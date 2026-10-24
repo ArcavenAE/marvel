@@ -6,9 +6,10 @@ marvel `409593c` and director `813c595`. V4's gate was tightened in review
 after the vote (a second read before Enter, and copy mode); the panel voted
 the single-read form.
 
-Build status: T2 (the V6 spawn tokens, `DIRECTOR_CLUSTER` and `DIRECTOR_ROLE`) is in
-#1049. T1 (the declaration and its apply validation) follows once #1047 has
-merged. Both build under the operator go, 2026-10-24.
+Build status: T2 (the V6 spawn token, `DIRECTOR_CLUSTER`) is in #1049; the
+role half of V6 is withdrawn there pending ruling 4 in section 7. T1 (the
+declaration and its apply validation) is not started. Both build under the
+operator go, 2026-10-24.
 
 ## 1. Why
 
@@ -96,8 +97,15 @@ seat, and be visible when a slot is missed. That is what this design does.
   `overdue` fires once per change of state as a `cadence.overdue` event and
   director mail to the team's supervisor, carrying only fields marvel writes.
   `swept` is self-reported, so this shows a silent seat, not one that lies.
-- **V6. Spawn tokens.** marvel sets `DIRECTOR_CLUSTER` and `DIRECTOR_ROLE`
-  at spawn, so a marvel-native launch does not depend on a cast script.
+- **V6. Spawn token.** marvel sets `DIRECTOR_CLUSTER` at spawn, so a
+  marvel-native launch names its cluster without a cast script. It does not
+  set `DIRECTOR_ROLE`. In director's shim that variable is role membership,
+  not a label: a session started with it holds the role, reads its role inbox
+  from the start once, and receives every `role://` send to the role, fanned
+  out to each holder (director `docs/shim-reference.md`, "Role mail"). Nothing
+  in V2 to V5 needs the shim to hold a role. A role that wants role mail
+  declares `DIRECTOR_ROLE` in its own `runtime.env`. As voted, V6 also set
+  the role; that half is withdrawn pending ruling 4 in section 7.
 - **V7. The bridge, until V2 to V5 ship.** The seat's process text re-arms
   its session cron at bootstrap from the role library's text, types the same
   fixed line as V4, deletes the cron when it writes its handoff, never reads
@@ -188,3 +196,15 @@ Each recommendation was valid until 2026-10-20, or a change to the schedule
 clock, the inject path, the composer reader or a Claude Code release that
 changes the facts in section 2, whichever comes first; the architect seat
 that wrote this re-checks it then. Nothing here executes on silence.
+
+4. **V6's role half (added 2026-10-24, during the build of T2).** As voted,
+   V6 set `DIRECTOR_ROLE` at spawn. In director's shim that makes every marvel
+   seat a holder of its role: a one-time replay of its role inbox at its next
+   spawn, and every `role://` send to the role, refused today when no session
+   holds it, fanned out to each replica. The vote did not weigh that.
+   Recommended: withdraw the role half. marvel sets `DIRECTOR_CLUSTER` only,
+   and a role that wants role mail declares `DIRECTOR_ROLE` in its own
+   `runtime.env`. This recommendation is valid until 2026-11-07, or until
+   director changes what `DIRECTOR_ROLE` means, whichever comes first; the
+   architect seat of the team building this design re-checks it then.
+   Nothing here executes on silence.
