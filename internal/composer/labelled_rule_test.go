@@ -171,3 +171,35 @@ func TestClaudeReaderDoesNotConfirmAFrameWithTheQueuedBanner(t *testing.T) {
 		}
 	}
 }
+
+// Fixture 10 is a real capture, not a hand-built frame: a read-only capture -e
+// of an idle seat on another host (2026-10-24), cut like fixture 8 (the done
+// line, one blank line standing in for an omitted banner line, the labelled
+// rule, the composer and the bare rule). The label is replaced with
+// "example-session" and the run of ─ is shortened to 80 columns. The composer
+// holds a dim suggestion (SGR 2), not a draft.
+//
+// A labelled rule must read the way a bare rule does for the same composer, so
+// the verdicts are those of fixture 5 (the dim suggestion under a bare rule):
+// the colored capture reads Unknown, because the reader sees the dim, and the
+// plain one reads HoldsText, because a plain capture cannot see dim. Neither
+// reads Empty, and neither confirms a stage or a submit.
+func TestClaudeReaderReadsACapturedDimSuggestionUnderALabelledRuleLikeABareOne(t *testing.T) {
+	t.Parallel()
+	r := ReaderFor("claude")
+	for name, want := range map[string]State{
+		"10-labelled-rule-kinu-suggestion.ansi.txt": Unknown,
+		"10-labelled-rule-kinu-suggestion.txt":      HoldsText,
+	} {
+		got := r.Read(fixture(t, name))
+		if got != want {
+			t.Errorf("%s: Read = %q, want %q", name, got, want)
+		}
+		if bare := r.Read(fixture(t, strings.Replace(name, "10-labelled-rule-kinu-suggestion", "5-idle-suggestion", 1))); got != bare {
+			t.Errorf("%s: Read = %q, but the bare-rule suggestion reads %q", name, got, bare)
+		}
+	}
+	if state := r.Read(fixture(t, "10-labelled-rule-kinu-suggestion.ansi.txt")); Confirms(Submit, state) || Confirms(Stage, state) {
+		t.Errorf("the dim suggestion under a labelled rule reads %q, which confirms an inject", state)
+	}
+}
