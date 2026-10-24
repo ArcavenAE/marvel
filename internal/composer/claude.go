@@ -12,7 +12,8 @@ import (
 //
 // What the captures show:
 //   - The live composer is a prompt line "❯" followed by a no-break space,
-//     between two rules, with continuation lines indented two spaces. The echo
+//     between two rules, with continuation lines indented two spaces. A rule
+//     can carry a label (the session name) after its first run of ─. The echo
 //     of an earlier prompt in the history has a plain space after the glyph.
 //   - A fresh composer shows a dim (SGR 2) placeholder, 'Try "..."', which is
 //     not a draft. A plain capture cannot tell it from typed text, so the shape
@@ -37,8 +38,16 @@ const (
 )
 
 var (
-	ansiSeq  = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
-	ruleLine = regexp.MustCompile(`^─{10,}$`)
+	ansiSeq = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
+	// A rule is a run of at least ten ─ at the margin, and nothing else, or the
+	// same run followed by one label and a trailing run of ─: a space, a label
+	// with no ─ in it, a space, and ─ to the end of the line. Some panes draw the
+	// session name in the rule that way. Like the other markers it is matched at
+	// the margin and by its own glyph, so an indented line or a reply line (which
+	// starts with the bullet) that imitates it is not a rule, and a label holding
+	// a ─ is not one either. The closing rule is read by the same shape: a draft's
+	// continuation lines are indented, so a line at the margin is never text.
+	ruleLine = regexp.MustCompile(`^─{10,}(?: [^─]+ ─+)?$`)
 	// The spinner and done lines are matched by their own glyphs, at the margin.
 	// A reply's text is model-controlled and starts with the reply bullet (or is
 	// indented), so a reply that imitates either line must not read as the
