@@ -6,10 +6,10 @@ marvel `409593c` and director `813c595`. V4's gate was tightened in review
 after the vote (a second read before Enter, and copy mode); the panel voted
 the single-read form.
 
-Build status: T2 (the V6 spawn token, `DIRECTOR_CLUSTER`) is in #1049; the
-role half of V6 is withdrawn there pending ruling 4 in section 7. T1 (the
-declaration and its apply validation) is not started. Both build under the
-operator go, 2026-10-24.
+Build status: T2 (the V6 spawn token, `DIRECTOR_CLUSTER`) is merged in #1049;
+the role half of V6 is withdrawn there pending ruling 4 in section 7. T1 (the
+declaration and its apply validation) is merged in #1052. T3 onward is not
+started. Both build under the operator go, 2026-10-24.
 
 ## 1. Why
 
