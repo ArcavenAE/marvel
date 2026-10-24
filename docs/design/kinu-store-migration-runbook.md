@@ -1,6 +1,18 @@
 # Runbook: kinu's marvel upgrade across the v1-to-v2 store migration
 
-Status: runbook for review, 2026-10-04. Docs only. **Nothing here runs on
+Status: **done on kinu, confirmed 2026-10-24.** The store is at schema 2 and
+the running binary carries the migration. Evidence, all read-only: kinu's
+`marvel version` and daemon both report 0.1.0-alpha.20261022.094913.740115f
+(daemon pid 89929, started 2026-10-22T14:52:03Z), and 1cc0a84 (#482) is an
+ancestor of 740115f; `~/.marvel/state` holds `marvel.bolt.v1.bak` and
+`marvel.bolt.pre-v2-20261007T015500Z`, both written 2026-10-06 20:55 local, so
+the store migrated then. The 10-22 daemon start wrote no new `.v1.bak`, which
+it would have if it had found a v1 store. The daemon log names no schema or
+migration line (#524), so this is confirmed from the files and the binary, not
+from a schema field; the bolt file was not opened. The next step is
+`kinu-bus-cutover-runbook.md`, which section 7 orders after this one.
+
+Original status: runbook for review, 2026-10-04. Docs only. **Nothing here runs on
 kinu without the operator present.** The rehearsal (section 3) is an
 operator-attended session of its own; the upgrade (section 5) is a scheduled
 window after it. Written to assume the upgrade goes badly.
