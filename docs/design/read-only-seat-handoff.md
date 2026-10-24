@@ -18,7 +18,7 @@ run), retention and expiry with the nonce line (7.1), `handoff get` (7.2),
 `handoff_via` validation at apply (RH-A), and the notice text for a seat that
 hands off by tool. A seat can run the verb only if its allowlist admits that
 one command; that grant is role configuration outside marvel. The pull request
-for slice 1 is named here once it is open.
+for slice 1 is #1050.
 
 **Why.** The operator ruled to keep the 72h max-age arm on every role. Today
 that arm can end in a shift only when the seat writes a file on the daemon
