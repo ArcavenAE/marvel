@@ -1,7 +1,7 @@
 # marvel bus audit: read one audit record, on any cluster
 
-Status: design for review, 2026-10-20. Owner: the architect role. Docs only;
-nothing is built by this document.
+Status: design for review, 2026-10-20. Owner: the architect role. Built in
+#1051 (operator go, 2026-10-24); this document itself changes nothing.
 
 A send that is refused or fails on a cluster's bus leaves a numbered record
 in that broker's `AGENT_AUDIT` stream, and the sender is told the number. On
