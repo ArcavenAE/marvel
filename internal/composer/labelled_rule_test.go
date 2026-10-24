@@ -188,18 +188,18 @@ func TestClaudeReaderReadsACapturedDimSuggestionUnderALabelledRuleLikeABareOne(t
 	t.Parallel()
 	r := ReaderFor("claude")
 	for name, want := range map[string]State{
-		"10-labelled-rule-kinu-suggestion.ansi.txt": Unknown,
-		"10-labelled-rule-kinu-suggestion.txt":      HoldsText,
+		"10-labelled-rule-suggestion.ansi.txt": Unknown,
+		"10-labelled-rule-suggestion.txt":      HoldsText,
 	} {
 		got := r.Read(fixture(t, name))
 		if got != want {
 			t.Errorf("%s: Read = %q, want %q", name, got, want)
 		}
-		if bare := r.Read(fixture(t, strings.Replace(name, "10-labelled-rule-kinu-suggestion", "5-idle-suggestion", 1))); got != bare {
+		if bare := r.Read(fixture(t, strings.Replace(name, "10-labelled-rule-suggestion", "5-idle-suggestion", 1))); got != bare {
 			t.Errorf("%s: Read = %q, but the bare-rule suggestion reads %q", name, got, bare)
 		}
 	}
-	if state := r.Read(fixture(t, "10-labelled-rule-kinu-suggestion.ansi.txt")); Confirms(Submit, state) || Confirms(Stage, state) {
+	if state := r.Read(fixture(t, "10-labelled-rule-suggestion.ansi.txt")); Confirms(Submit, state) || Confirms(Stage, state) {
 		t.Errorf("the dim suggestion under a labelled rule reads %q, which confirms an inject", state)
 	}
 }
