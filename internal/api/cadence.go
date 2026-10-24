@@ -67,6 +67,9 @@ func (c ManifestCadence) cadence(where string, now time.Time) (Cadence, error) {
 		return Cadence{}, fmt.Errorf("%s: cadence name is required", where)
 	}
 	where = fmt.Sprintf("%s cadence %q", where, c.Name)
+	if !validCadenceName(c.Name) {
+		return Cadence{}, fmt.Errorf("%s: name must be letters, digits, - and _", where)
+	}
 	for _, f := range []struct{ name, value string }{
 		{"schedule", c.Schedule},
 		{"timezone", c.Timezone},
@@ -151,4 +154,17 @@ func shortestSlotGap(schedule, timezone string, now time.Time, floor time.Durati
 		}
 	}
 	return gap, slots, nil
+}
+
+// validCadenceName reports whether name is made of ASCII letters, digits, "-"
+// and "_". Slot records and events are keyed by it.
+func validCadenceName(name string) bool {
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return name != ""
 }
