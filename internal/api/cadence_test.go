@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// cadenceScanBound is a guard on parse and apply of the most frequent cadence V1
+// allows. Measured at 648d7b7 under the run conditions: it did not finish inside
+// the default 10m go test timeout, so any bound is red there.
+const cadenceScanBound = 5 * time.Second
+
 // docs/design/declared-cadence.md V1 (ticket T1): a role carries cadence
 // entries, set only by applying a manifest. Apply refuses a cadence unless
 // 1m <= starting_deadline <= grace < period, where period is the shortest gap
@@ -196,5 +201,29 @@ func TestCadenceAcceptsTheEdges(t *testing.T) {
 				t.Errorf("manifest refused: %v", err)
 			}
 		})
+	}
+}
+
+// The period scan is the cost of an apply. A schedule as frequent as V1 allows
+// (every two minutes, with starting_deadline and grace at their 1m floor) holds
+// its grace and so is walked for the whole year. Parse and apply together must
+// stay inside a bound that a per-slot zone and cron reload would not.
+func TestCadencePeriodScanIsBounded(t *testing.T) {
+	// Not parallel: the other tests would be sharing the CPU the bound is read against.
+	text := cadenceManifest("", cadenceTable(map[string]string{
+		"schedule": `"*/2 * * * *"`, "starting_deadline": `"1m"`, "grace": `"1m"`,
+	}))
+	start := time.Now()
+	m, err := ParseManifestBytes([]byte(text))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(NewStore()); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	took := time.Since(start)
+	t.Logf("parse and apply of a */2 cadence took %s", took)
+	if took > cadenceScanBound {
+		t.Errorf("parse and apply took %s, want under %s", took, cadenceScanBound)
 	}
 }
