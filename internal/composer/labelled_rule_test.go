@@ -128,20 +128,28 @@ func TestClaudeReaderRefusesLinesThatImitateALabelledRule(t *testing.T) {
 }
 
 // Claude draws "Press up to edit queued messages" while a message is queued
-// behind a running turn. No capture of it is in the fixtures (taking one would
-// mean typing into a pane), so its position is assumed: a dim hint line between
-// the spinner and the composer, indented like the tip line. The reader has no
-// state of its own for it and the existing set has none that fits without a
-// real capture, so what the code can honestly report is that the frame is not
-// confirmed: the banner hides the spinner from the line-above rule, and a frame
-// the reader cannot place reads Unknown, which confirms nothing. A real capture
-// of the banner would let it read mid_turn, as the tip line does.
+// behind a running turn. The line is a mark line: a grey (38;5;246) prompt
+// glyph, a no-break space, then the hint in dim, as the pane drew it (the
+// captured bytes are quoted in queuedMarkANSI; queuedMarkPlain is the same line
+// with the escape sequences removed, as the .txt fixtures are). Its position is
+// still assumed, between the spinner and the composer, because taking a full
+// frame would mean typing into a pane. The reader has no state of its own for
+// it, and the mark line hides the spinner from the line-above rule, so what the
+// code can honestly report is that the frame is not confirmed: a frame the
+// reader cannot place reads Unknown, which confirms nothing.
 func TestClaudeReaderDoesNotConfirmAFrameWithTheQueuedBanner(t *testing.T) {
 	t.Parallel()
 	r := ReaderFor("claude")
-	const banner = "  Press up to edit queued messages"
+	const (
+		queuedMarkANSI  = "\x1b[38;5;246m❯\u00a0\x1b[2m\x1b[39mPress up to edit queued messages\x1b[0m"
+		queuedMarkPlain = "❯\u00a0Press up to edit queued messages"
+	)
 	for _, name := range []string{"3a-mid-turn-1s5.txt", "3a-mid-turn-1s5.ansi.txt"} {
 		for label, top := range map[string]string{"bare rule": "", "labelled rule": labelled} {
+			banner := queuedMarkPlain
+			if strings.HasSuffix(name, ".ansi.txt") {
+				banner = queuedMarkANSI
+			}
 			f := insertAfter(t, fixture(t, name), "Boogieing", banner)
 			if top != "" {
 				lines := strings.Split(f, "\n")
@@ -161,5 +169,37 @@ func TestClaudeReaderDoesNotConfirmAFrameWithTheQueuedBanner(t *testing.T) {
 				t.Errorf("%s with %s and the queued banner: Read = %q, want %q", name, label, got, Unknown)
 			}
 		}
+	}
+}
+
+// Fixture 10 is a real capture, not a hand-built frame: a read-only capture -e
+// of an idle seat on another host (2026-10-24), cut like fixture 8 (the done
+// line, one blank line standing in for an omitted banner line, the labelled
+// rule, the composer and the bare rule). The label is replaced with
+// "example-session" and the run of ─ is shortened to 80 columns. The composer
+// holds a dim suggestion (SGR 2), not a draft.
+//
+// A labelled rule must read the way a bare rule does for the same composer, so
+// the verdicts are those of fixture 5 (the dim suggestion under a bare rule):
+// the colored capture reads Unknown, because the reader sees the dim, and the
+// plain one reads HoldsText, because a plain capture cannot see dim. Neither
+// reads Empty, and neither confirms a stage or a submit.
+func TestClaudeReaderReadsACapturedDimSuggestionUnderALabelledRuleLikeABareOne(t *testing.T) {
+	t.Parallel()
+	r := ReaderFor("claude")
+	for name, want := range map[string]State{
+		"10-labelled-rule-suggestion.ansi.txt": Unknown,
+		"10-labelled-rule-suggestion.txt":      HoldsText,
+	} {
+		got := r.Read(fixture(t, name))
+		if got != want {
+			t.Errorf("%s: Read = %q, want %q", name, got, want)
+		}
+		if bare := r.Read(fixture(t, strings.Replace(name, "10-labelled-rule-suggestion", "5-idle-suggestion", 1))); got != bare {
+			t.Errorf("%s: Read = %q, but the bare-rule suggestion reads %q", name, got, bare)
+		}
+	}
+	if state := r.Read(fixture(t, "10-labelled-rule-suggestion.ansi.txt")); Confirms(Submit, state) || Confirms(Stage, state) {
+		t.Errorf("the dim suggestion under a labelled rule reads %q, which confirms an inject", state)
 	}
 }
