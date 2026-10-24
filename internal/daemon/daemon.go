@@ -1185,6 +1185,8 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return d.handleReap(req.Params)
 	case "heartbeat":
 		return d.handleHeartbeat(req.Params)
+	case "handoff.put":
+		return d.handleHandoffPut(req.Params)
 	case "broker.token":
 		return d.handleBrokerToken(context.Background(), req.Params)
 	case "account.limits":

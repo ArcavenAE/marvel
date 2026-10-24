@@ -887,6 +887,16 @@ type ShiftRequest struct {
 	// on the request for the same reason as NoticeUndelivered: the escalation
 	// must still name the cause after the event ring is gone (marvel#608).
 	DirError string
+	// DirDev and DirIno identify the handoff file's directory as it was when
+	// marvel asked (device and inode, zero when it could not be read). A
+	// handoff.put writes only into a directory that still has this identity,
+	// so a swap of the directory or of an ancestor after the request is
+	// refused instead of followed (docs/design/read-only-seat-handoff.md,
+	// section 2).
+	DirDev, DirIno uint64
+	// PutAt is when the daemon wrote the seat's handoff for a handoff.put, zero
+	// until then. The daemon's receipt, not a seat's report, is what it records.
+	PutAt time.Time
 	// Escalated is set once the window expired with no marker and marvel
 	// emitted shift.handoff-missing. From then on the team's supervisor
 	// decides; marvel neither re-requests nor shifts on its own.

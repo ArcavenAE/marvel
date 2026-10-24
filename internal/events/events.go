@@ -155,6 +155,13 @@ const (
 	// leaves the seat running and the team's supervisor decides whether to
 	// call the shift. marvel never shifts unwatched (design D5 step 3).
 	KindShiftHandoffMissing Kind = "team.shift-handoff-missing"
+	// KindHandoffPut records that the daemon wrote a seat's handoff on its
+	// handoff.put call (docs/design/read-only-seat-handoff.md). The receipt is
+	// the daemon's own, so a seat's account of having written never counts.
+	KindHandoffPut Kind = "handoff.put"
+	// KindHandoffPutRefused records a handoff.put the daemon refused, with the
+	// reason in Message. No file was written.
+	KindHandoffPutRefused Kind = "handoff.put-refused"
 	// KindShiftRoleReady records the instant the control plane decided a
 	// role's successor generation may take over: allReady returned true and
 	// the shift advanced from launching to draining. It is the boundary

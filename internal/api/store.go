@@ -362,6 +362,15 @@ func (s *Store) GetSession(key string) (Session, error) {
 	return cloneSession(sess), nil
 }
 
+// SessionByHeartbeatToken returns the session a bound heartbeat token was
+// minted for. It is the authority for a call that names no session of its own
+// (handoff.put): the token is the identity, so a caller cannot write for
+// another seat. Only a record with a token hash can be found, and the empty
+// token matches nothing. Not implemented yet.
+func (s *Store) SessionByHeartbeatToken(token string) (Session, error) {
+	return Session{}, ErrHeartbeatUnauthorized
+}
+
 // ListSessions returns snapshots of all sessions.
 func (s *Store) ListSessions() []Session {
 	s.mu.RLock()
