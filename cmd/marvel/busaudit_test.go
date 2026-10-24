@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -218,6 +219,46 @@ func TestBusAuditDaemonErrorExitsOneOnOneLine(t *testing.T) {
 		if strings.Contains(stderr, raw) {
 			t.Errorf("stderr holds a raw %U", []rune(raw)[0])
 		}
+	}
+}
+
+// send already passes every daemon error through drawn for every command, so
+// a control or format character in a daemon error prints as U+FFFD and no raw
+// byte of the rune reaches the terminal (design section 5, item 8). This pins
+// that existing behavior for each rune the design lists, the newline, and the
+// language tag U+E0001 that IsPrint rejects above U+FFFF. Runes are written by
+// number, never raw.
+func TestBusAuditDaemonErrorFiltersEveryListedRune(t *testing.T) {
+	runes := []rune{
+		0x1b, 0x85, 0x9b, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067,
+		0x2068, 0x2069, 0x200e, 0x200f, 0x061c, 0xe0001, 0x0a,
+	}
+	for _, r := range runes {
+		t.Run(fmt.Sprintf("U+%04X", r), func(t *testing.T) {
+			resolveFixture(t, false)
+			text := "read AGENT_AUDIT: boom " + string(r) + " tail"
+			socket, _ := auditFakeDaemon(t, func(daemonrpc.Request) daemonrpc.Response {
+				return daemonrpc.Response{Error: text}
+			})
+			code, stdout, stderr := runBusAudit(t, "7", "--socket", socket)
+			if code != 1 || stdout != "" {
+				t.Errorf("exit = %d, stdout = %q, want 1 and empty", code, stdout)
+			}
+			if lines := strings.Split(strings.TrimRight(stderr, "\n"), "\n"); len(lines) != 1 {
+				t.Errorf("stderr is %d lines, want one:\n%q", len(lines), stderr)
+			}
+			if !strings.Contains(stderr, "boom") || !strings.Contains(stderr, "tail") {
+				t.Errorf("stderr lost the daemon's text: %q", stderr)
+			}
+			if !strings.ContainsRune(stderr, '\uFFFD') {
+				t.Errorf("stderr has no U+FFFD for %U: %q", r, stderr)
+			}
+			// The CLI ends the line with its own newline, so the check for a raw
+			// U+000A reads the line without it.
+			if strings.ContainsRune(strings.TrimRight(stderr, "\n"), r) {
+				t.Errorf("stderr holds a raw %U: %q", r, stderr)
+			}
+		})
 	}
 }
 
