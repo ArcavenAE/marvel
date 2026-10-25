@@ -31,9 +31,15 @@ const HeartbeatTokenFileEnv = "MARVEL_HEARTBEAT_TOKEN_FILE"
 // which the daemon treats as no token presented. Every forwarder reads
 // through it, so none can honor one delivery and miss the other.
 func HeartbeatTokenFromEnv() string {
-	path := os.Getenv(HeartbeatTokenFileEnv)
+	return HeartbeatTokenFrom(os.Getenv)
+}
+
+// HeartbeatTokenFrom is HeartbeatTokenFromEnv over an environment lookup, for
+// a caller that carries its own environment and must not read the process's.
+func HeartbeatTokenFrom(getenv func(string) string) string {
+	path := getenv(HeartbeatTokenFileEnv)
 	if path == "" {
-		return os.Getenv(HeartbeatTokenEnv)
+		return getenv(HeartbeatTokenEnv)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
