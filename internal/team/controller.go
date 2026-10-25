@@ -60,6 +60,10 @@ type Controller struct {
 	// was last emitted, so it repeats once per window (shift_handoff.go).
 	// In memory, deliberately: a restart repeats it at once. Guarded by mu.
 	missingEmitted map[string]time.Time
+	// publishRecords is what the controller remembers, in memory, about
+	// publishing each escalated session's request to the supervisor
+	// (shift_handoff_deliver.go). The count and time are durable on the request.
+	publishRecords map[string]*publishRecord
 
 	// roleHealth tracks per-role crash-loop state: restart count and
 	// next-allowed-restart deadline. Keyed by workspace/team/role so
@@ -84,6 +88,9 @@ type Controller struct {
 	// once after a restart is correct: the operator restarted the daemon and
 	// the condition is still true. See aae-orc-qiay.
 	admissionHolds map[string]string
+	// Publisher delivers a handoff-missing escalation to the team's
+	// supervisor role over the bus. Nil means event-only (handoff-missing-delivery.md).
+	Publisher HandoffPublisher
 	// BusGate reports whether the cluster bus can take new sessions and, when
 	// it cannot, why. Nil means no managed bus, so no gate. A spawn withheld
 	// by the gate is RoleHold with HoldBus and one bus.unavailable per role
@@ -2004,6 +2011,7 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 			delete(live.ShiftRequests, r)
 			c.handoffProbes.forget(req.Session)
 			delete(c.missingEmitted, req.Session)
+			delete(c.publishRecords, req.Session)
 		}
 		return nil
 	}); err != nil {

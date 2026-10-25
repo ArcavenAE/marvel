@@ -585,8 +585,10 @@ func (h *Hub) AllURLs() []string {
 }
 
 // ReservedBusUsers are broker user names the renderer owns; a team or
-// seat by either name is refused, never merged.
-var ReservedBusUsers = []string{"director", "marvel_admin"}
+// seat by any of these names is refused, never merged. "marvel" is the sender
+// agent id of the escalations the daemon publishes, so no seat may carry it
+// (docs/design/handoff-missing-delivery.md, H2).
+var ReservedBusUsers = []string{"director", "marvel_admin", "marvel"}
 
 // DefaultGlobalRoleByName is the global role a role holds when its manifest
 // declares none, keyed by role name. It is read only when global_role is

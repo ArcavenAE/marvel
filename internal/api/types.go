@@ -910,6 +910,17 @@ type ShiftRequest struct {
 	// PutAt is when the daemon wrote the seat's handoff for a handoff.put, zero
 	// until then. The daemon's receipt, not a seat's report, is what it records.
 	PutAt time.Time
+	// DeliveredCount is how many escalation envelopes marvel has published to
+	// the team's supervisor for this request, and LastDeliveredAt when the last
+	// one went. They are written in the store update that records a send, so a
+	// daemon restart sends again only at the next window boundary
+	// (docs/design/handoff-missing-delivery.md, H4).
+	DeliveredCount  int
+	LastDeliveredAt time.Time
+	// LastDeliveryQueued records that the last send went out while the
+	// supervisor role had no live seat, so the first holder gets an immediate
+	// send instead of waiting out a window.
+	LastDeliveryQueued bool
 	// Escalated is set once the window expired with no marker and marvel
 	// emitted shift.handoff-missing. From then on the team's supervisor
 	// decides; marvel neither re-requests nor shifts on its own.

@@ -3195,6 +3195,12 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		return err
 	}
 	d.lifecycle = lc
+	// The escalation publisher dials the broker as the admin identity on its
+	// first publish, and reads the address and credential each time it dials.
+	d.teamCtrl.Publisher = bus.NewRoleInboxPublisher(func() (string, string, string) {
+		admin := mgr.Admin()
+		return mgr.URL(), admin.Name, admin.Password
+	})
 	d.teamCtrl.BusGate = func() (bool, string) {
 		if sup.Ready() {
 			return true, ""
