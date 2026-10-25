@@ -118,7 +118,7 @@ func TestSuccessorMessageComesBeforeTheRolePrompt(t *testing.T) {
 	succ := strings.Index(last, "You are a successor")
 	inbox := strings.Index(last, "drain your inbox")
 	role := strings.Index(last, rolePrompt)
-	if succ < 0 || inbox < 0 || role < 0 || !(succ < inbox && inbox < role) {
+	if succ < 0 || inbox < 0 || role < 0 || succ >= inbox || inbox >= role {
 		t.Errorf("order is not successor, inbox, role prompt (%d, %d, %d): %s", succ, inbox, role, last)
 	}
 	if !strings.HasSuffix(last, rolePrompt+"'") {

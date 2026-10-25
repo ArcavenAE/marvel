@@ -30,6 +30,7 @@ func RuntimeDrift(session, role Runtime) []string {
 	add(session.Script != role.Script, "script")
 	add(session.Mode != role.Mode, "mode")
 	add(session.Prompt != role.Prompt, "prompt")
+	add(session.SuccessorPromptOn() != role.SuccessorPromptOn(), "successor_prompt")
 	add(session.ContextWindow != role.ContextWindow, "context_window")
 	add(session.ContextFeed != role.ContextFeed, "context_feed")
 	add(!maps.Equal(session.Env, role.Env), "env")

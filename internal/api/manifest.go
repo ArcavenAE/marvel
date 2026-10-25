@@ -1019,16 +1019,17 @@ func (m *Manifest) Apply(store *Store) error {
 		var roles []Role
 		for _, mr := range mt.Roles {
 			rt := Runtime{
-				Name:          mr.Runtime.Image,
-				Command:       mr.Runtime.Command,
-				Args:          mr.Runtime.Args,
-				Script:        mr.Runtime.Script,
-				Mode:          mr.Runtime.Mode,
-				Prompt:        mr.Runtime.Prompt,
-				ContextWindow: mr.Runtime.ContextWindow,
-				ContextFeed:   mr.Runtime.ContextFeed,
-				Env:           mr.Runtime.Env,
-				Backend:       mr.Runtime.Backend,
+				Name:            mr.Runtime.Image,
+				Command:         mr.Runtime.Command,
+				Args:            mr.Runtime.Args,
+				Script:          mr.Runtime.Script,
+				Mode:            mr.Runtime.Mode,
+				Prompt:          mr.Runtime.Prompt,
+				SuccessorPrompt: mr.Runtime.SuccessorPrompt,
+				ContextWindow:   mr.Runtime.ContextWindow,
+				ContextFeed:     mr.Runtime.ContextFeed,
+				Env:             mr.Runtime.Env,
+				Backend:         mr.Runtime.Backend,
 			}
 			rt.Name = mr.Runtime.AdapterName()
 			role := Role{
