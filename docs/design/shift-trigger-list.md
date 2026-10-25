@@ -210,6 +210,25 @@ the marker:
   refused at apply (ruling 3, "yes for now").
 - A session with no resolved window, or a stale reading, is still skipped.
 
+**Who owns what in a handoff (operator ruling, 2026-10-25: "yes pass it on").**
+This section owns the handoff contract (the declared file, the marker, the
+window), so the split between marvel and the supervisory layer that sits above
+it is written here and not in per-seat-replace.md, which records the decision to
+replace per seat and not who owns the handoff.
+
+1. marvel owns the mechanics: the triggers, the handoff request, the waiting
+   period, the check that the handoff is complete, starting the successor and
+   stopping the old seat. The completeness check is marvel's own (the declared
+   path ends in the marker) and does not depend on any other component, in line
+   with component independence.
+2. The supervisory layer owns custody: what a handoff must contain, and
+   checking after a shift that the successor holds every open ask the old seat
+   held. marvel does not read or judge the content.
+3. The handoff file is that layer's content. marvel only checks the path the
+   role's `handoff` field gives it, so where the file lives is a property of a
+   deployment's manifest, not a marvel default. The examples carry a
+   placeholder path only.
+
 ### D6. Interaction with the context-pressure trigger
 
 - Both are evaluated each tick in list order; the first that holds asks.
