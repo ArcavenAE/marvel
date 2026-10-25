@@ -337,20 +337,7 @@ func (c *Controller) dropShiftRequest(t *api.Team, role string) {
 // that is not exactly one path element is refused, so it cannot steer the
 // resolved path out of the directory the manifest declared (marvel#444).
 func handoffPath(template string, sess api.Session) (string, error) {
-	if strings.Contains(template, "{session}") {
-		if n := sess.Name; n == "" || n == "." || n == ".." || strings.ContainsAny(n, `/\`) {
-			return "", fmt.Errorf("session name %q is not one path element", n)
-		}
-	}
-	p := strings.ReplaceAll(template, "{session}", sess.Name)
-	if rest, ok := strings.CutPrefix(p, "~/"); ok {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve ~/ in handoff path: %w", err)
-		}
-		p = filepath.Join(home, rest)
-	}
-	return p, nil
+	return api.ExpandHandoffPath(template, sess.Name)
 }
 
 // handoffComplete reports whether the file at path is a regular file whose
