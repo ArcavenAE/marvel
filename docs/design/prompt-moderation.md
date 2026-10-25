@@ -1,6 +1,6 @@
 # Prompt moderation: fit each seat's prompt to its model (design)
 
-Owner: arcaven-architect-g5-0. Subject: marvel. Issue: #379.
+Owner: the arcaven architect. Subject: marvel. Issue: #379.
 Status: design; F1-a to F1-c ruled 2026-09-27; ticket 1's run conditions and the review ruled 2026-10-25. Ticket 1 runs now; no code until the operator reviews the design with ticket 1's numbers.
 
 ## Why
