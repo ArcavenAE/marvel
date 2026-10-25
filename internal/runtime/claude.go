@@ -209,17 +209,24 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// A wrapper owns its command line, and so does a command whose words cannot
 	// be read, so the text goes in MARVEL_FIRST_PROMPT for the wrapper to pass on.
 	firstPrompt := ""
+	var record FirstPrompt
 	switch {
 	case headless:
 		args = append(args, ctx.Session.Runtime.Prompt)
+		record = FirstPrompt{Source: FirstPromptNone}
+		if p := ctx.Session.Runtime.Prompt; p != "" {
+			record = FirstPrompt{Source: FirstPromptRole, Bytes: len(p)}
+		}
 	default:
-		text, _, _ := composeFirstPrompt(ctx)
+		text, successor, role := composeFirstPrompt(ctx)
+		record = FirstPrompt{Source: firstPromptSource(successor, role), Bytes: len(text)}
 		switch {
 		case text == "":
 		case isBareClaude(binary) && readable:
 			args = append(args, text)
 		default:
 			firstPrompt = text
+			record.Source = FirstPromptWrapperEnv
 			logLaunch("role %s: command is a wrapper or shell text; the first prompt is in %s, not on the command line", ctx.Role.Name, firstPromptEnv)
 		}
 	}
@@ -229,6 +236,7 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		Env:                    baseEnv(ctx),
 		SettingSources:         settingSources,
 		SettingSourcesDelivery: delivery,
+		FirstPrompt:            record,
 	}
 	if firstPrompt != "" {
 		result.Env[firstPromptEnv] = firstPrompt

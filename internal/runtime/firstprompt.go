@@ -57,3 +57,16 @@ func handoffLine(ctx *LaunchContext, predecessor string) string {
 	}
 	return "Read its handoff at " + path + " first."
 }
+
+// firstPromptSource names where a composed message came from (design D7).
+func firstPromptSource(successor, role bool) string {
+	switch {
+	case successor && role:
+		return FirstPromptSuccessorRole
+	case successor:
+		return FirstPromptSuccessor
+	case role:
+		return FirstPromptRole
+	}
+	return FirstPromptNone
+}

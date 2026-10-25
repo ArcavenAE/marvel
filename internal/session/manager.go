@@ -833,6 +833,13 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.PID = pid
 	sess.State = api.SessionRunning
 	log.Printf("session %s running in pane %s", sess.Key(), paneID)
+	m.announceSpawn(sess, paneID, plan.firstPrompt)
+	return nil
+}
+
+// announceSpawn emits the events that say a spawn happened: session.created,
+// then the session.first-prompt that describes it.
+func (m *Manager) announceSpawn(sess *api.Session, paneID string, fp runtime.FirstPrompt) {
 	events.Emit(m.Events, events.Event{
 		Kind:      events.KindSessionCreated,
 		Workspace: sess.Workspace,
@@ -841,7 +848,7 @@ func (m *Manager) Create(sess *api.Session) error {
 		Session:   sess.Key(),
 		Message:   fmt.Sprintf("pane %s", paneID),
 	})
-	return nil
+	m.emitFirstPrompt(sess, fp)
 }
 
 // checkWorkDir refuses a spawn whose resolved directory is missing or is not a
@@ -922,6 +929,9 @@ type launchPlan struct {
 	// hold is set when the role's settings file could not be read at launch; the
 	// spawn is not made.
 	hold *settingsFileError
+	// firstPrompt is which first message the launch carried, for the
+	// session.first-prompt event.
+	firstPrompt runtime.FirstPrompt
 }
 
 // prepareSessionHome gives this launch a private harness state home, for an
@@ -1149,7 +1159,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		return m.directPlan(sess)
 	}
 
-	plan := launchPlan{command: result.Command, env: result.Env}
+	plan := launchPlan{command: result.Command, env: result.Env, firstPrompt: result.FirstPrompt}
 	if byFile && tokenFile == "" {
 		delete(plan.env, api.HeartbeatTokenEnv)
 	}

@@ -284,7 +284,34 @@ type LaunchResult struct {
 	// session produces no parseable stream and is observed by
 	// capture-pane alone.
 	Stream *StreamSpec
+	// FirstPrompt records which first message this launch carried
+	// (docs/design/interactive-first-prompt.md D7).
+	FirstPrompt FirstPrompt
 }
+
+// FirstPrompt is which first message a launch carried: where it came from and
+// how many bytes it was. It never holds the text.
+type FirstPrompt struct {
+	Source string
+	Bytes  int
+}
+
+// The sources a launch's first message can have (design D7).
+const (
+	// FirstPromptNone: marvel passed no first message.
+	FirstPromptNone = "none"
+	// FirstPromptRole: the role's own runtime.prompt.
+	FirstPromptRole = "role"
+	// FirstPromptSuccessor: marvel's fixed successor message alone.
+	FirstPromptSuccessor = "successor"
+	// FirstPromptSuccessorRole: the successor message, then the role's prompt.
+	FirstPromptSuccessorRole = "successor+role"
+	// FirstPromptWrapperEnv: the command is a wrapper, so the text went in
+	// MARVEL_FIRST_PROMPT and not on the command line.
+	FirstPromptWrapperEnv = "wrapper-env"
+	// FirstPromptSkippedResume: a resume form that cannot take a message.
+	FirstPromptSkippedResume = "skipped-resume"
+)
 
 // Adapter knows how to prepare the execution environment for a specific
 // runtime type. Adapters are stateless — all session-specific state is
