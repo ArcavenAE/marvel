@@ -1,0 +1,7 @@
+# osv-scanner configuration, read from the repository root.
+# Format: https://google.github.io/osv-scanner/configuration/
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+ignoreUntil = 2026-11-25
+reason = "Module-level finding only: golang.org/x/crypto/openpgp is unmaintained and has no fixed version, but marvel does not import that package (go list -deps ./... lists no openpgp package). Re-check on or before the expiry date."
