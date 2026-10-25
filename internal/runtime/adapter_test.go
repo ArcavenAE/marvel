@@ -814,6 +814,44 @@ func TestBaseEnvCarriesTheDeclaredHandoffPath(t *testing.T) {
 	}
 }
 
+// The variable names the file marvel watches: a leading ~/ is the daemon
+// user's home, not the seat's, and a path marvel cannot resolve is left out
+// rather than emitted relative or half-filled.
+func TestBaseEnvHandoffPathExpandsHomeAndOmitsWhatDoesNotResolve(t *testing.T) {
+	policy := &api.ShiftPolicy{On: api.ShiftTriggerMaxAge, Handoff: "~/handoffs/{session}.md", HandoffMarker: "END HANDOFF"}
+
+	t.Setenv("HOME", "/home/daemon")
+	ctx := testContext()
+	ctx.Role.Shift = policy
+	if got := baseEnv(ctx)[api.HandoffPathEnv]; got != "/home/daemon/handoffs/squad-worker-g1-0.md" {
+		t.Errorf("%s = %q, want the daemon user's home expanded", api.HandoffPathEnv, got)
+	}
+
+	// A seat's own HOME override in the role env does not move the path.
+	ctx = testContext()
+	ctx.Role.Shift = policy
+	ctx.Role.Runtime.Env = map[string]string{"HOME": "/home/seat"}
+	if got := baseEnv(ctx)[api.HandoffPathEnv]; got != "/home/daemon/handoffs/squad-worker-g1-0.md" {
+		t.Errorf("with a seat HOME: %s = %q, want the daemon's path", api.HandoffPathEnv, got)
+	}
+
+	// A session name that is not one path element cannot be filled in.
+	ctx = testContext()
+	ctx.Role.Shift = policy
+	ctx.Session.Name = "../escape"
+	if v, ok := baseEnv(ctx)[api.HandoffPathEnv]; ok {
+		t.Errorf("unsafe session name: %s=%q, want it absent", api.HandoffPathEnv, v)
+	}
+
+	// No home directory for ~/: absent, never relative.
+	t.Setenv("HOME", "")
+	ctx = testContext()
+	ctx.Role.Shift = policy
+	if v, ok := baseEnv(ctx)[api.HandoffPathEnv]; ok {
+		t.Errorf("no home: %s=%q, want it absent", api.HandoffPathEnv, v)
+	}
+}
+
 // MARVEL_WORKDIR is the declared placement, stamped beside MARVEL_SESSION for
 // wrappers and hooks; informational, since the pane is already there
 // (docs/design/session-working-directory.md, decision 5). A session placed
