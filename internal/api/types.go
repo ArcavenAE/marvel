@@ -307,6 +307,11 @@ type Session struct {
 	RestartCount    int           `toml:"-"`
 	LastHealthCheck time.Time     `toml:"-"`
 	CreatedAt       time.Time     `toml:"-"`
+
+	// RingClaim is the last ring written through `marvel inject --ring`
+	// (docs/design/marvel-watcher.md, section 11.2). It persists with the
+	// session record, so a restart keeps the window.
+	RingClaim *RingClaim `json:"ring_claim,omitempty" toml:"-"`
 	// Predecessor is the key of the session this one replaced in a shift,
 	// empty for a first spawn. Stamped at create and exported to the seat
 	// as MARVEL_PREDECESSOR, so a successor can tell "my predecessor wrote

@@ -2364,6 +2364,11 @@ type injectParams struct {
 	// capture cannot rule a usage-limit menu out of (marvel#559 part b). It does
 	// not lift the refusal on a menu the matcher finds.
 	AllowBareDigit bool `json:"allow_bare_digit,omitempty"`
+	// Ring marks the inject as a ring: it writes the session's ring claim
+	// before the keys go in and is refused while another ring holds it
+	// (docs/design/marvel-watcher.md, section 11.2). Off by default; an inject
+	// without it ignores the claim.
+	Ring bool `json:"ring,omitempty"`
 }
 
 // Injector is the caller's own account of who it is.
@@ -2436,6 +2441,15 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) daemonrpc.Resp
 	}
 	return respond(out)
 }
+
+// ringClaim writes the ring claim for sess, or returns a *api.RingRefusal when
+// another ring still holds it. Not implemented yet.
+func (d *Daemon) ringClaim(sess api.Session, c caller, from Injector, now time.Time) error {
+	return nil
+}
+
+// ringSettle records how the send ended. Not implemented yet.
+func (d *Daemon) ringSettle(sess api.Session, ringAt time.Time, sendErr error) {}
 
 // isDismissKey reports whether an inject is a lone Escape.
 func isDismissKey(p injectParams) bool {

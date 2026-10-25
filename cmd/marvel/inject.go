@@ -26,6 +26,9 @@ type injectStep struct {
 	// whose screen cannot be ruled out as a usage-limit menu (marvel#559). It
 	// never lifts the refusal on a menu the daemon finds.
 	AllowBareDigit bool
+	// Ring asks the daemon to write the session's ring claim before this step's
+	// keys go in. It rides only on the step that carries the text.
+	Ring bool
 }
 
 // namedTmuxKeys are the key names a person is most likely to type as if they
@@ -143,6 +146,11 @@ func injectRequestParams(sessionKey string, step injectStep) map[string]any {
 		p["allow_bare_digit"] = true
 	}
 	return p
+}
+
+// withRing marks the step that carries the text as a ring. Not implemented yet.
+func withRing(steps []injectStep, ring bool) ([]injectStep, error) {
+	return steps, nil
 }
 
 // withAllowBareDigit marks every step as sent with --allow-bare-digit.
