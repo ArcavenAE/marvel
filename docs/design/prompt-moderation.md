@@ -52,7 +52,7 @@ live one), for the claude and codex harnesses.
 |---|---|---|---|---|
 | L1 | MCP server set per role | spawn | manifest declares `mcp_servers` per role; the adapter passes the harness's strict MCP config flag | largest expected lever; no proxy |
 | L2 | tool set per role | spawn | adapter passes the harness's allow/deny tool flags | measure whether a denied tool's schema still reaches the model; if it does, L2 saves nothing and only L1 counts |
-| L3 | injected content | author time | wardrobe slice, seat file, appended prompt | marvel measures and names the contributor; it does not edit role text |
+| L3 | injected content | author time | role-library slice, seat file, appended prompt | marvel measures and names the contributor; it does not edit role text |
 | L4 | in-session compaction threshold | spawn | adapter sets the harness's own compaction threshold relative to `context_limit` | the harness compacts; marvel sets the operating point |
 | L5 | refuse | spawn | the fit check | the terminal lever; never silent |
 | L6 | request rewriting on the model endpoint | per request | a proxy | not recommended; see section 3 |
