@@ -38,6 +38,9 @@ type Store struct {
 	// a team's ShiftState, so it has its own bucket rather than riding the
 	// team record that apply replaces. See schedule_status.go.
 	scheduleStatus map[string]*ScheduleStatus
+	// cadenceStatus is each declared cadence's slot clock and slot records,
+	// keyed workspace/team/role/name (cadence_slot.go).
+	cadenceStatus map[string]*CadenceStatus
 	// duties are the seat readiness records, keyed seat|cell name, and
 	// dutySeq is the highest Seq the daemon has assigned. See readiness.go.
 	duties      map[string]*DutyRecord
@@ -111,6 +114,7 @@ func NewStore() *Store {
 		credentials: make(map[string]*Credential),
 
 		scheduleStatus: make(map[string]*ScheduleStatus),
+		cadenceStatus:  make(map[string]*CadenceStatus),
 		duties:         make(map[string]*DutyRecord),
 		exposures:      make(map[string]*ExposureRecord),
 		exposureRaw:    make(map[string][]byte),

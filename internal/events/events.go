@@ -245,9 +245,14 @@ const (
 	// frozen: on_failure = freeze stopped the schedule; dst-shift: the next
 	// firing's UTC offset differs from the last; dst-unacknowledged: the
 	// zone observes daylight saving and the role has no dst_ack.
-	KindScheduleFired             Kind = "schedule.fired"
-	KindScheduleSkipped           Kind = "schedule.skipped"
-	KindScheduleMissed            Kind = "schedule.missed"
+	KindScheduleFired   Kind = "schedule.fired"
+	KindScheduleSkipped Kind = "schedule.skipped"
+	KindScheduleMissed  Kind = "schedule.missed"
+	// KindCadenceSlotOpened records that the slot clock opened a slot for a
+	// declared cadence; KindCadenceSlotSkipped, that it skipped a due time
+	// (past starting_deadline, or a posture-withheld team).
+	KindCadenceSlotOpened         Kind = "cadence.slot-opened"
+	KindCadenceSlotSkipped        Kind = "cadence.slot-skipped"
 	KindScheduleReplaced          Kind = "schedule.replaced"
 	KindScheduleSuspended         Kind = "schedule.suspended"
 	KindScheduleFrozen            Kind = "schedule.frozen"
@@ -516,6 +521,8 @@ var allKinds = []Kind{
 	KindScheduleFired,
 	KindScheduleSkipped,
 	KindScheduleMissed,
+	KindCadenceSlotOpened,
+	KindCadenceSlotSkipped,
 	KindScheduleReplaced,
 	KindScheduleSuspended,
 	KindScheduleFrozen,
