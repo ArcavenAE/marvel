@@ -133,6 +133,7 @@ jobs:
             ocsp2.apple.com.edgesuite.net:443
             h3.apis.apple.map.fastly.net:443
             setup.icloud.com:443
+            help.v.aaplimg.com:443
             stocks-data-service.v.aaplimg.com:443
             ocsp.edge.digicert.com:443
 
@@ -167,6 +168,7 @@ jobs:
             ocsp2.apple.com.edgesuite.net:443
             h3.apis.apple.map.fastly.net:443
             setup.icloud.com:443
+            help.v.aaplimg.com:443
             stocks-data-service.v.aaplimg.com:443
             ocsp.edge.digicert.com:443
 
