@@ -67,7 +67,9 @@ func (m *Manager) reproject(fileBackedOnly bool, detail string) int {
 		return 0
 	}
 	changedCount := 0
-	for _, sess := range m.store.ListSessions() {
+	sessions := m.store.ListSessions()
+	m.pruneSettingsFileFailures(sessions)
+	for _, sess := range sessions {
 		if !sess.State.CountsAsAlive() {
 			continue
 		}
@@ -455,6 +457,24 @@ func (m *Manager) reportSettingsFileFailure(sess *api.Session, err error) bool {
 		Message:   msg,
 	})
 	return true
+}
+
+// pruneSettingsFileFailures drops the remembered failure of every session that
+// is no longer alive, so the memory does not grow with session churn.
+func (m *Manager) pruneSettingsFileFailures(sessions []api.Session) {
+	alive := make(map[string]bool, len(sessions))
+	for _, sess := range sessions {
+		if sess.State.CountsAsAlive() {
+			alive[sess.Key()] = true
+		}
+	}
+	m.failures.mu.Lock()
+	defer m.failures.mu.Unlock()
+	for key := range m.failures.last {
+		if !alive[key] {
+			delete(m.failures.last, key)
+		}
+	}
 }
 
 // clearSettingsFileFailure forgets a session's last reported failure, so a
