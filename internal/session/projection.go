@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
@@ -25,9 +27,14 @@ import (
 func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.Adapter) {
 	target, wrote, _, shadowed, err := m.projectPolicy(lctx, adapter)
 	if err != nil {
+		if m.reportSettingsFileFailure(lctx.Session, err) {
+			log.Printf("session %s: policy settings file unreadable, launching unprojected: %v", lctx.Session.Key(), err)
+			return
+		}
 		log.Printf("session %s: policy projection failed, launching unprojected: %v", lctx.Session.Key(), err)
 		return
 	}
+	m.clearSettingsFileFailure(lctx.Session.Key())
 	if !wrote {
 		return
 	}
@@ -49,6 +56,13 @@ func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.
 // Returns the number of files rewritten with changed content, for the
 // caller's logs.
 func (m *Manager) Reproject() int {
+	return m.reproject(false, "re-projected after manifest change")
+}
+
+// reproject is Reproject's body. With fileBackedOnly it visits only the
+// sessions whose policy reads a settings file, and detail is the event text for
+// a file that changed.
+func (m *Manager) reproject(fileBackedOnly bool, detail string) int {
 	if m.ProjectionDir == "" {
 		return 0
 	}
@@ -61,19 +75,25 @@ func (m *Manager) Reproject() int {
 		if !ok {
 			continue
 		}
+		if fileBackedOnly && !m.policyReadsFile(lctx) {
+			continue
+		}
 		before := projectedPermissions(adapter.ProjectionFor(lctx, m.ProjectionDir).Path)
 		target, wrote, changed, shadowed, err := m.projectPolicy(lctx, adapter)
 		if err != nil {
-			log.Printf("session %s: re-projection failed: %v", sess.Key(), err)
+			if !m.reportSettingsFileFailure(lctx.Session, err) {
+				log.Printf("session %s: re-projection failed: %v", sess.Key(), err)
+			}
 			continue
 		}
+		m.clearSettingsFileFailure(sess.Key())
 		if wrote && changed {
 			changedCount++
-			detail := "re-projected after manifest change"
+			msg := detail
 			if !bytes.Equal(before, projectedPermissions(target.Path)) {
-				detail += "; permissions take effect on next spawn (a running session keeps the permissions it started with)"
+				msg += "; permissions take effect on next spawn (a running session keeps the permissions it started with)"
 			}
-			m.emitProjected(lctx.Session, lctx.Role.Policy, target.Path, detail, shadowed)
+			m.emitProjected(lctx.Session, lctx.Role.Policy, target.Path, msg, shadowed)
 		}
 	}
 	return changedCount
@@ -83,7 +103,17 @@ func (m *Manager) Reproject() int {
 // settings file, and reports how many files changed. The controller calls it
 // on each reconcile so a rewritten file is projected without a recast.
 func (m *Manager) ReprojectFileBacked() int {
-	return 0
+	return m.reproject(true, "re-projected after the settings file changed")
+}
+
+// policyReadsFile reports whether the launch's role references a policy that
+// names a settings file.
+func (m *Manager) policyReadsFile(lctx *runtime.LaunchContext) bool {
+	if lctx.Role.Policy == "" {
+		return false
+	}
+	policy, err := m.store.GetPolicy(fmt.Sprintf("%s/%s", lctx.Workspace.Name, lctx.Role.Policy))
+	return err == nil && policy.SettingsFile != ""
 }
 
 // reprojectContext rebuilds the adapter and launch context for a live
@@ -169,6 +199,13 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 		policy, err := m.store.GetPolicy(key)
 		if err != nil {
 			return target, false, false, nil, fmt.Errorf("resolve policy %s: %w", key, err)
+		}
+		if policy.SettingsFile != "" {
+			fromFile, err := readSettingsFile(policy.SettingsFile)
+			if err != nil {
+				return target, false, false, nil, &settingsFileError{policy: lctx.Role.Policy, path: policy.SettingsFile, err: err}
+			}
+			settings = fromFile
 		}
 		for k, v := range policy.Settings {
 			settings[k] = v
@@ -333,4 +370,97 @@ func (m *Manager) emitProjected(sess *api.Session, policyName, path, detail stri
 		Session:   sess.Key(),
 		Message:   msg,
 	})
+}
+
+// settingsFileError is a policy settings file that could not be read as a JSON
+// object. It is its own type so the callers report it as an event, where any
+// other projection error is only logged.
+type settingsFileError struct {
+	policy, path string
+	err          error
+}
+
+func (e *settingsFileError) Error() string {
+	return fmt.Sprintf("policy %q settings file %s: %v", e.policy, e.path, e.err)
+}
+
+func (e *settingsFileError) Unwrap() error { return e.err }
+
+// readSettingsFile reads a policy's settings file verbatim: one JSON object,
+// numbers kept as written, nothing interpreted. A leading "~/" is the home
+// directory. The file is the operator's, so it is read as is; a missing file,
+// anything that is not a single JSON object, and an empty file are errors,
+// never an empty policy.
+func readSettingsFile(path string) (map[string]any, error) {
+	if rest, ok := strings.CutPrefix(path, "~/"); ok {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("resolve home directory: %w", err)
+		}
+		path = filepath.Join(home, rest)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var doc any
+	if err := dec.Decode(&doc); err != nil {
+		return nil, fmt.Errorf("not a JSON object: %w", err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("not a JSON object: more than one value")
+	}
+	obj, ok := doc.(map[string]any)
+	if !ok {
+		return nil, errors.New("not a JSON object")
+	}
+	return obj, nil
+}
+
+// settingsFileFailures remembers the last failure reported for each session, so
+// a file that stays unreadable is reported once and not on every reconcile.
+type settingsFileFailures struct {
+	mu   sync.Mutex
+	last map[string]string
+}
+
+// reportSettingsFileFailure emits a policy.projection-failed event for err when
+// it is a settings file failure and differs from the last one reported for the
+// session. It reports whether err was a settings file failure.
+func (m *Manager) reportSettingsFileFailure(sess *api.Session, err error) bool {
+	var sfe *settingsFileError
+	if !errors.As(err, &sfe) {
+		return false
+	}
+	msg := fmt.Sprintf("%s; the session keeps whatever settings file it already has", sfe)
+	m.failures.mu.Lock()
+	if m.failures.last == nil {
+		m.failures.last = make(map[string]string)
+	}
+	seen := m.failures.last[sess.Key()] == msg
+	m.failures.last[sess.Key()] = msg
+	m.failures.mu.Unlock()
+	if seen {
+		return true
+	}
+	events.Emit(m.Events, events.Event{
+		Kind:      events.KindPolicyProjectionFailed,
+		Severity:  events.SeverityError,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Session:   sess.Key(),
+		Message:   msg,
+	})
+	return true
+}
+
+// clearSettingsFileFailure forgets a session's last reported failure, so a
+// later failure reports again.
+func (m *Manager) clearSettingsFileFailure(key string) {
+	m.failures.mu.Lock()
+	delete(m.failures.last, key)
+	m.failures.mu.Unlock()
 }

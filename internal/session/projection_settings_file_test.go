@@ -56,8 +56,32 @@ func settingsFileSession(t *testing.T, path string) (*Manager, *events.Ring, str
 	if err := m.Apply(mgr.store); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	key := seedRunningSession(t, mgr, "acme", "squad", "reviewer", "squad-reviewer-g1-0", "claude")
+	key := seedReviewerSession(t, mgr)
 	return mgr, ring, key, filepath.Join(mgr.ProjectionDir, strings.ReplaceAll(key, "/", "-")+".settings.json")
+}
+
+// seedReviewerSession registers a running claude session of the reviewer role
+// the manifests above declare, and returns its key.
+func seedReviewerSession(t *testing.T, mgr *Manager) string {
+	t.Helper()
+	sess := &api.Session{
+		Name:      "squad-reviewer-g1-0",
+		Workspace: "acme",
+		Team:      "squad",
+		Role:      "reviewer",
+		Runtime:   api.Runtime{Name: "claude", Command: "claude"},
+	}
+	if err := mgr.store.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := mgr.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.State = api.SessionRunning
+		live.PaneID = "%1"
+		return nil
+	}); err != nil {
+		t.Fatalf("mark running: %v", err)
+	}
+	return sess.Key()
 }
 
 func writeSettingsFile(t *testing.T, dir, body string) string {
@@ -166,7 +190,7 @@ func TestReprojectFileBackedSkipsInlinePolicies(t *testing.T) {
 	if err := m.Apply(mgr.store); err != nil {
 		t.Fatal(err)
 	}
-	seedRunningSession(t, mgr, "acme", "squad", "reviewer", "squad-reviewer-g1-0", "claude")
+	seedReviewerSession(t, mgr)
 	if n := mgr.ReprojectFileBacked(); n != 0 {
 		t.Errorf("ReprojectFileBacked changed = %d for an inline policy, want 0", n)
 	}

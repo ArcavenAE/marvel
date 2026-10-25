@@ -34,6 +34,9 @@ type Manager struct {
 	// reconcile tick.
 	refusedMu sync.Mutex
 	refused   map[string]*refusal
+	// failures remembers the last unreadable policy settings file reported per
+	// session, so a standing failure is one event and not one per reconcile.
+	failures settingsFileFailures
 	// Clock is the time source for refusal bookkeeping; nil means time.Now.
 	Clock func() time.Time
 	// LookPath finds the container runtime CLI; nil means exec.LookPath.
