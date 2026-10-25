@@ -833,6 +833,7 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.PID = pid
 	sess.State = api.SessionRunning
 	log.Printf("session %s running in pane %s", sess.Key(), paneID)
+	m.emitFirstPrompt(sess, plan.firstPrompt)
 	events.Emit(m.Events, events.Event{
 		Kind:      events.KindSessionCreated,
 		Workspace: sess.Workspace,
@@ -1152,7 +1153,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		return m.directPlan(sess)
 	}
 
-	plan := launchPlan{command: result.Command, env: result.Env}
+	plan := launchPlan{command: result.Command, env: result.Env, firstPrompt: result.FirstPrompt}
 	if byFile && tokenFile == "" {
 		delete(plan.env, api.HeartbeatTokenEnv)
 	}
