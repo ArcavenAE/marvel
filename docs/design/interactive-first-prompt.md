@@ -7,10 +7,12 @@ pinned to marvel `5a972a4`.
 Implementation: T1 (the claude interactive positional, D1 and D4) is merged
 as marvel#1046, and T5 (the apply advisories, D6) as marvel#1047. T4 (the
 successor first message, D2 and D3) is in marvel#1069, for claude seats; codex
-and opencode use the same composer when T2 and T3 land. P1 is not measured,
-which the plan put before T1; ruling 1 let #1046 merge first on its narrow
-claim, that the prompt is on the command line, not that the seat gets a turn.
-T2, T3, T6, T7 and probes P1 to P4 are not started.
+and opencode use the same composer when T2 and T3 land. T6 (the
+`session.first-prompt` event, D7) is in marvel#1070, stacked on #1069. P1 is
+not measured, which the plan put before T1; ruling 1 let #1046 merge first on
+its narrow claim, that the prompt is on the command line, not that the seat
+gets a turn.
+T2, T3, T7 and probes P1 to P4 are not started.
 
 ## 1. Why
 
