@@ -1,13 +1,14 @@
 # A first prompt for interactive seats
 
-Status: design proposal, 2026-10-07, for #391. Proposal only; the rulings in
-section 7 are the operator's. Code references are pinned to marvel `5a972a4`.
+Status: design, 2026-10-07, for #391. The three rulings in section 7 were
+RULED by the operator on 2026-10-25, each as recommended. Code references are
+pinned to marvel `5a972a4`.
 
 Implementation: T1 (the claude interactive positional, D1 and D4) is in
 marvel#1046 and T5 (the apply advisories, D6) in marvel#1047, both drafts.
-Neither merges before the operator rules on section 7. P1 is not measured,
-which the plan puts before T1, so #1046 claims the prompt is on the command
-line and not that the seat gets a turn. T2 to T4, T6, T7 and probes P1 to P4
+Section 7 is ruled, so both may merge on review. P1 is not measured, which
+the plan put before T1; ruling 1 lets #1046 merge first on its narrow claim,
+that the prompt is on the command line, not that the seat gets a turn. T2 to T4, T6, T7 and probes P1 to P4
 are not started.
 
 ## 1. Why
@@ -191,39 +192,34 @@ everywhere: D5's codex `resume --last <prompt>` reading came from the
 `rust-v0.160.1` source, and a host on codex 0.154.0 is not covered by it.
 
 The operator's go of 2026-10-24 dispatched this design to be built; it did not
-adopt any ruling below. All three rulings are still the operator's, and the
-recommendations below are put to the operator as they stand. Neither #1046
-(T1) nor #1047 (T5) merges before the operator rules.
+adopt any ruling below. **RULED 2026-10-25**, relayed by director: the operator
+took the recommended option on all three, with no notes. Each ruling is
+recorded under its item.
 
-1. **Adopt D1 to D8 and the plan.** Renewed, revised. Recommended: adopt,
-   with two revisions to the plan's order:
-   - T1 is in review ahead of P1 (#1046). Once ruling 1 is given, it may merge
-     on the claim it makes, that marvel puts the role's prompt on the claude
-     command line; it may not be read as "the seat takes a turn" until P1 runs
-     on claude 2.1.310 or later.
+1. **Adopt D1 to D8 and the plan.** RULED 2026-10-25: adopted, with both
+   revisions to the plan's order:
+   - T1 is in review ahead of P1 (#1046). It may merge before P1 runs, on the
+     claim it makes, that marvel puts the role's prompt on the claude command
+     line; it may not be read as "the seat takes a turn" until P1 runs on
+     claude 2.1.310 or later.
    - P2 records the codex version of the seats it covers, and runs on each
      codex version the fleet's interactive seats use. Until P2 covers a
      version, T7's codex `resume --last` case for that version is unmeasured.
 
-   Needed before any ticket of this plan merges, T1 (#1046) and T5 (#1047)
-   included.
+   Given, so T1 (#1046) and T5 (#1047) may merge on review.
 
 2. **The successor prompt is on by default, with an opt-out (D2, D3).**
-   Renewed, unchanged. Recommended: on by default. The failure it fixes, a
-   successor idling until a person types, is silent and fleet-wide, and
-   nothing in the re-check changes that. Needed before T4 merges.
+   RULED 2026-10-25: on by default, with an opt-out per role. The failure it
+   fixes, a successor idling until a person types, is silent and fleet-wide.
+   T4 builds it this way.
 
 3. **Apply warns rather than refuses (D6, and D5's skipped resume forms).**
-   Renewed, unchanged. Recommended: warn now. A refusal would be a new gate
-   and needs its own ratified decision; revisit it once every live manifest
-   is clean. Needed, with ruling 1, before T5 (#1047) merges.
+   RULED 2026-10-25: warn now, and revisit a refusal once every live manifest
+   is clean. A refusal would be a new gate and needs its own ratified
+   decision. #1047 stays as built.
 
-Each recommendation is valid until 2026-11-07, or until one of these,
-whichever comes first:
-
-- P1, P2 or P3 reports;
-- a claude, codex or opencode release on a fleet host whose `--help` changes
-  the launch forms in the table above.
-
-The architect seat of the team building this design re-checks them then, and
-renews, revises or withdraws each. Nothing here executes on silence.
+The rulings stand as given. When P1, P2 or P3 reports, or a claude, codex or
+opencode release on a fleet host changes the launch forms in the table above,
+the architect seat of the team building this design checks whether any ruling
+rests on a fact that changed, and brings a change back to the operator as a
+new decision. Nothing here executes on silence.
