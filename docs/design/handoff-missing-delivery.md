@@ -2,8 +2,8 @@
 
 Status: design for review, 2026-10-02. Owner: the architect role. Tracks
 marvel#459 (step B of the operator's ruling "A then B"; step A is the
-re-emit in #455). Builds on `docs/design/shift-trigger-list.md` D5. Design
-only; the build waits for the #454, #455 and #456 stack.
+re-emit in #455). Builds on `docs/design/shift-trigger-list.md` D5. Build status
+is below.
 
 ## Build status and changed premises (2026-10-25)
 
