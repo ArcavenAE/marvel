@@ -156,6 +156,10 @@ const (
 	// leaves the seat running and the team's supervisor decides whether to
 	// call the shift. marvel never shifts unwatched (design D5 step 3).
 	KindShiftHandoffMissing Kind = "team.shift-handoff-missing"
+	// KindShiftHandoffUndelivered records, once per transition from delivered
+	// to undelivered, that the escalation could not be published to the team's
+	// supervisor. Message carries the error (handoff-missing-delivery.md, H5).
+	KindShiftHandoffUndelivered Kind = "team.shift-handoff-undelivered"
 	// KindHandoffPut records that the daemon wrote a seat's handoff on its
 	// handoff.put call (docs/design/read-only-seat-handoff.md). The receipt is
 	// the daemon's own, so a seat's account of having written never counts.
@@ -484,6 +488,7 @@ var allKinds = []Kind{
 	KindShiftAutoTriggered,
 	KindShiftHandoffRequested,
 	KindShiftHandoffMissing,
+	KindShiftHandoffUndelivered,
 	KindHandoffPut,
 	KindHandoffPutRefused,
 	KindShiftRoleReady,

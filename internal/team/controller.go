@@ -84,6 +84,9 @@ type Controller struct {
 	// once after a restart is correct: the operator restarted the daemon and
 	// the condition is still true. See aae-orc-qiay.
 	admissionHolds map[string]string
+	// Publisher delivers a handoff-missing escalation to the team's
+	// supervisor role over the bus. Nil means event-only (handoff-missing-delivery.md).
+	Publisher HandoffPublisher
 	// BusGate reports whether the cluster bus can take new sessions and, when
 	// it cannot, why. Nil means no managed bus, so no gate. A spawn withheld
 	// by the gate is RoleHold with HoldBus and one bus.unavailable per role
