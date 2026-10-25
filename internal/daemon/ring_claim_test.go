@@ -30,10 +30,10 @@ func ringSeat(t *testing.T, d *Daemon) api.Session {
 	return got
 }
 
-func ringParams(t *testing.T, key, text string, from Injector) []byte {
+func ringParams(t *testing.T, key string, from Injector) []byte {
 	t.Helper()
 	return mustMarshal(t, map[string]any{
-		"session_key": key, "text": text, "literal": true, "enter": true,
+		"session_key": key, "text": "wake", "literal": true, "enter": true,
 		"injector": from, "ring": true,
 	})
 }
@@ -100,7 +100,7 @@ func TestRingInjectInsideTheWindowIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp := d.handleInjectAs(ringParams(t, sess.Key(), "wake", Injector{Session: "other-seat"}), localCaller())
+	resp := d.handleInjectAs(ringParams(t, sess.Key(), Injector{Session: "other-seat"}), localCaller())
 	for _, want := range []string{"ring refused", "the-holder", "window 120s"} {
 		if !strings.Contains(resp.Error, want) {
 			t.Errorf("error %q lacks %q", resp.Error, want)
@@ -142,14 +142,14 @@ func TestPlainInjectIgnoresTheRingClaim(t *testing.T) {
 func TestRingInjectThatFailsToSendLeavesAFailedClaim(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := ringSeat(t, d)
-	resp := d.handleInjectAs(ringParams(t, sess.Key(), "wake", Injector{}), localCaller())
+	resp := d.handleInjectAs(ringParams(t, sess.Key(), Injector{}), localCaller())
 	if resp.Error == "" || strings.Contains(resp.Error, "ring refused") {
 		t.Fatalf("first ring error = %q, want a send failure", resp.Error)
 	}
 	if c := claimOf(t, d, sess.Key()); c == nil || c.Result != api.RingFailed {
 		t.Fatalf("claim after a failed send = %+v, want failed", c)
 	}
-	resp = d.handleInjectAs(ringParams(t, sess.Key(), "wake", Injector{}), localCaller())
+	resp = d.handleInjectAs(ringParams(t, sess.Key(), Injector{}), localCaller())
 	if strings.Contains(resp.Error, "ring refused") {
 		t.Fatalf("a ring after a failed one was refused: %q", resp.Error)
 	}
@@ -206,7 +206,7 @@ func TestRingInjectAfterARefusedOneIsNotHeld(t *testing.T) {
 	if resp := d.handleInjectAs(mustMarshal(t, refused), localCaller()); !strings.Contains(resp.Error, "refusing --clear") {
 		t.Fatalf("first ring error = %q, want the clear refusal", resp.Error)
 	}
-	resp := d.handleInjectAs(ringParams(t, sess.Key(), "wake", Injector{}), localCaller())
+	resp := d.handleInjectAs(ringParams(t, sess.Key(), Injector{}), localCaller())
 	if resp.Error == "" || strings.Contains(resp.Error, "ring refused") || strings.Contains(resp.Error, "refusing --clear") {
 		t.Fatalf("second ring error = %q, want a send failure, not a ring or clear refusal", resp.Error)
 	}
