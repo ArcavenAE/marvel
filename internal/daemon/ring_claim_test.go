@@ -154,3 +154,84 @@ func TestRingInjectThatFailsToSendLeavesAFailedClaim(t *testing.T) {
 		t.Fatalf("a ring after a failed one was refused: %q", resp.Error)
 	}
 }
+
+// Q7: a refused inject leaves no claim. The ring is set after the clear,
+// preflight and bare-digit refusals, so an inject they refuse must not hold the
+// seat for a window with no signal.
+func TestRefusedRingInjectLeavesNoClaim(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		runtime string
+		extra   map[string]any
+		want    string
+	}{
+		// No safe clear key is known for this runtime, so --clear is refused
+		// before anything is read or typed.
+		{"clear refused", "sleep", map[string]any{"clear": true}, "refusing --clear"},
+		// claude is read before it is typed into; the pane cannot be read, so
+		// the preflight refuses.
+		{"preflight refused", "claude", nil, "not typed into blind"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := bareDigitDaemon(t)
+			sess := ringSeat(t, d)
+			if err := d.store.UpdateSession(sess.Key(), func(s *api.Session) error {
+				s.Runtime.Name = tc.runtime
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			p := map[string]any{"session_key": sess.Key(), "text": "wake", "literal": true, "enter": true, "injector": Injector{}, "ring": true}
+			for k, v := range tc.extra {
+				p[k] = v
+			}
+			resp := d.handleInjectAs(mustMarshal(t, p), localCaller())
+			if !strings.Contains(resp.Error, tc.want) {
+				t.Fatalf("error = %q, want the refusal containing %q", resp.Error, tc.want)
+			}
+			if c := claimOf(t, d, sess.Key()); c != nil {
+				t.Fatalf("a refused ring inject left a claim: %+v", c)
+			}
+		})
+	}
+}
+
+// After a refused ring inject, a ring with nothing refusing it is not held back
+// by the refusal: it reaches the send (this pane is gone, so the send fails and
+// the claim reads failed).
+func TestRingInjectAfterARefusedOneIsNotHeld(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sess := ringSeat(t, d)
+	refused := map[string]any{"session_key": sess.Key(), "text": "wake", "literal": true, "enter": true, "injector": Injector{}, "ring": true, "clear": true}
+	if resp := d.handleInjectAs(mustMarshal(t, refused), localCaller()); !strings.Contains(resp.Error, "refusing --clear") {
+		t.Fatalf("first ring error = %q, want the clear refusal", resp.Error)
+	}
+	resp := d.handleInjectAs(ringParams(t, sess.Key(), "wake", Injector{}), localCaller())
+	if resp.Error == "" || strings.Contains(resp.Error, "ring refused") || strings.Contains(resp.Error, "refusing --clear") {
+		t.Fatalf("second ring error = %q, want a send failure, not a ring or clear refusal", resp.Error)
+	}
+	if c := claimOf(t, d, sess.Key()); c == nil || c.Result != api.RingFailed {
+		t.Fatalf("claim after the second ring = %+v, want failed (it reached the send)", c)
+	}
+}
+
+// The bare-digit refusal sits just before the ring too. This one needs a real
+// pane, so it runs where tmux runs seats; a refused bare digit leaves no claim,
+// and a ring that nothing refuses then goes through and reads sent.
+func TestRefusedBareDigitRingInjectLeavesNoClaim(t *testing.T) {
+	d := bareDigitDaemon(t)
+	key := verifySeat(t, d, quietSeat, "claude", "composer ready")
+	resp := injectOf(t, d, map[string]any{"session_key": key, "text": "3", "literal": true, "enter": true, "ring": true})
+	if !strings.Contains(resp.Error, "cannot rule out") {
+		t.Fatalf("error = %q, want the bare-digit refusal", resp.Error)
+	}
+	if c := claimOf(t, d, key); c != nil {
+		t.Fatalf("a refused bare digit ring left a claim: %+v", c)
+	}
+	if resp := injectOf(t, d, map[string]any{"session_key": key, "text": "hello", "literal": true, "enter": true, "ring": true}); resp.Error != "" {
+		t.Fatalf("a ring that nothing refuses failed: %s", resp.Error)
+	}
+	if c := claimOf(t, d, key); c == nil || c.Result != api.RingSent {
+		t.Fatalf("claim after the second ring = %+v, want sent", c)
+	}
+}
