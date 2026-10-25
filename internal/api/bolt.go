@@ -57,7 +57,10 @@ var (
 	// bucketScheduleStatus is new in a schema-compatible way: OpenBolt
 	// creates a missing bucket, so an older database opens unchanged.
 	bucketScheduleStatus = []byte("schedule_status")
-	bucketMeta           = []byte("meta")
+	// bucketCadenceStatus is new the same way: a declared cadence's slot
+	// clock and slot records.
+	bucketCadenceStatus = []byte("cadence_status")
+	bucketMeta          = []byte("meta")
 )
 
 var (
@@ -83,6 +86,7 @@ var allBuckets = [][]byte{
 	bucketPolicies,
 	bucketRoleHealth,
 	bucketScheduleStatus,
+	bucketCadenceStatus,
 	bucketDutyReadiness,
 	bucketExposure,
 	bucketExposureSeal,
@@ -323,6 +327,18 @@ func (s *Store) rehydrate() error {
 			}
 			st.Key = string(k)
 			s.scheduleStatus[st.Key] = &st
+			return nil
+		}); err != nil {
+			return err
+		}
+		// Cadence status
+		if err := tx.Bucket(bucketCadenceStatus).ForEach(func(k, v []byte) error {
+			var st CadenceStatus
+			if err := json.Unmarshal(v, &st); err != nil {
+				return fmt.Errorf("unmarshal cadence status %s: %w", string(k), err)
+			}
+			st.Key = string(k)
+			s.cadenceStatus[st.Key] = &st
 			return nil
 		}); err != nil {
 			return err
