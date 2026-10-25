@@ -1,7 +1,7 @@
 # Prompt moderation: fit each seat's prompt to its model (design)
 
-Owner: arcaven-architect-g5-0. Subject: marvel. Issue: #379.
-Status: design, for skippy review; F1-a to F1-c ruled 2026-09-27. No code until reviewed.
+Owner: the arcaven architect. Subject: marvel. Issue: #379.
+Status: design; F1-a to F1-c ruled 2026-09-27; ticket 1's run conditions and the review ruled 2026-10-25. Ticket 1 runs now; no code until the operator reviews the design with ticket 1's numbers.
 
 ## Why
 
@@ -52,7 +52,7 @@ live one), for the claude and codex harnesses.
 |---|---|---|---|---|
 | L1 | MCP server set per role | spawn | manifest declares `mcp_servers` per role; the adapter passes the harness's strict MCP config flag | largest expected lever; no proxy |
 | L2 | tool set per role | spawn | adapter passes the harness's allow/deny tool flags | measure whether a denied tool's schema still reaches the model; if it does, L2 saves nothing and only L1 counts |
-| L3 | injected content | author time | wardrobe slice, seat file, appended prompt | marvel measures and names the contributor; it does not edit role text |
+| L3 | injected content | author time | role-library slice, seat file, appended prompt | marvel measures and names the contributor; it does not edit role text |
 | L4 | in-session compaction threshold | spawn | adapter sets the harness's own compaction threshold relative to `context_limit` | the harness compacts; marvel sets the operating point |
 | L5 | refuse | spawn | the fit check | the terminal lever; never silent |
 | L6 | request rewriting on the model endpoint | per request | a proxy | not recommended; see section 3 |
@@ -180,3 +180,15 @@ manifest route above covers the case with no ladder change.
 - **F1-c, the reserve: RULED.** The larger of 8192 tokens and 10 percent of
   `context_limit`, revisited once ticket 1 measures a real first turn and
   handoff.
+
+## Rulings (operator, RULED 2026-10-25, relayed by director)
+
+- **Ticket 1's run conditions: RULED.** Measure from live records, run the
+  local-server half now, and defer the per-component split. Nothing reaches
+  the model vendor, and no login is used or copied. This narrows ticket 1 as
+  written in sections 1 and 6: the split by system prompt, tool schemas and
+  injected content waits for a path that reaches the vendor, which needs its
+  own custody check against SOUL section 3 and ADR-009, and its own ruling.
+- **The 2026-10-24 go and the review: RULED.** The go covers ticket 1 only.
+  The operator reviews the design when ticket 1's numbers are in, and no code
+  (tickets 2 to 6) starts before that review.
