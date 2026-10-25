@@ -93,7 +93,7 @@ func (c *Controller) PutHandoff(token, text string) (HandoffPut, error) {
 		return HandoffPut{}, err
 	}
 
-	ident, err := writeHandoffFile(plan.path, plan.req, plan.body)
+	ident, err := writeHandoffFile(plan.path, plan.req, plan.body, plan.held)
 	if err != nil {
 		c.emitPutRefused(plan.sess, err)
 		return HandoffPut{}, err
@@ -146,6 +146,9 @@ type handoffPutPlan struct {
 	generation int64
 	req        api.ShiftRequest
 	path, body string
+	// held is the identity of the directory held open since the request, nil
+	// for a request restored after a restart.
+	held os.FileInfo
 }
 
 // liveSessionForPut is the gate's liveness rule: the session the token was
@@ -210,6 +213,9 @@ func (c *Controller) planHandoffPutLocked(token, text string) (handoffPutPlan, e
 	}
 	plan.teamKey, plan.role, plan.generation, plan.req = teamKey, role.Name, t.Generation, req
 	plan.path, plan.body = path, handoffBody(text, role.Shift.HandoffMarker)
+	if info, ok := c.heldHandoffDirInfoLocked(teamKey, role.Name, req); ok {
+		plan.held = info
+	}
 	return plan, nil
 }
 
@@ -248,7 +254,8 @@ func handoffBody(text, marker string) string {
 // writes a temporary file there with O_EXCL and O_NOFOLLOW, checks the target
 // is absent or a regular file, and renames the temporary file over it. A
 // refusal leaves nothing behind.
-func writeHandoffFile(path string, req api.ShiftRequest, body string) (writtenFile, error) {
+func writeHandoffFile(path string, req api.ShiftRequest, body string, held os.FileInfo) (writtenFile, error) {
+	_ = held
 	dir, base := filepath.Split(path)
 	dir = filepath.Clean(dir)
 	if base == "" || base == "." || base == ".." || strings.ContainsRune(base, filepath.Separator) {

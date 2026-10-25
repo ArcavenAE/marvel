@@ -110,6 +110,7 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 	text := ask.notice
 	dirError := ""
 	var dirDev, dirIno uint64
+	var heldDir *os.File
 	if role.Shift.Handoff != "" {
 		if path, err := handoffPath(role.Shift.Handoff, sess); err == nil {
 			text += fmt.Sprintf(" to %s, ending with the line %q; you have %s", path, role.Shift.HandoffMarker, role.Shift.HandoffWindowOrDefault())
@@ -125,6 +126,9 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 				// directory. Not a refusal here: a seat that writes its own
 				// file is unaffected by what the path resolves through.
 				dirDev, dirIno = dev, ino
+			}
+			if f, err := os.Open(filepath.Dir(path)); err == nil {
+				heldDir = f
 			}
 		}
 	}
@@ -147,8 +151,12 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 		return nil
 	}); err != nil {
 		log.Printf("shift: %s role %s: record handoff request: %v", t.Key(), role.Name, err)
+		if heldDir != nil {
+			_ = heldDir.Close()
+		}
 		return
 	}
+	c.adoptHandoffDir(t.Key(), role.Name, req, heldDir)
 	if t.ShiftRequests == nil {
 		t.ShiftRequests = make(map[string]api.ShiftRequest)
 	}
