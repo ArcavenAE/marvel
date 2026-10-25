@@ -462,3 +462,28 @@ func TestSettingsFileHoldLeavesOtherSpawnsAlone(t *testing.T) {
 		t.Errorf("session of no team: checkSettingsFile = %v, want nil", err)
 	}
 }
+
+// planLaunch is the backstop for a file that goes bad between Create's check and
+// the projection: it returns a plan carrying the hold, never a command line.
+func TestPlanLaunchHoldsWhenTheSettingsFileCannotBeRead(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "reviewer.json")
+	mgr := applyForHold(t, path)
+
+	plan := mgr.planLaunch(holdSession())
+	if plan.hold == nil {
+		t.Fatalf("plan for an unreadable settings file = %+v, want hold set", plan)
+	}
+	if plan.command != "" {
+		t.Errorf("held plan carries command %q, want none", plan.command)
+	}
+	if !strings.Contains(plan.hold.Error(), path) {
+		t.Errorf("hold = %v, want it to name the file", plan.hold)
+	}
+
+	writeSettingsFile(t, dir, reviewerSettingsJSON)
+	if plan := mgr.planLaunch(holdSession()); plan.hold != nil || plan.command == "" {
+		t.Errorf("plan once the file reads = %+v, want a command and no hold", plan)
+	}
+}
