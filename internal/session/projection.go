@@ -23,23 +23,29 @@ import (
 // points the launch at it via lctx.PolicyProjectionPath. Called from
 // planLaunch before Prepare. Projection is best-effort relative to a
 // working session: a write failure is logged and the session launches
-// unprojected rather than being refused.
-func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.Adapter) {
+// unprojected rather than being refused. The one carve-out is a policy that
+// reads a settings_file: its file carries the role's deny rules, so a launch
+// without it fails open, and the unreadable file is returned as a
+// settingsFileError for the caller to hold the spawn on. Create's
+// checkSettingsFile normally holds it first; this is the backstop for a file
+// that goes bad between that check and this read.
+func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.Adapter) error {
 	target, wrote, _, shadowed, err := m.projectPolicy(lctx, adapter)
 	if err != nil {
-		if m.reportSettingsFileFailure(lctx.Session, err) {
-			log.Printf("session %s: policy settings file unreadable, launching unprojected: %v", lctx.Session.Key(), err)
-			return
+		var sfe *settingsFileError
+		if errors.As(err, &sfe) {
+			return sfe
 		}
 		log.Printf("session %s: policy projection failed, launching unprojected: %v", lctx.Session.Key(), err)
-		return
+		return nil
 	}
 	m.clearSettingsFileFailure(lctx.Session.Key())
 	if !wrote {
-		return
+		return nil
 	}
 	lctx.PolicyProjectionPath = target.Path
 	m.emitProjected(lctx.Session, lctx.Role.Policy, target.Path, "projected at spawn", shadowed)
+	return nil
 }
 
 // Reproject rewrites the projected settings file for every live session
@@ -436,37 +442,96 @@ func (m *Manager) reportSettingsFileFailure(sess *api.Session, err error) bool {
 	if !errors.As(err, &sfe) {
 		return false
 	}
-	msg := fmt.Sprintf("%s; the session keeps whatever settings file it already has", sfe)
+	m.emitSettingsFileFailure(sess.Key(), sess,
+		fmt.Sprintf("%s; the session keeps whatever settings file it already has", sfe))
+	return true
+}
+
+// emitSettingsFileFailure emits the event once per change of msg for key.
+func (m *Manager) emitSettingsFileFailure(key string, sess *api.Session, msg string) {
 	m.failures.mu.Lock()
 	if m.failures.last == nil {
 		m.failures.last = make(map[string]string)
 	}
-	seen := m.failures.last[sess.Key()] == msg
-	m.failures.last[sess.Key()] = msg
+	seen := m.failures.last[key] == msg
+	m.failures.last[key] = msg
 	m.failures.mu.Unlock()
 	if seen {
-		return true
+		return
 	}
-	events.Emit(m.Events, events.Event{
+	ev := events.Event{
 		Kind:      events.KindPolicyProjectionFailed,
 		Severity:  events.SeverityError,
 		Workspace: sess.Workspace,
 		Team:      sess.Team,
 		Role:      sess.Role,
-		Session:   sess.Key(),
 		Message:   msg,
-	})
-	return true
+	}
+	if !strings.HasPrefix(key, heldSpawnKeyPrefix) {
+		ev.Session = key
+	}
+	events.Emit(m.Events, ev)
+}
+
+// heldSpawnKeyPrefix marks a failure remembered for a spawn that was held, which
+// has no session record, so it is keyed by role.
+const heldSpawnKeyPrefix = "role:"
+
+func heldSpawnKey(sess *api.Session) string {
+	return heldSpawnKeyPrefix + sess.Workspace + "/" + sess.Team + "/" + sess.Role
 }
 
 // checkSettingsFile holds the spawn of a role whose policy reads a settings
-// file that cannot be read.
-func (m *Manager) checkSettingsFile(_ *api.Session) error {
-	return nil
+// file that cannot be read. A launch without the file would drop every deny rule
+// the file carries, and the last good content may be stale, so the spawn waits
+// and the controller retries it each reconcile. The failure is emitted once. A
+// session with no team or role record, and a policy with inline settings, are
+// admitted.
+func (m *Manager) checkSettingsFile(sess *api.Session) error {
+	policy, ok := m.settingsFilePolicy(sess)
+	if !ok {
+		return nil
+	}
+	_, err := readSettingsFile(policy.SettingsFile)
+	if err == nil {
+		m.clearSettingsFileFailure(heldSpawnKey(sess))
+		return nil
+	}
+	sfe := &settingsFileError{policy: policy.Name, path: policy.SettingsFile, err: err}
+	return m.holdSpawn(sess, sfe)
+}
+
+// holdSpawn reports the failure once for the role and returns the error that
+// holds the spawn.
+func (m *Manager) holdSpawn(sess *api.Session, sfe *settingsFileError) error {
+	m.emitSettingsFileFailure(heldSpawnKey(sess), sess,
+		fmt.Sprintf("%s; the spawn is held and retried until the file reads", sfe))
+	return fmt.Errorf("hold session %s: %v: %w", sess.Key(), sfe, ErrSettingsFileRefused)
+}
+
+// settingsFilePolicy resolves the policy of the role a session is for, when that
+// policy names a settings file.
+func (m *Manager) settingsFilePolicy(sess *api.Session) (api.Policy, bool) {
+	t, err := m.store.GetTeam(sess.Workspace + "/" + sess.Team)
+	if err != nil {
+		return api.Policy{}, false
+	}
+	for i := range t.Roles {
+		if t.Roles[i].Name != sess.Role || t.Roles[i].Policy == "" {
+			continue
+		}
+		p, err := m.store.GetPolicy(sess.Workspace + "/" + t.Roles[i].Policy)
+		if err != nil || p.SettingsFile == "" {
+			return api.Policy{}, false
+		}
+		return p, true
+	}
+	return api.Policy{}, false
 }
 
 // pruneSettingsFileFailures drops the remembered failure of every session that
-// is no longer alive, so the memory does not grow with session churn.
+// is no longer alive, and of every held role whose team or role is gone, so the
+// memory does not grow with session churn.
 func (m *Manager) pruneSettingsFileFailures(sessions []api.Session) {
 	alive := make(map[string]bool, len(sessions))
 	for _, sess := range sessions {
@@ -477,10 +542,34 @@ func (m *Manager) pruneSettingsFileFailures(sessions []api.Session) {
 	m.failures.mu.Lock()
 	defer m.failures.mu.Unlock()
 	for key := range m.failures.last {
+		if rest, held := strings.CutPrefix(key, heldSpawnKeyPrefix); held {
+			if !m.roleExists(rest) {
+				delete(m.failures.last, key)
+			}
+			continue
+		}
 		if !alive[key] {
 			delete(m.failures.last, key)
 		}
 	}
+}
+
+// roleExists reports whether "<workspace>/<team>/<role>" names a role in the store.
+func (m *Manager) roleExists(path string) bool {
+	i := strings.LastIndex(path, "/")
+	if i < 0 {
+		return false
+	}
+	t, err := m.store.GetTeam(path[:i])
+	if err != nil {
+		return false
+	}
+	for _, r := range t.Roles {
+		if r.Name == path[i+1:] {
+			return true
+		}
+	}
+	return false
 }
 
 // clearSettingsFileFailure forgets a session's last reported failure, so a
