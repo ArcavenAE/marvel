@@ -53,11 +53,11 @@ func TestRingClaimNamesTheRingerLikeTheInjectEvent(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := ringSeat(t, d)
 	now := time.Date(2026, 10, 25, 4, 0, 0, 0, time.UTC)
-	if err := d.ringClaim(sess, localCaller(), Injector{Session: "seat-x-g1-0", User: "example-user"}, now); err != nil {
+	if err := d.ringClaim(sess, localCaller(), Injector{Session: "seat-x", User: "example-user"}, now); err != nil {
 		t.Fatalf("ringClaim: %v", err)
 	}
 	c := claimOf(t, d, sess.Key())
-	want := "transport=local declared_session=seat-x-g1-0 declared_user=example-user"
+	want := "transport=local declared_session=seat-x declared_user=example-user"
 	if c == nil || c.Ringer != want || c.Result != api.RingPending || !c.RingAt.Equal(now) {
 		t.Fatalf("claim = %+v, want pending at %v by %q", c, now, want)
 	}

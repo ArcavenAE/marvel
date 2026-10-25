@@ -145,12 +145,27 @@ func injectRequestParams(sessionKey string, step injectStep) map[string]any {
 	if step.AllowBareDigit {
 		p["allow_bare_digit"] = true
 	}
+	if step.Ring {
+		p["ring"] = true
+	}
 	return p
 }
 
-// withRing marks the step that carries the text as a ring. Not implemented yet.
-func withRing(steps []injectStep, ring bool) ([]injectStep, error) {
-	return steps, nil
+// withRing marks the step that carries the text as a ring, so a --clear step
+// before it and a --verify step after it do not claim a second time. The text
+// step is the first one (resolveInject puts it ahead of any --key step), and
+// there is none when only keys were given: that is nothing to ring, refused
+// before any request goes out.
+func withRing(steps []injectStep, ring, hasText bool) ([]injectStep, error) {
+	if !ring {
+		return steps, nil
+	}
+	if !hasText || len(steps) == 0 {
+		return nil, fmt.Errorf("--ring needs text to send: a keys-only inject is nothing to ring")
+	}
+	out := append([]injectStep(nil), steps...)
+	out[0].Ring = true
+	return out, nil
 }
 
 // withAllowBareDigit marks every step as sent with --allow-bare-digit.

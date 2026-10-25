@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"time"
 )
@@ -36,7 +35,10 @@ type RingClaim struct {
 
 // Blocks reports whether the claim holds the seat at now.
 func (c RingClaim) Blocks(now time.Time) bool {
-	return false
+	if c.Result != RingPending && c.Result != RingSent {
+		return false
+	}
+	return now.Before(c.RingAt.Add(RingClaimWindow))
 }
 
 // RingRefusal is the error a second ring gets inside the window.
@@ -56,11 +58,23 @@ func (e *RingRefusal) Error() string {
 // the holder when a claim still blocks. The check and the write happen under
 // the store lock, so two callers cannot both win.
 func (s *Store) ClaimRing(key, ringer string, now time.Time) error {
-	return errors.New("not implemented")
+	return s.UpdateSession(key, func(sess *Session) error {
+		if held := sess.RingClaim; held != nil && held.Blocks(now) {
+			return &RingRefusal{Session: key, Holder: *held, Now: now}
+		}
+		sess.RingClaim = &RingClaim{RingAt: now, Ringer: ringer, Result: RingPending}
+		return nil
+	})
 }
 
 // SettleRing records how the send ended, for the claim written at ringAt. A
 // claim that has since been replaced is left alone.
 func (s *Store) SettleRing(key string, ringAt time.Time, result RingResult) error {
-	return errors.New("not implemented")
+	return s.UpdateSession(key, func(sess *Session) error {
+		if sess.RingClaim == nil || !sess.RingClaim.RingAt.Equal(ringAt) {
+			return nil
+		}
+		sess.RingClaim.Result = result
+		return nil
+	})
 }
