@@ -15,10 +15,12 @@ records the directory's identity when it asks, so a seat that writes its own
 file is unaffected by what its path resolves through. It also holds that
 directory open until the request ends, and the put compares the directory it
 opens with the held one (`os.SameFile`), so a reused inode number cannot pass;
-a request restored after a restart falls back to the recorded numbers. Not
-built yet: the
-`submit_handoff` MCP server and crush seeding (the section 5 checks have not
-run), retention and expiry with the nonce line (7.1), `handoff get` (7.2),
+a request restored after a restart falls back to the recorded numbers. The
+`submit_handoff` MCP server is `marvel mcp handoff`, and the codex seed can
+render its `marvel-handoff` entry; no role asks for it yet, so nothing is
+seeded into a live config until `handoff_via = "tool"` is wired. Not built
+yet: crush seeding (deferred to the crush adapter, aae-orc-6c2r; the section 5
+checks have not run), retention and expiry with the nonce line (7.1), `handoff get` (7.2),
 `handoff_via` validation at apply (RH-A), and the notice text for a seat that
 hands off by tool. A seat can run the verb only if its allowlist admits that
 one command; that grant is role configuration outside marvel. The pull request
@@ -436,12 +438,16 @@ The ruling: max-age rotations first. Context pressure and an operator
 ### 7.4 Seeding crush and opencode homes (recommended, not ruled)
 
 This is a new adapter responsibility, as codex's was in #308. Recommended:
-yes for crush, which has no MCP channel today. opencode already gets one
-through its role environment, so it needs no seeder for this design. The
-earlier argument that a seed would also fix opencode's channel after a workdir
-change is withdrawn: that rested on a claim its author has since corrected. This recommendation is valid until
-2026-10-22, or until the section 5 checks have run, whichever comes first;
-the architect re-checks it then.
+yes for crush, which has no MCP channel today, built as part of the crush
+adapter (aae-orc-6c2r) and not before it, and only after section 5 check 1
+has passed on a scratch rig. Until then crush roles keep the max-age
+escalation (section 5). opencode already gets an MCP channel through its role
+environment (`internal/runtime/adapter.go:641`), so it needs no seeder for
+this design. The crush half was deferred by ruling on 2026-10-25, when the
+build order was set. Re-checked 2026-10-25: the crush adapter does not exist
+and the section 5 checks have not run. This recommendation is valid until
+2026-11-22, or until the crush adapter merges or the section 5 checks have
+run, whichever comes first; the architect re-checks it then.
 
 ## 8. Not this
 

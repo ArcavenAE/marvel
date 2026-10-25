@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 // codexConfigFile is the config file codex reads from its home.
@@ -56,7 +58,10 @@ type codexHandoffSeed struct {
 // codexHandoffEnv names the variables the handoff server is given: the
 // daemon socket and whichever token delivery the launch used.
 func codexHandoffEnv(tokenFile bool) []string {
-	return nil
+	if tokenFile {
+		return []string{"MARVEL_SOCKET", api.HeartbeatTokenFileEnv}
+	}
+	return []string{"MARVEL_SOCKET", api.HeartbeatTokenEnv}
 }
 
 // codexSeed is everything a seeded config.toml says. Every key marvel
@@ -131,6 +136,20 @@ func renderCodexConfig(s codexSeed) ([]byte, error) {
 			server["env_vars"] = s.EnvVars
 		}
 		doc["mcp_servers"] = map[string]any{codexDirectorServer: server}
+	}
+
+	if s.Handoff != nil && s.Handoff.Command != "" {
+		servers, _ := doc["mcp_servers"].(map[string]any)
+		if servers == nil {
+			servers = map[string]any{}
+		}
+		servers[codexHandoffServer] = map[string]any{
+			"command":                     s.Handoff.Command,
+			"args":                        []string{"mcp", "handoff"},
+			"default_tools_approval_mode": "approve",
+			"env_vars":                    s.Handoff.EnvVars,
+		}
+		doc["mcp_servers"] = servers
 	}
 
 	if s.TrustedRoot != "" {
