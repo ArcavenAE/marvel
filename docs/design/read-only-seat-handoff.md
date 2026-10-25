@@ -12,7 +12,11 @@ section 4 shell verb). It is served only on the daemon's local socket. One
 difference from section 2: the link check on the handoff directory is made at
 put time, on the opened directory, and not refused at request time. Marvel
 records the directory's identity when it asks, so a seat that writes its own
-file is unaffected by what its path resolves through. Not built yet: the
+file is unaffected by what its path resolves through. It also holds that
+directory open until the request ends, and the put compares the directory it
+opens with the held one (`os.SameFile`), so a reused inode number cannot pass;
+a request restored after a restart falls back to the recorded numbers. Not
+built yet: the
 `submit_handoff` MCP server and crush seeding (the section 5 checks have not
 run), retention and expiry with the nonce line (7.1), `handoff get` (7.2),
 `handoff_via` validation at apply (RH-A), and the notice text for a seat that
@@ -111,10 +115,18 @@ refuses otherwise, with an event naming the reason:
      the notice and the missing reason already carry.
    - **At write time,** open the directory with `os.OpenRoot`, the pattern
      `internal/view/view.go:182-187` already uses. `Stat` the opened root and
-     refuse unless it is the same directory recorded at request time
-     (`os.SameFile` on the identity). This check is on the opened handle, so
-     a swap of the directory or an ancestor after the request is caught, and
-     a swap after the check cannot redirect the write.
+     refuse unless it is the same directory marvel opened at request time and
+     has held open since (`os.SameFile` against that descriptor). The held
+     descriptor is what makes the comparison sound: while it is open the
+     directory's inode cannot be freed, so no other directory can be given
+     the same device and inode numbers, which a number read at request time
+     could not promise. The descriptor is closed when the request ends or the
+     controller stops. A request restored after a daemon restart holds
+     nothing open, so it falls back to the device and inode recorded when
+     marvel asked; for those requests the reuse window described above is
+     still open. This check is on the opened handle, so a swap of the
+     directory or an ancestor after the request is caught, and a swap after
+     the check cannot redirect the write.
    - **Inside the root,** create a temporary file with
      `O_CREAT|O_EXCL|O_NOFOLLOW`, write the text and marker, `Lstat` the
      target and refuse anything but absent or a regular file, then

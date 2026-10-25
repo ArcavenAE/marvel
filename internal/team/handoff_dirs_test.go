@@ -25,15 +25,6 @@ func dirNumbers(t *testing.T, dir string) (dev, ino uint64) {
 	return uint64(st.Dev), uint64(st.Ino) //nolint:unconvert // Dev is int32 on darwin
 }
 
-func openFDs(t *testing.T) int {
-	t.Helper()
-	des, err := os.ReadDir("/dev/fd")
-	if err != nil {
-		t.Skipf("cannot list descriptors: %v", err)
-	}
-	return len(des)
-}
-
 // A directory swapped for another whose numbers equal the recorded ones, as
 // inode reuse produces, is refused. The numeric check accepts it; the held
 // descriptor does not.
@@ -122,32 +113,56 @@ func TestRequestHoldsOneDirectoryUntilItEnds(t *testing.T) {
 	}
 }
 
-func TestRepeatedRequestsLeakNoDescriptors(t *testing.T) {
-	f := newPutFixture(t, false)
-	before := openFDs(t)
-	for i := 0; i < 25; i++ {
-		f.request()
-		f.dropRequest()
-		f.ctrl.mu.Lock()
-		f.ctrl.releaseHandoffDirsLocked()
-		f.ctrl.mu.Unlock()
+// heldFile is the descriptor held for the fixture's role, nil when none is.
+func (f *putFixture) heldFile() *os.File {
+	f.ctrl.mu.Lock()
+	defer f.ctrl.mu.Unlock()
+	return f.ctrl.handoffDirs.held[handoffDirKey{f.team, testShiftRole}].f
+}
+
+func isClosed(f *os.File) bool {
+	_, err := f.Stat()
+	return errors.Is(err, os.ErrClosed)
+}
+
+// A descriptor is closed when its request ends, when a new request for the
+// role replaces it, and when the controller stops, so none outlives its use.
+func TestHeldDirectoryDescriptorsAreClosed(t *testing.T) {
+	f := newPutFixture(t, true)
+	first := f.heldFile()
+	if first == nil || isClosed(first) {
+		t.Fatalf("no open descriptor is held after a request: %v", first)
 	}
-	if after := openFDs(t); after != before {
-		t.Errorf("open descriptors went from %d to %d over 25 requests", before, after)
-	}
-	// A request replaced by a new one for the same role closes the old one.
+
 	f.request()
-	f.request()
-	if n := f.ctrl.heldHandoffDirCount(); n != 1 {
-		t.Errorf("held directories after two requests for one role = %d, want 1", n)
+	second := f.heldFile()
+	if second == nil || second == first {
+		t.Fatalf("a second request kept the first descriptor: %v", second)
 	}
+	if !isClosed(first) {
+		t.Error("the descriptor of a replaced request is still open")
+	}
+	if isClosed(second) {
+		t.Error("the new request's descriptor is closed")
+	}
+
+	f.dropRequest()
+	f.ctrl.mu.Lock()
+	f.ctrl.releaseHandoffDirsLocked()
+	f.ctrl.mu.Unlock()
+	if !isClosed(second) {
+		t.Error("the descriptor of an ended request is still open")
+	}
+
+	f.request()
+	third := f.heldFile()
 	f.ctrl.mu.Lock()
 	f.ctrl.closeHandoffDirsLocked()
 	f.ctrl.mu.Unlock()
+	if third == nil || !isClosed(third) {
+		t.Error("a stopped controller still holds an open descriptor")
+	}
 	if n := f.ctrl.heldHandoffDirCount(); n != 0 {
 		t.Errorf("held directories after the controller stopped = %d, want 0", n)
-	}
-	if after := openFDs(t); after != before {
-		t.Errorf("open descriptors after stopping = %d, want %d", after, before)
 	}
 }

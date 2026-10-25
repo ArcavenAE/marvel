@@ -255,7 +255,6 @@ func handoffBody(text, marker string) string {
 // is absent or a regular file, and renames the temporary file over it. A
 // refusal leaves nothing behind.
 func writeHandoffFile(path string, req api.ShiftRequest, body string, held os.FileInfo) (writtenFile, error) {
-	_ = held
 	dir, base := filepath.Split(path)
 	dir = filepath.Clean(dir)
 	if base == "" || base == "." || base == ".." || strings.ContainsRune(base, filepath.Separator) {
@@ -292,8 +291,18 @@ func writeHandoffFile(path string, req api.ShiftRequest, body string, held os.Fi
 	if err != nil {
 		return writtenFile{}, fmt.Errorf("%w: stat %s: %v", ErrHandoffDir, dir, err)
 	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || uint64(st.Dev) != req.DirDev || uint64(st.Ino) != req.DirIno { //nolint:unconvert // Dev is int32 on darwin
+	if held != nil {
+		// The directory marvel opened when it asked is still open, so its inode
+		// cannot have been freed and given to another directory. Comparing the
+		// opened handle with it needs no number to stay unique.
+		if !os.SameFile(held, info) {
+			return writtenFile{}, fmt.Errorf("%w: %s is not the directory marvel held when it asked", ErrHandoffDir, dir)
+		}
+	} else if st, ok := info.Sys().(*syscall.Stat_t); !ok || uint64(st.Dev) != req.DirDev || uint64(st.Ino) != req.DirIno { //nolint:unconvert // Dev is int32 on darwin
+		// A request restored after a daemon restart holds nothing open, so it
+		// falls back to the numbers recorded when marvel asked. They can be
+		// reused by another directory in the gap, which is the window the held
+		// descriptor closes for every request made since the restart.
 		return writtenFile{}, fmt.Errorf("%w: %s is not the directory marvel recorded when it asked", ErrHandoffDir, dir)
 	}
 

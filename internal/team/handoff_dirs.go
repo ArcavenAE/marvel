@@ -29,26 +29,62 @@ type handoffDirs struct {
 }
 
 // adoptHandoffDir keeps f, the directory opened for req, in place of any
-// directory held for the same role. A nil f only closes the old one.
-func (c *Controller) adoptHandoffDir(_ string, _ string, _ api.ShiftRequest, f *os.File) {
-	if f != nil {
-		_ = f.Close()
+// directory held for the same role. A nil f only closes the old one. The caller
+// holds c.mu, as requestHandoff's callers do.
+func (c *Controller) adoptHandoffDir(teamKey, role string, req api.ShiftRequest, f *os.File) {
+	key := handoffDirKey{teamKey, role}
+	if old, ok := c.handoffDirs.held[key]; ok {
+		_ = old.f.Close()
+		delete(c.handoffDirs.held, key)
 	}
+	if f == nil {
+		return
+	}
+	if c.handoffDirs.held == nil {
+		c.handoffDirs.held = make(map[handoffDirKey]heldDir)
+	}
+	c.handoffDirs.held[key] = heldDir{session: req.Session, requestedAt: req.RequestedAt, f: f}
 }
 
 // heldHandoffDirInfoLocked returns the identity of the directory held for req,
-// read from the open descriptor, or false when none is held. The caller holds
-// c.mu.
-func (c *Controller) heldHandoffDirInfoLocked(_ string, _ string, _ api.ShiftRequest) (os.FileInfo, bool) {
-	return nil, false
+// read from the open descriptor, or false when none is held for this request.
+// The caller holds c.mu.
+func (c *Controller) heldHandoffDirInfoLocked(teamKey, role string, req api.ShiftRequest) (os.FileInfo, bool) {
+	h, ok := c.handoffDirs.held[handoffDirKey{teamKey, role}]
+	if !ok || h.session != req.Session || !h.requestedAt.Equal(req.RequestedAt) {
+		return nil, false
+	}
+	info, err := h.f.Stat()
+	if err != nil {
+		return nil, false
+	}
+	return info, true
 }
 
 // releaseHandoffDirsLocked closes the directory of every request that is no
-// longer pending. The caller holds c.mu.
-func (c *Controller) releaseHandoffDirsLocked() {}
+// longer pending: dropped, answered, replaced or moved into a shift. The
+// caller holds c.mu.
+func (c *Controller) releaseHandoffDirsLocked() {
+	for key, h := range c.handoffDirs.held {
+		t, err := c.store.GetTeam(key.team)
+		if err == nil {
+			if req, ok := t.ShiftRequests[key.role]; ok && req.Session == h.session && req.RequestedAt.Equal(h.requestedAt) {
+				continue
+			}
+		}
+		_ = h.f.Close()
+		delete(c.handoffDirs.held, key)
+	}
+}
 
-// closeHandoffDirsLocked closes every held directory. The caller holds c.mu.
-func (c *Controller) closeHandoffDirsLocked() {}
+// closeHandoffDirsLocked closes every held directory, for a controller that is
+// stopping. The caller holds c.mu.
+func (c *Controller) closeHandoffDirsLocked() {
+	for key, h := range c.handoffDirs.held {
+		_ = h.f.Close()
+		delete(c.handoffDirs.held, key)
+	}
+}
 
 // heldHandoffDirCount is how many directories are held open.
 func (c *Controller) heldHandoffDirCount() int { return len(c.handoffDirs.held) }
