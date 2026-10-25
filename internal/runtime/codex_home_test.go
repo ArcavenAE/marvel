@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -288,5 +289,74 @@ func TestStartupUpdateCheckIsWrittenToTheSeededFile(t *testing.T) {
 	top := strings.SplitN(string(body), "\n[", 2)[0]
 	if !strings.Contains(top, "check_for_update_on_startup = false") {
 		t.Errorf("the top level of the seeded file does not set check_for_update_on_startup = false:\n%s", body)
+	}
+}
+
+// TestRenderCodexConfigHandoffServer: the marvel-handoff entry carries the
+// absolute binary, exactly the args mcp handoff, approve mode and exactly the
+// socket and token names, and leaves the director entry as it was.
+func TestRenderCodexConfigHandoffServer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		tokenFile bool
+		wantEnv   []string
+	}{
+		{"by file", true, []string{"MARVEL_SOCKET", api.HeartbeatTokenFileEnv}},
+		{"by variable", false, []string{"MARVEL_SOCKET", api.HeartbeatTokenEnv}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seed := codexSeed{
+				HookCommand: "/opt/marvel codex-ctx",
+				Director:    operatorDirector(writeOperatorConfig(t)),
+				EnvVars:     []string{"DIRECTOR_AGENT_ID", "MARVEL_SESSION"},
+			}
+			without, err := renderCodexConfig(seed)
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			seed.Handoff = &codexHandoffSeed{Command: "/opt/marvel/bin/marvel", EnvVars: codexHandoffEnv(tc.tokenFile)}
+			with, err := renderCodexConfig(seed)
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			serversOf := func(b []byte) map[string]any {
+				var got map[string]any
+				if _, err := toml.Decode(string(b), &got); err != nil {
+					t.Fatalf("does not parse: %v\n%s", err, b)
+				}
+				m, _ := got["mcp_servers"].(map[string]any)
+				return m
+			}
+			base, got := serversOf(without), serversOf(with)
+			if _, ok := base[codexHandoffServer]; ok {
+				t.Errorf("handoff entry present when the role does not ask: %v", base)
+			}
+			h, ok := got[codexHandoffServer].(map[string]any)
+			if !ok {
+				t.Fatalf("no %s entry: %s", codexHandoffServer, with)
+			}
+			if h["command"] != "/opt/marvel/bin/marvel" {
+				t.Errorf("command = %v", h["command"])
+			}
+			if args, _ := h["args"].([]any); len(args) != 2 || args[0] != "mcp" || args[1] != "handoff" {
+				t.Errorf("args = %v, want [mcp handoff]", h["args"])
+			}
+			if h["default_tools_approval_mode"] != "approve" {
+				t.Errorf("approval = %v", h["default_tools_approval_mode"])
+			}
+			var env []string
+			for _, v := range h["env_vars"].([]any) {
+				env = append(env, v.(string))
+			}
+			if !slices.Equal(env, tc.wantEnv) {
+				t.Errorf("env_vars = %v, want %v", env, tc.wantEnv)
+			}
+			if len(h) != 4 {
+				t.Errorf("entry has extra keys: %v", h)
+			}
+			if !reflect.DeepEqual(base[codexDirectorServer], got[codexDirectorServer]) {
+				t.Errorf("director entry changed: %v vs %v", base[codexDirectorServer], got[codexDirectorServer])
+			}
+		})
 	}
 }

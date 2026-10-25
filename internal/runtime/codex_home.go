@@ -29,6 +29,9 @@ var codexHookEvents = []string{"SessionStart", "Stop", "PostToolUse"}
 // codexDirectorServer is the name of the director MCP server entry.
 const codexDirectorServer = "director"
 
+// codexHandoffServer is the MCP server entry name for the handoff tool.
+const codexHandoffServer = "marvel-handoff"
+
 // codexTrustTimeout bounds the one codex call a seed makes. Measured at
 // about 0.1s on codex-cli 0.157.0; the bound is for a codex that hangs.
 const codexTrustTimeout = 10 * time.Second
@@ -42,6 +45,20 @@ type codexMCPServer struct {
 	Args    []string `toml:"args"`
 }
 
+// codexHandoffSeed is the marvel-handoff entry: the absolute path of the
+// marvel binary and the two environment names it needs, the socket and the
+// token delivery the launch used. It forwards nothing else.
+type codexHandoffSeed struct {
+	Command string
+	EnvVars []string
+}
+
+// codexHandoffEnv names the variables the handoff server is given: the
+// daemon socket and whichever token delivery the launch used.
+func codexHandoffEnv(tokenFile bool) []string {
+	return nil
+}
+
 // codexSeed is everything a seeded config.toml says. Every key marvel
 // writes comes from a field here; nothing is copied from the operator's
 // file wholesale.
@@ -52,6 +69,9 @@ type codexSeed struct {
 	// Director is how to start the director MCP server, or nil when the
 	// operator has none configured.
 	Director *codexMCPServer
+	// Handoff, when set, adds the marvel-handoff MCP server beside director.
+	// Nothing sets it yet: a role asks for it with handoff_via = "tool".
+	Handoff *codexHandoffSeed
 	// EnvVars names the variables codex forwards to the director server.
 	// Codex does not pass its environment to an MCP child, so without
 	// this the server starts with no identity and no broker.
