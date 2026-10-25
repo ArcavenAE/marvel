@@ -886,7 +886,9 @@ const (
 type ShiftRequest struct {
 	// Session is the key of the session asked.
 	Session string
-	// Cause names the condition that fired (ShiftTriggerMaxAge).
+	// Cause names the condition that fired: ShiftTriggerMaxAge or
+	// ShiftTriggerContextPressure. Both are set from the condition in
+	// Controller.requestHandoff.
 	Cause string
 	// RequestedAt is when the notice was sent.
 	RequestedAt time.Time
