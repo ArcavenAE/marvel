@@ -251,6 +251,9 @@ type ManifestRuntime struct {
 	Script  string      `toml:"script,omitempty" yaml:"script,omitempty"`
 	Mode    RuntimeMode `toml:"mode,omitempty"  yaml:"mode,omitempty"`
 	Prompt  string      `toml:"prompt,omitempty" yaml:"prompt,omitempty"`
+	// SuccessorPrompt = false turns off the fixed first message a successor
+	// gets. Unset leaves it on. See api.Runtime.SuccessorPrompt.
+	SuccessorPrompt *bool `toml:"successor_prompt,omitempty" yaml:"successor_prompt,omitempty"`
 	// ContextWindow overrides the model-to-limit table, in tokens.
 	ContextWindow int `toml:"context_window,omitempty" yaml:"context_window,omitempty"`
 	// ContextFeed opts an interactive session into cooperative context
@@ -1016,16 +1019,17 @@ func (m *Manifest) Apply(store *Store) error {
 		var roles []Role
 		for _, mr := range mt.Roles {
 			rt := Runtime{
-				Name:          mr.Runtime.Image,
-				Command:       mr.Runtime.Command,
-				Args:          mr.Runtime.Args,
-				Script:        mr.Runtime.Script,
-				Mode:          mr.Runtime.Mode,
-				Prompt:        mr.Runtime.Prompt,
-				ContextWindow: mr.Runtime.ContextWindow,
-				ContextFeed:   mr.Runtime.ContextFeed,
-				Env:           mr.Runtime.Env,
-				Backend:       mr.Runtime.Backend,
+				Name:            mr.Runtime.Image,
+				Command:         mr.Runtime.Command,
+				Args:            mr.Runtime.Args,
+				Script:          mr.Runtime.Script,
+				Mode:            mr.Runtime.Mode,
+				Prompt:          mr.Runtime.Prompt,
+				SuccessorPrompt: mr.Runtime.SuccessorPrompt,
+				ContextWindow:   mr.Runtime.ContextWindow,
+				ContextFeed:     mr.Runtime.ContextFeed,
+				Env:             mr.Runtime.Env,
+				Backend:         mr.Runtime.Backend,
 			}
 			rt.Name = mr.Runtime.AdapterName()
 			role := Role{

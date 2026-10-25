@@ -1,11 +1,32 @@
-# Marvel — Agent Orchestration Control Plane
+# marvel
 
-A kubernetes-like control plane for AI agent workloads. Manages the full
-lifecycle of BYOA (Bring Your Own Agent) sessions: scheduling, configuration,
-process management, health monitoring, and rolling shifts.
+marvel keeps a declared team of AI agent sessions running: it starts them,
+watches them, repairs them and rotates them, for any harness.
 
-Where kubernetes orchestrates containers across nodes, marvel orchestrates
-agent sessions across tmux panes.
+![marvel get sessions in watch mode, while a session is killed and replaced and the team shifts to a fresh generation](docs/media/tour.gif)
+
+You describe a team in a short manifest: its roles, how many sessions each
+role runs, the command each one starts, and how marvel knows a session is
+alive. marvel runs each session in a tmux pane, compares what is running with
+what you declared every two seconds, and fixes the difference.
+
+A session that dies is replaced. A role can be scaled with one command. A
+shift swaps every session for a fresh one while the old ones drain, so a
+long-running team sheds stale context without going dark. It works with
+Claude Code, Codex, opencode, or any command you name.
+
+Try it on the simulator, which needs no model login and costs nothing:
+
+```sh
+just build
+./bin/marvel daemon &
+./bin/marvel work examples/tour.toml
+./bin/marvel get sessions -w 1
+./bin/marvel stop --teardown
+```
+
+Then take the [tour](docs/tour.md), or go deep with the
+[four-act demo](docs/demo.md).
 
 ## Install
 
@@ -76,6 +97,9 @@ marvel stop --teardown
 ```
 
 ## Resource Model
+
+Where kubernetes orchestrates containers across nodes, marvel orchestrates
+agent sessions across tmux panes.
 
 ```
 Workspace     isolation boundary (k8s namespace)

@@ -6,8 +6,10 @@ import (
 )
 
 func fullRuntime() Runtime {
+	off := false
 	return Runtime{
-		Name: "claude", Command: "claude", Args: []string{"--a", "--b"},
+		SuccessorPrompt: &off,
+		Name:            "claude", Command: "claude", Args: []string{"--a", "--b"},
 		Script: "s.sh", Mode: RuntimeModeHeadless, Prompt: "do it",
 		ContextWindow: 200000, ContextFeed: ContextFeedStatusline,
 		Env: map[string]string{"K": "v"}, Backend: "bedrock",
@@ -27,6 +29,7 @@ func TestRuntimeDriftNamesEachDifferingField(t *testing.T) {
 		{"script", func(r *Runtime) { r.Script = "t.sh" }},
 		{"mode", func(r *Runtime) { r.Mode = RuntimeModeInteractive }},
 		{"prompt", func(r *Runtime) { r.Prompt = "other" }},
+		{"successor_prompt", func(r *Runtime) { on := true; r.SuccessorPrompt = &on }},
 		{"context_window", func(r *Runtime) { r.ContextWindow = 1 }},
 		{"context_feed", func(r *Runtime) { r.ContextFeed = "" }},
 		{"env", func(r *Runtime) { r.Env = map[string]string{"K": "w"} }},

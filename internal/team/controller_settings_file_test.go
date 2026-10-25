@@ -49,8 +49,8 @@ func projectionFailures(ring *events.Ring) int {
 	return len(ring.Snapshot(events.Filter{Kind: events.KindPolicyProjectionFailed}, 0))
 }
 
+// A held spawn never reaches tmux, so this half runs without it.
 func TestHeldSpawnCreatesNoSessionAndCountsNoFailure(t *testing.T) {
-	skipIfNoTmux(t)
 	path := filepath.Join(t.TempDir(), "worker.json")
 	store, ctrl, ring, _ := settingsFileRig(t, "test-sf-first", path, sleepRuntime())
 
@@ -63,16 +63,28 @@ func TestHeldSpawnCreatesNoSessionAndCountsNoFailure(t *testing.T) {
 	if n := projectionFailures(ring); n != 1 {
 		t.Errorf("policy.projection-failed events over four ticks = %d, want 1", n)
 	}
-	if rh, ok := ctrl.RoleHealthSnapshot("test-sf-first", "squad", "worker"); ok && (rh.RestartCount != 0 || !rh.BackoffUntil.IsZero()) {
-		t.Errorf("held ticks counted against the role: %+v, want no restart and no backoff", rh)
+	// A role that was never charged has no health record at all; any record,
+	// even a zeroed one, means the hold touched the crash-loop state.
+	if rh, ok := ctrl.RoleHealthSnapshot("test-sf-first", "squad", "worker"); ok {
+		t.Errorf("held ticks left a role health record %+v, want none", rh)
 	}
+}
 
-	// The same role spawns once the file reads.
+// Once the file reads, the held role spawns.
+func TestHeldSpawnIsAdmittedOnTheTickAfterTheFileReads(t *testing.T) {
+	skipIfNoTmux(t)
+	path := filepath.Join(t.TempDir(), "worker.json")
+	store, ctrl, _, _ := settingsFileRig(t, "test-sf-admit", path, sleepRuntime())
+
+	ctrl.ReconcileOnce()
+	if n := len(store.ListSessionsByTeamRole("test-sf-admit", "squad", "worker")); n != 0 {
+		t.Fatalf("held tick created %d session(s), want 0", n)
+	}
 	if err := os.WriteFile(path, []byte(settingsFileJSON), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ctrl.ReconcileOnce()
-	sessions := store.ListSessionsByTeamRole("test-sf-first", "squad", "worker")
+	sessions := store.ListSessionsByTeamRole("test-sf-admit", "squad", "worker")
 	if len(sessions) != 1 || sessions[0].State != api.SessionRunning {
 		t.Fatalf("after the file read: sessions = %+v, want one running", sessions)
 	}

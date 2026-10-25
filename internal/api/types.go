@@ -190,6 +190,10 @@ type Runtime struct {
 	// headless mode: a harness given no prompt reads stdin, and stdin in
 	// a detached pane is a tty nobody types into.
 	Prompt string `toml:"prompt,omitempty"`
+	// SuccessorPrompt turns the fixed successor first message off when it is
+	// false. Nil, the default, leaves it on. See SuccessorPromptOn and
+	// docs/design/interactive-first-prompt.md D2 and D3.
+	SuccessorPrompt *bool `toml:"successor_prompt,omitempty"`
 	// ContextWindow overrides the model-to-limit table for this runtime,
 	// in tokens. The escape hatch for a model marvel does not know: a
 	// shipped table tracks the vendor's release cadence, not marvel's. A
@@ -221,6 +225,13 @@ type Runtime struct {
 	// against the backend the constructed environment actually resolves to
 	// and fail loudly when they disagree. Empty means no declared intent.
 	Backend string `toml:"backend,omitempty"`
+}
+
+// SuccessorPromptOn reports whether a session that replaces another gets
+// marvel's fixed successor first message. It is on unless the role declares
+// successor_prompt = false (docs/design/interactive-first-prompt.md D3).
+func (r Runtime) SuccessorPromptOn() bool {
+	return r.SuccessorPrompt == nil || *r.SuccessorPrompt
 }
 
 // ContextFeedStatusline is the only ContextFeed value marvel understands
@@ -886,7 +897,9 @@ const (
 type ShiftRequest struct {
 	// Session is the key of the session asked.
 	Session string
-	// Cause names the condition that fired (ShiftTriggerMaxAge).
+	// Cause names the condition that fired: ShiftTriggerMaxAge or
+	// ShiftTriggerContextPressure. Both are set from the condition in
+	// Controller.requestHandoff.
 	Cause string
 	// RequestedAt is when the notice was sent.
 	RequestedAt time.Time
