@@ -406,6 +406,25 @@ func TestSonnet5ResolvesUnderBothSpellings(t *testing.T) {
 	}
 }
 
+// claude-sonnet-5-5 is what the harness resolves the sonnet alias to
+// (marvel finding-058), and it has no 200k variant, so it follows the
+// sonnet-5 shape: one 1M window under both spellings. Before this entry
+// existed a real claude-sonnet-5-5 session resolved to
+// LimitUnresolved and CTX% stayed blank.
+func TestSonnet55ResolvesUnderBothSpellings(t *testing.T) {
+	t.Parallel()
+	r := NewResolver(DefaultTable())
+	for _, model := range []string{"claude-sonnet-5-5", "claude-sonnet-5-5[1m]"} {
+		limit, src, _ := r.Resolve(Request{StreamModel: model, Redirection: api.BackendDefault})
+		if limit != 1_000_000 {
+			t.Errorf("%s: limit = %d, want 1000000", model, limit)
+		}
+		if src != LimitFromTable {
+			t.Errorf("%s: source = %q, want %q", model, src, LimitFromTable)
+		}
+	}
+}
+
 func TestEveryAliasResolvesToARealEntry(t *testing.T) {
 	t.Parallel()
 	tbl := DefaultTable()
@@ -426,7 +445,7 @@ func TestAliasesArePinnedToCurrentNamedModels(t *testing.T) {
 	t.Parallel()
 	wantPin := map[string]string{
 		"haiku":     "claude-haiku-4-5",
-		"sonnet":    "claude-sonnet-5",
+		"sonnet":    "claude-sonnet-5-5",
 		"opus":      "claude-opus-5",
 		"fable[1m]": "claude-fable-5[1m]",
 	}
@@ -493,6 +512,8 @@ func TestDefaultTableEntryGrades(t *testing.T) {
 		"claude-sonnet-4-6[1m]": KeyExact,
 		"claude-sonnet-5":       KeyExact, // 1M under both spellings: spelling split, not default/max
 		"claude-sonnet-5[1m]":   KeyExact,
+		"claude-sonnet-5-5":     KeyExact, // 1M under both spellings, like sonnet-5
+		"claude-sonnet-5-5[1m]": KeyExact,
 		"claude-opus-4-7":       KeyNarrow,
 		"claude-opus-4-7[1m]":   KeyExact,
 		"claude-opus-4-8":       KeyNarrow,
