@@ -212,12 +212,16 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	switch {
 	case headless:
 		args = append(args, ctx.Session.Runtime.Prompt)
-	case ctx.Session.Runtime.Prompt == "":
-	case isBareClaude(binary) && readable:
-		args = append(args, ctx.Session.Runtime.Prompt)
 	default:
-		firstPrompt = ctx.Session.Runtime.Prompt
-		logLaunch("role %s: command is a wrapper or shell text; the first prompt is in %s, not on the command line", ctx.Role.Name, firstPromptEnv)
+		text, _, _ := composeFirstPrompt(ctx)
+		switch {
+		case text == "":
+		case isBareClaude(binary) && readable:
+			args = append(args, text)
+		default:
+			firstPrompt = text
+			logLaunch("role %s: command is a wrapper or shell text; the first prompt is in %s, not on the command line", ctx.Role.Name, firstPromptEnv)
+		}
 	}
 
 	result := &LaunchResult{
