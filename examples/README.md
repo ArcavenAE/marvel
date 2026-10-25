@@ -18,6 +18,7 @@ watch it work. This index says which one to open.
 
 | Manifest | What it shows | Needs |
 |---|---|---|
+| `tour` | Three workers and a supervisor on the simulator, the team the [tour](../docs/tour.md) walks through: kill a session, scale, shift. | nothing |
 | `generic-agent` | The smallest thing that works: marvel managing arbitrary commands through the generic adapter. | nothing |
 | `claude` | Real Claude Code agents beside a simulator supervisor, with adapter selection, permission injection and identity injection. | claude on PATH, model auth |
 | `review-team` | A heterogeneous team: several roles, per-role replicas and restart policy. | claude on PATH, model auth |

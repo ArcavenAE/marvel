@@ -10,10 +10,10 @@ is for, so you can tell from here whether to open it.
 | Run a team and operate it day to day | [User Guide](user-guide.md) |
 | Run the daemon, reach it remotely, upgrade it | [Admin Guide](admin-guide.md) |
 | Understand the model before trusting it | [Architecture Overview](architecture.md) |
-| See it work without reading anything first | [the four-act demo](demo.md), then [examples/](../examples/) |
+| See it work without reading anything first | [the tour](tour.md), then [the four-act demo](demo.md) and [examples/](../examples/) |
 
-New to marvel: the demo first, then the User Guide. The demo runs on the
-simulator, so it needs no model auth and costs no tokens.
+New to marvel: the tour first, then the User Guide. The tour and the demo run
+on the simulator, so they need no model auth and cost no tokens.
 
 ## Operating
 
@@ -28,6 +28,8 @@ simulator, so it needs no model auth and costs no tokens.
   hub.
 - [Adapter kit checklist](adapter-kit-checklist.md). The lines a new harness
   walks, with evidence, before marvel gets an adapter for it.
+- [Tour](tour.md). A three-minute walk through declaring a team, losing a
+  session, scaling and shifting, with a recording.
 - [Demo](demo.md). A four-act walkthrough of health, loss, recovery, context
   pressure and budgets, with the manifests it uses.
 - [examples/](../examples/). A manifest per scenario, each in TOML and YAML,

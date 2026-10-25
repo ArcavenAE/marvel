@@ -1,0 +1,38 @@
+# Marvel example: the tour. A team of three workers and one supervisor on the
+# simulator, so it needs no model login and costs nothing. See docs/tour.md.
+# Run:  ./bin/marvel daemon &   then   ./bin/marvel work examples/tour.toml
+# Stop: ./bin/marvel stop --teardown
+
+[workspace]
+name = "demo"
+
+[[team]]
+name = "crew"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 3
+
+    [team.role.runtime]
+    image = "simulator"
+    command = "../bin/simulator"
+    args = ["--tick", "1000"]
+
+    [team.role.healthcheck]
+    type = "heartbeat"
+    timeout = "10s"
+    failure_threshold = 3
+
+  [[team.role]]
+  name = "supervisor"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "simulator"
+    command = "../bin/simulator"
+    args = ["--tick", "2000"]
+
+    [team.role.healthcheck]
+    type = "heartbeat"
+    timeout = "10s"
+    failure_threshold = 3
