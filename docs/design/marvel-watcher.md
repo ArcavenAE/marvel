@@ -277,7 +277,8 @@ These recommendations are valid until 2026-11-07, or until C2 runs, whichever co
 
 The fleet has three readings of "unread" and three ringers today. Each gets one definition.
 
-- **Unread** is mail not acked. A seat's ack floor is the highest `AckFloor.Stream` over the seat's durables with the same filter subjects, live or departed, because that is where a successor resumes (director `bus.go`, `seatAckFloor`). Unread mail is every message on the seat's filter subjects above that floor. Depth is `NumPending + NumAckPending`. A message read in handled mode and not yet acked is unread. `LastAckAt` is the latest `AckFloor.Last` over those durables.
+- **Unread** is mail not acked, read per durable. Each live durable is read from its own `AckFloor.Stream`: its unread mail is every message on its filter subjects above its floor that it has not acked, and its depth is `NumPending + NumAckPending`. A message read in handled mode and not yet acked is unread. Its oldest unread message is the first one after its floor on its filter subjects. That message is never acked, because on nats-server the floor moves past other seats' sequences up to the oldest held message (the arcaven reviewer measured this on nats-server v2.15.0 for marvel#1056: floor 2 with the held message at 3). So an ack out of stream order moves the depth and leaves the oldest where it is, and the two statements agree. A seat's depth and oldest age are the maximum over its live durables. Live durables are never merged into one floor: two live sessions of one seat each get their own copy of the mail (R-50), and one session's acks say nothing about the other's.
+- **The inherited floor** is the highest `AckFloor.Stream` over the seat's departed durables with the same filter subjects, which is where a successor resumes (director `bus.go`, `seatAckFloor`, which skips live instances for the reason above). It is read only for a seat with no live durable, and it is what such a seat reports as unread. `LastAckAt` is the latest `AckFloor.Last` over the durables that were read.
 - **Age** is on the broker's clock: the consumer info's `TimeStamp`, which the server stamps when it answers, minus the stored time of the oldest unread message. Both times come from the server, so no host clock enters. A server that leaves `TimeStamp` zero gives an age on the reader's clock, and the state's `Note` says so.
 - **The ringer** is marvel's ring claim, one per seat. Anyone may ring, but every ring goes through `marvel inject --ring`, which writes the claim before the send and refuses a second ring inside the window with the claim's holder and time. The watcher's own ring stays held. Building the claim rings nothing new; it makes the existing rings visible to each other.
 
@@ -311,18 +312,20 @@ All three are built on the mokuzai marvel lane, because marvel is not pushed fro
 **A2, seat addresses and `SeatMail`.**
 - **The local tier.** The seat's durables on `AGENT_INBOX` are the ones named `mcp_<agent id>_<instance>`. The agent id is split from the instance at the last `_`, as director does (`unread.go`). Their filter subjects are `agent.<workspace>.<team>.<id>.inbox`, plus `agent.<workspace>.<team>.role.<role>.inbox` when a role is held.
 - **The global tier.** It exists only for a seat with a global address. That is a cluster supervisor (`global.<cluster>.supervisor.inbox` on `GLOBAL_TO_<cluster>`) or director (`GLOBAL_TO_DIRECTOR`), with durables named `mcp_global_<agent id>_<instance>`. Any other seat's global tier reads `unsupported`, with the note "no global address", and is not counted.
-- **The aggregate.** The floor is 11.2's maximum over the seat's durables. Depth is the sum over tiers. The oldest age is the maximum. `LastAckAt` is the latest. Any `unknown` tier makes the whole `unknown`.
+- **The aggregate.** Each live durable is read from its own floor and reported on its own, as `unread.go` reports per durable. Within a tier, the seat's depth and oldest age are the maximum over its live durables, never a sum and never one merged floor (11.2). Across tiers, depth is the sum and the oldest age is the maximum. `LastAckAt` is the latest. Any `unknown` tier makes the whole `unknown`.
 - **A durable with a different filter set** belongs to another seat sharing the id prefix and is skipped, as `seatAckFloor` skips it.
-- **A seat with no live durable.** Its unread mail is still counted from its floor, because that is what a successor inherits (the 83-message case in section 0). The note says "no live durable".
+- **A seat with no live durable.** Its unread mail is still counted from 11.2's inherited floor, because that is what a successor inherits (the 83-message case in section 0). The departed durable that holds that floor supplies the depth and the oldest message. A seat with no durable at all inherits floor 0: a successor would read everything the inbox holds on its subjects, so depth is the stream's message count on those subjects (`STREAM.INFO` with a subjects filter) and the oldest is the first message on them. The note says "no live durable" or "no durable".
 - Red tests (on the spool):
   - a successor whose departed predecessor acked further reads from the predecessor's floor;
+  - two live durables of one seat, one acked ahead: the other's mail still counts, and the seat reports the larger depth and the older age;
+  - a live durable and a departed one acked further: the live durable is read from its own floor, not the departed one's;
   - role mail on the same durable is counted once;
   - a durable with other filters is skipped;
   - one unknown tier makes the seat unknown;
   - a seat with no global address reads that tier `unsupported` and still reports the local tier.
 
 **A3, `internal/mail/jetstream`.**
-- **Reads.** Each tier is read with `ListConsumers` info on the stream, filtered to the seat's durables. The oldest unread message is read with `GetMsg(start, WithGetMsgSubject(subj))` per filter subject. `start` is the floor plus one, and never before a resumed durable's `OptStartSeq`: the same reads `unread.go` makes. Age is 11.2's broker-clock age.
+- **Reads.** Each tier is read with `ListConsumers` info on the stream, filtered to the seat's durables. For each durable read (each live one, or the one holding the inherited floor), the oldest unread message is read with `GetMsg(start, WithGetMsgSubject(subj))` per filter subject. `start` is that durable's own floor plus one, and never before a resumed durable's `OptStartSeq`: the same reads `unread.go` makes. Age is 11.2's broker-clock age.
 - **Bounds.** Each tier's reads are bounded (500 ms, as director#399 bounds its own). A denied or timed-out read makes that tier `unknown`, with the error in `Note`, and never zero.
 - **The credential this needs** has not been checked here. On each inbox stream it needs `STREAM.INFO`, `CONSUMER.LIST` and `CONSUMER.INFO`, plus `STREAM.MSG.GET` or `DIRECT.GET`. Director#399 records that the hub template grants a leaf `STREAM.MSG.GET` only on the presence bucket. So the global tier's oldest message may need a grant. The builder lists the subjects the daemon's credential is denied in its scratch broker, and the PR names any grant the fleet needs. Until it is granted, the global tier reads `unknown`, never a guess.
 - **The parity fixture.** One script builds a scratch broker state, and the same state is read twice:
@@ -331,15 +334,17 @@ All three are built on the mokuzai marvel lane, because marvel is not pushed fro
 
   The cases:
   - one live durable;
+  - two live durables of one seat, one acked ahead;
   - a successor resumed past a departed durable;
   - a seat with no live durable;
   - role mail;
   - an ack-pending message (handled mode);
+  - an ack out of stream order: a later message acked while an earlier one is held, so depth falls and the oldest stays the held message;
   - a Nak'd redelivery;
   - the global tier;
   - nothing unread.
 
-  For a seat with one live durable, these fields compare exactly: pending, ack pending, ack floor, oldest sequence and oldest stored time. Age compares within 2 s until the director ticket in 11.6 moves `unread.go` to the broker clock, then exactly. Director's per-durable states (`reading`, `behind`, `durable-idle`, `reads-outside-durable`) are not compared; the watcher has no such classes.
+  For each durable, these fields compare exactly: pending, ack pending, ack floor, oldest sequence and oldest stored time. The seat's maximum is then compared with the watcher's seat state. Age compares within 2 s until the director ticket in 11.6 moves `unread.go` to the broker clock, then exactly. Director's per-durable states (`reading`, `behind`, `durable-idle`, `reads-outside-durable`) are not compared; the watcher has no such classes.
 
 ### 11.4 lane-ledger's unread column (S11)
 
@@ -356,8 +361,9 @@ Director's reader already ships (`director-mcp unread --json`, slice M), so it i
 
 #399 counts `NumPending` only, so a message read in handled mode and held does not age toward `stalled`. Its body calls that deliberate: "Stalled means not drained." Under 11.2, that held message is unread. Two numbers named for the oldest pending mail of one seat would then disagree exactly for handled-mode seats. And `oldest_pending_s` is the number the multi-cluster outcome tells senders and supervisors to read.
 
-- **The count should align before merge.** The tracker reconciles to `NumPending + NumAckPending`. Both are in the consumer info #399 already reads, so no new grant is needed. The bus test that an ack-pending and a Nak'd message are not counted flips, and the reason text says "unacked" where the oldest message is ack-pending.
-- **The clock need not align.** #399's age is inferred from its own samples on the shim's clock. It never compares two hosts' clocks, and it errs high by at most one sample. Reading the broker's stamp of the oldest message would need `STREAM.MSG.GET` on the inbox streams, which the hub template does not grant a leaf (#399's own round 2). The doc comment says the age is sample-inferred, and the watcher's broker-clock age is the reference.
+- **The count should align before merge.** The tracker counts `NumPending + NumAckPending`. Both are in the consumer info #399 already reads, so no new grant is needed. The bus test that an ack-pending and a Nak'd message are not counted flips, and the reason text says "unacked" where the oldest message is ack-pending.
+- **The tracker pops by the ack floor, never by a fall in the count.** With the aligned count, a fall can be an ack out of stream order (handled mode acks the message the seat names), and popping the front batch on a fall hands a held message a younger stamp: a message held 3000 s read 3m20s in the reviewer's probe on #399 (review 5640723021). A batch leaves only once `AckFloor.Stream` has passed it, which matches 11.2's oldest unread, the first message after the floor. Undelivered mail still leaves in stream order, so while nothing is held ack-pending the front may be popped to the count.
+- **The clock need not align.** #399's age is inferred from its own samples on the shim's clock, and never compares two hosts' clocks. Reading the broker's stamp of the oldest message would need `STREAM.MSG.GET` on the inbox streams, which the hub template does not grant a leaf (#399's own round 2). Its bound, with batches stamped at the previous sample and popped by the floor: the age does not read low after a tier's first sample. It reads high by at most one sample while nothing is held. While mail is held it can read high for longer, because a batch stays until the floor passes all of it. The doc comment states that bound, and the watcher's broker-clock age is the reference.
 
 ### 11.6 Tickets
 
@@ -366,4 +372,4 @@ Director's reader already ships (`director-mcp unread --json`, slice M), so it i
 - **Director: `unread.go` ages on the broker clock** (aae-orc-f7fq8, 11.2).
 - **Director: lane-ledger's unread column** (aae-orc-p9vdn, 11.4).
 - **Director: the doorbell and supervisor rings use `marvel inject --ring`** (aae-orc-a2pk9), blocked by G1a.
-- **The #399 count change** is not filed. It goes on #399 as a review note, if director takes 11.5.
+- **The #399 changes** (the aligned count, and popping by the ack floor) are not filed as tickets. They went to #399 as review notes, and #399 carries both.
