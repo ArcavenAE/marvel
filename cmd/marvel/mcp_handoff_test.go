@@ -505,6 +505,11 @@ func TestMCPHandoffDialsOnlyItsOwnSocketEnv(t *testing.T) {
 		t.Fatalf("layout default socket dialed %d times", n)
 	}
 
+	// The root flags are package state a later test would inherit.
+	t.Cleanup(func() {
+		socketPath, clusterName, identityPath, clusterFlagGiven = "", "", "", false
+	})
+
 	// Control: with no root flag the command serves.
 	ctl := newRootCmd()
 	var ctlOut bytes.Buffer
