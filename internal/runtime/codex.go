@@ -137,6 +137,8 @@ func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	result := &LaunchResult{
 		Command: cmd,
 		Env:     codexEnv(ctx),
+		// The role prompt is on the command line, so the launch passed it.
+		FirstPrompt: FirstPrompt{Source: FirstPromptRole, Bytes: len(ctx.Session.Runtime.Prompt)},
 	}
 	if ctx.StreamPath != "" {
 		result.Command = redirectStdout(result.Command, ctx.StreamPath)

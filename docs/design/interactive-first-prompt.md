@@ -12,7 +12,9 @@ and opencode use the same composer when T2 and T3 land. T6 (the
 not measured, which the plan put before T1; ruling 1 let #1046 merge first on
 its narrow claim, that the prompt is on the command line, not that the seat
 gets a turn.
-T2, T3, T7 and probes P1 to P4 are not started.
+T2, T3, T7 and probes P1 to P3 are not started. P4 has run, read-only: no live
+manifest on any cluster declares `runtime.prompt`, and the only nonzero values
+are two draft manifests on one cluster, 531 and 521 bytes.
 
 ## 1. Why
 
@@ -122,7 +124,8 @@ not say it. This design has marvel hand the harness that first turn at launch.
 - **D7. Every spawn records which first prompt it got.** An event,
   `session.first-prompt`, with `source` = `role`, `successor`,
   `successor+role`, `wrapper-env`, `skipped-resume` or `none`, and the byte
-  length. It never carries the text. The event records what marvel passed on
+  length. It never carries the text. It is emitted just after
+  `session.created`, so a reader keyed on created has seen the session. The event records what marvel passed on
   the command line, not what the harness took. A message that only fills an
   input box (P3) or does not survive a first-run dialog (P1, P2) reads as
   passed, so on its own the event separates "marvel passed nothing" from
