@@ -115,7 +115,7 @@ func newDeliverFixture(t *testing.T, ws string, withSupervisor, supervisorRunnin
 	return f
 }
 
-func (f *deliverFixture) seedSupervisor() api.Session {
+func (f *deliverFixture) seedSupervisor() {
 	f.t.Helper()
 	s := api.Session{
 		Name:       "squad-" + testSupervisorRole + "-g1-0",
@@ -127,7 +127,6 @@ func (f *deliverFixture) seedSupervisor() api.Session {
 		CreatedAt:  f.clock.Now(),
 	}
 	seedSession(f.t, f.store, s)
-	return s
 }
 
 // escalate drives the worker's request to its escalation, as
@@ -183,7 +182,7 @@ func TestEscalationPublishesOneEnvelopeToTheSupervisorRole(t *testing.T) {
 		{"context pressure", []api.ShiftCondition{{On: api.ShiftTriggerContextPressure, HeadroomTokens: testShiftHeadroom}}, 900_000, "context-pressure", "context"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newDeliverFixture(t, "test-deliver-env-"+tc.cause, true, true, tc.conds...)
+			f := newDeliverFixture(t, "test-dlv-env-"+tc.cause, true, true, tc.conds...)
 			s := f.seed(testMaxAge+time.Hour, 10*time.Minute, tc.tok, 1_000_000)
 			f.escalate()
 

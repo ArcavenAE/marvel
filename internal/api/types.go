@@ -917,6 +917,10 @@ type ShiftRequest struct {
 	// (docs/design/handoff-missing-delivery.md, H4).
 	DeliveredCount  int
 	LastDeliveredAt time.Time
+	// LastDeliveryQueued records that the last send went out while the
+	// supervisor role had no live seat, so the first holder gets an immediate
+	// send instead of waiting out a window.
+	LastDeliveryQueued bool
 	// Escalated is set once the window expired with no marker and marvel
 	// emitted shift.handoff-missing. From then on the team's supervisor
 	// decides; marvel neither re-requests nor shifts on its own.

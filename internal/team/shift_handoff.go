@@ -188,6 +188,7 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		// The supervisor decides now (D5 step 3), and marvel keeps saying so:
 		// the event ring is in memory, so one emission can be lost to a
 		// restart or a wrap, and the escalation is sticky (marvel#453).
+		c.deliverHandoffMissing(t, role, sess, now)
 		c.repeatHandoffMissing(t, role, sess, now)
 		return false
 	}
@@ -233,7 +234,8 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		return false
 	}
 	t.ShiftRequests[role.Name] = req
-	c.emitHandoffMissing(t, role, sess, req, now, false, false)
+	c.deliverHandoffMissing(t, role, sess, now)
+	c.emitHandoffMissing(t, role, sess, t.ShiftRequests[role.Name], now, false, false)
 	return false
 }
 
@@ -281,7 +283,7 @@ func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Se
 		Session:    sess.Key(),
 		Generation: t.Generation,
 		Message: fmt.Sprintf("cause=%s: session %s, age %s, asked %s, window %s expired: %s; the seat keeps running and the team's supervisor decides whether to call the shift (marvel shift %s --role %s)%s",
-			req.Cause, sess.Key(), now.Sub(sess.CreatedAt).Round(time.Second), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, req, present), t.Key(), role.Name, again),
+			req.Cause, sess.Key(), now.Sub(sess.CreatedAt).Round(time.Second), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, req, present), t.Key(), role.Name, again) + c.publishedClause(sess.Key()),
 	})
 }
 
@@ -317,6 +319,7 @@ func (c *Controller) dropShiftRequest(t *api.Team, role string) {
 	if req, ok := t.ShiftRequests[role]; ok {
 		c.handoffProbes.forget(req.Session)
 		delete(c.missingEmitted, req.Session)
+		delete(c.publishRecords, req.Session)
 	}
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 		delete(live.ShiftRequests, role)
