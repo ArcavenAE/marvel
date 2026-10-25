@@ -93,7 +93,7 @@ func (c *Controller) PutHandoff(token, text string) (HandoffPut, error) {
 		return HandoffPut{}, err
 	}
 
-	ident, err := writeHandoffFile(plan.path, plan.req, plan.body)
+	ident, err := writeHandoffFile(plan.path, plan.req, plan.body, plan.held)
 	if err != nil {
 		c.emitPutRefused(plan.sess, err)
 		return HandoffPut{}, err
@@ -146,6 +146,9 @@ type handoffPutPlan struct {
 	generation int64
 	req        api.ShiftRequest
 	path, body string
+	// held is the identity of the directory held open since the request, nil
+	// for a request restored after a restart.
+	held os.FileInfo
 }
 
 // liveSessionForPut is the gate's liveness rule: the session the token was
@@ -210,6 +213,9 @@ func (c *Controller) planHandoffPutLocked(token, text string) (handoffPutPlan, e
 	}
 	plan.teamKey, plan.role, plan.generation, plan.req = teamKey, role.Name, t.Generation, req
 	plan.path, plan.body = path, handoffBody(text, role.Shift.HandoffMarker)
+	if info, ok := c.heldHandoffDirInfoLocked(teamKey, role.Name, req); ok {
+		plan.held = info
+	}
 	return plan, nil
 }
 
@@ -248,7 +254,7 @@ func handoffBody(text, marker string) string {
 // writes a temporary file there with O_EXCL and O_NOFOLLOW, checks the target
 // is absent or a regular file, and renames the temporary file over it. A
 // refusal leaves nothing behind.
-func writeHandoffFile(path string, req api.ShiftRequest, body string) (writtenFile, error) {
+func writeHandoffFile(path string, req api.ShiftRequest, body string, held os.FileInfo) (writtenFile, error) {
 	dir, base := filepath.Split(path)
 	dir = filepath.Clean(dir)
 	if base == "" || base == "." || base == ".." || strings.ContainsRune(base, filepath.Separator) {
@@ -285,8 +291,18 @@ func writeHandoffFile(path string, req api.ShiftRequest, body string) (writtenFi
 	if err != nil {
 		return writtenFile{}, fmt.Errorf("%w: stat %s: %v", ErrHandoffDir, dir, err)
 	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || uint64(st.Dev) != req.DirDev || uint64(st.Ino) != req.DirIno { //nolint:unconvert // Dev is int32 on darwin
+	if held != nil {
+		// The directory marvel opened when it asked is still open, so its inode
+		// cannot have been freed and given to another directory. Comparing the
+		// opened handle with it needs no number to stay unique.
+		if !os.SameFile(held, info) {
+			return writtenFile{}, fmt.Errorf("%w: %s is not the directory marvel held when it asked", ErrHandoffDir, dir)
+		}
+	} else if st, ok := info.Sys().(*syscall.Stat_t); !ok || uint64(st.Dev) != req.DirDev || uint64(st.Ino) != req.DirIno { //nolint:unconvert // Dev is int32 on darwin
+		// A request restored after a daemon restart holds nothing open, so it
+		// falls back to the numbers recorded when marvel asked. They can be
+		// reused by another directory in the gap, which is the window the held
+		// descriptor closes for every request made since the restart.
 		return writtenFile{}, fmt.Errorf("%w: %s is not the directory marvel recorded when it asked", ErrHandoffDir, dir)
 	}
 

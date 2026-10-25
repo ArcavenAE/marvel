@@ -52,6 +52,10 @@ type Controller struct {
 	// handoffProbes runs the max-age handoff marker reads (shift_handoff.go).
 	handoffProbes handoffProbes
 
+	// handoffDirs is the handoff directory held open for each pending request
+	// (handoff_dirs.go). Guarded by mu.
+	handoffDirs handoffDirs
+
 	// afterHandoffWrite, when set, runs between a handoff.put's write and its
 	// re-check. A test uses it to change the request mid-put; nil in production.
 	afterHandoffWrite func()
@@ -516,6 +520,7 @@ func (c *Controller) ReconcileOnce() {
 	// noteReapedCrash.
 	c.reapDeadLocked()
 	c.evaluateHealth()
+	c.releaseHandoffDirsLocked()
 
 	// A policy that reads a settings file is projected again when the file
 	// changed, so a rewritten file reaches its sessions without a recast. Each
@@ -2643,6 +2648,9 @@ func (c *Controller) Run(ctx context.Context, interval time.Duration) {
 	for {
 		select {
 		case <-ctx.Done():
+			c.mu.Lock()
+			c.closeHandoffDirsLocked()
+			c.mu.Unlock()
 			return
 		case <-ticker.C:
 			c.ReconcileOnce()
