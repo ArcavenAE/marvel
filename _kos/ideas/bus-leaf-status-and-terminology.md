@@ -1,3 +1,5 @@
+Closed 2026-10-25: pointers closed
+
 # The bus leaf: a status surface, and whether "bus" is the right word
 
 - **Status:** idea (pre-hypothesis, no commitment). Two parts, one subject: the

@@ -1,3 +1,5 @@
+Closed 2026-10-25: realized (composer-check)
+
 # Capture with escapes, a read-only composer state, and the dim suggestion (marvel#571)
 
 - **Status:** design for review, 2026-10-04, revision 2 (after review

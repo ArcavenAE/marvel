@@ -1,3 +1,5 @@
+Closed 2026-10-25: probe done
+
 # probe: what does a cold shift cost, end to end, in the same units as compaction
 
 **Ticket:** `aae-orc-r4q6`

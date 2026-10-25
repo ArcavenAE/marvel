@@ -1,3 +1,5 @@
+Closed 2026-10-25: shipped: the bus broker is signalled only through a proven child (#799)
+
 # Bus pidfile identity: prove the process before signalling it
 
 Proposal, 2026-10-09. Issue: #794. Code read at marvel `9c1541e` (`9c1541ea858afb8fbf971e18833332d2bffa803c`).

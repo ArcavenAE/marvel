@@ -1,3 +1,5 @@
+Closed 2026-10-25: pointers closed
+
 # Manifest plan: see what `marvel work` would do before it does it
 
 Design for review. No code lands until this doc is reviewed.

@@ -1,3 +1,5 @@
+Closed 2026-10-25: pointers closed (rule d adopted)
+
 # Code restructure plan: two package moves and a sequencing rule
 
 - **Status:** Proposal, 2026-10-10, revision 6 (2026-10-16). It is for review. It changes
