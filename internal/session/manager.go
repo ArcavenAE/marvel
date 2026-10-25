@@ -1958,6 +1958,11 @@ func (m *Manager) checkExposure(sess *api.Session) error {
 // session is for writes a function its slot has read (marvel#945).
 var ErrExposureRefused = errors.New("exposure refused")
 
+// ErrSettingsFileRefused is wrapped by the error Create returns when the role's
+// policy reads a settings file that cannot be read. The spawn is held, never
+// launched without the permission set the file carries.
+var ErrSettingsFileRefused = errors.New("settings file refused")
+
 // PlacementRefusal is one role whose spawn is currently refused for its
 // directory.
 type PlacementRefusal struct {

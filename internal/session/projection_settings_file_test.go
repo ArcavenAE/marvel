@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -330,4 +331,134 @@ func (m *Manager) settingsFileFailureCount() int {
 	m.failures.mu.Lock()
 	defer m.failures.mu.Unlock()
 	return len(m.failures.last)
+}
+
+// holdSession is the session a reconcile would spawn for the reviewer role.
+func holdSession() *api.Session {
+	return &api.Session{
+		Name:      "squad-reviewer-g1-0",
+		Workspace: "acme",
+		Team:      "squad",
+		Role:      "reviewer",
+		Runtime:   api.Runtime{Name: "claude", Command: "claude"},
+	}
+}
+
+// createExpectingHold calls Create and fails the test, rather than crashing it,
+// when Create goes on to launch: these managers have no tmux driver, so a Create
+// that is not held reaches it.
+func createExpectingHold(t *testing.T, mgr *Manager, sess *api.Session) (err error) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("Create went on to launch with an unreadable settings file: %v", r)
+			err = nil
+		}
+	}()
+	return mgr.Create(sess)
+}
+
+func applyForHold(t *testing.T, path string) *Manager {
+	t.Helper()
+	mgr, _ := projectionManager(t)
+	m, err := api.ParseManifestBytes([]byte(settingsFileProjectionManifest(path)))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	return mgr
+}
+
+// A spawn for a role whose settings file cannot be read is held: Create returns
+// an error wrapping ErrSettingsFileRefused, no session record exists, and the
+// event is emitted once however many ticks retry it.
+func TestCreateHoldsASpawnWhoseSettingsFileCannotBeRead(t *testing.T) {
+	t.Parallel()
+	for name, body := range map[string]*string{"missing": nil, "not an object": ptr(`["Read"]`), "not JSON": ptr("permissions: allow")} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "reviewer.json")
+			if body != nil {
+				writeSettingsFile(t, dir, *body)
+			}
+			mgr := applyForHold(t, path)
+			ring := mgr.Events.(*events.Ring)
+
+			for tick := 0; tick < 3; tick++ {
+				err := createExpectingHold(t, mgr, holdSession())
+				if !errors.Is(err, ErrSettingsFileRefused) {
+					t.Fatalf("tick %d: Create error = %v, want one wrapping ErrSettingsFileRefused", tick, err)
+				}
+			}
+			if n := len(mgr.store.ListSessions()); n != 0 {
+				t.Errorf("a held spawn left %d session record(s), want 0", n)
+			}
+			failed := ring.Snapshot(events.Filter{Kind: events.KindPolicyProjectionFailed}, 0)
+			if len(failed) != 1 {
+				t.Fatalf("policy.projection-failed events over three ticks = %d, want 1", len(failed))
+			}
+			if failed[0].Severity != events.SeverityError || !strings.Contains(failed[0].Message, path) {
+				t.Errorf("event = %+v, want error severity naming the file", failed[0])
+			}
+			if n := mgr.settingsFileFailureCount(); n != 1 {
+				t.Errorf("remembered failures = %d, want 1", n)
+			}
+		})
+	}
+}
+
+func ptr(s string) *string { return &s }
+
+// Once the file reads, the spawn is no longer held and the remembered failure is
+// dropped, so a later failure reports again.
+func TestHeldSpawnIsAdmittedOnceTheSettingsFileReads(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "reviewer.json")
+	mgr := applyForHold(t, path)
+	ring := mgr.Events.(*events.Ring)
+
+	if err := mgr.checkSettingsFile(holdSession()); !errors.Is(err, ErrSettingsFileRefused) {
+		t.Fatalf("missing file: checkSettingsFile = %v, want ErrSettingsFileRefused", err)
+	}
+	writeSettingsFile(t, dir, reviewerSettingsJSON)
+	if err := mgr.checkSettingsFile(holdSession()); err != nil {
+		t.Fatalf("readable file: checkSettingsFile = %v, want nil", err)
+	}
+	if n := mgr.settingsFileFailureCount(); n != 0 {
+		t.Errorf("remembered failures after the file read = %d, want 0", n)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.checkSettingsFile(holdSession()); !errors.Is(err, ErrSettingsFileRefused) {
+		t.Fatalf("file removed again: checkSettingsFile = %v, want ErrSettingsFileRefused", err)
+	}
+	if n := len(ring.Snapshot(events.Filter{Kind: events.KindPolicyProjectionFailed}, 0)); n != 2 {
+		t.Errorf("policy.projection-failed events across an outage, a recovery and a second outage = %d, want 2", n)
+	}
+}
+
+// The hold covers only a policy that reads a file. An inline policy, a role with
+// no policy and a session of no team are admitted.
+func TestSettingsFileHoldLeavesOtherSpawnsAlone(t *testing.T) {
+	t.Parallel()
+	mgr, _ := projectionManager(t)
+	m, err := api.ParseManifestBytes([]byte(projectionManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.checkSettingsFile(holdSession()); err != nil {
+		t.Errorf("inline policy: checkSettingsFile = %v, want nil", err)
+	}
+	adhoc := &api.Session{Name: "adhoc", Workspace: "other", Team: "none", Role: "none"}
+	if err := mgr.checkSettingsFile(adhoc); err != nil {
+		t.Errorf("session of no team: checkSettingsFile = %v, want nil", err)
+	}
 }

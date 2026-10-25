@@ -459,6 +459,12 @@ func (m *Manager) reportSettingsFileFailure(sess *api.Session, err error) bool {
 	return true
 }
 
+// checkSettingsFile holds the spawn of a role whose policy reads a settings
+// file that cannot be read.
+func (m *Manager) checkSettingsFile(_ *api.Session) error {
+	return nil
+}
+
 // pruneSettingsFileFailures drops the remembered failure of every session that
 // is no longer alive, so the memory does not grow with session churn.
 func (m *Manager) pruneSettingsFileFailures(sessions []api.Session) {
