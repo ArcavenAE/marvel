@@ -868,6 +868,11 @@ func (p *ShiftPolicy) HandoffWindowOrDefault() time.Duration {
 const (
 	PredecessorEnv        = "MARVEL_PREDECESSOR"
 	HandoffRequestedAtEnv = "MARVEL_HANDOFF_REQUESTED_AT"
+	// HandoffPathEnv is the handoff file marvel watches for the seat's role,
+	// {session} filled in, set only when the role declares a handoff. A seat
+	// that writes on its own threshold, before any notice, finds the path here
+	// and not in role text.
+	HandoffPathEnv = "MARVEL_HANDOFF_PATH"
 )
 
 // ShiftRequest is a pending handoff request on one role: marvel asked a seat

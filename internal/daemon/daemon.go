@@ -503,9 +503,10 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 }
 
 // noticeNoun names what a refused notice was, for the error text the team
-// records: the max-age ask is a handoff request, anything else is a notice.
+// records: the max-age and context-pressure asks are handoff requests,
+// anything else is a notice.
 func noticeNoun(origin string) string {
-	if origin == team.NoticeMaxAge {
+	if origin == team.NoticeMaxAge || origin == team.NoticeContextPressure {
 		return "handoff"
 	}
 	return "notice"

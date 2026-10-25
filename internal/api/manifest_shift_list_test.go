@@ -14,6 +14,13 @@ import (
 // because the two decoders drop unknown keys differently and the strict-key
 // check has to hold for both.
 
+// The handoff pair a context-pressure condition needs: pressure asks for a
+// handoff and replaces the seat only on its marker (marvel#442).
+const (
+	pairTOML = "    handoff = \"/tmp/handoffs/{session}.md\"\n    handoff_marker = \"END HANDOFF\"\n"
+	pairYAML = "          handoff: /tmp/handoffs/{session}.md\n          handoff_marker: END HANDOFF\n"
+)
+
 // shiftTOML wraps a [team.role.shift] body in a minimal one-role TOML
 // manifest. mode, when set, goes under runtime.
 func shiftTOML(mode, shift string) string {
@@ -83,8 +90,8 @@ func applyShift(t *testing.T, src string) *ShiftPolicy {
 func TestShiftSingleFormNormalizesToListOfOne(t *testing.T) {
 	t.Parallel()
 	for name, src := range map[string]string{
-		"toml": shiftTOML("", "    on = \"context-pressure\"\n    headroom_tokens = 120000\n"),
-		"yaml": shiftYAML("", "          on: context-pressure\n          headroom_tokens: 120000\n"),
+		"toml": shiftTOML("", "    on = \"context-pressure\"\n    headroom_tokens = 120000\n"+pairTOML),
+		"yaml": shiftYAML("", "          on: context-pressure\n          headroom_tokens: 120000\n"+pairYAML),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -94,6 +101,9 @@ func TestShiftSingleFormNormalizesToListOfOne(t *testing.T) {
 			}
 			if p.On != ShiftTriggerContextPressure || p.HeadroomTokens != 120000 {
 				t.Fatalf("single form = (%q, %d), want (context-pressure, 120000) kept", p.On, p.HeadroomTokens)
+			}
+			if p.Handoff != "/tmp/handoffs/{session}.md" || p.HandoffMarker != "END HANDOFF" {
+				t.Fatalf("handoff pair = (%q, %q), want it kept", p.Handoff, p.HandoffMarker)
 			}
 			want := []ShiftCondition{{On: ShiftTriggerContextPressure, HeadroomTokens: 120000}}
 			if got := p.Any; len(got) != 1 || got[0] != want[0] {
@@ -425,8 +435,8 @@ func TestCloneTeamCopiesShiftRequestsAndPolicy(t *testing.T) {
 func TestMaxAgeRefusedOnAMultiReplicaRole(t *testing.T) {
 	maxAgeTOML := "    on = \"max-age\"\n    max_age = \"8h\"\n"
 	maxAgeYAML := "          on: max-age\n          max_age: 8h\n"
-	pressureTOML := "    on = \"context-pressure\"\n    headroom_tokens = 5\n"
-	pressureYAML := "          on: context-pressure\n          headroom_tokens: 5\n"
+	pressureTOML := "    on = \"context-pressure\"\n    headroom_tokens = 5\n" + pairTOML
+	pressureYAML := "          on: context-pressure\n          headroom_tokens: 5\n" + pairYAML
 	withReplicas := func(src string, n int, format string) string {
 		if format == "toml" {
 			return strings.Replace(src, "replicas = 1", fmt.Sprintf("replicas = %d", n), 1)
@@ -523,5 +533,66 @@ func TestViewNoticesPersistAndAreCloned(t *testing.T) {
 	}
 	if got := live.ViewNotices["ws/squad-worker-g1-0/repo"]; got.Superseded[0] != "c0" || got.Sealed[0] != "c-1" {
 		t.Fatalf("a snapshot's tree lists alias the store's: %+v", got)
+	}
+}
+
+// Test 22: a pressure condition without the handoff pair is refused at apply
+// (design D8, ruling 3 "yes for now"). Pressure asks for a handoff and
+// replaces the seat only on the marker, because no handoff is worse than
+// autocompaction (the operator's ruling, 2026-10-04; marvel#442). The refusal
+// names the ruling and the pair, and holds for both forms and both formats.
+func TestContextPressureWithoutHandoffPairIsRefused(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		toml, yaml string
+		want       string
+	}{
+		{
+			name: "single form, no pair",
+			toml: "    on = \"context-pressure\"\n    headroom_tokens = 5\n",
+			yaml: "          on: context-pressure\n          headroom_tokens: 5\n",
+			want: "needs handoff and handoff_marker",
+		},
+		{
+			name: "list form, pressure arm and no pair",
+			toml: "    any = [ { on = \"context-pressure\", headroom_tokens = 5 }, { on = \"max-age\", max_age = \"8h\" } ]\n",
+			yaml: "          any:\n            - on: context-pressure\n              headroom_tokens: 5\n            - on: max-age\n              max_age: 8h\n",
+			want: "needs handoff and handoff_marker",
+		},
+		{
+			name: "handoff without marker still names the pair",
+			toml: "    on = \"context-pressure\"\n    headroom_tokens = 5\n    handoff = \"/tmp/{session}.md\"\n",
+			yaml: "          on: context-pressure\n          headroom_tokens: 5\n          handoff: /tmp/{session}.md\n",
+			want: "handoff and handoff_marker",
+		},
+	}
+	for _, tc := range cases {
+		for _, format := range []string{"toml", "yaml"} {
+			tc, format := tc, format
+			t.Run(tc.name+"/"+format, func(t *testing.T) {
+				t.Parallel()
+				src := shiftTOML("", tc.toml)
+				if format == "yaml" {
+					src = shiftYAML("", tc.yaml)
+				}
+				_, err := ParseManifestBytes([]byte(src))
+				if err == nil {
+					t.Fatalf("parse succeeded; want a refusal containing %q", tc.want)
+				}
+				if !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("error = %q, want it to contain %q", err, tc.want)
+				}
+			})
+		}
+	}
+	// The ruling is named in the refusal, so the operator can find why.
+	_, err := ParseManifestBytes([]byte(shiftTOML("", cases[0].toml)))
+	if err == nil || !strings.Contains(err.Error(), "no handoff is worse than autocompaction") || !strings.Contains(err.Error(), "2026-10-04") {
+		t.Fatalf("error = %v, want it to quote the ruling and its date", err)
+	}
+	// A max-age-only policy needs no pair at apply, as before.
+	if _, err := ParseManifestBytes([]byte(shiftTOML("", "    on = \"max-age\"\n    max_age = \"8h\"\n"))); err != nil {
+		t.Fatalf("max-age without a pair: %v; want it accepted", err)
 	}
 }

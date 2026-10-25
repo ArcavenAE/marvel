@@ -131,7 +131,7 @@ a shift never leaves the role empty; a merge the old seat had begun and not
 pushed is its handoff's to record (D5).
 
 Context pressure keeps firing on the level, with no quiet stage: its headroom
-already budgets the shift.
+already budgets the handoff and the shift (see D5, as amended).
 
 ### D5. The handoff
 
@@ -187,18 +187,63 @@ roles, it would be a per-role opt-in field (`on_no_handoff = "shift"`, default
 precedent for a default that consumes state. This design does not include it
 in slice 1; it is ruling 2.
 
-Context pressure keeps today's behaviour (no notice; the seat crosses its own
-pressure threshold and writes the handoff then), and gains only the successor
-variables in item 4.
+**Amended for marvel#442 (per-seat-replace.md D8).** Context pressure no longer
+shifts the seat by itself. Before this amendment it shifted at once with no
+notice; the operator ruled on 2026-10-04 that this is wrong: "no, it should
+NOT, no handoff is worse than autocompaction". At `headroom_tokens` the seat is
+asked for its handoff on the same request path as max age, and replaced only on
+the marker:
+
+- The notice reads "shift: context nearly full; write your handoff now to
+  <path>, ending with the line <marker>; you have <window>". Everything from
+  "write your handoff now" on is byte-identical to the max-age notice, so a
+  recognizer keyed on that clause matches both. The inject origin is
+  `context-pressure`, so the record reads `injector=marvel:context-pressure`.
+- The marker starts the shift (`cause=context-pressure`), carrying the request
+  to the successor as for max age (item 4).
+- With no marker by the end of the window, marvel emits `shift-handoff-missing`
+  (cause `context-pressure`) once per window and the seat stays running. A
+  marker written after the escalation does not shift the seat; it is held for
+  the supervisor (marvel#453). After an escalation a manual `marvel shift` stays
+  the supervisor's call.
+- A pressure condition without the `handoff` and `handoff_marker` pair is
+  refused at apply (ruling 3, "yes for now").
+- A session with no resolved window, or a stale reading, is still skipped.
+
+**Who owns what in a handoff (operator ruling, 2026-10-25: "yes pass it on").**
+This section owns the handoff contract (the declared file, the marker, the
+window), so the split between marvel and the supervisory layer that sits above
+it is written here and not in per-seat-replace.md, which records the decision to
+replace per seat and not who owns the handoff.
+
+1. marvel owns the mechanics: the triggers, the handoff request, the waiting
+   period, the check that the handoff is complete, starting the successor and
+   stopping the old seat. The completeness check is marvel's own (the declared
+   path ends in the marker) and does not depend on any other component, in line
+   with component independence.
+2. The supervisory layer owns custody: what a handoff must contain, and
+   checking after a shift that the successor holds every open ask the old seat
+   held. marvel does not read or judge the content.
+3. The handoff file is that layer's content. marvel only checks the path the
+   role's `handoff` field gives it, so where the file lives is a property of a
+   deployment's manifest, not a marvel default. The examples carry a
+   placeholder path only.
 
 ### D6. Interaction with the context-pressure trigger
 
-- Both are evaluated each tick in list order; the first that holds fires.
+- Both are evaluated each tick in list order; the first that holds asks.
   One shift per team per tick and the fleet budget are unchanged.
+- A pending request holds the role's one slot, whatever its cause or
+  escalation state, and the other cause waits for it. Both causes ask the same
+  seat for the same handoff at the same path and shift only on its marker, so a
+  second request would only reset the window and clear an escalation that
+  stays until the supervisor decides (marvel#453). Context pressure therefore
+  no longer fires while a max-age request is pending, which reverses the
+  original reading of this section.
 - An in-flight shift suppresses all triggers for the team, as today.
 - The event names which condition fired
   (`shift.auto-triggered ... cause=max-age age=8h12m` or
-  `cause=context-pressure ...`).
+  `cause=context-pressure ...`); the request event names it too.
 - A session on an unresolved window is skipped by context pressure, as
   today, but **is** evaluated by max age. That is the gap this closes.
 

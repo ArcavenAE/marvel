@@ -1,6 +1,8 @@
 package team
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -22,8 +24,21 @@ func shiftTriggerRole() api.Role {
 		Name:     testShiftRole,
 		Replicas: 1,
 		Runtime:  api.Runtime{Name: "claude", Command: "claude"},
-		Shift:    &api.ShiftPolicy{On: api.ShiftTriggerContextPressure, HeadroomTokens: testShiftHeadroom},
+		Shift: &api.ShiftPolicy{
+			On: api.ShiftTriggerContextPressure, HeadroomTokens: testShiftHeadroom,
+			// Context pressure is handoff-first: a pressure condition needs the
+			// pair (marvel#442, the operator's ruling of 2026-10-04).
+			Handoff:       filepath.Join(os.TempDir(), "marvel-pressure-test", "{session}.md"),
+			HandoffMarker: "END HANDOFF",
+		},
 	}
+}
+
+// pressureAsked reports whether the team holds a pending context-pressure
+// handoff request for the test role.
+func pressureAsked(tm api.Team) bool {
+	r, ok := tm.ShiftRequests[testShiftRole]
+	return ok && r.Cause == api.ShiftTriggerContextPressure
 }
 
 // seedContext seeds one Running current-generation session and gives it a
@@ -57,8 +72,8 @@ func TestAutoShiftFiresOnContextRemainder(t *testing.T) {
 	ctrl.evaluateShiftTriggers(&team)
 
 	got, _ := store.GetTeam("test-autoshift/squad")
-	if got.Shift.Phase != api.ShiftLaunching {
-		t.Fatalf("shift phase = %q, want %q (the remainder crossed headroom)", got.Shift.Phase, api.ShiftLaunching)
+	if !pressureAsked(got) || got.Shift.Phase != api.ShiftNone {
+		t.Fatalf("requests = %+v, phase = %q, want a pressure handoff request and no shift (the remainder crossed headroom)", got.ShiftRequests, got.Shift.Phase)
 	}
 }
 
@@ -83,8 +98,8 @@ func TestAutoShiftFiresOnSeatAtAnOlderGeneration(t *testing.T) {
 	ctrl.evaluateShiftTriggers(&team)
 
 	got, _ := store.GetTeam("test-autoshift-oldgen/squad")
-	if got.Shift.Phase != api.ShiftLaunching {
-		t.Fatalf("shift phase = %q, want %q: the seat is at generation 1 on a team at 4", got.Shift.Phase, api.ShiftLaunching)
+	if !pressureAsked(got) {
+		t.Fatalf("requests = %+v, want a pressure handoff request: the seat is at generation 1 on a team at 4", got.ShiftRequests)
 	}
 }
 
@@ -162,9 +177,10 @@ func TestAutoShiftDoesNotInterruptRunningShift(t *testing.T) {
 	}
 }
 
-// TestAutoShiftPerTickBudgetCaps proves the fleet-wide cap: two hot teams, one
-// reconcile pass, only the first is initiated. The rest stagger to later ticks
-// so an automatic actuator cannot burst the shared per-account rate limit.
+// TestAutoShiftPerTickBudgetCaps: two hot teams, one reconcile pass. Pressure
+// asks for a handoff rather than shifting, so both ask and the shift budget (which
+// caps the shifts that follow a marker, so an automatic actuator cannot burst
+// the shared per-account rate limit) stays unspent.
 func TestAutoShiftPerTickBudgetCaps(t *testing.T) {
 	store, _, ctrl, cleanup := setup(t)
 	t.Cleanup(cleanup)
@@ -186,10 +202,14 @@ func TestAutoShiftPerTickBudgetCaps(t *testing.T) {
 
 	gotAlpha, _ := store.GetTeam("test-budget-a/alpha")
 	gotBeta, _ := store.GetTeam("test-budget-b/beta")
-	if gotAlpha.Shift.Phase != api.ShiftLaunching {
-		t.Fatalf("alpha phase = %q, want launching (first within budget)", gotAlpha.Shift.Phase)
+	// A request is not a shift, so it does not spend the shift budget: both
+	// teams ask in the same pass and neither shifts.
+	for name, tm := range map[string]api.Team{"alpha": gotAlpha, "beta": gotBeta} {
+		if !pressureAsked(tm) || tm.Shift.Phase != api.ShiftNone {
+			t.Errorf("%s: requests = %+v, phase = %q, want a pressure request and no shift", name, tm.ShiftRequests, tm.Shift.Phase)
+		}
 	}
-	if gotBeta.Shift.Phase != api.ShiftNone {
-		t.Fatalf("beta phase = %q, want none (budget spent this tick)", gotBeta.Shift.Phase)
+	if ctrl.autoShiftsThisTick != 0 {
+		t.Errorf("autoShiftsThisTick = %d, want 0: asking is not a shift", ctrl.autoShiftsThisTick)
 	}
 }

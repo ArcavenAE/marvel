@@ -31,6 +31,8 @@ name = "squad"
     [team.role.shift]
     on = "context-pressure"
     headroom_tokens = %d
+    handoff = "/tmp/handoffs/{session}.md"
+    handoff_marker = "END HANDOFF"
 `, win, headroom)
 }
 
@@ -88,6 +90,8 @@ name = "squad"
     context_window = 200000
 
     [team.role.shift]
+    handoff = "/tmp/handoffs/{session}.md"
+    handoff_marker = "END HANDOFF"
     any = [
       { on = "max-age", max_age = "24h" },
       { on = "context-pressure", headroom_tokens = 300000 },

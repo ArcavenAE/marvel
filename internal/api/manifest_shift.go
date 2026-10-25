@@ -187,6 +187,9 @@ func (r *ManifestRole) shiftPolicy(where string) (*ShiftPolicy, error) {
 	if (s.Handoff == "") != (s.HandoffMarker == "") {
 		return nil, fmt.Errorf("%s: handoff and handoff_marker must be set together", prefix)
 	}
+	if seen[ShiftTriggerContextPressure] && s.Handoff == "" {
+		return nil, fmt.Errorf("%s: a context-pressure condition needs handoff and handoff_marker; pressure asks the seat for a handoff and replaces it only on the marker, because no handoff is worse than autocompaction (operator ruling, 2026-10-04; marvel#442)", prefix)
+	}
 	if s.Handoff != "" {
 		if !filepath.IsAbs(s.Handoff) && !strings.HasPrefix(s.Handoff, "~/") {
 			return nil, fmt.Errorf("%s.handoff %q must be absolute (or start with ~/)", prefix, s.Handoff)

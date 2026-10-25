@@ -86,7 +86,7 @@ func (f *putFixture) request() {
 		f.t.Fatal(err)
 	}
 	cond := team.Roles[0].Shift.Any[0]
-	f.ctrl.requestHandoff(&team, &team.Roles[0], cond, f.sess, 10*time.Hour, ageStageQuiet, listEpoch)
+	f.ctrl.requestHandoff(&team, &team.Roles[0], cond, f.sess, handoffAsk{notice: handoffNotice, origin: NoticeMaxAge, detail: "test"}, listEpoch)
 }
 
 func (f *putFixture) path() string { return filepath.Join(f.dir, f.sess.Name+".md") }

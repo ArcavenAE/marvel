@@ -1,13 +1,20 @@
-# Marvel example — automatic shift on context pressure (the remainder trigger).
+# Marvel example: handoff-first shift on context pressure (the remainder trigger).
 #
-# This role shifts itself before its context occupancy forces Claude Code to
-# auto-compact. The trigger is a token REMAINDER, not a percentage: marvel
-# initiates a shift when a live session rises within headroom_tokens of its
-# resolved window (context_tokens > context_limit - headroom_tokens).
+# This role asks its seat for a handoff before its context occupancy forces
+# Claude Code to auto-compact, and shifts only when the seat writes it. The
+# trigger is a token REMAINDER, not a percentage: when a live session rises
+# within headroom_tokens of its resolved window (context_tokens > context_limit
+# - headroom_tokens), marvel tells the seat to write its handoff to the declared
+# file, and starts the shift when that file ends in handoff_marker. With no
+# marker by the end of the window, marvel reports shift-handoff-missing and
+# leaves the seat running: no handoff is worse than autocompaction (operator
+# ruling, 2026-10-04), so a context-pressure condition without the handoff and
+# handoff_marker pair is refused at apply.
 #
-# Firing on the level, not on a post-compaction event, is what lets the shift
+# Firing on the level, not on a post-compaction event, is what lets the handoff
 # finish BEFORE the harness compacts; the event would arrive one compaction too
-# late (orc finding-016). Set headroom_tokens above the cost of a clean shift.
+# late (orc finding-016). Set headroom_tokens above the cost of writing the
+# handoff and of a clean shift.
 #
 # Scope: a resolved window is the denominator, not the whole trigger. This role
 # pins the 1M Claude window via runtime.context_window so context_limit is
@@ -25,8 +32,9 @@
 #   ./bin/marvel work examples/auto-shift.yaml
 #
 # Observe:
-#   ./bin/marvel events   # team.shift-autotriggered names the deciding session,
-#                         # then team.shift-started for the same shift
+#   ./bin/marvel events   # team.shift-handoff-requested names the session asked;
+#                         # team.shift-autotriggered and team.shift-started follow
+#                         # once the handoff file ends in the marker
 
 workspace:
   name: long-run
@@ -45,3 +53,5 @@ teams:
         shift:
           on: context-pressure
           headroom_tokens: 120000
+          handoff: ~/handoffs/{session}.md
+          handoff_marker: END HANDOFF

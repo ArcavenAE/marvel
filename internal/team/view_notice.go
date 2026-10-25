@@ -23,8 +23,9 @@ import (
 // The origins a Notify caller names. The daemon records them as
 // injector=marvel:<origin>.
 const (
-	NoticeMaxAge     = "max-age"
-	NoticeViewNotice = "view-notice"
+	NoticeMaxAge          = "max-age"
+	NoticeContextPressure = "context-pressure"
+	NoticeViewNotice      = "view-notice"
 )
 
 // shortCommit is how many characters of a commit the notice names.

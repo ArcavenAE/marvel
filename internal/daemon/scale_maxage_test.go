@@ -31,6 +31,8 @@ teams:
         shift:
           on: context-pressure
           headroom_tokens: 5
+          handoff: /tmp/handoffs/{session}.md
+          handoff_marker: END HANDOFF
 `
 
 func storedReplicas(t *testing.T, d *Daemon, role string) int {

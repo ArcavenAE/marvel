@@ -49,6 +49,7 @@ type listFixture struct {
 	clock   *testClock
 	ring    *events.Ring
 	notices []string
+	origins []string // the Notify origin of each entry in notices
 	teamKey string
 }
 
@@ -61,8 +62,9 @@ func newListFixture(t *testing.T, ws string, role api.Role) *listFixture {
 	ctrl.now = f.clock.Now
 	f.ring = events.NewRing(0)
 	ctrl.Events = f.ring
-	ctrl.Notify = func(sess api.Session, text, _ string) error {
+	ctrl.Notify = func(sess api.Session, text, origin string) error {
 		f.notices = append(f.notices, sess.Key()+": "+text)
+		f.origins = append(f.origins, origin)
 		return nil
 	}
 	createTeamFixture(t, store, ws, "squad", []api.Role{role})
@@ -353,9 +355,7 @@ func TestShiftListFirstHoldingConditionFires(t *testing.T) {
 		conds     []api.ShiftCondition
 		age       time.Duration
 		tokens    int
-		wantPhase api.ShiftPhase
-		wantCause string
-		wantAsks  int
+		wantCause string // the cause of the request the seat is asked under
 	}{
 		{
 			name: "pressure holds, age does not",
@@ -364,7 +364,7 @@ func TestShiftListFirstHoldingConditionFires(t *testing.T) {
 				{On: api.ShiftTriggerContextPressure, HeadroomTokens: testShiftHeadroom},
 			},
 			age: time.Hour, tokens: 900_000,
-			wantPhase: api.ShiftLaunching, wantCause: "cause=context-pressure",
+			wantCause: "cause=context-pressure",
 		},
 		{
 			name: "both hold, pressure listed first",
@@ -373,7 +373,7 @@ func TestShiftListFirstHoldingConditionFires(t *testing.T) {
 				{On: api.ShiftTriggerMaxAge, MaxAge: testMaxAge},
 			},
 			age: testMaxAge + time.Hour, tokens: 900_000,
-			wantPhase: api.ShiftLaunching, wantCause: "cause=context-pressure",
+			wantCause: "cause=context-pressure",
 		},
 		{
 			name: "both hold, age listed first",
@@ -382,7 +382,7 @@ func TestShiftListFirstHoldingConditionFires(t *testing.T) {
 				{On: api.ShiftTriggerContextPressure, HeadroomTokens: testShiftHeadroom},
 			},
 			age: testMaxAge + time.Hour, tokens: 900_000,
-			wantPhase: api.ShiftNone, wantAsks: 1,
+			wantCause: "cause=max-age",
 		},
 	}
 	for i, tc := range cases {
@@ -390,17 +390,16 @@ func TestShiftListFirstHoldingConditionFires(t *testing.T) {
 			f := newListFixture(t, "test-list-order-"+string(rune('a'+i)), maxAgeRole("", tc.conds...))
 			f.seed(tc.age, 10*time.Minute, tc.tokens, 1_000_000)
 			got := f.evaluate()
-			if got.Shift.Phase != tc.wantPhase {
-				t.Fatalf("phase = %q, want %q", got.Shift.Phase, tc.wantPhase)
+			// Both causes ask; neither shifts without a marker.
+			if got.Shift.Phase != api.ShiftNone {
+				t.Fatalf("phase = %q, want none: both causes ask first", got.Shift.Phase)
 			}
-			if len(f.notices) != tc.wantAsks {
-				t.Fatalf("notices = %d, want %d", len(f.notices), tc.wantAsks)
+			if len(f.notices) != 1 {
+				t.Fatalf("notices = %d, want 1", len(f.notices))
 			}
-			if tc.wantCause != "" {
-				evs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftAutoTriggered}, 0)
-				if len(evs) != 1 || !strings.Contains(evs[0].Message, tc.wantCause) {
-					t.Fatalf("autotriggered = %+v, want one naming %s", evs, tc.wantCause)
-				}
+			evs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffRequested}, 0)
+			if len(evs) != 1 || !strings.Contains(evs[0].Message, tc.wantCause) {
+				t.Fatalf("handoff-requested = %+v, want one naming %s", evs, tc.wantCause)
 			}
 		})
 	}
@@ -509,11 +508,15 @@ func TestShiftStampsPredecessorOnSuccessor(t *testing.T) {
 	}
 }
 
-// Design D6: a pending or escalated max-age request does not silence the
-// role's other conditions. Context pressure still shifts the seat, and the
-// shift carries the request to the successor.
-func TestContextPressureStillFiresWhileMaxAgeRequestPending(t *testing.T) {
-	role := maxAgeRole("",
+// Design D6, as amended for handoff-first pressure (marvel#442): a pending
+// request holds the role's one slot, whatever its cause or escalation state.
+// Pressure and max age ask the same seat for the same handoff and shift only on
+// its marker, so a second request would only reset the window and clear an
+// escalation that stays until the supervisor decides (marvel#453). Pressure
+// waits for the slot; it does not override, and it does not shift.
+func TestContextPressureWaitsForAPendingMaxAgeRequest(t *testing.T) {
+	dir := t.TempDir()
+	role := maxAgeRole(dir,
 		api.ShiftCondition{On: api.ShiftTriggerMaxAge, MaxAge: testMaxAge},
 		api.ShiftCondition{On: api.ShiftTriggerContextPressure, HeadroomTokens: testShiftHeadroom},
 	)
@@ -521,17 +524,51 @@ func TestContextPressureStillFiresWhileMaxAgeRequestPending(t *testing.T) {
 	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 100_000, 1_000_000)
 	f.evaluate()
 	f.clock.Advance(api.DefaultShiftHandoffWindow + time.Second)
-	if got := f.evaluate(); !got.ShiftRequests[testShiftRole].Escalated {
-		t.Fatalf("ShiftRequests = %+v, want an escalated request", got.ShiftRequests)
+	f.evaluate() // starts the read that grounds the escalation
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
+	escalated := f.evaluate()
+	if !escalated.ShiftRequests[testShiftRole].Escalated {
+		t.Fatalf("ShiftRequests = %+v, want an escalated request", escalated.ShiftRequests)
 	}
+	f.ctrl.handoffProbes.wait()
+	asked, missing := len(f.notices), f.count(events.KindShiftHandoffMissing)
 
 	f.store.UpdateSessionContext(s.Key(), api.SessionContext{ContextTokens: 900_000, ContextLimit: 1_000_000, ContextAt: f.clock.Now()})
 	got := f.evaluate()
-	if got.Shift.Phase != api.ShiftLaunching {
-		t.Fatalf("phase = %q, want launching on context pressure", got.Shift.Phase)
+	if got.Shift.Phase != api.ShiftNone {
+		t.Fatalf("phase = %q, want none: pressure waits for the slot and never shifts", got.Shift.Phase)
 	}
-	if req := got.Shift.HandoffRequests[testShiftRole]; req.Session != s.Key() {
-		t.Fatalf("Shift.HandoffRequests = %+v, want the escalated request carried", got.Shift.HandoffRequests)
+	if got.ShiftRequests[testShiftRole] != escalated.ShiftRequests[testShiftRole] {
+		t.Fatalf("ShiftRequests = %+v, want the escalated request unchanged (was %+v)", got.ShiftRequests, escalated.ShiftRequests)
+	}
+	if len(f.notices) != asked || f.count(events.KindShiftHandoffMissing) != missing {
+		t.Fatalf("notices %d -> %d, missing %d -> %d: pressure must not ask or escalate again",
+			asked, len(f.notices), missing, f.count(events.KindShiftHandoffMissing))
+	}
+	if n := f.count(events.KindShiftHandoffRequested); n != 1 {
+		t.Fatalf("handoff-requested events = %d, want 1", n)
+	}
+}
+
+// A pending pressure request is never overridden by a later max-age one either
+// (the slot is the role's, not the cause's).
+func TestMaxAgeWaitsForAPendingPressureRequest(t *testing.T) {
+	dir := t.TempDir()
+	role := maxAgeRole(dir,
+		api.ShiftCondition{On: api.ShiftTriggerContextPressure, HeadroomTokens: testShiftHeadroom},
+		api.ShiftCondition{On: api.ShiftTriggerMaxAge, MaxAge: testMaxAge},
+	)
+	f := newListFixture(t, "test-pressure-then-maxage", role)
+	f.seed(time.Hour, 10*time.Minute, 900_000, 1_000_000)
+	first := f.evaluate()
+	if r := first.ShiftRequests[testShiftRole]; r.Cause != api.ShiftTriggerContextPressure {
+		t.Fatalf("ShiftRequests = %+v, want a pressure request", first.ShiftRequests)
+	}
+	f.clock.Advance(testMaxAge)
+	got := f.evaluate()
+	if got.ShiftRequests[testShiftRole] != first.ShiftRequests[testShiftRole] || len(f.notices) != 1 {
+		t.Fatalf("ShiftRequests = %+v, notices = %d, want the pressure request kept and no second ask", got.ShiftRequests, len(f.notices))
 	}
 }
 
