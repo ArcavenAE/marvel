@@ -534,6 +534,9 @@ func (c *Controller) ReconcileOnce() {
 	// The clock writes firings before the roles are planned, so a firing
 	// that comes due this tick spawns this tick.
 	c.reconcileScheduleClock(teams)
+	// The cadence clock opens slot records for interactive roles and nothing
+	// else; a slot opened this tick is visible to the steps after it.
+	c.reconcileCadenceClock(teams)
 	for i := range teams {
 		c.reconcileTeam(&teams[i])
 	}

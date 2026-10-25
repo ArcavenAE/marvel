@@ -9,8 +9,19 @@ the single-read form.
 Build status: T2 (the V6 spawn token, `DIRECTOR_CLUSTER`) is merged in #1049;
 the role half of V6 is withdrawn there by operator ruling, 2026-10-24
 (option 1, ruling 4 in section 7). T1 (the
-declaration and its apply validation) is merged in #1052. T3 onward is not
-started. Both build under the operator go, 2026-10-24.
+declaration and its apply validation) is merged in #1052. T1 and T2 build
+under the operator go, 2026-10-24. T3 (the slot clock, V2) is built: for each
+declared cadence marvel keeps the next due time and writes slot records, `open`
+or `skipped`, in its own `cadence_status` store bucket keyed
+`workspace/team/role/name`, the newest 50 per cadence. A due slot opens one
+record named by its due time. A cadence seen for the first time, or with a
+changed schedule or zone, fires nothing in the past. After an outage the
+newest missed due time opens one catch-up slot if it is within
+`starting_deadline`, counting the earlier ones; past it, one `skipped` record
+counts them all. A posture-withheld team does not wait: its due time is
+recorded `skipped`. The status of a cadence, role or team that is gone is
+dropped. T3 writes no claim, wake or overdue state; those are T4 to T6. T4
+onward is not started.
 
 ## 1. Why
 
