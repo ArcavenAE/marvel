@@ -64,6 +64,10 @@ type ManifestPolicy struct {
 	Name     string         `toml:"name"              yaml:"name"`
 	Version  string         `toml:"version,omitempty" yaml:"version,omitempty"`
 	Settings map[string]any `toml:"settings,omitempty" yaml:"settings,omitempty"`
+	// SettingsFile names a JSON settings file marvel reads verbatim at
+	// projection, in place of inline Settings. A policy carries one or the
+	// other, never both.
+	SettingsFile string `toml:"settings_file,omitempty" yaml:"settings_file,omitempty"`
 }
 
 // ManifestWorkspace is the workspace section of a manifest.
@@ -415,6 +419,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			return nil, fmt.Errorf("parse manifest: policy[%d].name %q is duplicated", i, p.Name)
 		}
 		policyNames[p.Name] = true
+		if err := validatePolicySettingsFile(i, p); err != nil {
+			return nil, fmt.Errorf("parse manifest: %w", err)
+		}
 	}
 	teamNames := make(map[string]bool, len(m.Teams))
 	for i, t := range m.Teams {
@@ -984,16 +991,18 @@ func (m *Manifest) Apply(store *Store) error {
 	// the reconciler re-projects.
 	for _, mp := range m.Policies {
 		policy := &Policy{
-			Name:      mp.Name,
-			Workspace: m.Workspace.Name,
-			Version:   mp.Version,
-			Settings:  mp.Settings,
-			CreatedAt: now,
+			Name:         mp.Name,
+			Workspace:    m.Workspace.Name,
+			Version:      mp.Version,
+			Settings:     mp.Settings,
+			SettingsFile: mp.SettingsFile,
+			CreatedAt:    now,
 		}
 		if _, err := store.GetPolicy(policy.Key()); err == nil {
 			if err := store.UpdatePolicy(policy.Key(), func(live *Policy) error {
 				live.Version = mp.Version
 				live.Settings = mp.Settings
+				live.SettingsFile = mp.SettingsFile
 				return nil
 			}); err != nil {
 				return fmt.Errorf("apply policy %s: %w", mp.Name, err)
@@ -1239,6 +1248,23 @@ func validateSettingsSources(where string, sources []string) error {
 			return fmt.Errorf("%s.settings_sources: %q appears twice", where, v)
 		}
 		seen[v] = true
+	}
+	return nil
+}
+
+// validatePolicySettingsFile checks a policy's settings_file: a policy carries
+// inline settings or a file, never both, and the path is absolute or under the
+// home directory, since a relative path would resolve against the daemon's
+// working directory.
+func validatePolicySettingsFile(i int, p ManifestPolicy) error {
+	if p.SettingsFile == "" {
+		return nil
+	}
+	if len(p.Settings) > 0 {
+		return fmt.Errorf("policy[%d] %q: settings and settings_file are exclusive; a policy carries one or the other", i, p.Name)
+	}
+	if !strings.HasPrefix(p.SettingsFile, "/") && !strings.HasPrefix(p.SettingsFile, "~/") {
+		return fmt.Errorf("policy[%d] %q: settings_file %q must be an absolute path or start with ~/", i, p.Name, p.SettingsFile)
 	}
 	return nil
 }

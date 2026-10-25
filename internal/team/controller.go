@@ -517,6 +517,13 @@ func (c *Controller) ReconcileOnce() {
 	c.reapDeadLocked()
 	c.evaluateHealth()
 
+	// A policy that reads a settings file is projected again when the file
+	// changed, so a rewritten file reaches its sessions without a recast. Each
+	// session's file is written only on a change.
+	if c.sessMgr != nil {
+		c.sessMgr.ReprojectFileBacked()
+	}
+
 	// Reset the per-tick automatic-shift budget before the team loop so the
 	// fleet-wide cap (maxAutoShiftsPerTick) applies across every team this
 	// pass, not per team. See evaluateShiftTriggers.
@@ -1406,7 +1413,7 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				break
 			}
 			// A refused placement is reported, at a low rate, by the manager.
-			if err := c.sessMgr.Create(sess); err != nil && !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) {
+			if err := c.sessMgr.Create(sess); err != nil && !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) && !errors.Is(err, session.ErrSettingsFileRefused) {
 				log.Printf("reconcile: create session %s: %v", name, err)
 			}
 		}
@@ -2399,7 +2406,7 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 				return
 			}
 			if err := c.sessMgr.Create(sess); err != nil {
-				if !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) {
+				if !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) && !errors.Is(err, session.ErrSettingsFileRefused) {
 					log.Printf("shift: create session %s: %v", name, err)
 				}
 				return

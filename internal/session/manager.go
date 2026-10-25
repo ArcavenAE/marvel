@@ -34,6 +34,9 @@ type Manager struct {
 	// reconcile tick.
 	refusedMu sync.Mutex
 	refused   map[string]*refusal
+	// failures remembers the last unreadable policy settings file reported per
+	// session, so a standing failure is one event and not one per reconcile.
+	failures settingsFileFailures
 	// Clock is the time source for refusal bookkeeping; nil means time.Now.
 	Clock func() time.Time
 	// LookPath finds the container runtime CLI; nil means exec.LookPath.
@@ -667,6 +670,9 @@ func (m *Manager) Create(sess *api.Session) error {
 	if err := m.checkExposure(sess); err != nil {
 		return err
 	}
+	if err := m.checkSettingsFile(sess); err != nil {
+		return err
+	}
 	if err := m.checkWorkDir(sess); err != nil {
 		return err
 	}
@@ -698,6 +704,11 @@ func (m *Manager) Create(sess *api.Session) error {
 	}
 
 	plan := m.planLaunch(sess)
+	if plan.hold != nil {
+		_ = m.store.DeleteSession(sess.Key())
+		m.teardownViews(sess.Key())
+		return m.holdSpawn(sess, plan.hold)
+	}
 
 	// Layer A: write the per-session backend overlay for a role that declared a
 	// non-default backend, and stamp its path so cast-launch.sh passes it as
@@ -908,6 +919,9 @@ type launchPlan struct {
 	command string
 	env     map[string]string
 	stream  *runtime.StreamSource
+	// hold is set when the role's settings file could not be read at launch; the
+	// spawn is not made.
+	hold *settingsFileError
 }
 
 // prepareSessionHome gives this launch a private harness state home, for an
@@ -1103,7 +1117,11 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// so the adapter can point the harness at the settings file. Sets
 	// lctx.PolicyProjectionPath when the adapter supports projection and a
 	// policy resolves; a no-op otherwise.
-	m.projectForLaunch(lctx, adapter)
+	if err := m.projectForLaunch(lctx, adapter); err != nil {
+		var sfe *settingsFileError
+		errors.As(err, &sfe)
+		return launchPlan{hold: sfe}
+	}
 
 	// Name the session before Prepare builds the command line, so the id
 	// the harness is told is the id marvel recorded (aae-orc-ca7y). Minted
@@ -1954,6 +1972,11 @@ func (m *Manager) checkExposure(sess *api.Session) error {
 // ErrExposureRefused is wrapped by the error Create returns when the role the
 // session is for writes a function its slot has read (marvel#945).
 var ErrExposureRefused = errors.New("exposure refused")
+
+// ErrSettingsFileRefused is wrapped by the error Create returns when the role's
+// policy reads a settings file that cannot be read. The spawn is held, never
+// launched without the permission set the file carries.
+var ErrSettingsFileRefused = errors.New("settings file refused")
 
 // PlacementRefusal is one role whose spawn is currently refused for its
 // directory.

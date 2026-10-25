@@ -1110,8 +1110,11 @@ type Policy struct {
 	// third party's schema (Claude Code's), not an owner of it — pinning a
 	// Go struct here would couple marvel's releases to Claude Code's
 	// settings schema for no gain.
-	Settings  map[string]any `toml:"-"`
-	CreatedAt time.Time      `toml:"-"`
+	Settings map[string]any `toml:"-"`
+	// SettingsFile is a path to a JSON settings file read verbatim at each
+	// projection, in place of Settings. Marvel interprets nothing in it.
+	SettingsFile string    `toml:"-"`
+	CreatedAt    time.Time `toml:"-"`
 }
 
 // CredentialKind is the closed set of credential kinds marvel can hold.
