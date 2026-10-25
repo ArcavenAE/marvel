@@ -298,3 +298,36 @@ func TestSettingsFileTildeIsExpandedToTheHome(t *testing.T) {
 		t.Errorf("projection has no permissions from ~/reviewer.json: %v", got)
 	}
 }
+
+// A failure remembered for a session is dropped when the session is gone, so
+// the memory does not grow with session churn.
+func TestSettingsFileFailureMemoryIsPrunedForDeletedSessions(t *testing.T) {
+	t.Parallel()
+	path := writeSettingsFile(t, t.TempDir(), reviewerSettingsJSON)
+	mgr, ring, key, _ := settingsFileSession(t, path)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	mgr.ReprojectFileBacked()
+	if n := len(ring.Snapshot(events.Filter{Kind: events.KindPolicyProjectionFailed, Session: key}, 0)); n != 1 {
+		t.Fatalf("policy.projection-failed events = %d, want 1", n)
+	}
+	if n := mgr.settingsFileFailureCount(); n != 1 {
+		t.Fatalf("remembered failures = %d, want 1", n)
+	}
+
+	if err := mgr.store.DeleteSession(key); err != nil {
+		t.Fatal(err)
+	}
+	mgr.ReprojectFileBacked()
+	if n := mgr.settingsFileFailureCount(); n != 0 {
+		t.Errorf("remembered failures after the session was deleted = %d, want 0", n)
+	}
+}
+
+// settingsFileFailureCount is how many sessions have a failure remembered.
+func (m *Manager) settingsFileFailureCount() int {
+	m.failures.mu.Lock()
+	defer m.failures.mu.Unlock()
+	return len(m.failures.last)
+}
