@@ -155,8 +155,10 @@ func TestCadenceClockIgnoresARoleWithoutACadence(t *testing.T) {
 // of a deleted team is dropped, so no stale open slot is left for a claim.
 func TestCadenceClockDropsStatusOfWhatIsGone(t *testing.T) {
 	r := newCadenceRig(t, "test-cad-gone", cadenceRole())
-	other := api.Role{Name: "other", Replicas: 1, Runtime: api.Runtime{Name: "claude", Command: "claude", Mode: api.RuntimeModeInteractive},
-		Cadence: []api.Cadence{{Name: "keep", Schedule: "0 * * * *", Timezone: "UTC", Prompt: "p", StartingDeadline: time.Minute, Grace: 30 * time.Minute}}}
+	other := api.Role{
+		Name: "other", Replicas: 1, Runtime: api.Runtime{Name: "claude", Command: "claude", Mode: api.RuntimeModeInteractive},
+		Cadence: []api.Cadence{{Name: "keep", Schedule: "0 * * * *", Timezone: "UTC", Prompt: "p", StartingDeadline: time.Minute, Grace: 30 * time.Minute}},
+	}
 	if err := r.store.UpdateTeam("test-cad-gone/squad", func(live *api.Team) error {
 		live.Roles = append(live.Roles, other)
 		return nil
