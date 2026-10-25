@@ -780,6 +780,40 @@ func TestBaseEnvStampsLineageOnlyWhenSet(t *testing.T) {
 	}
 }
 
+// A seat is told the handoff path marvel watches, from its environment, so one
+// that writes on its own threshold before any notice finds the right file
+// (marvel#442). The path is the role's declared template with {session} filled;
+// a role that declares no handoff carries no such name.
+func TestBaseEnvCarriesTheDeclaredHandoffPath(t *testing.T) {
+	t.Parallel()
+
+	withShift := func(p *api.ShiftPolicy) *LaunchContext {
+		ctx := testContext()
+		ctx.Role.Shift = p
+		return ctx
+	}
+	pressure := []api.ShiftCondition{{On: api.ShiftTriggerContextPressure, HeadroomTokens: 100000}}
+	maxAge := []api.ShiftCondition{{On: api.ShiftTriggerMaxAge, MaxAge: 8 * time.Hour}}
+
+	for name, conds := range map[string][]api.ShiftCondition{"context pressure": pressure, "max age": maxAge} {
+		ctx := withShift(&api.ShiftPolicy{Any: conds, Handoff: "/var/handoffs/{session}.md", HandoffMarker: "END HANDOFF"})
+		env := baseEnv(ctx)
+		if got := env[api.HandoffPathEnv]; got != "/var/handoffs/squad-worker-g1-0.md" {
+			t.Errorf("%s: %s = %q, want the declared path with {session} filled", name, api.HandoffPathEnv, got)
+		}
+	}
+
+	for name, ctx := range map[string]*LaunchContext{
+		"no shift policy":      withShift(nil),
+		"policy without pair":  withShift(&api.ShiftPolicy{Any: maxAge}),
+		"single form, no pair": withShift(&api.ShiftPolicy{On: api.ShiftTriggerMaxAge}),
+	} {
+		if v, ok := baseEnv(ctx)[api.HandoffPathEnv]; ok {
+			t.Errorf("%s: %s=%q, want it absent", name, api.HandoffPathEnv, v)
+		}
+	}
+}
+
 // MARVEL_WORKDIR is the declared placement, stamped beside MARVEL_SESSION for
 // wrappers and hooks; informational, since the pane is already there
 // (docs/design/session-working-directory.md, decision 5). A session placed
