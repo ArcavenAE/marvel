@@ -922,6 +922,9 @@ type launchPlan struct {
 	// hold is set when the role's settings file could not be read at launch; the
 	// spawn is not made.
 	hold *settingsFileError
+	// firstPrompt is which first message the launch carried, for the
+	// session.first-prompt event.
+	firstPrompt runtime.FirstPrompt
 }
 
 // prepareSessionHome gives this launch a private harness state home, for an

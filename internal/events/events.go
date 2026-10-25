@@ -208,6 +208,11 @@ const (
 	// signal of a policy landing at spawn and of live re-projection after
 	// a manifest change. See finding-024.
 	KindPolicyProjected Kind = "policy.projected"
+	// KindSessionFirstPrompt records which first message a spawn was launched
+	// with: its source and byte length, never the text. It records what marvel
+	// passed on the command line or in the wrapper's environment, not what the
+	// harness took (docs/design/interactive-first-prompt.md D7).
+	KindSessionFirstPrompt Kind = "session.first-prompt"
 	// KindPolicyProjectionFailed records that a policy's settings file could
 	// not be read as a JSON object when marvel projected it for a session. The
 	// session's projected file is left as it was, never replaced by an empty
@@ -502,6 +507,7 @@ var allKinds = []Kind{
 	KindRoleReplicasInvalid,
 	KindRoleRemoved,
 	KindPolicyProjected,
+	KindSessionFirstPrompt,
 	KindPolicyProjectionFailed,
 	KindContextLimitUnresolved,
 	KindScheduleDSTAcknowledged,
