@@ -31,8 +31,9 @@ No file states this idea [measured]. The search covered the orc, marvel,
 director and the role library, plus a bd search over every issue's title,
 description and notes. The terms searched were concern, demerit, strike, vote
 off, island, fault report, reputation, trust score, penalize, health score,
-error rate and per-model. As a positive control, `max_restarts` was found in 10
-marvel files.
+error rate and per-model. As a positive control, `git grep -l max_restarts 7c4a3d3e | wc -l` finds 22
+marvel files at marvel `7c4a3d3e`, 10 of them Markdown and 9 of them Go
+[measured].
 
 The memory probably blends three items [inferred]:
 
@@ -160,16 +161,15 @@ fleet learns [inferred from outside 5, 17]. Two framings help:
   (`question-shift-triggers.yaml:73,88`) [read]. Age is a candidate factor,
   not a given.
 
-**The caution that comes first.** The orchestrator's finding-054 hand-classified
-169 bad-outcome chains from 4,656 dispatches. It found that "84% of real
-(non-by_design) bad outcomes ... are not model capability". A version split
-read as a model effect was "phase, not model", and the finding warns that "any
-naive fleet grouping by model manufactures a fake model effect" [read]. In a
-small fleet, model, host, role and harness are tangled: one model may run only
-on one host in one role. That breaks the multilevel assumption that conditions
-are uncorrelated with the seat effect [read, outside 5]. So no condition effect
-is reported until its cell has enough independent groups, and every report
-names the confound it could not separate.
+**The caution that comes first.** Most bad outcomes in an agent fleet are not
+model capability: they come from the task, the phase of the work, the
+environment or the instructions. A naive grouping of the fleet by model
+therefore manufactures a model effect that is not there. In a small fleet,
+model, host, role and harness are tangled: one model may run only on one host
+in one role. That breaks the multilevel assumption that conditions are
+uncorrelated with the seat effect [read, outside 5]. So no condition effect is
+reported until its cell has enough independent groups, and every report names
+the confound it could not separate.
 
 One more gap: marvel records the model a seat declares, not the one that
 served it (finding-058) [read]. A model key built from marvel's record alone
@@ -301,8 +301,6 @@ bandit) need.
   `_kos/nodes/bedrock/question-healthchecks.yaml`; finding-019.
 - director `_kos/ideas/task-judge.md` (shadow, propose only, a different model
   family); director `skills/director/SKILL.md:394-400`.
-- The orchestrator's finding-053 and finding-054 (model attribution);
-  finding-190 (a second harness changed answers, with no same-harness control).
 - The role library's retrospector, which grades merges, not seats.
 - Outside sources, fetched 2026-10-24: Dempster-Shafer and Zadeh's example;
   empirical Bayes and partial pooling; Dawid and Skene; Snorkel; CUSUM and
