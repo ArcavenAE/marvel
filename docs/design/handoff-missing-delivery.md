@@ -5,6 +5,32 @@ marvel#459 (step B of the operator's ruling "A then B"; step A is the
 re-emit in #455). Builds on `docs/design/shift-trigger-list.md` D5. Design
 only; the build waits for the #454, #455 and #456 stack.
 
+## Build status and changed premises (2026-10-25)
+
+This slice is built (marvel#459): H1 for the same-team supervisor, H2, H4,
+H5 and the reserved sender id `marvel`. Not built yet, each its own chain
+link: the legs for an escalated seat that is itself a supervisor and the
+director leg (tests 11, 12 and 14), then H6 (mute, cancel, abort). The
+architect's answers of 2026-10-25 changed these premises:
+
+- **P1 is replaced.** There is no gate on `DIRECTOR_ROLE` and nothing is added
+  to `baseEnv`: director's launcher sets `DIRECTOR_ROLE` from the seat's role
+  for the seats it wraps, which marvel cannot see, so a gate on the role spec
+  would leave the feature dark. marvel publishes to `role://<team>/supervisor`
+  whenever the team declares a role named `supervisor`, and a message nobody
+  reads waits in the stream for its 24 hours. The event says `published`,
+  never `delivered` or `read`.
+- **The connection.** marvel had no persistent admin connection. The
+  publisher opens one long-lived connection with the admin principal on its
+  first publish, and H5 governs when it is down. Ruling 3 of 2026-10-02 stands:
+  no new scoped principal.
+- **P2 step 1 holds.** The canonical schema accepts `global://director`.
+- **The cause text** follows the cause of the request: "passed max age
+  <max_age>" or "had a context nearly full".
+- **The subject** stays `agent.<ws>.<team>.role.supervisor.inbox`. The trace
+  that prompted this found that the daemon had no publish path at all: the
+  escalation wrote only to the in-memory event ring.
+
 ## 1. Why
 
 When a seat misses its max-age handoff window, D5 step 3 says the team's
