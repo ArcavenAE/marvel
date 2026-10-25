@@ -547,6 +547,16 @@ func constructedEnvQuiet(ctx *LaunchContext, quiet bool) map[string]string {
 	if !ctx.Session.HandoffRequestedAt.IsZero() {
 		env[api.HandoffRequestedAtEnv] = ctx.Session.HandoffRequestedAt.UTC().Format(time.RFC3339)
 	}
+	// The file marvel watches for this role's handoff, so a seat that writes on
+	// its own threshold before any notice finds the right one. Left out when the
+	// role declares none or the path cannot be resolved: never relative or
+	// half-filled. Only this adapter path carries it; a launch through the
+	// session manager's direct command has no role policy.
+	if ctx.Role != nil && ctx.Role.Shift != nil && ctx.Role.Shift.Handoff != "" {
+		if p, err := api.ExpandHandoffPath(ctx.Role.Shift.Handoff, ctx.Session.Name); err == nil {
+			env[api.HandoffPathEnv] = p
+		}
+	}
 	if ctx.BusURL != "" {
 		// The bus is cluster topology, so it rides from the cluster config
 		// the way MARVEL_SOCKET does, and a manifest names no broker.
