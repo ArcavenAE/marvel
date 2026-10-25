@@ -1,3 +1,5 @@
+Closed 2026-10-25: pointers closed
+
 # Keeping `get sessions` readable: width, truncation, and the RUNTIME cell
 
 - **Status:** idea (pre-hypothesis, no commitment).

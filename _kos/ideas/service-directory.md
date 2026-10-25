@@ -1,3 +1,5 @@
+Closed 2026-10-25: pointers closed
+
 # A service directory: ask where the hub and bd are, instead of carrying addresses
 
 - **Status:** idea (pre-hypothesis, no commitment). Exploration only: no

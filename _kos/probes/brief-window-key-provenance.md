@@ -1,3 +1,5 @@
+Closed 2026-10-25: probe done
+
 # Probe brief: the window resolver's key is narrower than the fact it stores
 
 **Status:** RUN 2026-08-28. Result: firm conclusion, captured in

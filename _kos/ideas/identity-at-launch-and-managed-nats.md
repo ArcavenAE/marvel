@@ -1,3 +1,5 @@
+Closed 2026-10-25: pointers closed
+
 # Identity at launch and a managed bus: what director's forward requirements ask of marvel
 
 **Status: idea, carrying four forward requirements the operator ruled on

@@ -1,3 +1,5 @@
+Closed 2026-10-25: pointers closed
+
 # The seat register: what each seat can do now, with its age
 
 Proposal, 2026-10-09. Not ruled; section 8 holds the decisions for the operator.

@@ -1,3 +1,5 @@
+Closed 2026-10-25: pointers closed
+
 # Watchdog positive control and the uncovered state
 
 - **Status:** design for review, 2026-10-06, for #626, revised the same day

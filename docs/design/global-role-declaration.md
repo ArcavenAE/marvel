@@ -1,3 +1,5 @@
+Closed 2026-10-25: shipped: a role declares global_role and the cluster admits the name (#520)
+
 # Global role declaration: every supervisor-type role gets the global tier
 
 Design for review. No code lands until this doc is reviewed.

@@ -1,3 +1,5 @@
+Closed 2026-10-25: done (headless completion semantics decided)
+
 # Probe brief: what a headless role's terminal state means, and whether tmux can carry it
 
 **Status:** SP1, SP2 and SP5 answered (2026-09-12, finding-038; 2026-09-08,

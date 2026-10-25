@@ -1,3 +1,5 @@
+Closed 2026-10-25: pointers closed
+
 # Redaction: what marvel's read surfaces may print
 
 Design for review. No code lands until this doc is reviewed.
