@@ -76,13 +76,15 @@ func (p *fakePublisher) set(fail error, block bool) {
 	p.mu.Unlock()
 }
 
-// supervisorRole is a single-replica role named supervisor that declares the
-// director role it holds, as a role must for role:// mail to reach it.
+// supervisorRole is a single-replica role named supervisor. marvel keys on a
+// live session of this role and does not look at the role's env: director's
+// launcher sets DIRECTOR_ROLE for the seats it wraps, which marvel cannot see
+// (architect answers on marvel#459, 2026-10-25).
 func supervisorRole() api.Role {
 	return api.Role{
 		Name:     testSupervisorRole,
 		Replicas: 1,
-		Runtime:  api.Runtime{Name: "claude", Command: "claude", Env: map[string]string{"DIRECTOR_ROLE": testSupervisorRole}},
+		Runtime:  api.Runtime{Name: "claude", Command: "claude"},
 	}
 }
 
@@ -237,8 +239,8 @@ func TestEscalationPublishesOneEnvelopeToTheSupervisorRole(t *testing.T) {
 				t.Fatalf("handoff-missing events = %d, want 1: the event stays the floor", n)
 			}
 			for _, ev := range f.ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffMissing}, 0) {
-				if !strings.Contains(ev.Message, "delivered: sent") {
-					t.Errorf("event %q does not say how delivery went", ev.Message)
+				if !strings.Contains(ev.Message, "published: sent") {
+					t.Errorf("event %q does not say whether it was published", ev.Message)
 				}
 			}
 			if len(f.notices) != 1 {
@@ -272,8 +274,8 @@ func TestRepeatKeepsTheCorrelationIdAndAdvancesTheDedupeId(t *testing.T) {
 		t.Fatalf("dedupe ids %q, %q, want suffixes /0 and /1", a.msgID, b.msgID)
 	}
 	req := got.ShiftRequests[testShiftRole]
-	if req.DeliveredCount != 2 || !req.LastDeliveredAt.Equal(f.clock.Now()) {
-		t.Fatalf("request = count %d last %v, want 2 and now %v", req.DeliveredCount, req.LastDeliveredAt, f.clock.Now())
+	if age := f.clock.Now().Sub(req.LastDeliveredAt); req.DeliveredCount != 2 || age < 0 || age > 5*time.Second {
+		t.Fatalf("request = count %d last %v, want 2 and a send just now (%v)", req.DeliveredCount, req.LastDeliveredAt, f.clock.Now())
 	}
 
 	// A shift ends the request; no further envelope follows.
@@ -308,7 +310,7 @@ func TestNoSupervisorRolePublishesNothing(t *testing.T) {
 		t.Fatalf("handoff-missing events = %d, want the floor to keep repeating", len(evs))
 	}
 	for _, ev := range evs {
-		if !strings.Contains(ev.Message, "delivered: none, no recipient") {
+		if !strings.Contains(ev.Message, "published: none, no recipient") {
 			t.Errorf("event %q does not say there is no recipient", ev.Message)
 		}
 	}
@@ -328,7 +330,7 @@ func TestSupervisorWithNoLiveSeatIsPublishedToOnce(t *testing.T) {
 		t.Fatalf("published %d envelopes across six windows with no holder, want 1", n)
 	}
 	evs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffMissing}, 0)
-	if !strings.Contains(evs[0].Message, "delivered: queued once, no live holder") {
+	if !strings.Contains(evs[0].Message, "published: queued once, no live holder") {
 		t.Errorf("first event %q does not say the message was queued once", evs[0].Message)
 	}
 
