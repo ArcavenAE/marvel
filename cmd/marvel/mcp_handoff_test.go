@@ -178,8 +178,11 @@ func errCode(t *testing.T, m map[string]any) float64 {
 // exactly tools with listChanged false.
 func TestMCPHandoffInitializeNegotiatesVersion(t *testing.T) {
 	for _, tc := range []struct{ ask, want string }{
-		{"2025-06-18", "2025-06-18"}, {"2025-03-26", "2025-03-26"}, {"2024-11-05", "2024-11-05"},
-		{"2099-01-01", "2025-06-18"}, {"", "2025-06-18"},
+		{"2025-06-18", "2025-06-18"},
+		{"2025-03-26", "2025-03-26"},
+		{"2024-11-05", "2024-11-05"},
+		{"2099-01-01", "2025-06-18"},
+		{"", "2025-06-18"},
 	} {
 		in := `{"jsonrpc":"2.0","id":7,"method":"initialize","params":{"protocolVersion":"` + tc.ask + `","capabilities":{},"clientInfo":{"name":"c","version":"1"}}}` + "\n"
 		run := runMCP(t, nil, time.Second, in)
