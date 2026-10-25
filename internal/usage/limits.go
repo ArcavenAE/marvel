@@ -222,6 +222,13 @@ func DefaultTable() Table {
 		"claude-sonnet-4-6[1m]": 1_000_000,
 		"claude-sonnet-5":       1_000_000, // no 200k variant on the API; both spellings, same window (see opus-5 below)
 		"claude-sonnet-5[1m]":   1_000_000,
+		// claude-sonnet-5-5: 1M tokens, max output 128K, no 200k variant, so
+		// both spellings carry the one window like sonnet-5 above. Source:
+		// Anthropic's models overview, https://platform.claude.com/docs/en/models/overview,
+		// compare table, read 2026-10-25 by a peer seat (not by the author of
+		// this entry).
+		"claude-sonnet-5-5":     1_000_000,
+		"claude-sonnet-5-5[1m]": 1_000_000,
 		"claude-opus-4-7":       200_000,
 		"claude-opus-4-7[1m]":   1_000_000,
 		"claude-opus-4-8":       200_000,
@@ -337,10 +344,15 @@ func (t Table) keyConfidence(normalizedKey string, window int) KeyConfidence {
 // model lands. TestAliasesResolveToPinnedWindows locks the current pins so
 // a bump is an explicit, reviewed edit; the loop test below guards that no
 // pin dangles off the table.
+//
+// 2026-10-25: sonnet moved from claude-sonnet-5 to claude-sonnet-5-5. The
+// 2026-10-01 probe saw the claude init report resolve --model sonnet to
+// claude-sonnet-5-5 (marvel finding-058; #432, #440). Before 2026-10-25 the
+// pin was claude-sonnet-5, and before 2026-08-30 claude-sonnet-4-6.
 var aliases = map[string]string{
 	"haiku":     "claude-haiku-4-5",
-	"sonnet":    "claude-sonnet-5", // was claude-sonnet-4-6 (pre-5); bumped 2026-08-30
-	"opus":      "claude-opus-5",   // was claude-opus-4-8 (200k default); aae-orc-ldq8, 2026-08-30
+	"sonnet":    "claude-sonnet-5-5", // was claude-sonnet-5; bumped 2026-10-25 (finding-058)
+	"opus":      "claude-opus-5",     // was claude-opus-4-8 (200k default); aae-orc-ldq8, 2026-08-30
 	"fable[1m]": "claude-fable-5[1m]",
 }
 
