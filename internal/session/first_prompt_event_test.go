@@ -139,3 +139,22 @@ func TestCreateEmitsExactlyOneFirstPromptEvent(t *testing.T) {
 		t.Errorf("event session = %q, want %q", got[0].Session, sess.Key())
 	}
 }
+
+// The first-prompt event describes a session, so it follows session.created
+// and a reader keyed on created has already seen the session.
+func TestAnnounceSpawnEmitsCreatedBeforeFirstPrompt(t *testing.T) {
+	t.Parallel()
+	mgr, ring := firstPromptManager(t)
+	mgr.announceSpawn(reviewerSpawn(""), "%1", runtime.FirstPrompt{Source: runtime.FirstPromptRole, Bytes: 5})
+	got := ring.Snapshot(events.Filter{}, 0)
+	var kinds []string
+	for _, ev := range got {
+		if ev.Kind == events.KindSessionCreated || ev.Kind == events.KindSessionFirstPrompt {
+			kinds = append(kinds, string(ev.Kind))
+		}
+	}
+	want := []string{string(events.KindSessionCreated), string(events.KindSessionFirstPrompt)}
+	if len(kinds) != 2 || kinds[0] != want[0] || kinds[1] != want[1] {
+		t.Errorf("event order = %v, want %v", kinds, want)
+	}
+}

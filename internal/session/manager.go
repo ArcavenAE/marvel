@@ -833,7 +833,14 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.PID = pid
 	sess.State = api.SessionRunning
 	log.Printf("session %s running in pane %s", sess.Key(), paneID)
-	m.emitFirstPrompt(sess, plan.firstPrompt)
+	m.announceSpawn(sess, paneID, plan.firstPrompt)
+	return nil
+}
+
+// announceSpawn emits the events that say a spawn happened: session.created,
+// then the session.first-prompt that describes it.
+func (m *Manager) announceSpawn(sess *api.Session, paneID string, fp runtime.FirstPrompt) {
+	m.emitFirstPrompt(sess, fp)
 	events.Emit(m.Events, events.Event{
 		Kind:      events.KindSessionCreated,
 		Workspace: sess.Workspace,
@@ -842,7 +849,6 @@ func (m *Manager) Create(sess *api.Session) error {
 		Session:   sess.Key(),
 		Message:   fmt.Sprintf("pane %s", paneID),
 	})
-	return nil
 }
 
 // checkWorkDir refuses a spawn whose resolved directory is missing or is not a
