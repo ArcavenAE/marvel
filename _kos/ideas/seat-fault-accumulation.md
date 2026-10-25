@@ -161,12 +161,13 @@ fleet learns [inferred from outside 5, 17]. Two framings help:
   (`question-shift-triggers.yaml:73,88`) [read]. Age is a candidate factor,
   not a given.
 
-**The caution that comes first.** Most bad outcomes in an agent fleet are not
-model capability: they come from the task, the phase of the work, the
-environment or the instructions. A naive grouping of the fleet by model
-therefore manufactures a model effect that is not there. In a small fleet,
-model, host, role and harness are tangled: one model may run only on one host
-in one role. That breaks the multilevel assumption that conditions are
+**The caution that comes first.** In one earlier fleet measurement, most real
+bad outcomes traced to a defect in the task's spec or a gap in the process, not
+to model capability, and an apparent model effect turned out to be the phase of
+the work [measured, in a private fleet record]. A naive grouping of the fleet
+by model therefore manufactures a model effect that is not there. In a small
+fleet, model, host, role and harness are tangled: one model may run only on one
+host in one role. That breaks the multilevel assumption that conditions are
 uncorrelated with the seat effect [read, outside 5]. So no condition effect is
 reported until its cell has enough independent groups, and every report names
 the confound it could not separate.
