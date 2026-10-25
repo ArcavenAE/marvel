@@ -113,3 +113,16 @@ than the one it replaced.
 - local-llm-for-marvels-own-purposes (the utility harness's backend).
 - aae-orc F25 stage-rig (backdrops authored, props verbatim) and the CogCanvas
   verbatim-recall finding (the fidelity discipline this must honor).
+
+## Parked
+
+2026-10-24: parked until the operator rules on
+`docs/design/handoff-crash-options.md` (marvel#803; card
+`ops-4-handoff-options`). The presentation was ruled ("show both", per the
+operations coordination plan), but no starting combination is selected and
+none of its section 6 rulings is answered. Rulings 1 (reading a harness's
+private store), 2 (a 30-day transcript as a second copy) and 6 (storing
+`transcript_path`) decide whether this idea's first step is permitted, and
+options O2, O4 and O8 overlap its method. Its recommendations were valid until
+2026-10-23; the architect role re-checks them. Re-open this idea when those
+rulings land, and test it against the selected bundle rather than beside it.

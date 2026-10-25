@@ -94,3 +94,12 @@ each harness and is the first thing to measure.
   detect-and-never-type side of the same update menu.
 - marvel#560: the inject refusal on a recognized limit menu, the pattern a
   pane reader follows.
+
+## Became
+
+2026-10-24: merged with `harness-update-visible-and-idle-restart.md` into one
+exploration brief, `_kos/probes/probe-harness-update-exit-and-resume.md`. The
+brief tests this idea's first open question (does a harness resume after an
+exit, on the new version) and the detection question, and lists where the two
+ideas disagree (trigger, who decides, whether the state is a health condition)
+as open questions. Nothing here is decided by the merge.

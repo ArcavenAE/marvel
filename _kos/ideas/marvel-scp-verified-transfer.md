@@ -2,6 +2,12 @@
 
 Status: idea (pre-hypothesis). Subject: marvel. Filed 2026-09-21.
 
+**Became:** `_kos/probes/brief-cross-host-artifact-transfer.md` (2026-10-24),
+which first checks whether the incident above had a path already: `marvel
+--cluster <c> work <file>` sends the manifest bytes over `mrvl://`, and `get
+team|workspace -o yaml` has shipped (aae-orc-zv4jw). The brief asks whether
+any recorded case needs a general file channel beyond those.
+
 ## The gap this answers
 
 Operating the fleet turned up a concrete wall: there is no clean way to move

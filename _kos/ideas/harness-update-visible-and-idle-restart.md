@@ -103,3 +103,13 @@ were captured a week apart from two separate asks.
   marvel#483 (seat codex config turns the startup update check off).
 - `marvel daemon reexec` re-executes the daemon's own process. It does not
   restart seats, so it is not this feature.
+
+## Became
+
+2026-10-24: merged with `harness-update-pending-exit-and-resume.md` into one
+exploration brief, `_kos/probes/probe-harness-update-exit-and-resume.md`. The
+brief tests the shared premise (resume after exit runs the new version) and
+both detection candidates named here (the banner, and running against
+installed version). The version column, the indicators, the manifest opt-in
+and the idle gate stay open questions for the design that follows the
+finding.
