@@ -25,18 +25,18 @@ func seedContextAged(t *testing.T, store *api.Store, ws, team string, tokens, li
 	}
 }
 
-// A reading older than the bound does not arm the shift: occupancy read hours
+// A reading older than the bound does not arm the handoff request: occupancy read hours
 // ago says nothing about the seat now. A reading inside the bound still does.
 func TestAutoShiftIgnoresAStaleReading(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		age  time.Duration
-		want api.ShiftPhase
+		want bool
 	}{
-		{"fresh reading arms", time.Minute, api.ShiftLaunching},
-		{"just inside the bound arms", api.DefaultQuietWindow - time.Minute, api.ShiftLaunching},
-		{"just past the bound does not", api.DefaultQuietWindow + time.Minute, api.ShiftNone},
-		{"a two day old reading does not", 48 * time.Hour, api.ShiftNone},
+		{"fresh reading arms", time.Minute, true},
+		{"just inside the bound arms", api.DefaultQuietWindow - time.Minute, true},
+		{"just past the bound does not", api.DefaultQuietWindow + time.Minute, false},
+		{"a two day old reading does not", 48 * time.Hour, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, _, ctrl, cleanup := setup(t)
@@ -48,8 +48,11 @@ func TestAutoShiftIgnoresAStaleReading(t *testing.T) {
 			ctrl.evaluateShiftTriggers(&team)
 
 			got, _ := store.GetTeam("test-fresh/squad")
-			if got.Shift.Phase != tc.want {
-				t.Errorf("shift phase = %q, want %q for a reading %v old", got.Shift.Phase, tc.want, tc.age)
+			if asked := pressureAsked(got); asked != tc.want {
+				t.Errorf("pressure handoff asked = %v, want %v for a reading %v old", asked, tc.want, tc.age)
+			}
+			if got.Shift.Phase != api.ShiftNone {
+				t.Errorf("shift phase = %q, want none: pressure asks, it does not shift", got.Shift.Phase)
 			}
 		})
 	}
@@ -63,10 +66,10 @@ func TestAutoShiftFreshnessEdgeIsExact(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		age  time.Duration
-		want api.ShiftPhase
+		want bool
 	}{
-		{"exactly the bound arms", api.DefaultQuietWindow, api.ShiftLaunching},
-		{"one nanosecond past does not", api.DefaultQuietWindow + time.Nanosecond, api.ShiftNone},
+		{"exactly the bound arms", api.DefaultQuietWindow, true},
+		{"one nanosecond past does not", api.DefaultQuietWindow + time.Nanosecond, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, _, ctrl, cleanup := setup(t)
@@ -86,8 +89,11 @@ func TestAutoShiftFreshnessEdgeIsExact(t *testing.T) {
 			ctrl.evaluateShiftTriggers(&team)
 
 			got, _ := store.GetTeam("test-edge/squad")
-			if got.Shift.Phase != tc.want {
-				t.Errorf("shift phase = %q, want %q for a reading %v old", got.Shift.Phase, tc.want, tc.age)
+			if asked := pressureAsked(got); asked != tc.want {
+				t.Errorf("pressure handoff asked = %v, want %v for a reading %v old", asked, tc.want, tc.age)
+			}
+			if got.Shift.Phase != api.ShiftNone {
+				t.Errorf("shift phase = %q, want none: pressure asks, it does not shift", got.Shift.Phase)
 			}
 		})
 	}

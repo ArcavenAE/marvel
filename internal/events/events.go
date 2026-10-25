@@ -146,9 +146,10 @@ const (
 	// unattended shift is legible without reconstructing it. See
 	// api.ShiftPolicy.
 	KindShiftAutoTriggered Kind = "team.shift-autotriggered"
-	// KindShiftHandoffRequested records that a seat past its max age was
-	// asked for a handoff (design D5 step 1). Message carries the age, the
-	// stage (quiet or hard) and whether the notice reached the pane.
+	// KindShiftHandoffRequested records that a seat was asked for a handoff
+	// (design D5 step 1), past its max age or near the end of its context
+	// window. Message carries the cause, why (the age and stage, or the
+	// occupancy and headroom) and whether the notice reached the pane.
 	KindShiftHandoffRequested Kind = "team.shift-handoff-requested"
 	// KindShiftHandoffMissing is the escalation: a handoff request's window
 	// expired with no marker, or the role declares no handoff path, so marvel

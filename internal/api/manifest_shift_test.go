@@ -24,6 +24,8 @@ name = "squad"
     [team.role.shift]
     on = "context-pressure"
     headroom_tokens = 120000
+    handoff = "/tmp/handoffs/{session}.md"
+    handoff_marker = "END HANDOFF"
 `))
 	if err != nil {
 		t.Fatalf("parse: %v", err)

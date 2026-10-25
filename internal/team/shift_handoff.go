@@ -27,6 +27,19 @@ import (
 // handoffNotice is what a seat past its max age is sent.
 const handoffNotice = "shift: max age reached; write your handoff now"
 
+// pressureNotice is what a seat near the end of its context window is sent.
+// Everything from "write your handoff now" on is byte-identical to the max-age
+// notice, so a recognizer keyed on that clause matches both.
+const pressureNotice = "shift: context nearly full; write your handoff now"
+
+// handoffAsk is what differs between the causes of a handoff request: the
+// notice lead, the inject origin, and the event's account of why.
+type handoffAsk struct {
+	notice string
+	origin string
+	detail string
+}
+
 // maxHandoffTail bounds how much of a handoff file marvel reads to find its
 // last line.
 const maxHandoffTail = 4096
@@ -93,8 +106,8 @@ func lastWorked(s api.Session) time.Time {
 
 // requestHandoff asks sess for its handoff and records the pending request on
 // the team, durably, so a daemon restart inside the window resumes it.
-func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftCondition, sess api.Session, age time.Duration, stage string, now time.Time) {
-	text := handoffNotice
+func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftCondition, sess api.Session, ask handoffAsk, now time.Time) {
+	text := ask.notice
 	dirError := ""
 	var dirDev, dirIno uint64
 	if role.Shift.Handoff != "" {
@@ -118,7 +131,7 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 	delivery, undelivered := "delivered", ""
 	if c.Notify == nil {
 		undelivered = "no notifier"
-	} else if err := c.Notify(sess, text, NoticeMaxAge); err != nil {
+	} else if err := c.Notify(sess, text, ask.origin); err != nil {
 		undelivered = err.Error()
 	}
 	if undelivered != "" {
@@ -153,8 +166,8 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 		Role:       role.Name,
 		Session:    sess.Key(),
 		Generation: t.Generation,
-		Message: fmt.Sprintf("cause=%s: session %s age %s >= %s, %s threshold; notice %s; handoff window %s",
-			cond.On, sess.Key(), age.Round(time.Second), cond.MaxAge, stage, delivery, role.Shift.HandoffWindowOrDefault()) + dirNote,
+		Message: fmt.Sprintf("cause=%s: %s; notice %s; handoff window %s",
+			cond.On, ask.detail, delivery, role.Shift.HandoffWindowOrDefault()) + dirNote,
 	})
 }
 

@@ -2082,8 +2082,8 @@ roles:
 		role := &t.Roles[i]
 		conds := role.Shift.Conditions()
 		req, pending := t.ShiftRequests[role.Name]
-		if pending && !hasCondition(conds, api.ShiftTriggerMaxAge) {
-			// The policy that asked no longer declares max age.
+		if pending && !hasCondition(conds, req.Cause) {
+			// The policy that asked no longer declares the cause.
 			c.dropShiftRequest(t, role.Name)
 			pending = false
 		}
@@ -2097,32 +2097,44 @@ roles:
 			_, pending = t.ShiftRequests[role.Name]
 		}
 		for _, cond := range conds {
-			// A pending request already answers max age; the other
-			// conditions still hold their ground (design D6), and a shift
-			// one of them starts carries the request with it.
-			if pending && cond.On == api.ShiftTriggerMaxAge {
+			// A pending request holds the role's one slot (design D6): both
+			// causes ask the same seat for the same handoff and shift only on
+			// its marker, so a second request would only reset the window and
+			// clear an escalation that stays until the supervisor decides.
+			if pending {
 				continue
 			}
 			switch cond.On {
 			case api.ShiftTriggerContextPressure:
-				if c.autoShiftsThisTick >= maxAutoShiftsPerTick {
-					continue
-				}
-				sess, tokens, limit, ok := c.firstSessionOverRemainder(t, role, cond.HeadroomTokens)
+				sessKey, tokens, limit, ok := c.firstSessionOverRemainder(t, role, cond.HeadroomTokens)
 				if !ok {
 					continue
 				}
-				msg := fmt.Sprintf("cause=%s: session %s at %d/%d tokens, remainder %d <= headroom %d",
-					cond.On, sess, tokens, limit, limit-tokens, cond.HeadroomTokens)
-				if c.autoShift(t, role, sess, msg) {
-					return // one automatic shift per team per tick, within the fleet budget
+				sess, err := c.store.GetSession(sessKey)
+				if err != nil {
+					continue
 				}
+				// Handoff-first (marvel#442, the operator's ruling of 2026-10-04):
+				// no handoff is worse than autocompaction, so pressure asks and
+				// never shifts by itself.
+				c.requestHandoff(t, role, cond, sess, handoffAsk{
+					notice: pressureNotice,
+					origin: NoticeContextPressure,
+					detail: fmt.Sprintf("session %s at %d/%d tokens, remainder %d <= headroom %d",
+						sessKey, tokens, limit, limit-tokens, cond.HeadroomTokens),
+				}, now)
+				continue roles
 			case api.ShiftTriggerMaxAge:
 				sess, age, stage, ok := c.firstSessionOverAge(t, role, cond, now)
 				if !ok {
 					continue
 				}
-				c.requestHandoff(t, role, cond, sess, age, stage, now)
+				c.requestHandoff(t, role, cond, sess, handoffAsk{
+					notice: handoffNotice,
+					origin: NoticeMaxAge,
+					detail: fmt.Sprintf("session %s age %s >= %s, %s threshold",
+						sess.Key(), age.Round(time.Second), cond.MaxAge, stage),
+				}, now)
 				continue roles
 			}
 		}
