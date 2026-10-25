@@ -64,6 +64,10 @@ type ManifestPolicy struct {
 	Name     string         `toml:"name"              yaml:"name"`
 	Version  string         `toml:"version,omitempty" yaml:"version,omitempty"`
 	Settings map[string]any `toml:"settings,omitempty" yaml:"settings,omitempty"`
+	// SettingsFile names a JSON settings file marvel reads verbatim at
+	// projection, in place of inline Settings. A policy carries one or the
+	// other, never both.
+	SettingsFile string `toml:"settings_file,omitempty" yaml:"settings_file,omitempty"`
 }
 
 // ManifestWorkspace is the workspace section of a manifest.

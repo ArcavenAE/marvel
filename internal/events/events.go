@@ -203,6 +203,11 @@ const (
 	// signal of a policy landing at spawn and of live re-projection after
 	// a manifest change. See finding-024.
 	KindPolicyProjected Kind = "policy.projected"
+	// KindPolicyProjectionFailed records that a policy's settings file could
+	// not be read as a JSON object when marvel projected it for a session. The
+	// session's projected file is left as it was, never replaced by an empty
+	// policy. Error severity; emitted once per change of failure.
+	KindPolicyProjectionFailed Kind = "policy.projection-failed"
 	// KindContextLimitUnresolved records that marvel measured a session's
 	// context tokens but could not resolve the model's context window, so
 	// CTX% stays blank rather than showing a percentage against a guessed
@@ -491,6 +496,7 @@ var allKinds = []Kind{
 	KindRoleReplicasInvalid,
 	KindRoleRemoved,
 	KindPolicyProjected,
+	KindPolicyProjectionFailed,
 	KindContextLimitUnresolved,
 	KindScheduleDSTAcknowledged,
 	KindScheduleStale,

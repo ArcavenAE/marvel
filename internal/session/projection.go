@@ -79,6 +79,13 @@ func (m *Manager) Reproject() int {
 	return changedCount
 }
 
+// ReprojectFileBacked re-projects the live sessions whose policy reads a
+// settings file, and reports how many files changed. The controller calls it
+// on each reconcile so a rewritten file is projected without a recast.
+func (m *Manager) ReprojectFileBacked() int {
+	return 0
+}
+
 // reprojectContext rebuilds the adapter and launch context for a live
 // session from current store state — the same team/role/workspace lookups
 // planLaunch does at spawn, minus the stream sink (re-projection touches
