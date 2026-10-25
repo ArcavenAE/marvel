@@ -2368,6 +2368,11 @@ type injectParams struct {
 	// capture cannot rule a usage-limit menu out of (marvel#559 part b). It does
 	// not lift the refusal on a menu the matcher finds.
 	AllowBareDigit bool `json:"allow_bare_digit,omitempty"`
+	// Ring marks the inject as a ring: it writes the session's ring claim
+	// before the keys go in and is refused while another ring holds it
+	// (docs/design/marvel-watcher.md, section 11.2). Off by default; an inject
+	// without it ignores the claim.
+	Ring bool `json:"ring,omitempty"`
 }
 
 // Injector is the caller's own account of who it is.
@@ -2427,8 +2432,26 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) daemonrpc.Resp
 		}
 	}
 
-	if err := sendInject(d.driver, d.events, sess, p, clearKey, origin); err != nil {
-		return daemonrpc.Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
+	// The ring claim is set after every refusal above and just before the keys
+	// go in, so a refused inject leaves no claim.
+	var ringAt time.Time
+	if p.Ring {
+		ringAt = time.Now().UTC()
+		if err := d.ringClaim(sess, c, p.Injector, ringAt); err != nil {
+			var refusal *api.RingRefusal
+			if errors.As(err, &refusal) {
+				return d.refuseInject(sess, p, origin+" flag=ring", err.Error())
+			}
+			return daemonrpc.Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, err)}
+		}
+		origin += " flag=ring"
+	}
+	sendErr := sendInject(d.driver, d.events, sess, p, clearKey, origin)
+	if p.Ring {
+		d.ringSettle(sess, ringAt, sendErr)
+	}
+	if sendErr != nil {
+		return daemonrpc.Response{Error: fmt.Sprintf("inject %s: %v", p.SessionKey, sendErr)}
 	}
 
 	out := map[string]string{
@@ -2439,6 +2462,26 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) daemonrpc.Resp
 		d.verifyInject(sess, reader, p, out)
 	}
 	return respond(out)
+}
+
+// ringClaim writes the ring claim for sess, or returns a *api.RingRefusal when
+// another ring still holds it. The ringer is the daemon's own account of the
+// caller (injectOrigin, without the flag and override suffixes), a claim and
+// not a proof.
+func (d *Daemon) ringClaim(sess api.Session, c caller, from Injector, now time.Time) error {
+	return d.store.ClaimRing(sess.Key(), injectOrigin(c, from), now)
+}
+
+// ringSettle records how the send ended: sent, or failed, which stops holding
+// the seat. Nothing here marks a ring confirmed.
+func (d *Daemon) ringSettle(sess api.Session, ringAt time.Time, sendErr error) {
+	result := api.RingSent
+	if sendErr != nil {
+		result = api.RingFailed
+	}
+	if err := d.store.SettleRing(sess.Key(), ringAt, result); err != nil {
+		log.Printf("inject: %s: settle ring claim: %v", sess.Key(), err)
+	}
 }
 
 // isDismissKey reports whether an inject is a lone Escape.

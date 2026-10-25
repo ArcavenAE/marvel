@@ -144,6 +144,10 @@ func cloneSession(s *Session) Session {
 	out.SpendPromptTokens = copyInt(s.SpendPromptTokens)
 	out.CostSamples = slices.Clone(s.CostSamples)
 	out.APISamples = slices.Clone(s.APISamples)
+	if s.RingClaim != nil {
+		rc := *s.RingClaim
+		out.RingClaim = &rc
+	}
 	if s.HarnessState != nil {
 		hs := *s.HarnessState
 		hs.Evidence = append([]string(nil), s.HarnessState.Evidence...)

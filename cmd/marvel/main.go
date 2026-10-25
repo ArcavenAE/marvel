@@ -1881,7 +1881,7 @@ restart_policy=never, short of deleting and re-applying the whole team.`,
 }
 
 func injectCmd() *cobra.Command {
-	var literal, enter, verify, clearDraft, allowBareDigit bool
+	var literal, enter, verify, clearDraft, allowBareDigit, ring bool
 	var settle time.Duration
 	var keys []string
 	cmd := &cobra.Command{
@@ -1930,6 +1930,10 @@ at an empty composer and have no reader that can see a draft yet.`,
 			}
 			steps = applyInjectOptions(steps, verify, clearDraft, settle)
 			steps = withAllowBareDigit(steps, allowBareDigit)
+			steps, err = withRing(steps, ring, hasText)
+			if err != nil {
+				return err
+			}
 			var unconfirmed error
 			for _, step := range steps {
 				params, _ := json.Marshal(injectRequestParams(args[0], step))
@@ -1954,6 +1958,7 @@ at an empty composer and have no reader that can see a draft yet.`,
 	}
 	cmd.Flags().BoolVar(&verify, "verify", false, "read the composer afterwards and exit non-zero if the effect was not seen")
 	cmd.Flags().BoolVar(&allowBareDigit, "allow-bare-digit", false, "send a bare 1, 2 or 3 to a claude pane that might be showing a usage-limit menu (it never answers a menu marvel can see)")
+	cmd.Flags().BoolVar(&ring, "ring", false, "mark this inject as a ring: write the seat's ring claim first, and be refused while another ring holds it")
 	cmd.Flags().BoolVar(&clearDraft, "clear", false, "clear a staged draft first (refused wherever no reader can vouch for it)")
 	cmd.Flags().DurationVar(&settle, "settle", 0, "with --verify or --clear, how long to wait for a redraw (default is the repaint default)")
 	cmd.Flags().BoolVarP(&literal, "literal", "l", true, "send keys literally (no special key interpretation)")

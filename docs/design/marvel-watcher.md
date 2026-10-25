@@ -369,6 +369,11 @@ Director's reader already ships (`director-mcp unread --json`, slice M), so it i
 
 - **A1 to A3** (aae-orc-f3usp, aae-orc-dehyh, aae-orc-i9tw9) carry 11.3 as their spec.
 - **G1a (aae-orc-svz6j), the ring claim in the inject path.** `marvel inject --ring` writes `last_ring_at`, the ringer and `ring_result = pending` before the send. Inside the window it refuses, with the holder and time. The claim reads in `describe session`. G1 (aae-orc-2y4mi) now depends on it and becomes the watcher's use of it. Building G1a turns on no watcher ring, so it sits outside the ring hold, pending director's confirmation of 11.2.
+  - As built (operator ruling, 2026-10-25): the claim is `ring_claim` on the session record, `{ring_at, ringer, result}`, written through the store's session update so the check and the write are one step. The ringer is the daemon's own account of the caller (the transport it saw and what the caller declared, the same words the inject event carries, without the flag suffixes); it is a claim, not a proof. The claim persists with the session record, so a pending claim after a restart still reads as rung until it lapses.
+  - `result` is `pending` (written before the send), `sent` (the keys went in) or `failed` (the send errored). Pending and sent block until `ring_at` plus the window; failed does not. Nothing in G1a marks a ring confirmed.
+  - The window is one constant, 120 s (`api.RingClaimWindow`), section 8's confirm window until C2 measures it. There is no flag or config.
+  - The check runs after the existing preflight, menu and bare-digit refusals and just before the keys go in, so a refused inject leaves no claim. A refused ring is recorded as an inject refusal, exits as the other inject refusals do, and leaves the claim untouched. The claim is not gated on the composer reading Empty; that is the watcher's own ring condition (G1).
+  - `--ring` rides on the step that carries the text, so `--clear` before it and `--verify` after it do not claim twice. A keys-only inject with `--ring` is refused client-side, before any request.
 - **Director: `unread.go` ages on the broker clock** (aae-orc-f7fq8, 11.2).
 - **Director: lane-ledger's unread column** (aae-orc-p9vdn, 11.4).
 - **Director: the doorbell and supervisor rings use `marvel inject --ring`** (aae-orc-a2pk9), blocked by G1a.
