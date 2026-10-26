@@ -1,13 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
 )
 
 // The rig for the watch across clusters: a fetch that blocks until the test
@@ -296,6 +300,89 @@ func TestEachClusterAgesOnItsOwnAsOf(t *testing.T) {
 	} {
 		if !strings.Contains(f, want) {
 			t.Errorf("missing %q:\n%s", want, f)
+		}
+	}
+}
+
+// q quits the view while a fetch is still blocked: the keys are never behind a
+// daemon that does not answer.
+func TestFanWatchQuitsWhileAFetchIsBlocked(t *testing.T) {
+	r := newFanRig(t, time.Hour, time.Hour, "a", "b")
+	r.waitStarted("a", 1)
+	r.waitStarted("b", 1)
+	r.keys <- 'q'
+	select {
+	case <-r.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("q did not quit the view while the fetches were blocked")
+	}
+}
+
+// An entry that shares a socket with another is polled with its stamp. Both
+// reads together stay inside one timer, so a daemon that answers each call
+// within the timer, but slowly, is not reported as silent: the stamp is the
+// part that gives way.
+func TestStampReadSharesTheFetchBudget(t *testing.T) {
+	setWidth(t, 200)
+	timer, backstop, delay := 600*time.Millisecond, 150*time.Millisecond, 400*time.Millisecond
+	fastTimer(t, timer)
+	old := fanWatchBackstop
+	fanWatchBackstop = backstop
+	t.Cleanup(func() { fanWatchBackstop = old })
+
+	f := startSD(t, sdStart, []api.Session{row("w", "s1"), row("w", "s2")})
+	f.delay = delay
+	link := filepath.Join(filepath.Dir(f.sock), "alias.sock")
+	if err := os.Symlink(f.sock, link); err != nil {
+		t.Fatal(err)
+	}
+	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock}, config.Cluster{Name: "b", Socket: link})
+	cfgFile, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var targets []clusterTarget
+	for _, n := range []string{"a", "b"} {
+		tg, err := resolveCluster(cfgFile, n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		targets = append(targets, tg)
+	}
+	params, err := json.Marshal(getRequest(fanOutResource, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols, _, err := loadSessionColumnsSel("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := newFanWatchConfig(targets, params, time.Second)
+	frames := make(chan string, 256)
+	cfg.out = func(frame string) {
+		select {
+		case frames <- frame:
+		default:
+		}
+	}
+	keys := make(chan byte, 2)
+	done := make(chan struct{})
+	go func() { fanWatchLoop(newWatchState(cols), cfg, keys, make(chan time.Time)); close(done) }()
+	t.Cleanup(func() { keys <- 'q'; <-done })
+
+	deadline := time.After(10 * time.Second)
+	var last string
+	for {
+		select {
+		case last = <-frames:
+			if strings.Contains(last, "cluster a: no_answer_in_time") {
+				t.Fatalf("a read that answered within the timer was reported silent:\n%s", last)
+			}
+			if strings.Contains(last, "cluster a: answered") {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("cluster a never reached answered:\n%s", last)
 		}
 	}
 }
