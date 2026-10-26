@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -101,10 +100,11 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 	}
 	results := make(chan fanResult, 8*len(states)+8)
 	timers := make(chan fanTimer, 8*len(states)+8)
+	// Closed when the loop returns, so a fetch that finishes later drops its
+	// result and ends. The loop does not wait for one: a key must never sit
+	// behind a daemon that is not answering.
 	stop := make(chan struct{})
 	defer close(stop)
-	var wg sync.WaitGroup
-	defer wg.Wait()
 
 	trace := func(e fanEvent) {
 		if cfg.trace != nil {
@@ -147,9 +147,7 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 		}
 		arm(cfg.stale, "stale")
 		arm(cfg.timeout, "timeout")
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
 			f := cfg.fetch(s.name, seq, want)
 			select {
 			case results <- fanResult{s.name, seq, f}:
@@ -369,10 +367,14 @@ func newFanWatchConfig(targets []clusterTarget, params json.RawMessage, interval
 		timeout:  fanOutTimeout + fanWatchBackstop,
 		fetch: func(name string, _ uint64, wantStamp bool) fanFetch {
 			t := byName[name]
+			began := time.Now()
 			rec, rows, fp := readCluster(t, params)
 			f := fanFetch{rec: rec, rows: rows, fingerprint: fp}
-			if wantStamp && rec.answered() {
-				f.stamp, f.stampOK = readStamp(t)
+			// The stamp is read inside what is left of the one timer, so a poll
+			// never outlives it. A slow daemon loses its stamp for this frame,
+			// and the rows it gave still count.
+			if left := fanOutTimeout - time.Since(began); wantStamp && rec.answered() && left > 0 {
+				f.stamp, f.stampOK = readStampWithin(t, left)
 			}
 			return f
 		},

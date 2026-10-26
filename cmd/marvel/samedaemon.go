@@ -110,11 +110,14 @@ type daemonStamp struct {
 func (s daemonStamp) usable() bool { return s.PID != 0 && !s.StartedAt.IsZero() }
 
 // readStamp asks a daemon for its stamp under the fan-out timer.
-func readStamp(t clusterTarget) (daemonStamp, bool) {
+func readStamp(t clusterTarget) (daemonStamp, bool) { return readStampWithin(t, fanOutTimeout) }
+
+// readStampWithin asks a daemon for its stamp under the given timer.
+func readStampWithin(t clusterTarget, timeout time.Duration) (daemonStamp, bool) {
 	opts := t.Opts
 	opts.StrictHostKey = true
 	opts.OfferOneKey = true
-	opts.Timeout = fanOutTimeout
+	opts.Timeout = timeout
 	resp, err := daemonrpc.SendRequestWith(t.Addr, daemonrpc.Request{Method: "version"}, opts)
 	if err != nil || resp.Error != "" {
 		return daemonStamp{}, false
