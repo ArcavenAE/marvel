@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -1086,6 +1087,7 @@ func workCmd() *cobra.Command {
 
 func getCmd() *cobra.Command {
 	var watchSec, columns, output string
+	var getArgs []string // the arguments left once -w has taken its value
 	var noTrunc, header, load, allClusters bool
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
@@ -1161,9 +1163,16 @@ the table's. Nothing is replaced for display: a name holding control or bidi
 characters, which the table draws as U+FFFD, appears as the daemon sent it, so -o output is raw: a
 terminal may act on such characters, and piping it through cat -v shows them.
 Secret-looking Env values show as (redacted), as in the team document.`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		Args: func(cmd *cobra.Command, args []string) error {
+			// The value of a bare -w is split off once, here, and RunE reads
+			// the result: a second split would see the interval already moved
+			// into watchSec and leave it among the arguments.
+			getArgs, watchSec = splitWatchValue(cmd.Flags().Changed("watch"), watchSec, args)
+			return cobra.ExactArgs(1)(cmd, getArgs)
+		},
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			watching := cmd.Flags().Changed("watch")
+			args := getArgs
 			names, fan, err := clusterSet(args[0], allClusters)
 			if err != nil {
 				return err
@@ -1203,13 +1212,11 @@ Secret-looking Env values show as (redacted), as in the team document.`,
 				return fmt.Errorf("--columns applies to get sessions only")
 			}
 			if watching {
-				secs := 2
-				if watchSec != "" {
-					if _, err := fmt.Sscanf(watchSec, "%d", &secs); err != nil || secs < 1 {
-						return fmt.Errorf("invalid watch interval: %s", watchSec)
-					}
+				interval, err := watchInterval(watchSec)
+				if err != nil {
+					return err
 				}
-				return watchSessionsLoop(time.Duration(secs)*time.Second, cols, explicit, noTrunc)
+				return watchSessionsLoop(interval, cols, explicit, noTrunc)
 			}
 			headerText := ""
 			if sessions && wantHeader(header) {
@@ -1222,13 +1229,51 @@ Secret-looking Env values show as (redacted), as in the team document.`,
 	cmd.Flags().BoolVar(&load, "load", false, "with get teams: one row per team with seats, mean ACTIVE% and limited seats")
 	cmd.Flags().BoolVar(&noTrunc, "no-trunc", false, "print RUNTIME and WORKDIR in full instead of cutting them to fit")
 	f := cmd.Flags().VarPF(newOptionalString(&watchSec), "watch", "w", "watch sessions (optional: seconds, default 2)")
-	f.NoOptDefVal = ""
+	f.NoOptDefVal = bareWatch
 	cmd.Flags().StringVar(&columns, "columns", "",
 		"sessions columns, comma-separated and in order (overrides display.session_columns); names: "+validColumnNames())
 	cmd.Flags().BoolVar(&header, "header", false,
 		"print the daemon header above the sessions table even when stdout is not a terminal")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "print get team or get workspace as json or yaml (desired and observed sections), or get sessions as json or yaml (a list; with a cluster set, {clusters, sessions})")
 	return cmd
+}
+
+// bareWatch is what the watch flag holds when it is given without a value. It
+// is not empty because pflag reads an empty NoOptDefVal as "a value is
+// required", which is what made a bare -w fail.
+const bareWatch = "default"
+
+// defaultWatchInterval is the poll interval of a bare -w.
+const defaultWatchInterval = 2 * time.Second
+
+// watchInterval turns the --watch flag's value into the poll interval.
+func watchInterval(v string) (time.Duration, error) {
+	if v == "" || v == bareWatch {
+		return defaultWatchInterval, nil
+	}
+	secs, err := strconv.Atoi(v)
+	if err != nil || secs < 1 {
+		return 0, fmt.Errorf("invalid watch interval: %s", v)
+	}
+	return time.Duration(secs) * time.Second, nil
+}
+
+// splitWatchValue keeps "-w 5" meaning five seconds. A flag whose value is
+// optional only takes a value written as -w=5, so after a bare -w the 5 lands
+// among the positional arguments. When the flag was given bare and exactly one
+// of two arguments is an integer, that argument is the interval (watchInterval
+// refuses one below 1) and the other is the resource type. Resource types are never numbers, so nothing
+// else is taken.
+func splitWatchValue(watching bool, cur string, args []string) ([]string, string) {
+	if !watching || cur != bareWatch || len(args) != 2 {
+		return args, cur
+	}
+	for i, a := range args {
+		if _, err := strconv.Atoi(a); err == nil {
+			return []string{args[1-i]}, a
+		}
+	}
+	return args, cur
 }
 
 // optionalString implements pflag.Value for a flag with an optional value.
