@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
 )
 
 // watchOf parses args with get's real flag set and returns the interval the
@@ -64,5 +67,36 @@ func TestWatchValueIsNotSwallowedWithoutTheFlag(t *testing.T) {
 	// A second positional with no -w stays an error, as before.
 	if _, err := watchOf(t, "sessions", "5"); err == nil {
 		t.Error("get sessions 5: no error, want the extra argument refused")
+	}
+}
+
+// The real command, Args and RunE both, with a value after a bare -w. The
+// table above replaces RunE, so only these see which argument RunE takes as
+// the resource type. Each case ends in a refusal that names the resource: with
+// "5" taken for it, the message is another one.
+func TestWatchValueReachesRunEAsTheResourceType(t *testing.T) {
+	a := startFake(t, fakeAnswers, []api.Session{row("w", "s1")})
+	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock})
+	const across = "--watch across clusters is not available yet"
+	tests := map[string]struct {
+		args []string
+		want string
+	}{
+		"value before type, all clusters": {[]string{"get", "-w", "5", "sessions", "--all-clusters"}, across},
+		"value after type, all clusters":  {[]string{"get", "sessions", "-w", "5", "--all-clusters"}, across},
+		"bare, all clusters":              {[]string{"get", "-w", "sessions", "--all-clusters"}, across},
+		"equals, all clusters":            {[]string{"get", "sessions", "-w=5", "--all-clusters"}, across},
+		"value before type, teams load":   {[]string{"get", "-w", "5", "teams", "--load"}, "--load and --watch cannot be combined"},
+		"value after type, teams load":    {[]string{"get", "teams", "-w", "5", "--load"}, "--load and --watch cannot be combined"},
+		"value before type, no terminal":  {[]string{"get", "-w", "5", "sessions"}, "watch mode requires a terminal"},
+		"value after type, no terminal":   {[]string{"get", "sessions", "-w", "5"}, "watch mode requires a terminal"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, _, stderr := runFanGet(t, tc.args...)
+			if !strings.Contains(stderr, tc.want) {
+				t.Errorf("get %v: stderr = %q, want it to hold %q", tc.args, stderr, tc.want)
+			}
+		})
 	}
 }
