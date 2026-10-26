@@ -27,12 +27,13 @@ func TestWatchTakesAnOptionalInterval(t *testing.T) {
 		args []string
 		want time.Duration
 	}{
-		"bare short":       {[]string{"sessions", "-w"}, 2 * time.Second},
-		"bare long":        {[]string{"sessions", "--watch"}, 2 * time.Second},
-		"short equals":     {[]string{"sessions", "-w=5"}, 5 * time.Second},
-		"long equals":      {[]string{"sessions", "--watch=7"}, 7 * time.Second},
-		"short then space": {[]string{"sessions", "-w", "5"}, 5 * time.Second},
-		"bare before type": {[]string{"-w", "sessions"}, 2 * time.Second},
+		"bare short":        {[]string{"sessions", "-w"}, 2 * time.Second},
+		"bare long":         {[]string{"sessions", "--watch"}, 2 * time.Second},
+		"short equals":      {[]string{"sessions", "-w=5"}, 5 * time.Second},
+		"long equals":       {[]string{"sessions", "--watch=7"}, 7 * time.Second},
+		"short then space":  {[]string{"sessions", "-w", "5"}, 5 * time.Second},
+		"bare before type":  {[]string{"-w", "sessions"}, 2 * time.Second},
+		"value before type": {[]string{"-w", "5", "sessions"}, 5 * time.Second},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
