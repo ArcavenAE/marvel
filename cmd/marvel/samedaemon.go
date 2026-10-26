@@ -22,13 +22,16 @@ import (
 // or the same host key the operator verified, and only then does the pid and
 // start time the daemon reports have to agree.
 
-// addressKey spells an address so two spellings of one unix path compare
-// equal. Other schemes compare as written.
-func addressKey(addr string) string {
-	if daemonrpc.IsSSH(addr) || daemonrpc.IsMRVL(addr) || hasScheme(addr) {
-		return addr
+// addressKey is what makes a second dial redundant: the same address read
+// with the same identity. Two spellings of one unix path compare equal; other
+// schemes compare as written. The identity is part of the key because the
+// same address read with another key can answer differently, and a refusal is
+// news the second entry must still report.
+func addressKey(t clusterTarget) string {
+	if daemonrpc.IsSSH(t.Addr) || daemonrpc.IsMRVL(t.Addr) || hasScheme(t.Addr) {
+		return t.Addr + "\x00" + t.Opts.Identity
 	}
-	return filepath.Clean(addr)
+	return filepath.Clean(t.Addr)
 }
 
 func hasScheme(addr string) bool {
@@ -42,7 +45,7 @@ func firstAddress(targets []clusterTarget) []int {
 	first := make([]int, len(targets))
 	seen := map[string]int{}
 	for i, t := range targets {
-		k := addressKey(t.Addr)
+		k := addressKey(t)
 		if j, ok := seen[k]; ok {
 			first[i] = j
 			continue
