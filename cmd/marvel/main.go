@@ -1087,6 +1087,7 @@ func workCmd() *cobra.Command {
 
 func getCmd() *cobra.Command {
 	var watchSec, columns, output string
+	var getArgs []string // the arguments left once -w has taken its value
 	var noTrunc, header, load, allClusters bool
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
@@ -1163,13 +1164,15 @@ characters, which the table draws as U+FFFD, appears as the daemon sent it, so -
 terminal may act on such characters, and piping it through cat -v shows them.
 Secret-looking Env values show as (redacted), as in the team document.`,
 		Args: func(cmd *cobra.Command, args []string) error {
-			rest, secs := splitWatchValue(cmd.Flags().Changed("watch"), watchSec, args)
-			watchSec = secs
-			return cobra.ExactArgs(1)(cmd, rest)
+			// The value of a bare -w is split off once, here, and RunE reads
+			// the result: a second split would see the interval already moved
+			// into watchSec and leave it among the arguments.
+			getArgs, watchSec = splitWatchValue(cmd.Flags().Changed("watch"), watchSec, args)
+			return cobra.ExactArgs(1)(cmd, getArgs)
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			watching := cmd.Flags().Changed("watch")
-			args, _ = splitWatchValue(watching, watchSec, args)
+			args := getArgs
 			names, fan, err := clusterSet(args[0], allClusters)
 			if err != nil {
 				return err
