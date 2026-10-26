@@ -36,14 +36,14 @@ type sdFake struct {
 	versions int
 }
 
-func startSD(t *testing.T, pid int, started time.Time, getRows ...[]api.Session) *sdFake {
+func startSD(t *testing.T, started time.Time, getRows ...[]api.Session) *sdFake {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "sd")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	f := &sdFake{sock: filepath.Join(dir, "d.sock"), pid: pid, started: started, getRows: getRows}
+	f := &sdFake{sock: filepath.Join(dir, "d.sock"), pid: 4242, started: started, getRows: getRows}
 	ln, err := net.Listen("unix", f.sock)
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ var sdStart = time.Date(2026, 10, 26, 9, 0, 0, 0, time.UTC)
 // Two entries that spell one address dial it once; the second reads
 // same_daemon and names the first.
 func TestSameAddressDialledOnce(t *testing.T) {
-	f := startSD(t, 4242, sdStart, []api.Session{row("w", "s1"), row("w", "s2")})
+	f := startSD(t, sdStart, []api.Session{row("w", "s1"), row("w", "s2")})
 	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock}, config.Cluster{Name: "b", Socket: f.sock})
 	doc, code := readDoc(t, "--cluster", "a,b")
 	if code != 0 {
@@ -224,7 +224,7 @@ func TestSameAddressDialledOnce(t *testing.T) {
 // Two paths to one socket (one a symlink) are one daemon, once its pid and
 // start time agree.
 func TestSameInodeMerges(t *testing.T) {
-	f := startSD(t, 4242, sdStart, []api.Session{row("w", "s1"), row("w", "s2")})
+	f := startSD(t, sdStart, []api.Session{row("w", "s1"), row("w", "s2")})
 	link := filepath.Join(filepath.Dir(f.sock), "alias.sock")
 	if err := os.Symlink(f.sock, link); err != nil {
 		t.Fatal(err)
@@ -246,8 +246,8 @@ func TestSameInodeMerges(t *testing.T) {
 // one inode never merge on those fields.
 func TestEchoedVersionNotMerged(t *testing.T) {
 	rows := []api.Session{row("w", "s1")}
-	a := startSD(t, 4242, sdStart, rows)
-	b := startSD(t, 4242, sdStart, rows)
+	a := startSD(t, sdStart, rows)
+	b := startSD(t, sdStart, rows)
 	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "b", Socket: b.sock})
 	doc, _ := readDoc(t, "--cluster", "a,b")
 	for _, n := range []string{"a", "b"} {
@@ -264,8 +264,8 @@ func TestEchoedVersionNotMerged(t *testing.T) {
 // when both report one pid and start time.
 func TestSharedHostKeyDifferentSocketNotMerged(t *testing.T) {
 	rows := []api.Session{row("w", "s1")}
-	a := startSD(t, 4242, sdStart, rows)
-	b := startSD(t, 4242, sdStart, rows)
+	a := startSD(t, sdStart, rows)
+	b := startSD(t, sdStart, rows)
 	addr, key := sshFront(t, map[string]string{"/run/a.sock": a.sock, "/run/b.sock": b.sock})
 	id := identityFile(t)
 	clusterConfig(t,
@@ -286,7 +286,7 @@ func TestSharedHostKeyDifferentSocketNotMerged(t *testing.T) {
 // Two ssh:// entries to one server, with the same verified host key, the same
 // socket path, and one pid and start time, are one daemon.
 func TestSameHostKeyAndSocketMerges(t *testing.T) {
-	f := startSD(t, 4242, sdStart, []api.Session{row("w", "s1"), row("w", "s2")})
+	f := startSD(t, sdStart, []api.Session{row("w", "s1"), row("w", "s2")})
 	addr, key := sshFront(t, map[string]string{"/run/d.sock": f.sock})
 	id := identityFile(t)
 	clusterConfig(t,
@@ -309,7 +309,7 @@ func TestSameHostKeyAndSocketMerges(t *testing.T) {
 // view: a session one read saw and the other missed (a spawn between the two
 // reads) is still shown.
 func TestMergeNeverHidesStatusLine(t *testing.T) {
-	f := startSD(t, 4242, sdStart,
+	f := startSD(t, sdStart,
 		[]api.Session{row("w", "s1")},
 		[]api.Session{row("w", "s1"), row("w", "s2")})
 	link := filepath.Join(filepath.Dir(f.sock), "alias.sock")
