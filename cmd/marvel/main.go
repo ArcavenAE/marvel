@@ -1231,6 +1231,11 @@ Secret-looking Env values show as (redacted), as in the team document.`,
 	return cmd
 }
 
+// watchInterval turns the --watch flag's value into the poll interval.
+func watchInterval(v string) (time.Duration, error) {
+	return 0, nil
+}
+
 // optionalString implements pflag.Value for a flag with an optional value.
 type optionalString struct {
 	val *string
