@@ -66,6 +66,11 @@ type DialOptions struct {
 	// cluster's credentials to another. With no loadable key the dial fails
 	// with a NoIdentityError before any connection.
 	OfferOneKey bool
+	// OnVerifiedHostKey, when set, is called with the SHA256 fingerprint of
+	// the host key a strict-mode dial verified against known_hosts. It is not
+	// called for a key the strict check refused, nor in any other mode, so a
+	// fingerprint it reports is one the operator recorded.
+	OnVerifiedHostKey func(fingerprint string)
 	// Timeout bounds the whole exchange when positive: one timer, armed
 	// before the dial, over connect, handshake, auth, request and reply,
 	// which closes the connection when it fires (see exchange). Zero keeps
@@ -472,10 +477,21 @@ func sshClientConfig(user string, opts DialOptions, offered *offeredKeys) (*ssh.
 	} else if opts.StrictHostKey {
 		mode = knownhosts.ModeStrict
 	}
+	hostKey := knownhosts.Callback(layout, mode, nil, nil)
+	if opts.OnVerifiedHostKey != nil && mode == knownhosts.ModeStrict {
+		check := hostKey
+		hostKey = func(host string, remote net.Addr, key ssh.PublicKey) error {
+			if err := check(host, remote, key); err != nil {
+				return err
+			}
+			opts.OnVerifiedHostKey(ssh.FingerprintSHA256(key))
+			return nil
+		}
+	}
 	return &ssh.ClientConfig{
 		User:            user,
 		Auth:            methods,
-		HostKeyCallback: knownhosts.Callback(layout, mode, nil, nil),
+		HostKeyCallback: hostKey,
 		Timeout:         10 * time.Second,
 	}, closeHeld, nil
 }

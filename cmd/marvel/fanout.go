@@ -30,7 +30,7 @@ import (
 var fanOutTimeout = 10 * time.Second
 
 // fanOutMethods are the daemon methods a fan-out may call: reads only.
-var fanOutMethods = []string{"get"}
+var fanOutMethods = []string{"get", "version"}
 
 // outcome is how one cluster's read ended. The set is closed and pinned by a
 // test.
@@ -39,7 +39,7 @@ type outcome string
 const (
 	outcomeAnswered       outcome = "answered"
 	outcomeStarting       outcome = "starting"
-	outcomeSameDaemon     outcome = "same_daemon" // set by the merge in #831; nothing here emits it
+	outcomeSameDaemon     outcome = "same_daemon" // set by the merge in samedaemon.go
 	outcomeUnreachable    outcome = "unreachable"
 	outcomeNoAnswer       outcome = "no_answer_in_time"
 	outcomeAuthRefused    outcome = "auth_refused"
@@ -158,21 +158,29 @@ func nextStep(o outcome) string {
 	return ""
 }
 
-// readCluster reads one cluster's sessions under the timer.
-func readCluster(t clusterTarget, params json.RawMessage) (clusterRecord, []api.Session) {
+// readCluster reads one cluster's sessions under the timer. The third result
+// is the fingerprint of the host key the dial verified, empty when it verified
+// none (a unix socket, or a dial that failed first).
+func readCluster(t clusterTarget, params json.RawMessage) (clusterRecord, []api.Session, string) {
 	rec := clusterRecord{Cluster: t.Name}
-	finish := func() (clusterRecord, []api.Session) {
+	// The host key callback runs on the dial's goroutine, which can outlive the
+	// timer, so the fingerprint is guarded.
+	var fpMu sync.Mutex
+	var fp string
+	fingerprint := func() string { fpMu.Lock(); defer fpMu.Unlock(); return fp }
+	finish := func() (clusterRecord, []api.Session, string) {
 		rec.AsOf = time.Now().UTC().Format(time.RFC3339)
 		if rec.Outcome != outcomeAnswered && rec.Outcome != outcomeStarting && rec.Next == "" {
 			rec.Next = nextStep(rec.Outcome)
 		}
-		return rec, nil
+		return rec, nil, fingerprint()
 	}
 	opts := t.Opts
 	opts.StrictHostKey = true
 	opts.OfferOneKey = true
 	opts.Timeout = fanOutTimeout
-	resp, err := daemonrpc.SendRequestWith(t.Addr, daemonrpc.Request{Method: fanOutMethods[0], Params: params}, opts)
+	opts.OnVerifiedHostKey = func(v string) { fpMu.Lock(); fp = v; fpMu.Unlock() }
+	resp, err := daemonrpc.SendRequestWith(t.Addr, daemonrpc.Request{Method: "get", Params: params}, opts)
 	if err != nil {
 		rec.Outcome, rec.Phase, rec.Fingerprint, rec.Cause = classifyDialError(err)
 		var noID *daemonrpc.NoIdentityError
@@ -206,7 +214,7 @@ func readCluster(t clusterTarget, params json.RawMessage) (clusterRecord, []api.
 	rec.Cause = fmt.Sprintf("%d sessions", n)
 	rec.AsOf = time.Now().UTC().Format(time.RFC3339)
 	rec.Next = nextStep(rec.Outcome)
-	return rec, rows
+	return rec, rows, fingerprint()
 }
 
 // collectFanOut resolves every named cluster from its own config entry, then
@@ -231,15 +239,26 @@ func collectFanOut(names []string, composer bool) ([]clusterRecord, []api.Sessio
 	}
 	records := make([]clusterRecord, len(targets))
 	rowSets := make([][]api.Session, len(targets))
+	fingerprints := make([]string, len(targets))
+	firstAt := firstAddress(targets)
 	var wg sync.WaitGroup
 	for i, t := range targets {
+		if firstAt[i] != i {
+			continue // an address already dialled is not dialled again
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			records[i], rowSets[i] = readCluster(t, params)
+			records[i], rowSets[i], fingerprints[i] = readCluster(t, params)
 		}()
 	}
 	wg.Wait()
+	for i, t := range targets {
+		if firstAt[i] != i {
+			records[i] = recordForRepeatedAddress(t.Name, records[firstAt[i]])
+		}
+	}
+	mergeSameDaemon(targets, records, rowSets, fingerprints)
 	var rows []api.Session
 	for _, rs := range rowSets {
 		rows = append(rows, rs...)

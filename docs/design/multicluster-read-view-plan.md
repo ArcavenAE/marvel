@@ -229,6 +229,9 @@ Both are filed as bd `blocks`, so the ready list shows only the chain's head.
 | 12 | #832 | aae-orc-w5ik7 | `get sessions -w` across clusters, with #822's sequence discard folded in | jkb6u, lfb76 (r) |
 | 13 | #833 | aae-orc-xj69u | `get teams` and `events` across clusters | jkb6u, w5ik7 (r) |
 
+Status, 2026-10-26: link 11 (#831) is open as PR #1082, on top of the bare `-w`
+fix in PR #1081; link 12 (#832) follows on #1082 (operator go, 2026-10-24).
+
 Not in the chain: #834 (read-only permission level; unscheduled, its own
 ruling), #835 (workspace name rule; its own change), and #822 (aae-orc-2ihk2),
 folded into #832 (director, 2026-10-21, section 8). Director closes #822
