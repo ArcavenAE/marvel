@@ -73,11 +73,12 @@ func TestWatchValueIsNotSwallowedWithoutTheFlag(t *testing.T) {
 // The real command, Args and RunE both, with a value after a bare -w. The
 // table above replaces RunE, so only these see which argument RunE takes as
 // the resource type. Each case ends in a refusal that names the resource: with
-// "5" taken for it, the message is another one.
+// "5" taken for it, the message is another one. Under a test there is no
+// terminal, so a watch that is allowed ends at "watch mode requires a terminal".
 func TestWatchValueReachesRunEAsTheResourceType(t *testing.T) {
 	a := startFake(t, fakeAnswers, []api.Session{row("w", "s1")})
 	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock})
-	const across = "--watch across clusters is not available yet"
+	const across = "watch mode requires a terminal"
 	tests := map[string]struct {
 		args []string
 		want string

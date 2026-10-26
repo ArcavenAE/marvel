@@ -394,15 +394,17 @@ func buildFanOutDocument(records []clusterRecord, rows []api.Session) fanOutDocu
 // runFanOutGet is `get sessions` across a cluster set. With -o it prints the
 // document instead of the table and the status lines, and exits as the table
 // does.
-func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, noTrunc, watching, hasOutput, load bool) error {
+func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, noTrunc, watching bool, interval time.Duration, hasOutput, load bool) error {
 	if err := fanOutRefusals(); err != nil {
 		return err
 	}
 	switch {
-	case watching:
-		return errors.New("--watch across clusters is not available yet")
 	case load:
 		return errors.New("--load applies to get teams only")
+	case watching && hasOutput:
+		return errors.New("-o and --watch cannot be combined")
+	case watching:
+		return runFanWatch(names, columns, noTrunc, interval)
 	}
 	if hasOutput {
 		if err := checkGetOutput(fanOutResource, format); err != nil {

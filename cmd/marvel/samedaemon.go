@@ -127,58 +127,70 @@ func readStamp(t clusterTarget) (daemonStamp, bool) {
 }
 
 // mergeSameDaemon folds the records and rows of entries that are one daemon.
-// Entries that gave rows are grouped by daemonKey; in a group, each member
-// reports its pid and start time, and a member that agrees with the first
-// member that reported one reads same_daemon and names it. The rows shown are
-// the union: a merged entry's row is kept only when no earlier row has its
-// key, so nothing is dropped that a read saw and the other missed.
+// Entries that gave rows are grouped by daemonKey; the members of a group of
+// two or more report their pid and start time, and foldSameDaemon does the
+// rest.
 func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [][]api.Session, fingerprints []string) {
-	groups := map[string][]int{}
-	var order []string
+	keys := make([]string, len(targets))
+	count := map[string]int{}
 	for i, rec := range records {
 		if rec.Outcome != outcomeAnswered && rec.Outcome != outcomeStarting {
 			continue
 		}
-		k := daemonKey(targets[i].Addr, fingerprints[i])
+		keys[i] = daemonKey(targets[i].Addr, fingerprints[i])
+		if keys[i] != "" {
+			count[keys[i]]++
+		}
+	}
+	stamps := make([]daemonStamp, len(targets))
+	ok := make([]bool, len(targets))
+	var wg sync.WaitGroup
+	for i := range targets {
+		if keys[i] == "" || count[keys[i]] < 2 {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stamps[i], ok[i] = readStamp(targets[i])
+		}()
+	}
+	wg.Wait()
+	foldSameDaemon(keys, stamps, ok, records, rowSets)
+}
+
+// foldSameDaemon merges the entries that share a non-empty key, given the
+// stamp each reported. In a group, a member that agrees with the first member
+// that reported a stamp reads same_daemon and names it. The rows shown are the
+// union: a merged entry's row is kept only when no earlier row has its key, so
+// nothing is dropped that a read saw and the other missed.
+func foldSameDaemon(keys []string, stamps []daemonStamp, ok []bool, records []clusterRecord, rowSets [][]api.Session) {
+	groups := map[string][]int{}
+	var order []string
+	for i, k := range keys {
 		if k == "" {
 			continue
 		}
-		if _, ok := groups[k]; !ok {
+		if _, seen := groups[k]; !seen {
 			order = append(order, k)
 		}
 		groups[k] = append(groups[k], i)
 	}
 	for _, k := range order {
-		members := groups[k]
-		if len(members) < 2 {
-			continue
-		}
-		stamps := make([]daemonStamp, len(members))
-		okStamp := make([]bool, len(members))
-		var wg sync.WaitGroup
-		for j, i := range members {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				stamps[j], okStamp[j] = readStamp(targets[i])
-			}()
-		}
-		wg.Wait()
 		lead := -1
-		for j, i := range members {
-			if !okStamp[j] {
+		for _, i := range groups[k] {
+			if !ok[i] {
 				continue
 			}
 			if lead < 0 {
-				lead = j
+				lead = i
 				continue
 			}
-			if stamps[j].PID != stamps[lead].PID || !stamps[j].StartedAt.Equal(stamps[lead].StartedAt) {
+			if stamps[i].PID != stamps[lead].PID || !stamps[i].StartedAt.Equal(stamps[lead].StartedAt) {
 				continue
 			}
-			leader := members[lead]
 			have := map[string]bool{}
-			for _, r := range rowSets[leader] {
+			for _, r := range rowSets[lead] {
 				have[r.Workspace+"/"+r.Name] = true
 			}
 			var kept []api.Session
@@ -191,9 +203,9 @@ func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [
 			rowSets[i] = kept
 			n := len(kept)
 			records[i].Outcome = outcomeSameDaemon
-			records[i].SameDaemonAs = records[leader].Cluster
+			records[i].SameDaemonAs = records[lead].Cluster
 			records[i].Sessions = &n
-			records[i].Cause = "same daemon as " + records[leader].Cluster
+			records[i].Cause = "same daemon as " + records[lead].Cluster
 			records[i].Next = ""
 		}
 	}

@@ -287,14 +287,29 @@ func TestGetSessionsOutputRefusesAnUnknownFormatBeforeAnyDial(t *testing.T) {
 	}
 }
 
-// --watch is still refused across clusters, with or without -o.
-func TestGetSessionsWatchStillRefusedAcrossClusters(t *testing.T) {
+// --watch across clusters cannot be combined with -o, as on one cluster; and
+// without -o it needs a terminal, which a test run does not have. Both are
+// refused before any cluster is dialled.
+func TestGetSessionsWatchAcrossClustersRefusals(t *testing.T) {
 	a := startFake(t, fakeAnswers, nil)
 	b := startFake(t, fakeAnswers, nil)
 	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "b", Socket: b.sock})
-	code, _, stderr := runFanGet(t, "get", "sessions", "--cluster", "a,b", "-o", "json", "--watch=2")
-	if code == 0 || !strings.Contains(stderr, "--watch across clusters is not available yet") {
-		t.Errorf("exit = %d, stderr %q, want the --watch refusal", code, stderr)
+	cases := map[string]struct {
+		args []string
+		want string
+	}{
+		"with -o":     {[]string{"get", "sessions", "--cluster", "a,b", "-o", "json", "--watch=2"}, "-o and --watch cannot be combined"},
+		"no tty":      {[]string{"get", "sessions", "--cluster", "a,b", "--watch=2"}, "watch mode requires a terminal"},
+		"bare no tty": {[]string{"get", "sessions", "--all-clusters", "-w"}, "watch mode requires a terminal"},
+	}
+	for name, tc := range cases {
+		code, _, stderr := runFanGet(t, tc.args...)
+		if code == 0 || !strings.Contains(stderr, tc.want) {
+			t.Errorf("%s: exit = %d, stderr %q, want %q", name, code, stderr, tc.want)
+		}
+	}
+	if a.conns()+b.conns() != 0 {
+		t.Errorf("%d connections before the refusals, want 0", a.conns()+b.conns())
 	}
 }
 
