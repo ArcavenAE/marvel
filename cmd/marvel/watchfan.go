@@ -346,8 +346,40 @@ func fanStatusLine(s *fanState, rec clusterRecord) string {
 
 // fanWatchBackstop is added to the cluster timer for the loop's own timer. The
 // dial's timer fires first and carries the phase; the loop's frees the slot
-// even when a fetch does not return.
-const fanWatchBackstop = 2 * time.Second
+// even when a fetch does not return. A variable so a test can shorten it.
+var fanWatchBackstop = 2 * time.Second
+
+// newFanWatchConfig is the loop's configuration for a set of resolved
+// clusters, without the drawing function, which belongs to the terminal.
+func newFanWatchConfig(targets []clusterTarget, params json.RawMessage, interval time.Duration) fanWatchConfig {
+	byName := map[string]clusterTarget{}
+	clusters := make([]fanWatchCluster, len(targets))
+	firstAt := firstAddress(targets)
+	for i, t := range targets {
+		byName[t.Name] = t
+		clusters[i] = fanWatchCluster{name: t.Name}
+		if firstAt[i] != i {
+			clusters[i].repeatOf = targets[firstAt[i]].Name
+		}
+	}
+	return fanWatchConfig{
+		clusters: clusters,
+		interval: interval,
+		stale:    watchFetchDeadline,
+		timeout:  fanOutTimeout + fanWatchBackstop,
+		fetch: func(name string, _ uint64, wantStamp bool) fanFetch {
+			t := byName[name]
+			rec, rows, fp := readCluster(t, params)
+			f := fanFetch{rec: rec, rows: rows, fingerprint: fp}
+			if wantStamp && rec.answered() {
+				f.stamp, f.stampOK = readStamp(t)
+			}
+			return f
+		},
+		keyOf: func(name, fp string) string { return daemonKey(byName[name].Addr, fp) },
+		now:   time.Now,
+	}
+}
 
 // runFanWatch is get sessions -w across a cluster set.
 func runFanWatch(names []string, columns string, noTrunc bool, interval time.Duration) error {
@@ -371,37 +403,12 @@ func runFanWatch(names []string, columns string, noTrunc bool, interval time.Dur
 	if err != nil {
 		return err
 	}
-	byName := map[string]clusterTarget{}
-	clusters := make([]fanWatchCluster, len(targets))
-	firstAt := firstAddress(targets)
-	for i, t := range targets {
-		byName[t.Name] = t
-		clusters[i] = fanWatchCluster{name: t.Name}
-		if firstAt[i] != i {
-			clusters[i].repeatOf = targets[firstAt[i]].Name
-		}
-	}
 	return withWatchTerminal(interval, func(keys <-chan byte, ticks <-chan time.Time, out func(string)) {
 		ws := newWatchState(cols)
 		ws.explicit, ws.noTrunc = explicit, noTrunc
-		fanWatchLoop(ws, fanWatchConfig{
-			clusters: clusters,
-			interval: interval,
-			stale:    watchFetchDeadline,
-			timeout:  fanOutTimeout + fanWatchBackstop,
-			fetch: func(name string, _ uint64, wantStamp bool) fanFetch {
-				t := byName[name]
-				rec, rows, fp := readCluster(t, params)
-				f := fanFetch{rec: rec, rows: rows, fingerprint: fp}
-				if wantStamp && rec.answered() {
-					f.stamp, f.stampOK = readStamp(t)
-				}
-				return f
-			},
-			keyOf: func(name, fp string) string { return daemonKey(byName[name].Addr, fp) },
-			now:   time.Now,
-			out:   out,
-		}, keys, ticks)
+		cfg := newFanWatchConfig(targets, params, interval)
+		cfg.out = out
+		fanWatchLoop(ws, cfg, keys, ticks)
 	})
 }
 
