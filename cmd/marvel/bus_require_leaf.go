@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/bus"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // repushCommand is the one command that puts a lost leaf credential back. The
@@ -39,6 +42,25 @@ func leafRequirement(st bus.Status, now time.Time) (bool, string) {
 		return false, "unknown"
 	}
 	return true, ""
+}
+
+// busStatusResult is what `marvel bus status` does with the daemon's answer: it
+// prints the status, and with requireLeaf it fails unless leafRequirement holds.
+func busStatusResult(w io.Writer, resp *daemonrpc.Response, requireLeaf bool, now time.Time) error {
+	if resp.Error != "" {
+		return fmt.Errorf("%s", resp.Error)
+	}
+	var st bus.Status
+	if err := json.Unmarshal(resp.Result, &st); err != nil {
+		return fmt.Errorf("decode bus status: %w", err)
+	}
+	printBusStatus(w, st)
+	if requireLeaf {
+		if ok, why := leafRequirement(st, now); !ok {
+			return requireLeafError(why)
+		}
+	}
+	return nil
 }
 
 // leafSourceRows renders the leaf source line of `bus status` for a source

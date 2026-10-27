@@ -2850,20 +2850,7 @@ change, and holds new sessions while it is down. A cluster with
 			if err != nil {
 				return err
 			}
-			if resp.Error != "" {
-				return fmt.Errorf("%s", resp.Error)
-			}
-			var st bus.Status
-			if err := json.Unmarshal(resp.Result, &st); err != nil {
-				return fmt.Errorf("decode bus status: %w", err)
-			}
-			printBusStatus(os.Stdout, st)
-			if requireLeaf {
-				if ok, why := leafRequirement(st, time.Now()); !ok {
-					return requireLeafError(why)
-				}
-			}
-			return nil
+			return busStatusResult(os.Stdout, resp, requireLeaf, time.Now())
 		},
 	}
 	status.Flags().BoolVar(&requireLeaf, "require-leaf", false,
