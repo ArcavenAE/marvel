@@ -157,19 +157,24 @@ func willSpawn(mt *ManifestTeam, sessions []Session) int {
 	return n
 }
 
-// pruneDelete lists a team's seats with the note on how each would leave: an
-// interactive role is asked for its handoff when it declares one, and a
-// headless role's run is waited for (section 6.2).
+// pruneDelete lists a team's seats with the note on how its alive seats would
+// leave: an interactive role is asked for its handoff when it declares one, and
+// a headless role's run is waited for (section 6.2). Until step 4, a team with
+// an alive seat is deferred, so a listed team carries no note.
 func pruneDelete(t *Team, sessions []Session) PruneDelete {
 	d := PruneDelete{Team: t.Key()}
 	roles := map[string]*Role{}
 	for i := range t.Roles {
 		roles[t.Roles[i].Name] = &t.Roles[i]
 	}
+	// Only an alive seat is asked for its handoff or waited for; one that has
+	// finished is deleted at once (section 6.2), so it adds no note.
 	seated := map[string]bool{}
 	for _, s := range sessions {
 		d.Seats = append(d.Seats, PruneSeat{Session: s.Key(), State: s.State})
-		seated[s.Role] = true
+		if s.State.CountsAsAlive() {
+			seated[s.Role] = true
+		}
 	}
 	var interactive, declared int
 	var window, headless time.Duration

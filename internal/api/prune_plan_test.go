@@ -165,45 +165,38 @@ func TestPlanPruneDigestCoversTheSourceAndTheSet(t *testing.T) {
 	}
 }
 
-// The handoff note on a would-delete team: declared, none or some roles,
+// The handoff note on a team's alive seats: declared, none or some roles,
 // counting only interactive roles, and a headless note when a headless role
-// holds a seat (the step 2 ruling, Q8).
-func TestPlanPruneNotesHandoffAndHeadlessWaits(t *testing.T) {
-	at := time.Now().UTC()
+// holds an alive seat (the step 2 ruling, Q8). Until step 4 such a team is
+// deferred rather than listed, so the notes are checked on pruneDelete itself.
+func TestPruneDeleteNotesHandoffAndHeadlessWaits(t *testing.T) {
 	asks := &ShiftPolicy{Handoff: "/h/{session}.md", HandoffWindow: 2 * time.Minute}
 	headless := Runtime{Mode: RuntimeModeHeadless}
-	s := NewStore()
 	for _, tc := range []struct {
-		name  string
-		roles []Role
+		name          string
+		roles         []Role
+		seated        bool
+		handoff, wait string
 	}{
-		{"declared", []Role{{Name: "a", Shift: asks}}},
-		{"none", []Role{{Name: "a"}}},
-		{"some", []Role{{Name: "a", Shift: asks}, {Name: "b"}}},
-		{"batch", []Role{{Name: "a", Runtime: headless}}},
-		{"empty", []Role{{Name: "a", Shift: asks}}},
+		{"declared", []Role{{Name: "a", Shift: asks}}, true, "handoff: declared, window 2m", ""},
+		{"none", []Role{{Name: "a"}}, true, "handoff: none", ""},
+		{"some", []Role{{Name: "a", Shift: asks}, {Name: "b"}}, true, "handoff: some roles", ""},
+		{"batch", []Role{{Name: "a", Runtime: headless}}, true, "", "headless: waits up to 5m"},
+		{"empty", []Role{{Name: "a", Shift: asks}}, false, "", ""},
 	} {
-		mustTeam(t, s, Team{Name: tc.name, Workspace: "ws", Roles: tc.roles, Claims: claimsOfSources(at, planSrc)})
-		if tc.name == "empty" {
-			continue
-		}
-		for _, r := range tc.roles {
-			mustSession(t, s, tc.name, r.Name, tc.name+"-"+r.Name+"-g1-0", 1, SessionFailed)
-		}
-	}
-	got := map[string][2]string{}
-	for _, d := range PlanPrune(parsedPreview(t), planSrc, s).WouldDelete {
-		got[d.Team] = [2]string{d.Handoff, d.Headless}
-	}
-	want := map[string][2]string{
-		"ws/declared": {"handoff: declared, window 2m", ""},
-		"ws/none":     {"handoff: none", ""},
-		"ws/some":     {"handoff: some roles", ""},
-		"ws/batch":    {"", "headless: waits up to 5m"},
-		"ws/empty":    {"", ""},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("notes = %v, want %v", got, want)
+		t.Run(tc.name, func(t *testing.T) {
+			team := Team{Name: tc.name, Workspace: "ws", Roles: tc.roles}
+			var sessions []Session
+			if tc.seated {
+				for _, r := range tc.roles {
+					sessions = append(sessions, Session{Name: tc.name + "-" + r.Name + "-g1-0", Workspace: "ws", Team: tc.name, Role: r.Name, Generation: 1, State: SessionRunning})
+				}
+			}
+			d := pruneDelete(&team, sessions)
+			if d.Handoff != tc.handoff || d.Headless != tc.wait {
+				t.Errorf("notes = %q, %q; want %q, %q", d.Handoff, d.Headless, tc.handoff, tc.wait)
+			}
+		})
 	}
 }
 
