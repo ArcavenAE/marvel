@@ -89,15 +89,15 @@ func TestSweepStaleSocketsRemovesOnlyOnARefusedConnection(t *testing.T) {
 // left.
 func TestScratchTmuxTmpDirIsPrivateAndStable(t *testing.T) {
 	base := t.TempDir()
-	dir := scratchTmuxTmpDir(base)
-	if dir == "" || filepath.Dir(dir) != base {
+	dir, err := scratchTmuxTmpDir(base)
+	if err != nil || filepath.Dir(dir) != base {
 		t.Fatalf("scratchTmuxTmpDir(%s) = %q, want a directory directly under it", base, dir)
 	}
 	fi, err := os.Lstat(dir)
 	if err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
 		t.Fatalf("scratch dir %s: %v, %v, want a directory with mode 0700", dir, err, fi)
 	}
-	if again := scratchTmuxTmpDir(base); again != dir {
+	if again, _ := scratchTmuxTmpDir(base); again != dir {
 		t.Errorf("a second call gave %q, want the same directory %q", again, dir)
 	}
 }
@@ -107,15 +107,18 @@ func TestScratchTmuxTmpDirIsPrivateAndStable(t *testing.T) {
 func TestScratchTmuxTmpDirRefusesAPlantedSymlink(t *testing.T) {
 	base := t.TempDir()
 	elsewhere := t.TempDir()
-	first := scratchTmuxTmpDir(base)
+	first, err := scratchTmuxTmpDir(base)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(first); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(elsewhere, first); err != nil {
 		t.Fatal(err)
 	}
-	got := scratchTmuxTmpDir(base)
-	if got == "" || got == first || got == elsewhere {
+	got, err := scratchTmuxTmpDir(base)
+	if err != nil || got == first || got == elsewhere {
 		t.Fatalf("scratchTmuxTmpDir with a symlink at %s = %q, want a different directory", first, got)
 	}
 	if fi, err := os.Lstat(got); err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
@@ -125,18 +128,43 @@ func TestScratchTmuxTmpDirRefusesAPlantedSymlink(t *testing.T) {
 
 func TestUseScratchTmuxTmpDirSetsTheVariableOnlyWhenUnset(t *testing.T) {
 	t.Setenv("TMUX_TMPDIR", "/somewhere/else")
-	if got := UseScratchTmuxTmpDir(); got != "" || os.Getenv("TMUX_TMPDIR") != "/somewhere/else" {
+	if got, err := UseScratchTmuxTmpDir(); err != nil || got != "" || os.Getenv("TMUX_TMPDIR") != "/somewhere/else" {
 		t.Errorf("with a value set: returned %q, TMUX_TMPDIR = %q, want it untouched", got, os.Getenv("TMUX_TMPDIR"))
 	}
 	if err := os.Unsetenv("TMUX_TMPDIR"); err != nil {
 		t.Fatal(err)
 	}
-	got := UseScratchTmuxTmpDir()
-	if got == "" || os.Getenv("TMUX_TMPDIR") != got {
+	got, err := UseScratchTmuxTmpDir()
+	if err != nil || os.Getenv("TMUX_TMPDIR") != got {
 		t.Fatalf("with none set: returned %q, TMUX_TMPDIR = %q, want it set to the directory", got, os.Getenv("TMUX_TMPDIR"))
 	}
 	// A unix socket path must stay under 104 bytes on darwin.
 	if n := len(filepath.Join(got, "tmux-"+strconv.Itoa(os.Getuid()), "marvel-test-session-4294967295")); n >= 104 {
 		t.Errorf("%s leaves a socket path of %d bytes, over the 104-byte limit", got, n)
+	}
+}
+
+// When no scratch directory can be made, the helper says so instead of
+// leaving TMUX_TMPDIR unset, which would send the sweep and the servers into
+// the operator's own /tmp/tmux-<uid> (#1087).
+func TestUseScratchTmuxTmpDirFailsLoudWhenNoDirectoryCanBeMade(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root is not stopped by a mode 0500 directory, so nothing here can make the Mkdir fail")
+	}
+	t.Setenv("TMUX_TMPDIR", "")
+	if err := os.Unsetenv("TMUX_TMPDIR"); err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	if err := os.Chmod(base, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(base, 0o700) })
+	got, err := useScratchTmuxTmpDirUnder(base)
+	if err == nil {
+		t.Fatalf("returned %q and no error for an unwritable %s, want an error", got, base)
+	}
+	if v, set := os.LookupEnv("TMUX_TMPDIR"); set {
+		t.Errorf("TMUX_TMPDIR = %q after a failure, want it unset", v)
 	}
 }
