@@ -118,7 +118,15 @@ func (d busDriver) Ready(ctx context.Context, c workload.ChildInfo) error {
 	}
 	timeout := s.dialTimeout
 	s.mu.Unlock()
-	ok, gone := s.waitListener(ctx, timeout, func() bool { return s.prober.Same(c.Child) })
+	// Gone means the pid no longer exists. Identity is not the test: a child
+	// that execs into another program (a shim in front of nats-server) is
+	// still running. A zombie exists until Cmd.Wait reaps it, and a probe that
+	// fails reads as alive, so both only delay the answer to the next poll.
+	alive := func() bool {
+		ok, err := s.prober.Exists(c.Child.Pid())
+		return ok || err != nil
+	}
+	ok, gone := s.waitListener(ctx, timeout, alive)
 	if gone {
 		return fmt.Errorf("bus: nats-server pid %d exited before it answered on %s: %s (see %s)", c.Child.Pid(), s.mgr.bus.Listen, logTail(s.logPath, 3), s.logPath)
 	}

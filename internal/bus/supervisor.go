@@ -1012,9 +1012,9 @@ func (s *Supervisor) listenerAnswers(timeout time.Duration) bool {
 }
 
 // waitListener waits for the listener to answer. It also stops, with gone
-// set, once alive reports the child is no longer the one started: a server
-// that exits at startup (a taken monitoring port, a bad config) is then
-// reported at once instead of after the whole wait (#962).
+// set, once alive reports the child no longer exists: a server that exits at
+// startup (a taken monitoring port, a bad config) is then reported at once
+// instead of after the whole wait (#962).
 func (s *Supervisor) waitListener(ctx context.Context, timeout time.Duration, alive func() bool) (ok, gone bool) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
