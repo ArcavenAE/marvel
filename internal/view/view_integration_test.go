@@ -8,21 +8,47 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 )
 
-// checkGitArgs is a stub until the next commit.
-func checkGitArgs(args []string) error { return nil }
+// gitSubcommands are the subcommands gitIn runs. None of them makes a
+// commit: signedCommit is the one path that does.
+var gitSubcommands = map[string]bool{"init": true, "add": true, "config": true, "rev-parse": true}
 
-// gitIn runs git in dir with a clean environment and fails the test on error.
-// git reads no global or system config and no ssh agent, so nothing the host
-// or a seat configured can sign a commit; the fixture repository's own config
-// names the run's key (realViewFixture).
-func gitIn(t *testing.T, dir string, args ...string) string {
-	t.Helper()
+// signingSetting matches a config key that changes how a commit is signed.
+var signingSetting = regexp.MustCompile(`(?i)^(gpg\.|commit\.gpgsign|tag\.gpgsign|user\.signingkey)`)
+
+// checkGitArgs refuses an argument list that could make a commit outside
+// signedCommit or change how one is signed: a subcommand off the list, a
+// config override on the command line, or a signing setting.
+func checkGitArgs(args []string) error {
+	if len(args) == 0 || !gitSubcommands[args[0]] {
+		return fmt.Errorf("git %q: not a subcommand these tests run", args)
+	}
+	for _, a := range args {
+		if a == "-c" || a == "-C" || strings.HasPrefix(a, "--config-env") {
+			return fmt.Errorf("git %q: %s is refused here", args, a)
+		}
+	}
+	if args[0] == "config" {
+		for _, a := range args[1:] {
+			if signingSetting.MatchString(a) {
+				return fmt.Errorf("git %q: only runSigningKey sets how commits are signed", args)
+			}
+		}
+	}
+	return nil
+}
+
+// runGit is the one place these tests start git. git reads no global or
+// system config and no ssh agent, so nothing the host or a seat configured
+// can sign a commit; the fixture repository's own config names the run's key
+// (runSigningKey).
+func runGit(dir string, extraEnv []string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	var env []string
@@ -31,14 +57,44 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 			env = append(env, kv)
 		}
 	}
-	cmd.Env = append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+	env = append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+	cmd.Env = append(env, extraEnv...)
 	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+// gitIn runs a checked git command in dir and fails the test on error.
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	if err := checkGitArgs(args); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runGit(dir, nil, args...)
 	if err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
-	return strings.TrimSpace(string(out))
+	return out
+}
+
+// gitTry runs a checked git command in dir with extra environment and
+// returns its error, for a test that expects git to fail.
+func gitTry(t *testing.T, dir string, extraEnv []string, args ...string) (string, error) {
+	t.Helper()
+	if err := checkGitArgs(args); err != nil {
+		t.Fatal(err)
+	}
+	return runGit(dir, extraEnv, args...)
+}
+
+// mustRunGit runs git unchecked, for the two helpers that commit and set the
+// signing config, and fails the test on error.
+func mustRunGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	if out, err := runGit(dir, nil, args...); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
 }
 
 // commitPayload writes payload files that name commit n and commits them.
@@ -64,8 +120,8 @@ func commitPayload(t *testing.T, repo string, n int) string {
 // unsigned commit or sign with the host's config or a seat's key.
 func signedCommit(t *testing.T, repo, msg string) {
 	t.Helper()
-	gitIn(t, repo, "commit", "-S", "-q", "-m", msg)
-	gitIn(t, repo, "verify-commit", "HEAD")
+	mustRunGit(t, repo, "commit", "-S", "-q", "-m", msg)
+	mustRunGit(t, repo, "verify-commit", "HEAD")
 }
 
 // runSigningKey makes a throwaway ed25519 key in a temp dir and sets repo's
@@ -93,7 +149,7 @@ func runSigningKey(t *testing.T, repo string) {
 		{"user.signingkey", key},
 		{"gpg.ssh.allowedSignersFile", signers},
 	} {
-		gitIn(t, repo, "config", kv[0], kv[1])
+		mustRunGit(t, repo, "config", kv[0], kv[1])
 	}
 }
 
@@ -254,9 +310,8 @@ func TestRealGitRevParseInsideCurFails(t *testing.T) {
 	if _, err := b.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("git", "-C", filepath.Join(b.Dir, "cur"), "rev-parse", "--git-dir")
-	cmd.Env = append(cleanGitEnv(), "GIT_CEILING_DIRECTORIES="+filepath.Dir(filepath.Dir(b.Dir)))
-	if out, err := cmd.CombinedOutput(); err == nil {
+	ceiling := []string{"GIT_CEILING_DIRECTORIES=" + filepath.Dir(filepath.Dir(b.Dir))}
+	if out, err := gitTry(t, filepath.Join(b.Dir, "cur"), ceiling, "rev-parse", "--git-dir"); err == nil {
 		t.Fatalf("git rev-parse succeeded inside the view: %s", out)
 	}
 }

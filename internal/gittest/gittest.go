@@ -5,6 +5,7 @@
 package gittest
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,8 +14,7 @@ import (
 )
 
 // Env is the process environment without the variables that point git at a
-// particular repository, plus an identity so no git call reads one from the
-// host's config.
+// particular repository, with no global or system config, plus an identity.
 func Env() []string {
 	var env []string
 	for _, kv := range os.Environ() {
@@ -26,14 +26,35 @@ func Env() []string {
 			env = append(env, kv)
 		}
 	}
-	return append(env,
+	return append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
 }
 
-// Run runs git in dir and returns its trimmed output, failing the test on error.
+// subcommands are the git subcommands Run takes. None of them makes a commit.
+var subcommands = map[string]bool{"init": true, "worktree": true}
+
+// checkArgs refuses an argument list that could make a commit or override
+// config on the command line.
+func checkArgs(args []string) error {
+	if len(args) == 0 || !subcommands[args[0]] {
+		return fmt.Errorf("git %q: not a subcommand gittest runs", args)
+	}
+	for _, a := range args {
+		if a == "-c" || a == "-C" || strings.HasPrefix(a, "--config-env") {
+			return fmt.Errorf("git %q: %s is refused here", args, a)
+		}
+	}
+	return nil
+}
+
+// Run runs git in dir and returns its trimmed output, failing the test on
+// error. It runs only the subcommands checkArgs allows.
 func Run(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	if err := checkArgs(args); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = Env()
 	out, err := cmd.CombinedOutput()
@@ -72,6 +93,3 @@ func Worktree(t *testing.T, repo, name string) string {
 	}
 	return real
 }
-
-// checkArgs is a stub until the next commit.
-func checkArgs(args []string) error { return nil }
