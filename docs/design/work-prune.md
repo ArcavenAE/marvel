@@ -33,7 +33,7 @@ given a bounded window before its pane goes.
 | A role dropped from the file is drained | `reconcileOrphanedSessions`, `controller.go:930-950`; it skips `marvel run` sessions (`Generation == 0`, :943) | true |
 | `Apply` loops only over the file's teams | `manifest.go:967` (`Apply`), team loop at :1033, upsert at :1141-1162 | true; no loop removes a team the file stopped naming |
 | A file names one workspace; a dropped workspace is untouched | `manifest.go:970` (`m.Workspace`, singular) | true |
-| Re-apply sets posture to converge, so a held team spawns | `internal/daemon/daemon.go:1585-1594` | true. Noted, not changed by this design |
+| Re-apply sets posture to converge, so a held team spawns | `internal/daemon/daemon.go:1594-1603` | true. Noted, not changed by this design |
 | The daemon never sees the manifest's path | `cmd/marvel/main.go:1050-1056`: only `manifest_data` and `workspace_root` go up | true |
 | No owner record exists | `api.Team`, `internal/api/types.go:1015-1052` | true |
 | Every delete kills the pane with no handoff | `Manager.Delete`, `internal/session/manager.go:1562` | true |
@@ -49,7 +49,7 @@ The delete call sites, and whether step 4 covers each:
 | `controller.go:2337` | shift abort deletes the new generation | not covered: those seats just launched |
 | `controller.go:2577` | shift drain of the old seat | not covered; see section 9, item 2 |
 | `schedule_clock.go:66` | scheduled firing replaced | not covered: headless runs use completion semantics (ADR-010) |
-| `daemon.go:1779-1810`, `manager.go:1927` | explicit `marvel delete` and teardown | not covered: an operator's direct act |
+| `daemon.go:1788-1819`, `manager.go:1927` | explicit `marvel delete` and teardown | not covered: an operator's direct act |
 
 One thing found in passing: the scale-down list at `controller.go:1171` is
 every session of the role, so a `marvel run` session placed in a manifest
@@ -184,7 +184,7 @@ kept, holds marvel run sessions:
 deferred:
   aae/night-batch    shift in progress; re-run the plan when it ends
 
-named by this file and held (re-apply converges them, daemon.go:1585):
+named by this file and held (re-apply converges them, daemon.go:1594):
   aae/builders       will spawn 2
 ```
 
@@ -216,7 +216,7 @@ marvel work <manifest> --prune <digest>
    sessions then leave through the scale-down path, which after step 4
    asks each one for its handoff. Once a pruning team holds no session, its
    record is deleted
-   exactly as `marvel delete team` does (`daemon.go:1780-1795`): health
+   exactly as `marvel delete team` does (`daemon.go:1789-1804`): health
    state cleared and the broker user revoked. Endpoints and policies stay,
    as they do for `delete team` today.
 4. The response lists the teams marked. The client errors if the response
@@ -372,7 +372,7 @@ One PR per step, each based on the one before, merged in order.
    shift timing and belongs with marvel#1063, not here.
 3. Scale-down can shed a `marvel run` session placed in a manifest role
    (`controller.go:1171`), where the role drop skips one. Separate issue.
-4. Re-apply converges a held team (`daemon.go:1585`). The dry-run reports
+4. Re-apply converges a held team (`daemon.go:1594`). The dry-run reports
    it; whether it should is a separate question.
 
 Valid until 2026-11-10; the arcaven architect re-checks it then.
