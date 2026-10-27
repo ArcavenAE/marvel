@@ -614,3 +614,6 @@ func short(sha string) string {
 	}
 	return sha
 }
+
+// Close is a stub until the next commit.
+func (k *Keeper) Close() {}
