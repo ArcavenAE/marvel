@@ -1261,6 +1261,8 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return d.handleVersion()
 	case "orphans":
 		return d.handleOrphans()
+	case "prune_plan":
+		return d.handlePrunePlan(req.Params)
 	case "plan":
 		return d.handlePlan()
 	default:
