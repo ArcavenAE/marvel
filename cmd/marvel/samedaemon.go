@@ -131,8 +131,9 @@ func readStampWithin(t clusterTarget, timeout time.Duration) (daemonStamp, bool)
 // two or more report their pid and start time, and foldSameDaemon does the
 // rest. began[i] is when entry i's read started: its stamp gets only what is
 // left of that one fan-out timer, as the watch poll's does, so a slow daemon
-// loses its stamp and keeps its rows (#1085).
-func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [][]api.Session, fingerprints []string, began []time.Time) {
+// loses its stamp and keeps its rows (#1085). timer is the one the reads were
+// started with, passed down rather than read again (#1093).
+func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [][]api.Session, fingerprints []string, began []time.Time, timer time.Duration) {
 	keys := make([]string, len(targets))
 	count := map[string]int{}
 	for i, rec := range records {
@@ -151,7 +152,7 @@ func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [
 		if keys[i] == "" || count[keys[i]] < 2 {
 			continue
 		}
-		left := fanOutTimeout - time.Since(began[i])
+		left := timer - time.Since(began[i])
 		if left <= 0 {
 			continue
 		}

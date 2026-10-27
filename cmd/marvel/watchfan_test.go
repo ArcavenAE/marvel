@@ -395,6 +395,7 @@ func TestStampReadSharesTheFetchBudget(t *testing.T) {
 func TestWatchFetchKeepsTheTimerItWasBuiltWith(t *testing.T) {
 	old := fanOutTimeout
 	fanOutTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { fanOutTimeout = old })
 	f := startSD(t, sdStart, []api.Session{row("w", "s1")})
 	f.delay = 400 * time.Millisecond
 	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock})
@@ -415,7 +416,6 @@ func TestWatchFetchKeepsTheTimerItWasBuiltWith(t *testing.T) {
 	go func() { got <- cfg.fetch("a", 1, true) }()
 	fanOutTimeout = 10 * time.Second // what a cleanup does while the fetch runs
 	ff := <-got
-	fanOutTimeout = old
 	if ff.rec.Outcome != outcomeNoAnswer {
 		t.Errorf("fetch outcome = %s (%s), want no_answer under the 200ms timer the config was built with", ff.rec.Outcome, ff.rec.Cause)
 	}
