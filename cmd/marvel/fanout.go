@@ -240,6 +240,7 @@ func collectFanOut(names []string, composer bool) ([]clusterRecord, []api.Sessio
 	records := make([]clusterRecord, len(targets))
 	rowSets := make([][]api.Session, len(targets))
 	fingerprints := make([]string, len(targets))
+	began := make([]time.Time, len(targets))
 	firstAt := firstAddress(targets)
 	var wg sync.WaitGroup
 	for i, t := range targets {
@@ -249,6 +250,7 @@ func collectFanOut(names []string, composer bool) ([]clusterRecord, []api.Sessio
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			began[i] = time.Now()
 			records[i], rowSets[i], fingerprints[i] = readCluster(t, params)
 		}()
 	}
@@ -256,9 +258,10 @@ func collectFanOut(names []string, composer bool) ([]clusterRecord, []api.Sessio
 	for i, t := range targets {
 		if firstAt[i] != i {
 			records[i] = recordForRepeatedAddress(t.Name, records[firstAt[i]])
+			began[i] = began[firstAt[i]]
 		}
 	}
-	mergeSameDaemon(targets, records, rowSets, fingerprints)
+	mergeSameDaemon(targets, records, rowSets, fingerprints, began)
 	var rows []api.Session
 	for _, rs := range rowSets {
 		rows = append(rows, rs...)

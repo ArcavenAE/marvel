@@ -109,9 +109,6 @@ type daemonStamp struct {
 
 func (s daemonStamp) usable() bool { return s.PID != 0 && !s.StartedAt.IsZero() }
 
-// readStamp asks a daemon for its stamp under the fan-out timer.
-func readStamp(t clusterTarget) (daemonStamp, bool) { return readStampWithin(t, fanOutTimeout) }
-
 // readStampWithin asks a daemon for its stamp under the given timer.
 func readStampWithin(t clusterTarget, timeout time.Duration) (daemonStamp, bool) {
 	opts := t.Opts
@@ -132,8 +129,10 @@ func readStampWithin(t clusterTarget, timeout time.Duration) (daemonStamp, bool)
 // mergeSameDaemon folds the records and rows of entries that are one daemon.
 // Entries that gave rows are grouped by daemonKey; the members of a group of
 // two or more report their pid and start time, and foldSameDaemon does the
-// rest.
-func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [][]api.Session, fingerprints []string) {
+// rest. began[i] is when entry i's read started: its stamp gets only what is
+// left of that one fan-out timer, as the watch poll's does, so a slow daemon
+// loses its stamp and keeps its rows (#1085).
+func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [][]api.Session, fingerprints []string, began []time.Time) {
 	keys := make([]string, len(targets))
 	count := map[string]int{}
 	for i, rec := range records {
@@ -152,10 +151,14 @@ func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [
 		if keys[i] == "" || count[keys[i]] < 2 {
 			continue
 		}
+		left := fanOutTimeout - time.Since(began[i])
+		if left <= 0 {
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			stamps[i], ok[i] = readStamp(targets[i])
+			stamps[i], ok[i] = readStampWithin(targets[i], left)
 		}()
 	}
 	wg.Wait()
