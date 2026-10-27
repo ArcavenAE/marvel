@@ -102,3 +102,16 @@ func TestCheckStructureAsksTheDialGuardForTheMonitor(t *testing.T) {
 		t.Fatalf("CheckStructure read /varz at %s = %v, want the dial guard's refusal", monitor, err)
 	}
 }
+
+// ReadHeadroom reads /jsz at the monitor address, a fourth read the first three
+// tests missed (marvel#1007 review). The address is a closed loopback port no
+// test started, so a read that gets past the guard is refused by the host.
+func TestReadHeadroomAsksTheDialGuard(t *testing.T) {
+	monitor := "127.0.0.1:" + strconv.Itoa(closedLoopbackPort(t))
+	t.Cleanup(func() { forgetRefused(monitor) })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := ReadHeadroom(ctx, monitor, t.TempDir()); !errors.Is(err, errNotStarted) {
+		t.Fatalf("ReadHeadroom read /jsz at %s = %v, want the dial guard's refusal", monitor, err)
+	}
+}
