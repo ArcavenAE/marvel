@@ -386,3 +386,37 @@ func TestStampReadSharesTheFetchBudget(t *testing.T) {
 		}
 	}
 }
+
+// A watch fetch runs on its own goroutine and can outlive the loop that
+// started it, so it must not read fanOutTimeout, which a test's cleanup
+// restores (#1093). The config keeps the timer it was built with: a fetch
+// still in flight when the variable changes is bounded by the copy, and under
+// -race the change is not a race.
+func TestWatchFetchKeepsTheTimerItWasBuiltWith(t *testing.T) {
+	old := fanOutTimeout
+	fanOutTimeout = 200 * time.Millisecond
+	f := startSD(t, sdStart, []api.Session{row("w", "s1")})
+	f.delay = 400 * time.Millisecond
+	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock})
+	cfgFile, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg, err := resolveCluster(cfgFile, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	params, err := json.Marshal(getRequest(fanOutResource, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := newFanWatchConfig([]clusterTarget{tg}, params, time.Second)
+	got := make(chan fanFetch, 1)
+	go func() { got <- cfg.fetch("a", 1, true) }()
+	fanOutTimeout = 10 * time.Second // what a cleanup does while the fetch runs
+	ff := <-got
+	fanOutTimeout = old
+	if ff.rec.Outcome != outcomeNoAnswer {
+		t.Errorf("fetch outcome = %s (%s), want no_answer under the 200ms timer the config was built with", ff.rec.Outcome, ff.rec.Cause)
+	}
+}

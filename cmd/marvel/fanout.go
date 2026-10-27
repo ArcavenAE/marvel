@@ -109,7 +109,7 @@ func (r clusterRecord) statusLine() string {
 // error, never by its text. phase is set for a timeout, fingerprint for a host
 // key outcome. An error of no known type is reported as unreachable with its
 // text as the cause, since nothing answered.
-func classifyDialError(err error) (out outcome, phase, fingerprint, cause string) {
+func classifyDialError(err error, timer time.Duration) (out outcome, phase, fingerprint, cause string) {
 	var (
 		unk  *knownhosts.HostKeyUnknownError
 		chg  *knownhosts.HostKeyChangedError
@@ -128,7 +128,7 @@ func classifyDialError(err error) (out outcome, phase, fingerprint, cause string
 	case errors.As(err, &ref), errors.As(err, &noID):
 		return outcomeAuthRefused, "", "", cause
 	case errors.As(err, &tmo):
-		return outcomeNoAnswer, tmo.Phase, "", fmt.Sprintf("no answer within %s in the %s phase", fanOutTimeout, tmo.Phase)
+		return outcomeNoAnswer, tmo.Phase, "", fmt.Sprintf("no answer within %s in the %s phase", timer, tmo.Phase)
 	case errors.As(err, &bad):
 		return outcomeBadReply, "", "", cause
 	case errors.As(err, &unr):
@@ -160,8 +160,10 @@ func nextStep(o outcome) string {
 
 // readCluster reads one cluster's sessions under the timer. The third result
 // is the fingerprint of the host key the dial verified, empty when it verified
-// none (a unix socket, or a dial that failed first).
-func readCluster(t clusterTarget, params json.RawMessage) (clusterRecord, []api.Session, string) {
+// none (a unix socket, or a dial that failed first). The timer is a parameter,
+// not a read of fanOutTimeout, because a watch fetch can outlive its loop and
+// a test restores that variable when it ends (#1093).
+func readCluster(t clusterTarget, params json.RawMessage, timer time.Duration) (clusterRecord, []api.Session, string) {
 	rec := clusterRecord{Cluster: t.Name}
 	// The host key callback runs on the dial's goroutine, which can outlive the
 	// timer, so the fingerprint is guarded.
@@ -178,11 +180,11 @@ func readCluster(t clusterTarget, params json.RawMessage) (clusterRecord, []api.
 	opts := t.Opts
 	opts.StrictHostKey = true
 	opts.OfferOneKey = true
-	opts.Timeout = fanOutTimeout
+	opts.Timeout = timer
 	opts.OnVerifiedHostKey = func(v string) { fpMu.Lock(); fp = v; fpMu.Unlock() }
 	resp, err := daemonrpc.SendRequestWith(t.Addr, daemonrpc.Request{Method: "get", Params: params}, opts)
 	if err != nil {
-		rec.Outcome, rec.Phase, rec.Fingerprint, rec.Cause = classifyDialError(err)
+		rec.Outcome, rec.Phase, rec.Fingerprint, rec.Cause = classifyDialError(err, timer)
 		var noID *daemonrpc.NoIdentityError
 		if errors.As(err, &noID) {
 			rec.Next = "no key could be loaded, so no dial was made; give the entry an identity or run 'marvel keys generate'"
@@ -241,6 +243,7 @@ func collectFanOut(names []string, composer bool) ([]clusterRecord, []api.Sessio
 	rowSets := make([][]api.Session, len(targets))
 	fingerprints := make([]string, len(targets))
 	began := make([]time.Time, len(targets))
+	timer := fanOutTimeout
 	firstAt := firstAddress(targets)
 	var wg sync.WaitGroup
 	for i, t := range targets {
@@ -251,7 +254,7 @@ func collectFanOut(names []string, composer bool) ([]clusterRecord, []api.Sessio
 		go func() {
 			defer wg.Done()
 			began[i] = time.Now()
-			records[i], rowSets[i], fingerprints[i] = readCluster(t, params)
+			records[i], rowSets[i], fingerprints[i] = readCluster(t, params, timer)
 		}()
 	}
 	wg.Wait()
