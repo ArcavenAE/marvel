@@ -214,6 +214,22 @@ func TestScheduleRefusals(t *testing.T) {
 			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
 			want:      []string{"max_restarts does not apply to a scheduled role"},
 		},
+		{
+			// scheduled-runs.md section 8, "No bypass": a scheduled run has
+			// no human at a prompt, so it never skips the permission checks.
+			name:      "dangerous_permissions on a scheduled role",
+			mode:      "headless",
+			roleExtra: `  dangerous_permissions = true`,
+			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:      []string{"dangerous_permissions", "scheduled role", "skips permission checks"},
+		},
+		{
+			name:      "bypassPermissions on a scheduled role",
+			mode:      "headless",
+			roleExtra: `  permissions = "bypassPermissions"`,
+			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:      []string{`permissions "bypassPermissions"`, "scheduled role", "skips permission checks"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -257,6 +273,21 @@ func TestScheduleAccepts(t *testing.T) {
 		if _, err := ParseManifestBytes([]byte(scheduleManifest("headless", "", schedule))); err != nil {
 			t.Errorf("schedule %q refused: %v", schedule, err)
 		}
+	}
+}
+
+// TestScheduleAcceptsDontAsk: dontAsk denies whatever the role has not
+// allowed, so it checks every call and a scheduled role may take it
+// (scheduled-runs.md section 8; it is the retrospector run's mode).
+func TestScheduleAcceptsDontAsk(t *testing.T) {
+	t.Parallel()
+	doc := scheduleManifest("headless", `  permissions = "dontAsk"`, "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"")
+	m, err := ParseManifestBytes([]byte(doc))
+	if err != nil {
+		t.Fatalf("a scheduled dontAsk role was refused: %v", err)
+	}
+	if got := m.Teams[0].Roles[0].Permissions; got != "dontAsk" {
+		t.Errorf("permissions = %q, want dontAsk", got)
 	}
 }
 
