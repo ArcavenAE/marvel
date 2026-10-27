@@ -33,7 +33,7 @@ given a bounded window before its pane goes.
 | A role dropped from the file is drained | `reconcileOrphanedSessions`, `controller.go:930-950`; it skips `marvel run` sessions (`Generation == 0`, :943) | true |
 | `Apply` loops only over the file's teams | `manifest.go:967` (`Apply`), team loop at :1033, upsert at :1141-1162 | true; no loop removes a team the file stopped naming |
 | A file names one workspace; a dropped workspace is untouched | `manifest.go:970` (`m.Workspace`, singular) | true |
-| Re-apply sets posture to converge, so a held team spawns | `internal/daemon/daemon.go:1586-1594` | true. Noted, not changed by this design |
+| Re-apply sets posture to converge, so a held team spawns | `internal/daemon/daemon.go:1585-1594` | true. Noted, not changed by this design |
 | The daemon never sees the manifest's path | `cmd/marvel/main.go:1050-1056`: only `manifest_data` and `workspace_root` go up | true |
 | No owner record exists | `api.Team`, `internal/api/types.go:1015-1052` | true |
 | Every delete kills the pane with no handoff | `Manager.Delete`, `internal/session/manager.go:1562` | true |
@@ -64,6 +64,14 @@ A manifest is identified by **where it was applied from**: the client's host
 name and the file's absolute path with symlinks resolved, written
 `<host>:<path>`. `marvel work` computes it and sends it as a new apply param,
 `manifest_source`.
+
+`<host>` is `os.Hostname()` cut at the first dot and lowercased, so
+`host-a.local` and `host-a.lan` are one host. That still moves when the name
+itself changes (on macOS with no `HostName` set, the name can come from DNS
+and follow the network). A host whose name moves becomes a new source: its
+old claims are never released, so that file can no longer prune the teams it
+applied under the old name. This fails safe, since the teams stay. `describe
+team` shows the stale source, and the teams can be deleted by hand.
 
 A declared id inside the file was weighed and rejected. A file copied as a
 template keeps its id, and two files with one id would each prune the
@@ -136,6 +144,23 @@ fails closed. Until aae-orc-qawkf lands the full manifest plan, `marvel plan
 lands, the prune section becomes one section of its output and `prune_plan`
 becomes a part of its `evaluate`.
 
+**The prune set.** A team is in this file's prune set only when all four
+hold:
+
+1. its `Claims` is non-nil, its `Sources` is empty, and `ReleasedBy` is this
+   file's source;
+2. it holds no `marvel run` session (`Generation == 0`). Such a session
+   belongs to the operator, as the role-drop path already says
+   (`controller.go:940-942`), and scale-down would otherwise shed it
+   (`controller.go:1171`);
+3. it is not mid-shift (`Shift.Phase` is none). A shift's drain and abort
+   (`controller.go:2577`, `:2337`) call `Delete` directly, so a prune waits
+   for the shift to end;
+4. until step 4 lands, it has no running seat (section 5).
+
+A team that meets rule 1 and fails 2, 3 or 4 is listed as kept or deferred,
+with the rule it failed, and is not deleted.
+
 It writes nothing: no store, no events, no tmux. It prints:
 
 ```
@@ -156,7 +181,10 @@ kept, unclaimed (applied before claims existed, or by an older client):
 kept, holds marvel run sessions:
   aae/scratch        1 run session (not the manifest's to remove)
 
-named by this file and held (re-apply converges them, daemon.go:1586):
+deferred:
+  aae/night-batch    shift in progress; re-run the plan when it ends
+
+named by this file and held (re-apply converges them, daemon.go:1585):
   aae/builders       will spawn 2
 ```
 
@@ -182,9 +210,12 @@ marvel work <manifest> --prune <digest>
    stands and the prune is refused with both lists printed. Nothing a
    preview did not show is deleted.
 3. Each team in the set is marked `Pruning` (by source, at a time) and every
-   role's effective desired count becomes 0. The team's sessions then leave
-   through the scale-down path, which after step 4 asks each one for its
-   handoff. Once a pruning team holds no session, its record is deleted
+   role's effective desired count becomes 0. A pruning team starts no
+   shift: the automatic triggers skip it and `marvel shift` refuses it, so
+   no drain can bypass the ask once the prune has begun. The team's
+   sessions then leave through the scale-down path, which after step 4
+   asks each one for its handoff. Once a pruning team holds no session, its
+   record is deleted
    exactly as `marvel delete team` does (`daemon.go:1780-1795`): health
    state cleared and the broker user revoked. Endpoints and policies stay,
    as they do for `delete team` today.
@@ -193,9 +224,10 @@ marvel work <manifest> --prune <digest>
    is caught: it applied, and it pruned nothing.
 
 **Scope until step 4 lands:** step 3 prunes only a team with no running
-interactive seat. A team with one is listed as "deferred: live seat, needs
-step 4" and kept. So no live pane is killed without a handoff ask at any
-point in the chain.
+seat, interactive or headless. A team with one is listed as "deferred: live
+seat, needs step 4" and kept. So at no point in the chain is a running seat
+killed without either a handoff ask or, for a headless run that cannot take
+one, a bounded wait for it to finish (section 6.2).
 
 A team being pruned that a later apply names again stops pruning: the apply
 clears `Pruning`, reclaims it, and the reconciler converges it back. Seats
@@ -219,7 +251,8 @@ already asked for their handoff are not un-asked (section 6.4).
 
 At each covered call site (section 2), `Delete` is replaced by `Retire`.
 `Retire` reuses the shift handoff request (`internal/team/shift_handoff.go:109`,
-`requestHandoff`) with a new notice:
+`requestHandoff`) for an interactive seat, with a new notice (a running
+headless seat is waited on instead, section 6.2):
 
 ```
 retire: this seat is being removed; write your handoff now to <path>, ending with the line "<marker>"; you have <window>
@@ -243,9 +276,16 @@ rises again, a fresh seat spawns; the retiring one is not recalled.
 - **The role declares no handoff path:** the notice goes without a path, and
   the seat gets the same default window as a plain grace. There is nothing
   to watch, so the pane goes at the end of the window.
-- **Not asked at all, deleted at once:** a seat not in the running state, a
-  headless role (ADR-010), and a team-wide delete by an operator (out of
-  scope, section 2).
+- **A running headless seat:** it is not asked, because a headless run
+  reads no keystrokes, so a typed notice would reach nothing. Its run's own
+  end is its record (ADR-010): marvel waits for the run to finish, up to
+  the role's `handoff_window` (default 5 minutes), then kills the pane.
+  A run that finishes is recorded by the reaper as it is today; one killed
+  at the window is recorded as `cancelled` in the run history, as a kill of
+  a live run already is.
+- **Not waited for, deleted at once:** a seat not in the running state (a
+  finished headless run included), and a team-wide delete by an operator
+  (out of scope, section 2).
 
 A prune runs all its seats' windows at once, so a prune ends within the
 longest window plus a tick.
@@ -259,8 +299,9 @@ so what the seat had on screen survives.
 
 Every retirement emits `session.retired` with one outcome:
 `handoff-written`, `handoff-missing` (with the reason: window passed,
-notice undelivered, or the directory could not be made), or `not-asked`
-(with the reason). `handoff-missing` is a warning, and also goes to the
+notice undelivered, or the directory could not be made), `run-finished`
+or `run-cancelled` for a running headless seat, or `not-asked` (with the
+reason). `handoff-missing` and `run-cancelled` are warnings, and go to the
 team's supervisor seat by the existing missing-handoff delivery
 (`handoff-missing-delivery.md`) when that seat is not itself retiring.
 
@@ -301,19 +342,25 @@ One PR per step, each based on the one before, merged in order.
    workspaces; an apply with no source sets nil; a nil-claims team survives
    every later rule.
 2. **`prune_plan` and `marvel plan -f --prune`.** Read-only; the groups and
-   digest of section 4. Red tests: each group; the digest moves when a
+   digest of section 4. Red tests: each group, including a team kept for a
+   run session and one deferred mid-shift; the digest moves when a
    session is added; nothing is written (store, events, tmux); an older
    daemon fails the client closed. Blocked by 1.
 3. **`marvel work --prune <digest>`.** The digest check, `Pruning`, the
    team delete once empty, the `pruned` response field, and the deferral of
-   teams with a live interactive seat. Red tests: a digest mismatch prunes
-   nothing; a team claimed by two sources is kept; a re-apply clears
-   `Pruning`; a team with a live seat is deferred. Blocked by 2.
+   teams with a running seat. Red tests: a digest mismatch prunes nothing; a
+   team claimed by two sources is kept; a team holding a `marvel run`
+   session is kept and the run session survives; a team mid-shift is
+   deferred; a re-apply clears `Pruning`; a team
+   with a running interactive seat is deferred, and so is one with a running
+   headless seat. Blocked by 2.
 4. **`Retire`.** The notice, the stored request, the windows, the saved
    screen, `session.retired`, and the switch at the three covered call
    sites; lifts step 3's deferral. Red tests: marker kills one tick after;
-   no marker kills at the window; no path uses the plain grace; a restart
-   inside the window resumes it; a retiring seat is not counted as actual.
+   no marker kills at the window; no path uses the plain grace; a running
+   headless seat gets no notice, is killed when its run ends or at the
+   window, and the kill at the window records `cancelled`; a restart inside
+   the window resumes it; a retiring seat is not counted as actual.
    Blocked by 3.
 
 ## 9. Open items
@@ -325,7 +372,7 @@ One PR per step, each based on the one before, merged in order.
    shift timing and belongs with marvel#1063, not here.
 3. Scale-down can shed a `marvel run` session placed in a manifest role
    (`controller.go:1171`), where the role drop skips one. Separate issue.
-4. Re-apply converges a held team (`daemon.go:1586`). The dry-run reports
+4. Re-apply converges a held team (`daemon.go:1585`). The dry-run reports
    it; whether it should is a separate question.
 
 Valid until 2026-11-10; the arcaven architect re-checks it then.
