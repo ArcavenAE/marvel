@@ -3131,8 +3131,9 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 }
 
 // deskLess orders desk ids (tmux pane ids, "%29") by their number, so %100
-// follows %29. A desk with no number sorts below every numbered desk, as a
-// missing rate does, and two such desks compare as text.
+// follows %29. A desk with no number (empty, or not a number) sorts first
+// ascending and last descending, as rateSortKey treats a missing rate, and
+// two such desks compare as text.
 func deskLess(a, b string) bool {
 	na, aok := deskNumber(a)
 	nb, bok := deskNumber(b)

@@ -8,7 +8,8 @@ import (
 
 // TestSortByDeskIsNumeric: desk ids are tmux pane numbers, so %100 sorts
 // after %29, not before it. A desk with no number (empty, or not a number)
-// sorts below every numbered desk, as a missing rate does.
+// sorts first ascending and last descending, as rateSortKey treats a missing
+// rate.
 func TestSortByDeskIsNumeric(t *testing.T) {
 	t.Parallel()
 	rows := func() []api.Session {
