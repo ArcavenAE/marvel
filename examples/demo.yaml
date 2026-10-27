@@ -20,7 +20,7 @@ teams:
         replicas: 3
         runtime:
           image: simulator
-          command: bin/simulator
+          command: ../bin/simulator
           args: ["--tick", "3000"]
         healthcheck:
           type: heartbeat
@@ -31,7 +31,7 @@ teams:
         replicas: 1
         runtime:
           image: simulator
-          command: bin/simulator
+          command: ../bin/simulator
           args: ["--tick", "5000"]
           script: scripts/chaos.lua
         healthcheck:

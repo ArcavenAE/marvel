@@ -15,7 +15,7 @@ name = "squad"
 
     [team.role.runtime]
     image = "simulator"
-    command = "bin/simulator"
+    command = "../bin/simulator"
     args = ["--tick", "3000"]
 
     [team.role.healthcheck]
@@ -29,7 +29,7 @@ name = "squad"
 
     [team.role.runtime]
     image = "simulator"
-    command = "bin/simulator"
+    command = "../bin/simulator"
     args = ["--tick", "5000"]
     script = "scripts/chaos.lua"
 
