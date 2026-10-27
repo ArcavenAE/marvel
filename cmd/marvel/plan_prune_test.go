@@ -9,7 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
@@ -17,6 +19,13 @@ import (
 // olderDaemon answers every method as a daemon without prune_plan does, and
 // records the methods it was asked for.
 func olderDaemon(t *testing.T) func() []string {
+	t.Helper()
+	return pruneFakeDaemon(t, nil)
+}
+
+// pruneFakeDaemon answers prune_plan with plan, or every method with "unknown
+// method" when plan is nil, and records the methods it was asked for.
+func pruneFakeDaemon(t *testing.T, plan *api.PrunePlan) func() []string {
 	t.Helper()
 	home, err := os.MkdirTemp("", "mp")
 	if err != nil {
@@ -52,7 +61,11 @@ func olderDaemon(t *testing.T) func() []string {
 				mu.Lock()
 				methods = append(methods, req.Method)
 				mu.Unlock()
-				resp.Error = "unknown method: " + req.Method
+				if plan != nil && req.Method == "prune_plan" {
+					resp.Result, _ = json.Marshal(plan)
+				} else {
+					resp.Error = "unknown method: " + req.Method
+				}
 			}
 			_ = json.NewEncoder(c).Encode(resp)
 			_ = c.Close()
@@ -77,13 +90,20 @@ func writeManifest(t *testing.T) string {
 }
 
 func runPlan(args ...string) error {
+	_, err := runPlanOut(args...)
+	return err
+}
+
+func runPlanOut(args ...string) (string, error) {
+	out := &strings.Builder{}
 	cmd := planCmd()
 	cmd.SetArgs(args)
-	cmd.SetOut(&strings.Builder{})
+	cmd.SetOut(out)
 	cmd.SetErr(&strings.Builder{})
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
-	return cmd.Execute()
+	err := cmd.Execute()
+	return out.String(), err
 }
 
 // A daemon without prune_plan answers "unknown method". The preview must fail
@@ -128,5 +148,64 @@ func TestPlanFileFlagsAreRefusedWithoutTheirPartner(t *testing.T) {
 				t.Errorf("plan %q sent %q, want nothing sent", args, got)
 			}
 		})
+	}
+}
+
+// The preview prints each group of section 4, the digest and the line that
+// says apply's other pre-flights were not evaluated (the step 2 ruling, Q6). It
+// exits 0, and 2 under --detailed-exitcode when something would be deleted.
+func TestPlanPrunePrintsTheGroupsAndExitsByWhatItFound(t *testing.T) {
+	at := time.Date(2026, 10, 27, 18, 2, 0, 0, time.UTC)
+	plan := &api.PrunePlan{
+		Workspace: "ws",
+		Source:    "host-a:/srv/manifests/main.toml",
+		Digest:    "3f9c1a07",
+		WouldDelete: []api.PruneDelete{
+			{Team: "aae/old-research", Seats: []api.PruneSeat{{Session: "aae/old-research-worker-g1-0", State: api.SessionFailed}}, Handoff: "handoff: declared, window 5m0s"},
+			{Team: "aae/ops-trial"},
+		},
+		KeptShared:    []api.PruneShared{{Team: "aae/shared-ops", Others: map[string]time.Time{"host-a:/srv/manifests/ops.toml": at}}},
+		KeptUnclaimed: []string{"aae/fossil-a"},
+		KeptRun:       []api.PruneRun{{Team: "aae/scratch", Runs: 1}},
+		Deferred:      []api.PruneDeferred{{Team: "aae/night-batch", Reason: "shift in progress; re-run the plan when it ends"}},
+		Held:          []api.PruneHeld{{Team: "aae/builders", WillSpawn: 2}},
+	}
+	pruneFakeDaemon(t, plan)
+	path := writeManifest(t)
+	out, err := runPlanOut("-f", path, "--prune")
+	if err != nil {
+		t.Fatalf("plan --prune = %v, want exit 0", err)
+	}
+	for _, want := range []string{
+		"prune plan for workspace/ws from host-a:/srv/manifests/main.toml",
+		"digest 3f9c1a07",
+		"pre-flight checks not evaluated (aae-orc-qawkf)",
+		"would delete (claimed only by this file, which no longer names them):",
+		"aae/old-research   1 seat  1 failed   handoff: declared, window 5m0s",
+		"aae/ops-trial   0 seats",
+		"kept, claimed by another file too:",
+		"aae/shared-ops   also host-a:/srv/manifests/ops.toml (applied 2026-10-27T18:02Z)",
+		"kept, unclaimed (applied before claims existed, or by an older client):",
+		"aae/fossil-a   delete by hand: marvel delete team aae/fossil-a",
+		"kept, holds marvel run sessions:",
+		"aae/scratch   1 run session (not the manifest's to remove)",
+		"deferred:",
+		"aae/night-batch   shift in progress; re-run the plan when it ends",
+		"named by this file and held (re-apply converges them):",
+		"aae/builders   will spawn 2",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+
+	_, err = runPlanOut("-f", path, "--prune", "--detailed-exitcode")
+	var ee *exitError
+	if !errors.As(err, &ee) || ee.Code != 2 {
+		t.Errorf("--detailed-exitcode with teams to delete = %v, want exit 2", err)
+	}
+	plan.WouldDelete = nil
+	if _, err := runPlanOut("-f", path, "--prune", "--detailed-exitcode"); err != nil {
+		t.Errorf("--detailed-exitcode with nothing to delete = %v, want exit 0", err)
 	}
 }
