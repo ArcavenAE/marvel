@@ -1458,7 +1458,9 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	if err != nil {
 		return daemonrpc.Response{Error: err.Error()}
 	}
-	if derived {
+	// ValidateWorkDirs drops a root this host cannot see, and Apply then leaves
+	// the stored one alone, so only a root that survived it can move.
+	if derived && m.Workspace.Root != "" {
 		if live, err := d.store.GetWorkspace(m.Workspace.Name); err == nil && live.Root != "" && live.Root != m.Workspace.Root {
 			workDirAdvisories = append(workDirAdvisories, fmt.Sprintf(
 				"workspace %s root moves from %s to %s: the manifest names no workspace.root, so the directory it was applied from is taken; its teams place from there on their next restart (marvel#1086)",
