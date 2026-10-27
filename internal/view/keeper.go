@@ -192,7 +192,15 @@ func (k *Keeper) track(sess api.Session, v api.View) *tracked {
 // longer bound. The controller prepares first, so the fetching branch is for a
 // caller that creates a session without it.
 func (k *Keeper) Build(sess api.Session, views []api.View) {
-	ctx, cancel := context.WithTimeout(context.Background(), k.spawnTimeout())
+	// The spawn's build is counted in builds and runs under the keeper's
+	// lifetime, so Close cancels it and waits for it; after Close it builds
+	// nothing (marvel#1121).
+	life, ok := k.begin()
+	if !ok {
+		return
+	}
+	defer k.builds.Done()
+	ctx, cancel := context.WithTimeout(life, k.spawnTimeout())
 	defer cancel()
 	for _, v := range views {
 		t := k.track(sess, v)
@@ -318,6 +326,16 @@ func (k *Keeper) noteDown(t *tracked, err error) bool {
 // Refresh follows one named view of a session, or every view when name is
 // empty, now and whatever the schedule says. It returns one line per view.
 func (k *Keeper) Refresh(sessKey, name string) ([]string, error) {
+	// A refresh runs under the keeper's lifetime and is counted in builds, as a
+	// prepared build is, so Close cancels it and waits for it, and one asked for
+	// after Close does not run (marvel#1119). It is counted before anything
+	// else, so a refresh that has begun is one Close waits for.
+	life, ok := k.begin()
+	if !ok {
+		return nil, errClosed
+	}
+	defer k.builds.Done()
+
 	var decl *Declaration
 	if k.Declared != nil {
 		for _, d := range k.Declared() {
@@ -343,20 +361,6 @@ func (k *Keeper) Refresh(sessKey, name string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("session %s declares no views", sessKey)
 	}
-	// A refresh runs under the keeper's lifetime and is counted in builds, as a
-	// prepared build is, so Close cancels it and waits for it, and one asked for
-	// after Close does not run (marvel#1119).
-	k.mu.Lock()
-	if k.closed {
-		k.mu.Unlock()
-		return nil, errClosed
-	}
-	k.lifeLocked()
-	life := k.life
-	k.builds.Add(1)
-	k.mu.Unlock()
-	defer k.builds.Done()
-
 	lines := make([]string, 0, len(picked))
 	for _, v := range picked {
 		t := k.track(decl.Session, v)
@@ -664,6 +668,21 @@ func (k *Keeper) Close() {
 	k.mu.Unlock()
 	stop()
 	k.builds.Wait()
+}
+
+// begin counts a build in builds and returns the keeper's lifetime context
+// for it to run under, so Close cancels it and waits for it. It reports false
+// once Close has run, and the caller then builds nothing. A true return is
+// paired with builds.Done.
+func (k *Keeper) begin() (context.Context, bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.closed {
+		return nil, false
+	}
+	k.lifeLocked()
+	k.builds.Add(1)
+	return k.life, true
 }
 
 // lifeLocked returns the cancel for the keeper's lifetime context, creating
