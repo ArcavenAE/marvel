@@ -81,6 +81,13 @@ type Keeper struct {
 
 	mu      sync.Mutex
 	tracked map[string]*tracked
+	// life ends at Close; the background builds Prepare starts run under it,
+	// and builds counts them so Close can wait. closed refuses new ones. All
+	// three are set and read under mu.
+	life   context.Context
+	stop   context.CancelFunc
+	builds sync.WaitGroup
+	closed bool
 	// gen counts ticks. An entry created during or after a tick's snapshot is
 	// not older than that tick, so the tick does not forget it.
 	gen uint64
@@ -235,9 +242,18 @@ func (k *Keeper) Prepare(sess api.Session, views []api.View) bool {
 		}
 		t.pre = now.Add(prepareTTL)
 		tried, cutoff := t.tried, now.Sub(t.prepAt) >= k.spawnTimeout()
+		start := first && !k.closed
+		var life context.Context
+		if start {
+			// Counted under the lock Close takes, so Close never waits before
+			// a build it must wait for is counted.
+			k.lifeLocked()
+			life = k.life
+			k.builds.Add(1)
+		}
 		k.mu.Unlock()
-		if first {
-			go k.prepareBuild(t)
+		if start {
+			go k.prepareBuild(life, t)
 		}
 		if tried {
 			continue
@@ -255,10 +271,13 @@ func (k *Keeper) Prepare(sess api.Session, views []api.View) bool {
 }
 
 // prepareBuild runs the first build of a prepared view, off every lock but the
-// view's own refresh slot.
-func (k *Keeper) prepareBuild(t *tracked) {
-	t.run <- struct{}{}
-	k.refreshLocked(context.Background(), t, "spawn")
+// view's own refresh slot, under the keeper's lifetime context, so Close
+// stops it.
+func (k *Keeper) prepareBuild(life context.Context, t *tracked) {
+	defer k.builds.Done()
+	if t.acquire(life) {
+		k.refreshLocked(life, t, "spawn")
+	}
 	k.mu.Lock()
 	t.tried = true
 	k.mu.Unlock()
@@ -615,5 +634,24 @@ func short(sha string) string {
 	return sha
 }
 
-// Close is a stub until the next commit.
-func (k *Keeper) Close() {}
+// Close stops every build Prepare started in the background and waits for it
+// to return, so nothing writes under ViewsDir once Close returns. A Prepare
+// after Close starts no build. It is for whoever owns the keeper's lifetime;
+// the daemon does not call it yet.
+func (k *Keeper) Close() {
+	k.mu.Lock()
+	k.closed = true
+	stop := k.lifeLocked()
+	k.mu.Unlock()
+	stop()
+	k.builds.Wait()
+}
+
+// lifeLocked returns the cancel for the keeper's lifetime context, creating
+// both on first use. The caller holds the keeper's lock.
+func (k *Keeper) lifeLocked() context.CancelFunc {
+	if k.life == nil {
+		k.life, k.stop = context.WithCancel(context.Background())
+	}
+	return k.stop
+}
