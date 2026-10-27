@@ -51,13 +51,26 @@ func freePort(t *testing.T) int {
 		}
 		port := l.Addr().(*net.TCPAddr).Port
 		_ = l.Close()
-		if port <= maxBase {
+		// The server binds its monitoring port too, and exits at once when
+		// that is taken; under a loaded run it can be any socket's ephemeral
+		// port (#962).
+		if port <= maxBase && portFree(port+monitorPortOffset) {
 			markStarted("127.0.0.1:" + strconv.Itoa(port))
 			return port
 		}
 	}
 	t.Fatal("freePort: no loopback port at or below the monitoring-offset cap after 8192 tries")
 	return 0
+}
+
+// portFree reports whether a loopback port can be bound right now.
+func portFree(port int) bool {
+	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		return false
+	}
+	_ = l.Close()
+	return true
 }
 
 func kindsOf(r *events.Ring) []events.Kind {

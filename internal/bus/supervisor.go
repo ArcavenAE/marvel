@@ -1011,18 +1011,45 @@ func (s *Supervisor) listenerAnswers(timeout time.Duration) bool {
 	return true
 }
 
-func (s *Supervisor) waitListener(ctx context.Context, timeout time.Duration) bool {
+// waitListener waits for the listener to answer. It also stops, with gone
+// set, once alive reports the child no longer exists: a server that exits at
+// startup (a taken monitoring port, a bad config) is then reported at once
+// instead of after the whole wait (#962).
+func (s *Supervisor) waitListener(ctx context.Context, timeout time.Duration, alive func() bool) (ok, gone bool) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
-			return false
+			return false, false
 		}
 		if s.listenerAnswers(300 * time.Millisecond) {
-			return true
+			return true, false
+		}
+		if alive != nil && !alive() {
+			return false, true
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
-	return false
+	return false, false
+}
+
+// logTail returns the last few non-empty lines of the server's log, joined,
+// for an error that would otherwise only point at the file. A log that cannot
+// be read gives "".
+func logTail(path string, lines int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var kept []string
+	for _, l := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			kept = append(kept, l)
+		}
+	}
+	if len(kept) > lines {
+		kept = kept[len(kept)-lines:]
+	}
+	return strings.Join(kept, " | ")
 }
 
 func (s *Supervisor) emit(kind events.Kind, sev events.Severity, msg string) {

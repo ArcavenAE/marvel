@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -305,12 +304,7 @@ func TestAttachBusHandsTheUnreadCauseToTheSupervisor(t *testing.T) {
 	if _, err := exec.LookPath("nats-server"); err != nil {
 		t.Skip("nats-server not on PATH")
 	}
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
+	_, port := freeBrokerPort(t)
 
 	d1 := newHandlerDaemon(t)
 	home := t.TempDir()
