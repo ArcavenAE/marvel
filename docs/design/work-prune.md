@@ -215,7 +215,7 @@ digest 3f9c1a07
 pre-flight checks not evaluated (aae-orc-qawkf)
 
 would delete (claimed only by this file, which no longer names them):
-  aae/old-research   3 seats  1 parked, 2 running   handoff: declared, window 5m
+  aae/old-research   3 seats  1 failed, 2 running   handoff: declared, window 5m
   aae/ops-trial      0 seats
   aae/nightly-sync   1 seat  1 running   headless: waits up to 5m
 
