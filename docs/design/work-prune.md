@@ -200,9 +200,12 @@ The other groups:
   source), or one only other sources claim, is not listed: it belongs to that
   file's preview.
 
-`prune_plan` parses the manifest as `apply` does and runs none of `apply`'s
-other pre-flights (admission, the name clash, `LookPath`); those are the full
-manifest plan's. It refuses an empty `manifest_source`, as the client does.
+`prune_plan` is parse only: it parses the manifest as `apply` does and runs
+none of `apply`'s other pre-flights (admission, the name clash, `LookPath`);
+those are the full manifest plan's. It skips the `workspace_root` transform,
+which is a plain assignment that cannot fail and plays no part in the prune
+set. It refuses an empty `manifest_source`, as the client does, so a parse
+error and a missing source are its only exit 1.
 
 It writes nothing: no store, no events, no tmux. It prints:
 
@@ -229,7 +232,7 @@ kept, holds marvel run sessions:
 deferred:
   aae/night-batch    shift in progress; re-run the plan when it ends
 
-named by this file and held (re-apply converges them, daemon.go:1598):
+named by this file and held (re-apply converges them):
   aae/builders       will spawn 2
 ```
 
