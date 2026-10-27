@@ -3,7 +3,7 @@ package bus
 import (
 	"context"
 	"errors"
-	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -30,23 +30,18 @@ func inboxEnvelope() envelope.Envelope {
 }
 
 // A publish to an address no test started is refused before the dial. The
-// address is a loopback port opened and closed here and never marked started,
-// so without the guard the dial is refused by the host and reaches no broker,
-// and the error is a connect failure, not the guard's.
+// address is a closed loopback port no test marked started (closedLoopbackPort,
+// marvel#1107), so without the guard the dial is refused by the host and
+// reaches no broker, and the error is a connect failure, not the guard's.
 func TestRoleInboxPublisherDialAnswersToTheDialGuard(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	closed := "nats://" + ln.Addr().String()
-	_ = ln.Close()
+	closed := "nats://127.0.0.1:" + strconv.Itoa(closedLoopbackPort(t))
 	t.Cleanup(func() { forgetRefused(closed) })
 
 	p := NewRoleInboxPublisher(func() (string, string, string) { return closed, "u", "p" })
 	t.Cleanup(p.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	err = p.PublishRoleInbox(ctx, "aae", "team", "supervisor", inboxEnvelope(), "id")
+	err := p.PublishRoleInbox(ctx, "aae", "team", "supervisor", inboxEnvelope(), "id")
 	if !errors.Is(err, errNotStarted) {
 		t.Fatalf("publish to %s = %v, want the dial guard's refusal", closed, err)
 	}

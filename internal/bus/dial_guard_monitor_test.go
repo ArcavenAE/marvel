@@ -41,10 +41,22 @@ func closedLoopbackPort(t *testing.T) int {
 	})
 }
 
-// closedLoopbackPortFrom takes its ports from pick.
+// closedLoopbackPortFrom takes ports from pick until one is not in the dial
+// guard's started set. The set only grows, so a port that passed stays
+// unmarked unless a test marks it later.
 func closedLoopbackPortFrom(t *testing.T, pick func() int) int {
 	t.Helper()
-	return pick()
+	for range 64 {
+		port := pick()
+		dialGuardState.Lock()
+		marked := dialGuardState.started["127.0.0.1:"+strconv.Itoa(port)]
+		dialGuardState.Unlock()
+		if !marked {
+			return port
+		}
+	}
+	t.Fatal("closedLoopbackPort: every port in 64 picks was one a test marked started")
+	return 0
 }
 
 // marvel#1107: the kernel hands out a closed port's number again, so a port
