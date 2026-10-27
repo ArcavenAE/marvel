@@ -350,6 +350,10 @@ var fanWatchBackstop = 2 * time.Second
 // newFanWatchConfig is the loop's configuration for a set of resolved
 // clusters, without the drawing function, which belongs to the terminal.
 func newFanWatchConfig(targets []clusterTarget, params json.RawMessage, interval time.Duration) fanWatchConfig {
+	// The timer is read once, here: each fetch runs on its own goroutine and
+	// can outlive the loop, so it closes over this copy and never reads the
+	// package variable (#1093).
+	timer := fanOutTimeout
 	byName := map[string]clusterTarget{}
 	clusters := make([]fanWatchCluster, len(targets))
 	firstAt := firstAddress(targets)
@@ -364,16 +368,16 @@ func newFanWatchConfig(targets []clusterTarget, params json.RawMessage, interval
 		clusters: clusters,
 		interval: interval,
 		stale:    watchFetchDeadline,
-		timeout:  fanOutTimeout + fanWatchBackstop,
+		timeout:  timer + fanWatchBackstop,
 		fetch: func(name string, _ uint64, wantStamp bool) fanFetch {
 			t := byName[name]
 			began := time.Now()
-			rec, rows, fp := readCluster(t, params)
+			rec, rows, fp := readCluster(t, params, timer)
 			f := fanFetch{rec: rec, rows: rows, fingerprint: fp}
 			// The stamp is read inside what is left of the one timer, so a poll
 			// never outlives it. A slow daemon loses its stamp for this frame,
 			// and the rows it gave still count.
-			if left := fanOutTimeout - time.Since(began); wantStamp && rec.answered() && left > 0 {
+			if left := timer - time.Since(began); wantStamp && rec.answered() && left > 0 {
 				f.stamp, f.stampOK = readStampWithin(t, left)
 			}
 			return f

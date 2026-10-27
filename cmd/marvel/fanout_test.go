@@ -259,7 +259,7 @@ func TestAllFailSameCauseExitsThatCode(t *testing.T) {
 	// rows below run it end to end.
 	t.Run("8 auth_refused", func(t *testing.T) {
 		for _, err := range []error{&daemonrpc.AuthRefusedError{}, &daemonrpc.NoIdentityError{}} {
-			out, _, _, _ := classifyDialError(err)
+			out, _, _, _ := classifyDialError(err, fanOutTimeout)
 			if out != outcomeAuthRefused || outcomeExit[out] != 8 {
 				t.Errorf("%T -> %s (exit %d), want auth_refused (8)", err, out, outcomeExit[out])
 			}
@@ -269,11 +269,11 @@ func TestAllFailSameCauseExitsThatCode(t *testing.T) {
 		}
 	})
 	t.Run("9 host_key", func(t *testing.T) {
-		out, _, fp, _ := classifyDialError(&knownhosts.HostKeyUnknownError{Fingerprint: "SHA256:abc"})
+		out, _, fp, _ := classifyDialError(&knownhosts.HostKeyUnknownError{Fingerprint: "SHA256:abc"}, fanOutTimeout)
 		if out != outcomeHostKeyUnknown || outcomeExit[out] != 9 || fp != "SHA256:abc" {
 			t.Errorf("unknown -> %s %q", out, fp)
 		}
-		out, _, fp, _ = classifyDialError(&knownhosts.HostKeyChangedError{Fingerprint: "SHA256:def"})
+		out, _, fp, _ = classifyDialError(&knownhosts.HostKeyChangedError{Fingerprint: "SHA256:def"}, fanOutTimeout)
 		if out != outcomeHostKeyChanged || outcomeExit[out] != 9 || fp != "SHA256:def" {
 			t.Errorf("changed -> %s %q", out, fp)
 		}
