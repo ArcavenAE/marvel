@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -334,4 +335,43 @@ func TestMergeNeverHidesStatusLine(t *testing.T) {
 			t.Errorf("%s appears %d times, want once:\n%s", name, n, out)
 		}
 	}
+}
+
+// With three entries on one daemon, a row the leader's read missed and two
+// later members both saw is shown once (#1084). The keys a member keeps carry
+// over to the next member of its group.
+func TestFoldSameDaemonUnionAcrossThreeEntries(t *testing.T) {
+	at := time.Unix(1_700_000_000, 0)
+	stamp := daemonStamp{PID: 4242, StartedAt: at}
+	keys := []string{"d", "d", "d"}
+	stamps := []daemonStamp{stamp, stamp, stamp}
+	ok := []bool{true, true, true}
+	records := []clusterRecord{{Cluster: "a"}, {Cluster: "b"}, {Cluster: "c"}}
+	rowSets := [][]api.Session{
+		{{Workspace: "w", Name: "s1"}},
+		{{Workspace: "w", Name: "s1"}, {Workspace: "w", Name: "x"}},
+		{{Workspace: "w", Name: "s1"}, {Workspace: "w", Name: "x"}},
+	}
+	foldSameDaemon(keys, stamps, ok, records, rowSets)
+	seen := map[string]int{}
+	for _, set := range rowSets {
+		for _, r := range set {
+			seen[r.Workspace+"/"+r.Name]++
+		}
+	}
+	for k, n := range seen {
+		if n != 1 {
+			t.Errorf("row %s shown %d times in the merged view, want 1", k, n)
+		}
+	}
+	if n := records[2].Sessions; n == nil || *n != 0 {
+		t.Errorf("third entry's session count is not 0: %v", sessionCount(n))
+	}
+}
+
+func sessionCount(n *int) string {
+	if n == nil {
+		return "unset"
+	}
+	return strconv.Itoa(*n)
 }
