@@ -64,7 +64,7 @@ func TestPollLeafAsksTheDialGuard(t *testing.T) {
 		t.Skipf("MonitorAddr(%s) = %q, %v; not the scratch port %d", listen, want, err, mon)
 	}
 	t.Cleanup(func() { forgetRefused(want) })
-	s := &Supervisor{mgr: &Manager{bus: config.ResolvedBus{Listen: listen, HubURL: "nats-leaf://hub.example:7442"}}}
+	s := &Supervisor{mgr: &Manager{bus: config.ResolvedBus{Listen: listen, HubURL: "nats-leaf://hub.example:9"}}}
 	s.pollLeaf()
 	if !guardWasAsked(want) {
 		t.Errorf("pollLeaf read /leafz at %s without asking the dial guard", want)
