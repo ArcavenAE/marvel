@@ -118,7 +118,11 @@ func (d busDriver) Ready(ctx context.Context, c workload.ChildInfo) error {
 	}
 	timeout := s.dialTimeout
 	s.mu.Unlock()
-	if !s.waitListener(ctx, timeout) {
+	ok, gone := s.waitListener(ctx, timeout, func() bool { return s.prober.Same(c.Child) })
+	if gone {
+		return fmt.Errorf("bus: nats-server pid %d exited before it answered on %s: %s (see %s)", c.Child.Pid(), s.mgr.bus.Listen, logTail(s.logPath, 3), s.logPath)
+	}
+	if !ok {
 		return fmt.Errorf("bus: nats-server pid %d did not answer on %s within %s (see %s)", c.Child.Pid(), s.mgr.bus.Listen, timeout, s.logPath)
 	}
 	if s.AfterReady != nil {
