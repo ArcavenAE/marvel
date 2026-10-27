@@ -148,6 +148,9 @@ func TestUseScratchTmuxTmpDirSetsTheVariableOnlyWhenUnset(t *testing.T) {
 // leaving TMUX_TMPDIR unset, which would send the sweep and the servers into
 // the operator's own /tmp/tmux-<uid> (#1087).
 func TestUseScratchTmuxTmpDirFailsLoudWhenNoDirectoryCanBeMade(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root is not stopped by a mode 0500 directory, so nothing here can make the Mkdir fail")
+	}
 	t.Setenv("TMUX_TMPDIR", "")
 	if err := os.Unsetenv("TMUX_TMPDIR"); err != nil {
 		t.Fatal(err)
