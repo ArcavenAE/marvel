@@ -99,6 +99,31 @@ func bypassArg(args []string) string {
 	return ""
 }
 
+// bypassText returns the bypass spelling that appears anywhere in text, or
+// "" when neither does.
+func bypassText(text string) string {
+	for _, w := range []string{"--dangerously-skip-permissions", "bypassPermissions"} {
+		if strings.Contains(text, w) {
+			return w
+		}
+	}
+	return ""
+}
+
+// validateSchedulePolicy refuses a schedule on a role whose inline policy
+// sets permissions.defaultMode = "bypassPermissions": projectPolicy writes
+// the policy to the harness's --settings file. The contents of a
+// settings_file are not visible at parse. A role can name only a policy in
+// its own manifest (an undefined name is refused), so no stored policy
+// reaches it here.
+func validateSchedulePolicy(team string, r ManifestRole, p ManifestPolicy) error {
+	perms, _ := p.Settings["permissions"].(map[string]any)
+	if mode, _ := perms["defaultMode"].(string); mode == "bypassPermissions" {
+		return fmt.Errorf("team %s role %s: policy %q sets permissions.defaultMode = %q, which skips permission checks and is refused on a scheduled role; use \"dontAsk\" with an allow list", team, r.Name, p.Name, mode)
+	}
+	return nil
+}
+
 // validateSchedule checks one role's schedule block. now anchors the
 // daylight-saving scan.
 func validateSchedule(team string, r ManifestRole, now time.Time) error {
@@ -132,6 +157,12 @@ func validateSchedule(team string, r ManifestRole, now time.Time) error {
 	}
 	if flag := bypassArg(strings.Fields(r.Runtime.Command)); flag != "" {
 		return fmt.Errorf("%s: runtime.command %q skips permission checks and is refused on a scheduled role; use permissions = \"dontAsk\" with an allow list", where, flag)
+	}
+	// A command may be shell text, where quotes can sit anywhere in a word,
+	// so the command is also refused when either bypass spelling appears in
+	// it at all.
+	if word := bypassText(r.Runtime.Command); word != "" {
+		return fmt.Errorf("%s: runtime.command names %q, which skips permission checks and is refused on a scheduled role; use permissions = \"dontAsk\" with an allow list", where, word)
 	}
 	if s.Cron == "" {
 		return fmt.Errorf("%s: schedule.cron is required", where)

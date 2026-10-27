@@ -414,6 +414,7 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 		return nil, fmt.Errorf("parse manifest: workspace.scope %q: the one scope is %q", sc, WorkspaceScopeClient)
 	}
 	policyNames := make(map[string]bool, len(m.Policies))
+	policies := make(map[string]ManifestPolicy, len(m.Policies))
 	for i, p := range m.Policies {
 		if p.Name == "" {
 			return nil, fmt.Errorf("parse manifest: policy[%d].name is required", i)
@@ -422,6 +423,7 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			return nil, fmt.Errorf("parse manifest: policy[%d].name %q is duplicated", i, p.Name)
 		}
 		policyNames[p.Name] = true
+		policies[p.Name] = p
 		if err := validatePolicySettingsFile(i, p); err != nil {
 			return nil, fmt.Errorf("parse manifest: %w", err)
 		}
@@ -499,6 +501,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			}
 			if r.Schedule != nil {
 				if err := validateSchedule(t.Name, r, time.Now().UTC()); err != nil {
+					return nil, fmt.Errorf("parse manifest: %w", err)
+				}
+				if err := validateSchedulePolicy(t.Name, r, policies[r.Policy]); err != nil {
 					return nil, fmt.Errorf("parse manifest: %w", err)
 				}
 			}
