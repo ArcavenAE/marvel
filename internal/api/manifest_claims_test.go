@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -137,5 +138,93 @@ func TestNilClaimsTeamSurvivesEveryLaterRule(t *testing.T) {
 	}
 	if _, err := s.GetTeam("ws1/legacy"); err != nil {
 		t.Errorf("ws1/legacy is gone: %v", err)
+	}
+}
+
+// Condition 2 of the step 1 ruling: the teams a file names are matched by full
+// key, so a team of the same name in another workspace is still released.
+func TestApplyReleasesASameNamedTeamInAnotherWorkspace(t *testing.T) {
+	s := NewStore()
+	applyFrom(t, s, srcA, "ws1", "alpha")
+	applyFrom(t, s, srcA, "ws2", "alpha")
+
+	if c := claimsOf(t, s, "ws2/alpha"); !claimedBy(c, srcA) {
+		t.Errorf("ws2/alpha claims = %+v, want a claim by %s", c, srcA)
+	}
+	c := claimsOf(t, s, "ws1/alpha")
+	if claimedBy(c, srcA) {
+		t.Errorf("ws1/alpha still claimed by %s, which now names only ws2/alpha", srcA)
+	}
+	if c == nil || c.ReleasedBy != srcA {
+		t.Errorf("ws1/alpha claims = %+v, want released by %s", c, srcA)
+	}
+}
+
+// Condition 3: the release runs only after the team loop succeeds, so an apply
+// that fails part way releases nothing.
+func TestAFailedApplyReleasesNothing(t *testing.T) {
+	s := NewStore()
+	applyFrom(t, s, srcA, "ws1", "alpha", "beta")
+
+	m := claimsManifest(t, "ws1", "alpha", "gamma")
+	m.Teams[1].Roles[0].ActivityTimeout = "not-a-duration"
+	if err := m.ApplyFrom(s, srcA); err == nil {
+		t.Fatal("apply with a bad activity_timeout succeeded; the test needs it to fail in the team loop")
+	}
+	if c := claimsOf(t, s, "ws1/beta"); !claimedBy(c, srcA) || c.ReleasedBy != "" {
+		t.Errorf("ws1/beta claims = %+v after a failed apply, want %s's claim kept and no release", c, srcA)
+	}
+}
+
+// The step 1 ruling's race: source A releases team T while source B claims it.
+// Claims are per source key, so either order, and the two run at once, end with
+// T claimed by B alone and no release recorded.
+func TestReleaseAndClaimOfOneTeamEndTheSameInEitherOrder(t *testing.T) {
+	release := func(s *Store) error { return claimsManifest(t, "ws1", "other").ApplyFrom(s, srcA) }
+	claim := func(s *Store) error { return claimsManifest(t, "ws1", "target").ApplyFrom(s, srcB) }
+	// run starts each step on its own goroutine; ordered waits for one to
+	// finish before the next starts, and otherwise they run at once.
+	run := func(s *Store, ordered bool, steps ...func(*Store) error) []error {
+		errs := make([]error, len(steps))
+		var wg sync.WaitGroup
+		for i, step := range steps {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs[i] = step(s)
+			}()
+			if ordered {
+				wg.Wait()
+			}
+		}
+		wg.Wait()
+		return errs
+	}
+	cases := []struct {
+		name    string
+		ordered bool
+		steps   []func(*Store) error
+	}{
+		{"release then claim", true, []func(*Store) error{release, claim}},
+		{"claim then release", true, []func(*Store) error{claim, release}},
+		{"at once", false, []func(*Store) error{release, claim}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewStore()
+			applyFrom(t, s, srcA, "ws1", "target")
+			for _, err := range run(s, tc.ordered, tc.steps...) {
+				if err != nil {
+					t.Fatalf("apply: %v", err)
+				}
+			}
+			c := claimsOf(t, s, "ws1/target")
+			if c == nil || len(c.Sources) != 1 || !claimedBy(c, srcB) {
+				t.Fatalf("ws1/target claims = %+v, want Sources = {%s}", c, srcB)
+			}
+			if c.ReleasedBy != "" || !c.ReleasedAt.IsZero() {
+				t.Errorf("ws1/target released by %q at %v while %s claims it", c.ReleasedBy, c.ReleasedAt, srcB)
+			}
+		})
 	}
 }
