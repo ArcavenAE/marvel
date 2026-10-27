@@ -144,6 +144,16 @@ func join(names []string) string {
 // (marvel#998); it is nil otherwise.
 var dialGuard func(url string) error
 
+// checkDial asks dialGuard about addr, a URL or a host:port, and is a no-op
+// when no guard is set. The dials that do not go through connectAdmin call it:
+// the monitor reads and the listener probe (marvel#1007).
+func checkDial(addr string) error {
+	if dialGuard == nil {
+		return nil
+	}
+	return dialGuard(addr)
+}
+
 // errNoAddress is what a dial with no URL returns. nats.Connect given an empty
 // URL adds its own default, nats://127.0.0.1:4222, which is the managed
 // broker's listen address, so an unset address would reach a live broker

@@ -52,7 +52,13 @@ func freePort(t *testing.T) int {
 		port := l.Addr().(*net.TCPAddr).Port
 		_ = l.Close()
 		if port <= maxBase {
-			markStarted("127.0.0.1:" + strconv.Itoa(port))
+			addr := "127.0.0.1:" + strconv.Itoa(port)
+			markStarted(addr)
+			// A broker started on this port has its monitor at the offset
+			// port, so the guard knows that address too (marvel#1007).
+			if mon, err := MonitorAddr(addr); err == nil {
+				markStarted(mon)
+			}
 			return port
 		}
 	}

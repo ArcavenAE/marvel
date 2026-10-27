@@ -939,6 +939,9 @@ func (s *Supervisor) pollLeaf() {
 	if err != nil {
 		return
 	}
+	if checkDial(mon) != nil {
+		return
+	}
 	cli := &http.Client{Timeout: 3 * time.Second}
 	resp, err := cli.Get("http://" + mon + "/leafz")
 	if err != nil {
@@ -1003,6 +1006,9 @@ func leafDuration(d time.Duration) string {
 }
 
 func (s *Supervisor) listenerAnswers(timeout time.Duration) bool {
+	if checkDial(s.mgr.bus.Listen) != nil {
+		return false
+	}
 	c, err := net.DialTimeout("tcp", s.mgr.bus.Listen, timeout)
 	if err != nil {
 		return false
