@@ -49,7 +49,7 @@ name = "code-review"
     image = "simulator"
     command = "../bin/simulator"
     args = ["--tick", "5000"]
-    script = "scripts/scaler.lua"
+    script = "../scripts/scaler.lua"
 
     [team.role.healthcheck]
     type = "heartbeat"

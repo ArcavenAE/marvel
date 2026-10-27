@@ -774,7 +774,9 @@ func (r ManifestRuntime) AdapterName() string {
 // advisories returned say that role's program was not checked.
 //
 // Scripts are checked as absolute/relative paths (never PATH-resolved)
-// because scripts are typically repo-relative files, not executables.
+// because scripts are typically repo-relative files, not executables. A
+// relative script resolves against the same directory as a relative command,
+// the one the pane starts in (see validateScript).
 //
 // See ArcavenAE/marvel#9 / aae-orc-rjm — the pre-fix behavior was to
 // silently create panes whose processes exited immediately, hiding the
@@ -793,7 +795,7 @@ func (m *Manifest) ValidateRuntimes() ([]string, error) {
 				advisories = append(advisories, fmt.Sprintf("role %s: %s", r.Name, advisory))
 			}
 			if r.Runtime.Script != "" {
-				if err := validateScript(r.Runtime.Script); err != nil {
+				if err := validateScript(r.Runtime.Script, dir); err != nil {
 					missing = append(missing, fmt.Sprintf("  %s: script %q: %v", ctx, r.Runtime.Script, err))
 				}
 			}
@@ -900,7 +902,15 @@ func hasUnsplitWhitespace(command string) bool {
 
 const commandNotParsedAdvisory = "runtime command is shell text the pre-flight does not parse; its program was not checked"
 
-func validateScript(path string) error {
+// validateScript checks a role's script. A relative script resolves against dir,
+// the directory the launch starts the pane in (the same one validateCommand
+// uses), because the program opens it from its own working directory. A role
+// with no directory has none to resolve against, so the path is statted as
+// given, which is the daemon's directory.
+func validateScript(path, dir string) error {
+	if !filepath.IsAbs(path) && dir != "" {
+		path = filepath.Join(dir, path)
+	}
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("not found: %w", err)
 	}

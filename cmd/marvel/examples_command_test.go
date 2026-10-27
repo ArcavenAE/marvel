@@ -15,8 +15,10 @@ import (
 // command against that anchor, so "bin/simulator" in examples/demo.toml looks
 // for examples/bin/simulator and refuses the README Quick Start (marvel#1062).
 // The built simulator sits at <repo>/bin/simulator, which the examples reach as
-// "../bin/simulator", the form examples/tour.toml already uses.
-func TestExampleManifestRelativeCommandsReachTheBuiltBinary(t *testing.T) {
+// "../bin/simulator", the form examples/tour.toml already uses. A relative
+// script resolves from the same directory, so it reaches <repo>/scripts as
+// "../scripts/<name>" and must name a file that exists there.
+func TestExampleManifestRelativePathsReachTheirTargets(t *testing.T) {
 	repo := t.TempDir()
 	wantBin := filepath.Join(repo, "bin", "simulator")
 	if err := os.MkdirAll(filepath.Dir(wantBin), 0o755); err != nil {
@@ -42,7 +44,8 @@ func TestExampleManifestRelativeCommandsReachTheBuiltBinary(t *testing.T) {
 		}
 		m, err := api.ParseManifestBytes(data)
 		if err != nil {
-			continue // not a manifest (a fragment or a fixture); the parser tests own that
+			t.Errorf("%s does not parse as a manifest, so its commands and scripts were not checked: %v", filepath.Base(src), err)
+			continue
 		}
 		// Place the manifest where it sits in the repository, one level below
 		// the root, and anchor it the way marvel work does.
@@ -50,6 +53,13 @@ func TestExampleManifestRelativeCommandsReachTheBuiltBinary(t *testing.T) {
 		root := workspaceRootFor(placed, m.Workspace.Root)
 		for _, tm := range m.Teams {
 			for _, r := range tm.Roles {
+				if sc := r.Runtime.Script; sc != "" && !filepath.IsAbs(sc) && r.WorkDir == "" && tm.WorkDir == "" {
+					checked++
+					realRoot := workspaceRootFor(src, m.Workspace.Root)
+					if _, err := os.Stat(filepath.Join(realRoot, sc)); err != nil {
+						t.Errorf("%s team %s role %s: script %q does not resolve from the manifest's directory: %v", filepath.Base(src), tm.Name, r.Name, sc, err)
+					}
+				}
 				cmd := strings.Fields(r.Runtime.Command)
 				if len(cmd) == 0 || filepath.IsAbs(cmd[0]) || !strings.ContainsRune(cmd[0], '/') {
 					continue

@@ -43,7 +43,7 @@ teams:
           image: simulator
           command: ../bin/simulator
           args: ["--tick", "5000"]
-          script: scripts/chaos.lua
+          script: ../scripts/chaos.lua
 
 endpoints:
   - name: claude-svc

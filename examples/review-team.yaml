@@ -49,7 +49,7 @@ teams:
           image: simulator
           command: ../bin/simulator
           args: ["--tick", "5000"]
-          script: scripts/scaler.lua
+          script: ../scripts/scaler.lua
         healthcheck:
           type: heartbeat
           timeout: "30s"
