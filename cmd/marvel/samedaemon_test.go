@@ -375,3 +375,26 @@ func sessionCount(n *int) string {
 	}
 	return strconv.Itoa(*n)
 }
+
+// The one-shot read keeps the stamp inside the one fan-out timer, as the
+// watch poll does (#1085): a daemon whose get answers late in the timer gets
+// only what is left of it for version, so a slow daemon loses its stamp and
+// keeps its rows instead of holding the screen for a second full timer.
+func TestOneShotStampKeepsToTheOneTimer(t *testing.T) {
+	fastTimer(t, 500*time.Millisecond)
+	f := startSD(t, sdStart, []api.Session{row("w", "s1")})
+	f.delay = 400 * time.Millisecond
+	link := filepath.Join(filepath.Dir(f.sock), "alias.sock")
+	if err := os.Symlink(f.sock, link); err != nil {
+		t.Fatal(err)
+	}
+	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock}, config.Cluster{Name: "b", Socket: link})
+	began := time.Now()
+	doc, _ := readDoc(t, "--cluster", "a,b")
+	if took := time.Since(began); took > fanOutTimeout+200*time.Millisecond {
+		t.Errorf("the read took %v, past the one timer of %v", took, fanOutTimeout)
+	}
+	if got := recordOf(t, doc, "b"); got.Outcome == outcomeSameDaemon {
+		t.Errorf("b = %+v, want its own rows: the stamp read had no timer left", got)
+	}
+}
