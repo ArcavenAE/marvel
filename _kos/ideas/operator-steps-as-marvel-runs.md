@@ -7,7 +7,7 @@ Source: operator, relayed by director.
 
 ## The operator's words
 
-> "kos idea marvel today we're running scripts by hand on different clusters, but marvel is capable of organizing and running one off scripts using ... itself as a job scheduler and they have a fully tty, and marvel capture/inject can be used to interactively answer inputs, we may need to analyze/ensure that we do not repeatly run the same script over and over but it's basically a single run TUI harness shape with a supervisor using marvel capture/inject to follow the latest questions, look for errors, approve or reject the run, collect the logs/status. we should study what changes to the system are needed for this use of marvel as system automation/maintenance/steps, and what improvements to marvel are important to streamline this use case"
+> "kos idea marvel today we're running scripts by hand on different clusters, but marvel is capable of organizing and running one off scripts using ... itself as a job scheduler and they have a fully tty, and marvel capture/inject can be used to interactively answer inputs, we may need to analyze/ensure that we do not repeatly run the same script over and over but it's basically a single run tui harness shape with a supervisor using marvel capture/inject to follow the latest questions, look for errors, approve or reject the run, collect the logs/status. we should study what changes to the system are needed for this use of marvel as system automation/maintenance/steps, and what improvements to marvel are important to streamline this use case"
 
 ## The idea, in one sentence
 
