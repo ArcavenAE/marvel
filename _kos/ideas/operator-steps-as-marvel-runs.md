@@ -100,5 +100,3 @@ and which improvements matter most.
 - Who may approve: a supervisor session, a person, or either according to the
   step?
 - What is the smallest first case that would show whether the shape works?
-
-Studied in finding-marvel-g6l6 (`_kos/findings/finding-marvel-g6l6-operator-steps-as-marvel-runs.md`).
