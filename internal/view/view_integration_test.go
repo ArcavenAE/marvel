@@ -15,11 +15,21 @@ import (
 )
 
 // gitIn runs git in dir with a clean environment and fails the test on error.
+// git reads no global or system config and no ssh agent, so nothing the host
+// or a seat configured can sign a commit; the fixture repository's own config
+// names the run's key (realViewFixture).
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(cleanGitEnv(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+	var env []string
+	for _, kv := range cleanGitEnv() {
+		if !strings.HasPrefix(kv, "SSH_AUTH_SOCK=") {
+			env = append(env, kv)
+		}
+	}
+	cmd.Env = append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -41,8 +51,47 @@ func commitPayload(t *testing.T, repo string, n int) string {
 		}
 	}
 	gitIn(t, repo, "add", "-A")
-	gitIn(t, repo, "commit", "-q", "-m", fmt.Sprintf("commit %d", n))
+	signedCommit(t, repo, fmt.Sprintf("commit %d", n))
 	return gitIn(t, repo, "rev-parse", "HEAD")
+}
+
+// signedCommit commits what is staged in repo, signed with the run's key, and
+// fails the test unless the signature verifies against that key alone. These
+// tests read commit history, so they commit; a test may not write an
+// unsigned commit or sign with the host's config or a seat's key.
+func signedCommit(t *testing.T, repo, msg string) {
+	t.Helper()
+	gitIn(t, repo, "commit", "-S", "-q", "-m", msg)
+	gitIn(t, repo, "verify-commit", "HEAD")
+}
+
+// runSigningKey makes a throwaway ed25519 key in a temp dir and sets repo's
+// own config to sign every commit with it and to trust only it.
+func runSigningKey(t *testing.T, repo string) {
+	t.Helper()
+	if _, err := exec.LookPath("ssh-keygen"); err != nil {
+		t.Skip("ssh-keygen is not on PATH")
+	}
+	key := filepath.Join(t.TempDir(), "key")
+	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "view-test", "-f", key).CombinedOutput(); err != nil {
+		t.Fatalf("ssh-keygen: %v\n%s", err, out)
+	}
+	pub, err := os.ReadFile(key + ".pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signers := key + ".signers"
+	if err := os.WriteFile(signers, []byte("t@example.com "+string(pub)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range [][2]string{
+		{"gpg.format", "ssh"},
+		{"commit.gpgsign", "true"},
+		{"user.signingkey", key},
+		{"gpg.ssh.allowedSignersFile", signers},
+	} {
+		gitIn(t, repo, "config", kv[0], kv[1])
+	}
 }
 
 func realViewFixture(t *testing.T) (repo string, b *Builder) {
@@ -55,6 +104,7 @@ func realViewFixture(t *testing.T) (repo string, b *Builder) {
 		t.Fatal(err)
 	}
 	gitIn(t, repo, "init", "-q", "-b", "main")
+	runSigningKey(t, repo)
 	root := t.TempDir()
 	b = New(filepath.Join(root, "views", "ws", "seat", "repo"), repo, "main", ExecGit{})
 	// The trees are read-only; restore write so TempDir can remove them.
@@ -240,7 +290,7 @@ func TestRealGitRefusesACommitThatCarriesAVIEWSHA(t *testing.T) {
 		t.Fatal(err)
 	}
 	gitIn(t, repo, "add", "-A")
-	gitIn(t, repo, "commit", "-q", "-m", "carries a VIEW_SHA")
+	signedCommit(t, repo, "carries a VIEW_SHA")
 
 	_, err := b.Refresh(context.Background())
 	var re *RefreshError
@@ -260,7 +310,7 @@ func TestRealGitRefusesALinkThatPassesThroughAnotherLink(t *testing.T) {
 		}
 	}
 	gitIn(t, repo, "add", "-A")
-	gitIn(t, repo, "commit", "-q", "-m", "links through links")
+	signedCommit(t, repo, "links through links")
 
 	_, err := b.Refresh(context.Background())
 	var re *RefreshError
@@ -286,7 +336,7 @@ func TestRealGitRefusesACaseFoldedLinkTarget(t *testing.T) {
 		}
 	}
 	gitIn(t, repo, "add", "-A")
-	gitIn(t, repo, "commit", "-q", "-m", "a link through another spelling")
+	signedCommit(t, repo, "a link through another spelling")
 
 	_, err := b.Refresh(context.Background())
 	var re *RefreshError
