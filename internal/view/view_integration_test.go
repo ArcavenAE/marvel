@@ -14,6 +14,9 @@ import (
 	"testing"
 )
 
+// checkGitArgs is a stub until the next commit.
+func checkGitArgs(args []string) error { return nil }
+
 // gitIn runs git in dir with a clean environment and fails the test on error.
 // git reads no global or system config and no ssh agent, so nothing the host
 // or a seat configured can sign a commit; the fixture repository's own config

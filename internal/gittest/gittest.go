@@ -72,3 +72,6 @@ func Worktree(t *testing.T, repo, name string) string {
 	}
 	return real
 }
+
+// checkArgs is a stub until the next commit.
+func checkArgs(args []string) error { return nil }
