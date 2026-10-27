@@ -102,6 +102,9 @@ func CheckStructure(ctx context.Context, url, user, password, monitorAddr string
 	}
 	sort.Strings(st.Missing)
 
+	if err := checkDial(monitorAddr); err != nil {
+		return st, err
+	}
 	cli := &http.Client{Timeout: 3 * time.Second}
 	resp, err := cli.Get("http://" + monitorAddr + "/varz")
 	if err != nil {

@@ -55,7 +55,13 @@ func freePort(t *testing.T) int {
 		// that is taken; under a loaded run it can be any socket's ephemeral
 		// port (#962).
 		if port <= maxBase && portFree(port+monitorPortOffset) {
-			markStarted("127.0.0.1:" + strconv.Itoa(port))
+			addr := "127.0.0.1:" + strconv.Itoa(port)
+			markStarted(addr)
+			// A broker started on this port has its monitor at the offset
+			// port, so the guard knows that address too (marvel#1007).
+			if mon, err := MonitorAddr(addr); err == nil {
+				markStarted(mon)
+			}
 			return port
 		}
 	}

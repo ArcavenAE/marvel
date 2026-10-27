@@ -35,6 +35,9 @@ func TestAnEmptyBrokerURLIsRefusedBeforeAnyDial(t *testing.T) {
 			if err == nil {
 				t.Fatal("a dial with no URL succeeded")
 			}
+			if !errors.Is(err, errNoAddress) {
+				t.Fatalf("an empty URL was refused with %v, want errNoAddress", err)
+			}
 			if errors.Is(err, errNotStarted) || guardWasAsked("") {
 				t.Fatalf("an empty URL reached the dial guard (%v); with the guard off it dials nats.go's default address", err)
 			}
