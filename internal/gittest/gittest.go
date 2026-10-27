@@ -13,7 +13,8 @@ import (
 )
 
 // Env is the process environment without the variables that point git at a
-// particular repository, plus an identity for the plumbing commit.
+// particular repository, plus an identity so no git call reads one from the
+// host's config.
 func Env() []string {
 	var env []string
 	for _, kv := range os.Environ() {
@@ -42,16 +43,16 @@ func Run(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// Repo makes a repository at dir with one commit, built with plumbing so the
-// fixture needs no signing and no git config, and returns its top-level with
-// symlinks resolved.
+// Repo makes a repository at dir and returns its top-level with symlinks
+// resolved. It makes no commit: the callers test where a repository and its
+// worktrees resolve, never its history, and a test may not write an unsigned
+// commit.
 func Repo(t *testing.T, dir string) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	Run(t, dir, "init", "-q", "-b", "main")
-	Run(t, dir, "update-ref", "refs/heads/main", Run(t, dir, "commit-tree", Run(t, dir, "mktree"), "-m", "fixture"))
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -59,12 +60,12 @@ func Repo(t *testing.T, dir string) string {
 	return real
 }
 
-// Worktree adds a linked worktree of repo on a new branch and returns its path
-// with symlinks resolved.
+// Worktree adds a linked worktree of repo on a new unborn branch, so it needs
+// no commit, and returns its path with symlinks resolved.
 func Worktree(t *testing.T, repo, name string) string {
 	t.Helper()
 	wt := filepath.Join(t.TempDir(), name)
-	Run(t, repo, "worktree", "add", "-q", wt, "-b", name)
+	Run(t, repo, "worktree", "add", "-q", "--orphan", "-b", name, wt)
 	real, err := filepath.EvalSymlinks(wt)
 	if err != nil {
 		t.Fatal(err)
