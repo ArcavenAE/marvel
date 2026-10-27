@@ -815,8 +815,8 @@ or `unknown`) and the command that fixes it. `marvel bus status` shows
 `leaf-src: unknown` for a broker whose identity file predates the record.
 
 After the exec, `daemon reexec` and `upgrade --daemon` read the leaf for up to
-90 seconds and print what they measured. A cluster with no hub passes and says
-so. A cluster with a hub whose leaf is not up on a current reading exits
+90 seconds and print what they measured. A cluster with no hub, or with no bus
+at all, passes and says so. A cluster with a hub whose leaf is not up on a current reading exits
 nonzero, prints how long it waited, the cause, the line `not carried: ...` when
 the old daemon declined or could not hand the credentials over, and the one
 command that puts the seed back. For a script:
@@ -827,6 +827,8 @@ marvel --cluster <name> bus status --require-leaf   # exit 0 only when a hub is 
 
 It exits nonzero with one of: `no hub`, `detached by operator`, `dropped on
 adopt`, `not enrolled`, `down` or `unknown` (a reading older than two polls).
+A cluster with no bus at all reads `no hub` too; plain `bus status` there still
+prints the daemon's sentence about adding a bus section.
 
 A downgrade across this change needs the bus stopped first. The broker's
 identity file is now schema 2, and a binary older than this change reads only

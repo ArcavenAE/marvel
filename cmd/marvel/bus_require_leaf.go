@@ -48,6 +48,9 @@ func leafRequirement(st bus.Status, now time.Time) (bool, string) {
 // prints the status, and with requireLeaf it fails unless leafRequirement holds.
 func busStatusResult(w io.Writer, resp *daemonrpc.Response, requireLeaf bool, now time.Time) error {
 	if resp.Error != "" {
+		if requireLeaf && resp.Error == daemonrpc.NoBusReply {
+			return requireLeafError("no hub")
+		}
 		return fmt.Errorf("%s", resp.Error)
 	}
 	var st bus.Status

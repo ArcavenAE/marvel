@@ -13,7 +13,7 @@ import (
 func TestBusStatusWithoutABusSaysSo(t *testing.T) {
 	d := newHandlerDaemon(t)
 	resp := d.dispatchAs(daemonrpc.Request{Method: "bus.status"}, localCaller())
-	if resp.Error == "" || !strings.Contains(resp.Error, "no bus is configured") {
+	if resp.Error != daemonrpc.NoBusReply || !strings.Contains(resp.Error, "no bus is configured") {
 		t.Fatalf("resp = %+v, want a no-bus error", resp)
 	}
 }

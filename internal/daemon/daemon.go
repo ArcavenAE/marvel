@@ -3277,7 +3277,7 @@ func (d *Daemon) lifecycleStatus() bus.Status {
 func (d *Daemon) handleBusStatus() daemonrpc.Response {
 	st, ok := d.busStatus()
 	if !ok {
-		return daemonrpc.Response{Error: "no bus is configured for this cluster; add a bus section to its entry in the client config"}
+		return daemonrpc.Response{Error: daemonrpc.NoBusReply}
 	}
 	return respond(st)
 }
