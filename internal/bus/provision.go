@@ -138,8 +138,9 @@ func join(names []string) string {
 	return s
 }
 
-// dialGuard, when set, is asked about every URL before connectAdmin dials it,
-// and its error is returned without a dial. Only the package's tests set it,
+// dialGuard, when set, is asked about every URL before connectAdmin or the role
+// inbox publisher dials it, and its error is returned without a dial. Only the
+// package's tests set it,
 // to refuse a broker the test did not start (marvel#998); it is nil otherwise.
 var dialGuard func(url string) error
 
