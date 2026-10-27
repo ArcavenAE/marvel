@@ -196,10 +196,10 @@ func TestPlanPruneNotesHandoffAndHeadlessWaits(t *testing.T) {
 		got[d.Team] = [2]string{d.Handoff, d.Headless}
 	}
 	want := map[string][2]string{
-		"ws/declared": {"handoff: declared, window 2m0s", ""},
+		"ws/declared": {"handoff: declared, window 2m", ""},
 		"ws/none":     {"handoff: none", ""},
 		"ws/some":     {"handoff: some roles", ""},
-		"ws/batch":    {"", "headless: waits up to 5m0s"},
+		"ws/batch":    {"", "headless: waits up to 5m"},
 		"ws/empty":    {"", ""},
 	}
 	if !reflect.DeepEqual(got, want) {

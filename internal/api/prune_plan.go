@@ -190,16 +190,26 @@ func pruneDelete(t *Team, sessions []Session) PruneDelete {
 	switch {
 	case interactive == 0:
 	case declared == interactive:
-		d.Handoff = "handoff: declared, window " + window.String()
+		d.Handoff = "handoff: declared, window " + shortDuration(window)
 	case declared == 0:
 		d.Handoff = "handoff: none"
 	default:
 		d.Handoff = "handoff: some roles"
 	}
 	if hasHeadless {
-		d.Headless = "headless: waits up to " + headless.String()
+		d.Headless = "headless: waits up to " + shortDuration(headless)
 	}
 	return d
+}
+
+// shortDuration drops the empty seconds of a whole-minute duration, so 5m0s
+// reads 5m as the design writes it.
+func shortDuration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		return strings.TrimSuffix(s, "0s")
+	}
+	return s
 }
 
 // pruneDigest is the first 8 hex characters of a sha256 over "source <source>",
