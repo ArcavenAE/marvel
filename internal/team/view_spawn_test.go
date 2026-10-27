@@ -76,6 +76,10 @@ func viewSpawnRig(t *testing.T, git view.Git, spawnBound time.Duration) (*api.St
 			_ = keeper.Teardown(s.Key())
 		}
 	})
+	// Runs before the teardown above and before the temp directories go: a
+	// build Prepare started (a shift successor's, say) is stopped and waited
+	// for, so nothing writes under ViewsDir while it is removed (marvel#1104).
+	t.Cleanup(keeper.Close)
 	if err := store.CreateWorkspace(&api.Workspace{Name: "test-view-spawn", Root: realDir(t), CreatedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
