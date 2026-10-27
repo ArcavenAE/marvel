@@ -264,7 +264,7 @@ func collectFanOut(names []string, composer bool) ([]clusterRecord, []api.Sessio
 			began[i] = began[firstAt[i]]
 		}
 	}
-	mergeSameDaemon(targets, records, rowSets, fingerprints, began)
+	mergeSameDaemon(targets, records, rowSets, fingerprints, began, timer)
 	var rows []api.Session
 	for _, rs := range rowSets {
 		rows = append(rows, rs...)
