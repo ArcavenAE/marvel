@@ -18,7 +18,7 @@ name = "code-review"
 
     [team.role.runtime]
     image = "simulator"
-    command = "bin/simulator"
+    command = "../bin/simulator"
     args = ["--tick", "2000"]
 
     [team.role.healthcheck]
@@ -33,7 +33,7 @@ name = "code-review"
 
     [team.role.runtime]
     image = "simulator"
-    command = "bin/simulator"
+    command = "../bin/simulator"
     args = ["--tick", "4000"]
 
     [team.role.healthcheck]
@@ -47,9 +47,9 @@ name = "code-review"
 
     [team.role.runtime]
     image = "simulator"
-    command = "bin/simulator"
+    command = "../bin/simulator"
     args = ["--tick", "5000"]
-    script = "scripts/scaler.lua"
+    script = "../scripts/scaler.lua"
 
     [team.role.healthcheck]
     type = "heartbeat"

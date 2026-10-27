@@ -37,7 +37,7 @@ name = "squad"
 
     [team.role.runtime]
     image = "simulator"
-    command = "bin/simulator"
+    command = "../bin/simulator"
     args = ["--tick", "1000"]
 
     [team.role.healthcheck]
@@ -51,7 +51,7 @@ name = "squad"
 
     [team.role.runtime]
     image = "simulator"
-    command = "bin/simulator"
+    command = "../bin/simulator"
     args = ["--tick", "2000"]
 
     [team.role.healthcheck]

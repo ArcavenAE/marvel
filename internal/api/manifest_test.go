@@ -1109,6 +1109,50 @@ func TestValidateRuntimesScriptMissing(t *testing.T) {
 	}
 }
 
+// A relative script resolves against the directory the launch starts the pane
+// in, as a relative command does, because the simulator opens it from its own
+// working directory. Statting it against the daemon's directory passed a
+// script the pane could not open (marvel#1062, review of #1097).
+func TestValidateRuntimesScriptResolvesFromThePaneDirectory(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "examples"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "scripts", "chaos.lua"), []byte("-- x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	build := func(script string) *Manifest {
+		return &Manifest{
+			Workspace: ManifestWorkspace{Name: "demo", Root: filepath.Join(repo, "examples")},
+			Teams: []ManifestTeam{{
+				Name: "squad",
+				Roles: []ManifestRole{{
+					Name: "a", Replicas: 1,
+					Runtime: ManifestRuntime{Command: "sh", Script: script},
+				}},
+			}},
+		}
+	}
+	if _, err := build("../scripts/chaos.lua").ValidateRuntimes(); err != nil {
+		t.Errorf("a script that exists one level above the pane directory was refused: %v", err)
+	}
+	_, err := build("scripts/chaos.lua").ValidateRuntimes()
+	if err == nil {
+		t.Fatal("scripts/chaos.lua does not exist under the pane directory; the pre-flight passed it")
+	}
+	if !strings.Contains(err.Error(), "script") {
+		t.Errorf("error should name the script, got: %v", err)
+	}
+	abs := filepath.Join(repo, "scripts", "chaos.lua")
+	if _, err := build(abs).ValidateRuntimes(); err != nil {
+		t.Errorf("an absolute script that exists was refused: %v", err)
+	}
+}
+
 func TestValidateRuntimesEmptyCommand(t *testing.T) {
 	t.Parallel()
 	m := &Manifest{
