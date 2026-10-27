@@ -49,8 +49,10 @@ func TestScheduleRefusals(t *testing.T) {
 		name      string
 		mode      string
 		roleExtra string
-		// args, when set, is a runtime.args line for the role.
+		// args, when set, is a runtime.args line for the role, and
+		// command replaces the runtime command.
 		args     string
+		command  string
 		schedule string
 		want     []string
 		notWant  []string
@@ -256,6 +258,21 @@ func TestScheduleRefusals(t *testing.T) {
 			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
 			want:      []string{"runtime.args", "--dangerously-skip-permissions", "skips permission checks"},
 		},
+		{
+			// The adapter passes the command's words to the harness too.
+			name:     "--dangerously-skip-permissions in runtime.command",
+			mode:     "headless",
+			command:  "claude --dangerously-skip-permissions",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "--dangerously-skip-permissions", "skips permission checks"},
+		},
+		{
+			name:     "--permission-mode bypassPermissions in runtime.command",
+			mode:     "headless",
+			command:  "claude  --permission-mode bypassPermissions",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "--permission-mode bypassPermissions", "skips permission checks"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -263,6 +280,9 @@ func TestScheduleRefusals(t *testing.T) {
 			doc := scheduleManifest(c.mode, c.roleExtra, c.schedule)
 			if c.args != "" {
 				doc = strings.Replace(doc, `prompt = "/refresh"`, "prompt = \"/refresh\"\n    "+c.args, 1)
+			}
+			if c.command != "" {
+				doc = strings.Replace(doc, `command = "claude"`, fmt.Sprintf("command = %q", c.command), 1)
 			}
 			_, err := ParseManifestBytes([]byte(doc))
 			if err == nil {
