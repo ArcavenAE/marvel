@@ -51,9 +51,8 @@ Three places this can happen, stated as questions:
 
 ## How it relates to what exists
 
-- **Operator-steps scripts.** Today an operator step is a file under
-  `tools/operator-steps/` in the orchestrator repository. A seat writes it and
-  runs `--check`, which only reads. A person runs `--apply <sha256>`, which
+- **Operator-steps scripts.** Today an operator step is a script that a seat
+  writes and checks. The seat runs `--check`, which only reads. A person runs `--apply <sha256>`, which
   takes the digest that `--check` printed and refuses when the plan has
   changed since. The idea would move who runs the script, not what the script
   checks. The open tension is that those scripts say a seat never runs
@@ -68,16 +67,18 @@ Three places this can happen, stated as questions:
   and is not refilled. This is the completion rule a one-off run needs. The
   rule is written for print-mode runs, and whether it applies to a tty run is
   one of the things to study.
-- **The retrospector's scheduled run.** The retrospector is moving to a
-  headless scheduled run with a constrained write surface
+- **The retrospector's headless run.** The retrospector is designed as a
+  headless one-shot role with a constrained write surface
   (`docs/design/codex-roles-reviewer-and-retrospector.md`, finding-048). It is
   the nearest existing case of a run that does bounded work and leaves
   records behind. It needs no one to answer a prompt, which is the part this
   idea adds.
 - **Capture and inject.** `inject` appends to what is already in a pane and
   is not a dispatch channel (finding-040). Answering a prompt with it is a
-  different use from dispatching work, and the same weaknesses apply: text
-  that does not submit, and text that joins what was already typed.
+  different use from dispatching work, and two weaknesses that finding-040
+  records still apply: `inject` appends to what is already in the input box,
+  and there is no reliable way to clear the box. The non-submit defect it
+  also records was fixed in #357.
 
 ## What would have to be studied
 
@@ -85,7 +86,9 @@ Not answered here. The operator asks for a study of what the system needs
 and which improvements matter most.
 
 - Whether a role can be started once, by hand or by a supervisor, with no
-  clock and no restart.
+  clock and no restart. `marvel run` is the existing one-off. It takes a raw
+  command and sets no headless mode, so it gets no ADR-010 completion
+  (`docs/design/scheduled-runs.md`, section 1.1).
 - What completion, status and exit code a tty run reports, and where its
   output is kept after the pane is gone.
 - Whether `capture` can reliably find the latest question in a script's
