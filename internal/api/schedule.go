@@ -98,6 +98,15 @@ func validateSchedule(team string, r ManifestRole, now time.Time) error {
 	if r.MaxRestarts != 0 {
 		return fmt.Errorf("%s: max_restarts does not apply to a scheduled role; use schedule.retries and schedule.on_failure", where)
 	}
+	// scheduled-runs.md section 8, "No bypass": a scheduled run has no human
+	// at a prompt, so a role that skips the permission checks never gets a
+	// schedule. dontAsk, acceptEdits and auto still check each call.
+	if r.DangerousPermissions {
+		return fmt.Errorf("%s: dangerous_permissions skips permission checks and is refused on a scheduled role; a scheduled run that needs a check skipped is a design problem to escalate", where)
+	}
+	if r.Permissions == "bypassPermissions" {
+		return fmt.Errorf("%s: permissions %q skips permission checks and is refused on a scheduled role; use \"dontAsk\" with an allow list", where, r.Permissions)
+	}
 	if s.Cron == "" {
 		return fmt.Errorf("%s: schedule.cron is required", where)
 	}
