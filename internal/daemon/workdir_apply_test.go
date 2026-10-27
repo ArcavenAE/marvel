@@ -215,3 +215,30 @@ func TestApplyWarnsWhenADerivedRootMovesTheStoredOne(t *testing.T) {
 		t.Errorf("a root the manifest names warned: %q", adv)
 	}
 }
+
+// A derived root this host cannot see is dropped by ValidateWorkDirs, and the
+// stored root stays, so nothing moves and the apply must not say it does
+// (review 5661957948 on #1091).
+func TestApplyFromAClientOnlyRootDoesNotWarnOfAMove(t *testing.T) {
+	d := newHandlerDaemon(t)
+	manifest := strings.Replace(workDirManifestYAML, "    workdir: sub\n", "", 1)
+	homeRaw := t.TempDir()
+	home, err := filepath.EvalSymlinks(homeRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := applyWithRoot(t, d, manifest, homeRaw); resp.Error != "" {
+		t.Fatalf("first apply: %s", resp.Error)
+	}
+	gone := filepath.Join(t.TempDir(), "not-on-this-host")
+	resp := applyWithRoot(t, d, manifest, gone)
+	if resp.Error != "" {
+		t.Fatalf("apply from a client-only root: %s", resp.Error)
+	}
+	if adv := strings.Join(advisoriesOf(t, resp), "; "); strings.Contains(adv, "moves") {
+		t.Errorf("advisories = %q, want no move: the stored root stays", adv)
+	}
+	if ws, err := d.store.GetWorkspace("placed"); err != nil || ws.Root != home {
+		t.Errorf("stored root = %q (%v), want it left at %q", ws.Root, err, home)
+	}
+}
