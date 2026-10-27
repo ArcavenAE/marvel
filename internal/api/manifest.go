@@ -963,6 +963,12 @@ func (m *Manifest) ValidateTeamNames(existing []Team) error {
 	return nil
 }
 
+// ApplyFrom is Apply for a manifest applied from source, written
+// "<host>:<path>"; an empty source is an older client that sent none.
+func (m *Manifest) ApplyFrom(store *Store, source string) error {
+	return m.Apply(store)
+}
+
 // Apply converts a manifest into store resources and creates them.
 func (m *Manifest) Apply(store *Store) error {
 	now := time.Now().UTC()

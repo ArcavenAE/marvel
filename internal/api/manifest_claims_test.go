@@ -1,0 +1,141 @@
+package api
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
+
+// claimsManifest is a manifest of workspace ws naming the given teams, each
+// with one parked role.
+func claimsManifest(t *testing.T, ws string, teams ...string) *Manifest {
+	t.Helper()
+	var b strings.Builder
+	fmt.Fprintf(&b, "[workspace]\nname = %q\n", ws)
+	for _, name := range teams {
+		fmt.Fprintf(&b, "\n[[team]]\nname = %q\n\n  [[team.role]]\n  name = \"worker\"\n  replicas = 0\n\n    [team.role.runtime]\n    command = \"bash\"\n", name)
+	}
+	m, err := ParseManifestBytes([]byte(b.String()))
+	if err != nil {
+		t.Fatalf("parse manifest for %s %v: %v", ws, teams, err)
+	}
+	return m
+}
+
+func applyFrom(t *testing.T, s *Store, source, ws string, teams ...string) {
+	t.Helper()
+	if err := claimsManifest(t, ws, teams...).ApplyFrom(s, source); err != nil {
+		t.Fatalf("apply %s from %q: %v", ws, source, err)
+	}
+}
+
+func claimsOf(t *testing.T, s *Store, key string) *TeamClaims {
+	t.Helper()
+	team, err := s.GetTeam(key)
+	if err != nil {
+		t.Fatalf("get team %s: %v", key, err)
+	}
+	return team.Claims
+}
+
+func claimedBy(c *TeamClaims, source string) bool {
+	if c == nil {
+		return false
+	}
+	_, ok := c.Sources[source]
+	return ok
+}
+
+const (
+	srcA = "host-a:/work/a/marvel.toml"
+	srcB = "host-b:/work/b/marvel.toml"
+)
+
+// Section 3.2, rules 1 and 2: an apply with a source claims every team the file
+// names, and releases its claim on every team it does not name, in any
+// workspace. A team whose last claim goes records who released it. Nothing is
+// deleted, and another source's claim is left alone.
+func TestApplyClaimsWhatItNamesAndReleasesWhatItDoesNot(t *testing.T) {
+	s := NewStore()
+	applyFrom(t, s, srcA, "ws1", "alpha", "beta")
+	applyFrom(t, s, srcB, "ws1", "alpha")
+
+	for _, key := range []string{"ws1/alpha", "ws1/beta"} {
+		c := claimsOf(t, s, key)
+		if !claimedBy(c, srcA) {
+			t.Fatalf("%s claims = %+v, want a claim by %s", key, c, srcA)
+		}
+		if c.ReleasedBy != "" {
+			t.Errorf("%s ReleasedBy = %q on a claimed team", key, c.ReleasedBy)
+		}
+	}
+
+	// The same source now names only a team in another workspace.
+	applyFrom(t, s, srcA, "ws2", "gamma")
+
+	if c := claimsOf(t, s, "ws2/gamma"); !claimedBy(c, srcA) {
+		t.Errorf("ws2/gamma claims = %+v, want a claim by %s", c, srcA)
+	}
+	beta := claimsOf(t, s, "ws1/beta")
+	if beta == nil {
+		t.Fatal("ws1/beta claims = nil, want a released record")
+	}
+	if len(beta.Sources) != 0 {
+		t.Errorf("ws1/beta sources = %v, want none once %s stopped naming it", beta.Sources, srcA)
+	}
+	if beta.ReleasedBy != srcA || beta.ReleasedAt.IsZero() {
+		t.Errorf("ws1/beta released by %q at %v, want %s and a time", beta.ReleasedBy, beta.ReleasedAt, srcA)
+	}
+	alpha := claimsOf(t, s, "ws1/alpha")
+	if claimedBy(alpha, srcA) {
+		t.Errorf("ws1/alpha still claimed by %s, which no longer names it", srcA)
+	}
+	if !claimedBy(alpha, srcB) {
+		t.Errorf("ws1/alpha claims = %+v, want %s's claim kept", alpha, srcB)
+	}
+	if alpha != nil && alpha.ReleasedBy != "" {
+		t.Errorf("ws1/alpha ReleasedBy = %q while %s still claims it", alpha.ReleasedBy, srcB)
+	}
+	for _, key := range []string{"ws1/alpha", "ws1/beta", "ws2/gamma"} {
+		if _, err := s.GetTeam(key); err != nil {
+			t.Errorf("team %s is gone after a release: %v", key, err)
+		}
+	}
+}
+
+// Section 3.2, rule 3: an apply with no source (an older client) sets Claims to
+// nil on every team it names.
+func TestApplyWithNoSourceSetsClaimsNil(t *testing.T) {
+	s := NewStore()
+	applyFrom(t, s, srcA, "ws1", "alpha")
+	if c := claimsOf(t, s, "ws1/alpha"); !claimedBy(c, srcA) {
+		t.Fatalf("ws1/alpha claims = %+v, want a claim by %s", c, srcA)
+	}
+	applyFrom(t, s, "", "ws1", "alpha")
+	if c := claimsOf(t, s, "ws1/alpha"); c != nil {
+		t.Errorf("ws1/alpha claims = %+v after a sourceless apply, want nil", c)
+	}
+}
+
+// A team with nil claims is never pruned, so every later rule leaves it nil: a
+// source that does not name it does not release it, a sourceless apply of
+// another team does not touch it, and it stays in the store.
+func TestNilClaimsTeamSurvivesEveryLaterRule(t *testing.T) {
+	s := NewStore()
+	applyFrom(t, s, "", "ws1", "legacy")
+	if c := claimsOf(t, s, "ws1/legacy"); c != nil {
+		t.Fatalf("ws1/legacy claims = %+v from a sourceless apply, want nil", c)
+	}
+
+	applyFrom(t, s, srcA, "ws1", "alpha")
+	applyFrom(t, s, srcA, "ws2", "gamma")
+	applyFrom(t, s, srcB, "ws1", "beta")
+	applyFrom(t, s, "", "ws2", "delta")
+
+	if c := claimsOf(t, s, "ws1/legacy"); c != nil {
+		t.Errorf("ws1/legacy claims = %+v after later applies, want nil", c)
+	}
+	if _, err := s.GetTeam("ws1/legacy"); err != nil {
+		t.Errorf("ws1/legacy is gone: %v", err)
+	}
+}
