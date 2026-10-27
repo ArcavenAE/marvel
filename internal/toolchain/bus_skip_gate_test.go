@@ -88,6 +88,12 @@ func TestNoSkipsGate(t *testing.T) {
 		// What go test -json writes for -run ^$, -skip . and -exec /usr/bin/true,
 		// measured on go1.27.0: a start and a package pass, with no test events.
 		{"-run ^$, -skip . or -exec /usr/bin/true", ev("start", busPkg, "") + ev("pass", busPkg, ""), 1, busPkg},
+		// A stream cut off before a package's own pass or fail, which go test
+		// -json writes last, is a run that never finished (review 5672013476).
+		{"truncated mid-test, no package result", ev("start", busPkg, "") + ev("run", busPkg, "TestA") + ev("pass", busPkg, "TestA") + ev("run", busPkg, "TestB"), 1, "did not finish"},
+		{"truncated after a test passed, no package result", ev("start", busPkg, "") + ev("run", busPkg, "TestA") + ev("pass", busPkg, "TestA"), 1, busPkg},
+		{"a package under internal/bus started and never finished", ran + ev("start", busPkg+"/inner", "") + ev("run", busPkg+"/inner", "TestC") + ev("pass", busPkg+"/inner", "TestC"), 1, busPkg + "/inner"},
+		{"a package under internal/bus finished", ran + ev("run", busPkg+"/inner", "TestC") + ev("pass", busPkg+"/inner", "TestC") + ev("pass", busPkg+"/inner", ""), 0, ""},
 	} {
 		got, out := runNoSkips(t, tc.stream, busPkg)
 		switch {
