@@ -140,9 +140,15 @@ func join(names []string) string {
 
 // dialGuard, when set, is asked about every URL before connectAdmin or the role
 // inbox publisher dials it, and its error is returned without a dial. Only the
-// package's tests set it,
-// to refuse a broker the test did not start (marvel#998); it is nil otherwise.
+// package's tests set it, to refuse a broker the test did not start
+// (marvel#998); it is nil otherwise.
 var dialGuard func(url string) error
+
+// errNoAddress is what a dial with no URL returns. nats.Connect given an empty
+// URL adds its own default, nats://127.0.0.1:4222, which is the managed
+// broker's listen address, so an unset address would reach a live broker
+// instead of failing with a reason (marvel#1003).
+var errNoAddress = errors.New("the bus has no address to dial")
 
 // connectAdmin dials as the admin identity. An authorization refusal is
 // retried briefly: the daemon has usually just rewritten authorization.conf
@@ -154,6 +160,9 @@ var dialGuard func(url string) error
 // mismatch reads as an early EOF, so it now waits out the window before it
 // fails.
 func connectAdmin(ctx context.Context, url, user, password string) (*nats.Conn, error) {
+	if url == "" {
+		return nil, errNoAddress
+	}
 	if dialGuard != nil {
 		if err := dialGuard(url); err != nil {
 			return nil, err
