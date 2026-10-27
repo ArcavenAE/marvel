@@ -83,8 +83,10 @@ jobs:
         # run here, and a skip means the proof did not run
         # (code-restructure-plan.md, PR M2-1; aae-orc-p0zkz). The package runs
         # once more with -json and without -race, which the step above covers.
+        # go test's own status is not read, hence set +e, so a failing test
+        # reaches the gate, which names it and prints its output (marvel#1060).
         run: |
-          set -euo pipefail
+          set +e
           go test -json -count=1 ./internal/bus/... > "${RUNNER_TEMP}/bus-tests.json"
           scripts/no-skips.sh "${RUNNER_TEMP}/bus-tests.json" github.com/arcavenae/marvel/internal/bus
 
@@ -93,9 +95,10 @@ jobs:
         # unreadable (hidepid) or the runner is root. The GitHub ubuntu runner
         # is neither, so a skip here means the twin did not run and the proof
         # is gone. The package runs once more with -json and without -race,
-        # which the step above covers.
+        # which the step above covers. go test's own status is not read, hence
+        # set +e, so a failing test reaches the gate, which names it (marvel#1060).
         run: |
-          set -euo pipefail
+          set +e
           go test -json -count=1 ./internal/childproof/... > "${RUNNER_TEMP}/childproof-tests.json"
           scripts/no-skips.sh "${RUNNER_TEMP}/childproof-tests.json" github.com/arcavenae/marvel/internal/childproof
 
