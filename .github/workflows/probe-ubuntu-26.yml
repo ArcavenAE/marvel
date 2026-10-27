@@ -67,11 +67,11 @@ jobs:
           grep -q '^class Marvel < Formula$' marvel.rb
 
           # The tap step stages and commits in a repository, and skips the
-          # commit when nothing changed. Here the repository is local and new.
+          # commit when nothing changed. Here the repository is local and new,
+          # and the probe stops at the staged paths, because a probe may not
+          # make an unsigned commit.
           mkdir tap-repo
           git -C tap-repo init -q
-          git -C tap-repo config user.name probe
-          git -C tap-repo config user.email probe@example.invalid
           mkdir -p tap-repo/Formula
           cp marvel.rb tap-repo/Formula/marvel.rb
           git -C tap-repo add Formula/marvel.rb
@@ -79,5 +79,4 @@ jobs:
             echo "::error::the staged formula shows no change"
             exit 1
           fi
-          git -C tap-repo commit -q -m "probe"
-          git -C tap-repo diff --cached --quiet
+          git -C tap-repo diff --cached --name-only | grep -qx 'Formula/marvel.rb'
