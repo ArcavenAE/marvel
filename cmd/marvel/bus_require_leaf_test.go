@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/bus"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // Section 5 of the reexec credential handoff (aae-orc-4h9xp):
@@ -95,5 +97,46 @@ func TestPrintBusStatusShowsALeafSourceThatIsNotTheStore(t *testing.T) {
 	printBusStatus(&b, bus.Status{Managed: true, Leaf: "up", LeafSource: "store", URL: "u", Listen: "l", Domain: "d"})
 	if got := b.String(); strings.Contains(got, "leaf-src") {
 		t.Errorf("the ordinary store source adds no row:\n%s", got)
+	}
+}
+
+// A cluster with no bus has no leaf to require, and --require-leaf says so in
+// the same words it uses for any other cluster without a hub, instead of
+// returning the daemon's "add a bus section" sentence as if the request had
+// failed (marvel#1102).
+func TestRequireLeafOnAClusterWithNoBusSaysNoHub(t *testing.T) {
+	var out strings.Builder
+	err := busStatusResult(&out, &daemonrpc.Response{Error: noBusReply}, true, requireLeafNow)
+	if err == nil || !strings.Contains(err.Error(), "the hub leaf is not up (no hub)") {
+		t.Fatalf("err = %v, want the --require-leaf failure that says no hub", err)
+	}
+}
+
+func TestBusStatusOnAClusterWithNoBusKeepsTheDaemonsSentence(t *testing.T) {
+	var out strings.Builder
+	err := busStatusResult(&out, &daemonrpc.Response{Error: noBusReply}, false, requireLeafNow)
+	if err == nil || err.Error() != noBusReply {
+		t.Fatalf("err = %v, want the daemon's own sentence, which tells the operator to add a bus section", err)
+	}
+}
+
+func TestRequireLeafKeepsAnotherDaemonErrorAsItIs(t *testing.T) {
+	var out strings.Builder
+	err := busStatusResult(&out, &daemonrpc.Response{Error: "the daemon is busy"}, true, requireLeafNow)
+	if err == nil || err.Error() != "the daemon is busy" {
+		t.Fatalf("err = %v, want the daemon's error unchanged", err)
+	}
+}
+
+func TestRequireLeafStillFailsForAManagedBusWhoseLeafIsDown(t *testing.T) {
+	st := bus.Status{Managed: true, Leaf: "down", LeafSource: "store", LeafValidUntil: requireLeafNow.Add(time.Minute).Format(time.RFC3339)}
+	raw, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	err = busStatusResult(&out, &daemonrpc.Response{Result: raw}, true, requireLeafNow)
+	if err == nil || !strings.Contains(err.Error(), "(down)") {
+		t.Fatalf("err = %v, want a failure that says down", err)
 	}
 }
