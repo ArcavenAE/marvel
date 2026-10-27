@@ -18,7 +18,8 @@ import (
 
 // The test dial guard covers every dial the package makes (marvel#1007). Three
 // of them do not go through connectAdmin: the /varz read in CheckStructure, the
-// /leafz read in pollLeaf, and the TCP connect in listenerAnswers. A fixture
+// /leafz read in pollLeaf, and the TCP connect in listenerAnswers. A fourth, the
+// /jsz read in ReadHeadroom, was found in review and has its test below. A fixture
 // that copied the managed broker's listen address back in would reach the live
 // broker's monitor port through them with nothing to say so. Each test hands
 // one of the dials an address no test started, a loopback port opened and closed

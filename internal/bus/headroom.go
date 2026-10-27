@@ -83,6 +83,9 @@ func (h Headroom) Problems() string {
 // information: the caller keeps its last reading.
 func ReadHeadroom(ctx context.Context, monitorAddr, storeDir string) (Headroom, error) {
 	var h Headroom
+	if err := checkDial(monitorAddr); err != nil {
+		return h, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+monitorAddr+"/jsz?config=true", nil)
 	if err != nil {
 		return h, err
