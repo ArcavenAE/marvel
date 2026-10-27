@@ -181,20 +181,24 @@ func foldSameDaemon(keys []string, stamps []daemonStamp, ok []bool, records []cl
 	}
 	for _, k := range order {
 		lead := -1
+		// have holds every key shown so far in this group: the leader's rows,
+		// then each merged member's kept rows, so a row two later members both
+		// saw is kept once (#1084).
+		var have map[string]bool
 		for _, i := range groups[k] {
 			if !ok[i] {
 				continue
 			}
 			if lead < 0 {
 				lead = i
+				have = map[string]bool{}
+				for _, r := range rowSets[lead] {
+					have[r.Workspace+"/"+r.Name] = true
+				}
 				continue
 			}
 			if stamps[i].PID != stamps[lead].PID || !stamps[i].StartedAt.Equal(stamps[lead].StartedAt) {
 				continue
-			}
-			have := map[string]bool{}
-			for _, r := range rowSets[lead] {
-				have[r.Workspace+"/"+r.Name] = true
 			}
 			var kept []api.Session
 			for _, r := range rowSets[i] {
