@@ -49,9 +49,11 @@ func TestScheduleRefusals(t *testing.T) {
 		name      string
 		mode      string
 		roleExtra string
-		schedule  string
-		want      []string
-		notWant   []string
+		// args, when set, is a runtime.args line for the role.
+		args     string
+		schedule string
+		want     []string
+		notWant  []string
 	}{
 		{
 			name:     "timezone missing (test 1)",
@@ -230,11 +232,39 @@ func TestScheduleRefusals(t *testing.T) {
 			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
 			want:      []string{`permissions "bypassPermissions"`, "scheduled role", "skips permission checks"},
 		},
+		{
+			// The same bypass spelled in runtime.args reaches the harness
+			// beside the flags the adapter adds.
+			name:     "--permission-mode bypassPermissions in runtime.args",
+			mode:     "headless",
+			args:     `args = ["--permission-mode", "bypassPermissions"]`,
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.args", "--permission-mode bypassPermissions", "skips permission checks"},
+		},
+		{
+			name:     "--permission-mode=bypassPermissions in runtime.args",
+			mode:     "headless",
+			args:     `args = ["--verbose", "--permission-mode=bypassPermissions"]`,
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.args", "--permission-mode=bypassPermissions", "skips permission checks"},
+		},
+		{
+			name:      "--dangerously-skip-permissions in runtime.args",
+			mode:      "headless",
+			roleExtra: `  permissions = "dontAsk"`,
+			args:      `args = ["--dangerously-skip-permissions"]`,
+			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:      []string{"runtime.args", "--dangerously-skip-permissions", "skips permission checks"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := ParseManifestBytes([]byte(scheduleManifest(c.mode, c.roleExtra, c.schedule)))
+			doc := scheduleManifest(c.mode, c.roleExtra, c.schedule)
+			if c.args != "" {
+				doc = strings.Replace(doc, `prompt = "/refresh"`, "prompt = \"/refresh\"\n    "+c.args, 1)
+			}
+			_, err := ParseManifestBytes([]byte(doc))
 			if err == nil {
 				t.Fatalf("parse accepted a schedule it must refuse")
 			}
