@@ -124,10 +124,14 @@ func validateSchedule(team string, r ManifestRole, now time.Time) error {
 	if r.Permissions == "bypassPermissions" {
 		return fmt.Errorf("%s: permissions %q skips permission checks and is refused on a scheduled role; use \"dontAsk\" with an allow list", where, r.Permissions)
 	}
-	// The same bypass spelled as harness flags in runtime.args. Flags a
-	// wrapper command adds on its own are not visible here at parse.
+	// The same bypass spelled as harness flags in runtime.args, or as words
+	// of runtime.command, which the adapter passes to the harness too. Flags
+	// a wrapper command adds on its own are not visible here at parse.
 	if flag := bypassArg(r.Runtime.Args); flag != "" {
 		return fmt.Errorf("%s: runtime.args %q skips permission checks and is refused on a scheduled role; use permissions = \"dontAsk\" with an allow list", where, flag)
+	}
+	if flag := bypassArg(strings.Fields(r.Runtime.Command)); flag != "" {
+		return fmt.Errorf("%s: runtime.command %q skips permission checks and is refused on a scheduled role; use permissions = \"dontAsk\" with an allow list", where, flag)
 	}
 	if s.Cron == "" {
 		return fmt.Errorf("%s: schedule.cron is required", where)
