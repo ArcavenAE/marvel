@@ -3,7 +3,10 @@ package bus
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -36,5 +39,30 @@ func TestStartReportsAServerThatExitsBeforeItListens(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exited") || !strings.Contains(err.Error(), "monitor") {
 		t.Errorf("err = %v, want it to say the server exited and quote its log line about the monitor port", err)
+	}
+}
+
+// A child that execs into another program is still running, so it is not a
+// server that exited: the wait runs its whole bound and says the listener did
+// not answer (review of #1099). The exec lands well inside the wait here, so
+// a check that compared identities would misreport it.
+func TestAChildThatExecsIsNotReportedAsExited(t *testing.T) {
+	s, _, _ := newTestSupervisor(t, "")
+	script := filepath.Join(t.TempDir(), "exec-broker")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s.binary = script
+	s.dialTimeout = 1500 * time.Millisecond
+	var spawned atomic.Int64
+	register := s.onSpawn
+	s.onSpawn = func(pid int) {
+		spawned.Store(int64(pid))
+		register(pid)
+	}
+	t.Cleanup(func() { endSpawnedChild(t, int(spawned.Load())) })
+	err := s.Start(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "did not answer on") {
+		t.Fatalf("Start = %v, want the listener timeout for a child that is still running", err)
 	}
 }
