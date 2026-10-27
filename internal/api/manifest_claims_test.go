@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -226,5 +227,47 @@ func TestReleaseAndClaimOfOneTeamEndTheSameInEitherOrder(t *testing.T) {
 				t.Errorf("ws1/target released by %q at %v while %s claims it", c.ReleasedBy, c.ReleasedAt, srcB)
 			}
 		})
+	}
+}
+
+// Claims are persisted with the team and read back on rehydrate, with no store
+// version change (section 3.3): a claim and a release both survive a restart.
+func TestClaimsSurviveARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	applyFrom(t, s1, srcA, "ws1", "alpha", "beta")
+	applyFrom(t, s1, srcA, "ws1", "alpha")
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatalf("CloseBolt: %v", err)
+	}
+
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	if c := claimsOf(t, s2, "ws1/alpha"); !claimedBy(c, srcA) {
+		t.Errorf("ws1/alpha claims after a restart = %+v, want a claim by %s", c, srcA)
+	}
+	if c := claimsOf(t, s2, "ws1/beta"); c == nil || len(c.Sources) != 0 || c.ReleasedBy != srcA {
+		t.Errorf("ws1/beta claims after a restart = %+v, want released by %s", c, srcA)
+	}
+}
+
+// A snapshot of a team owns its claims: changing it does not reach the store.
+func TestTeamSnapshotDoesNotShareItsClaims(t *testing.T) {
+	s := NewStore()
+	applyFrom(t, s, srcA, "ws1", "alpha")
+	snap, err := s.GetTeam("ws1/alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap.Claims.Sources[srcB] = snap.Claims.Sources[srcA]
+	snap.Claims.ReleasedBy = srcB
+	if c := claimsOf(t, s, "ws1/alpha"); claimedBy(c, srcB) || c.ReleasedBy != "" {
+		t.Errorf("store claims = %+v after editing a snapshot, want them unchanged", c)
 	}
 }

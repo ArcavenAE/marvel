@@ -1050,10 +1050,17 @@ func workCmd() *cobra.Command {
 
 			// The bytes go up untouched. The workspace root marvel work
 			// resolves from the manifest file's directory rides beside them,
-			// so the daemon never sees the manifest's path.
+			// and so does the manifest's source, its host and resolved path,
+			// which the daemon records as the owner of the teams it names
+			// (docs/design/work-prune.md section 3.1).
 			p := map[string]any{"manifest_data": data}
 			if root := workspaceRootFor(args[0], declaredWorkspaceRoot(data)); root != "" {
 				p["workspace_root"] = root
+			}
+			if src, err := manifestSource(args[0]); err != nil {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not compute manifest source (%v); teams applied now are never pruned\n", err)
+			} else {
+				p["manifest_source"] = src
 			}
 			params, _ := json.Marshal(p)
 			resp, err := send(daemonrpc.Request{

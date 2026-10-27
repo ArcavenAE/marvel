@@ -213,6 +213,11 @@ func cloneTeam(t *Team) Team {
 			out.ViewNotices[k] = n
 		}
 	}
+	if t.Claims != nil {
+		c := *t.Claims
+		c.Sources = maps.Clone(t.Claims.Sources)
+		out.Claims = &c
+	}
 	return out
 }
 
@@ -557,6 +562,32 @@ func (s *Store) UpdateTeam(key string, fn func(*Team) error) error {
 		return err
 	}
 	return s.persistPut(bucketTeams, t.Key(), t)
+}
+
+// ReleaseClaims removes source's claim from every team, in any workspace, whose
+// key is not in named, under one hold of the store's lock (rule 2 of
+// docs/design/work-prune.md section 3.2). A team whose Sources empties this way
+// records source as ReleasedBy and at as ReleasedAt. A team with nil claims, or
+// one source does not claim, is left alone. Nothing is deleted.
+func (s *Store) ReleaseClaims(source string, named map[string]bool, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, t := range s.teams {
+		if named[key] || t.Claims == nil {
+			continue
+		}
+		if _, ok := t.Claims.Sources[source]; !ok {
+			continue
+		}
+		delete(t.Claims.Sources, source)
+		if len(t.Claims.Sources) == 0 {
+			t.Claims.ReleasedBy, t.Claims.ReleasedAt = source, at
+		}
+		if err := s.persistPut(bucketTeams, key, t); err != nil {
+			return fmt.Errorf("release claim of %s on %s: %w", source, key, err)
+		}
+	}
+	return nil
 }
 
 // Endpoint operations
