@@ -3110,7 +3110,7 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 			}
 			less = hi < hj
 		case "desk":
-			less = sessions[i].PaneID < sessions[j].PaneID
+			less = deskLess(sessions[i].PaneID, sessions[j].PaneID)
 		default:
 			less = sessions[i].Name < sessions[j].Name
 		}
@@ -3128,6 +3128,30 @@ func sortSessions(sessions []api.Session, ws *watchSort) {
 		}
 		return sessionTieLess(sessions[i], sessions[j])
 	})
+}
+
+// deskLess orders desk ids (tmux pane ids, "%29") by their number, so %100
+// follows %29. A desk with no number sorts below every numbered desk, as a
+// missing rate does, and two such desks compare as text.
+func deskLess(a, b string) bool {
+	na, aok := deskNumber(a)
+	nb, bok := deskNumber(b)
+	switch {
+	case aok != bok:
+		return bok
+	case aok && na != nb:
+		return na < nb
+	default:
+		return a < b
+	}
+}
+
+func deskNumber(paneID string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimPrefix(paneID, "%"))
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 // sessionTieLess is the order rows take when nothing else separates them:
