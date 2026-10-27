@@ -33,8 +33,8 @@ given a bounded window before its pane goes.
 | A role dropped from the file is drained | `reconcileOrphanedSessions`, `controller.go:930-950`; it skips `marvel run` sessions (`Generation == 0`, :943) | true |
 | `Apply` loops only over the file's teams | `manifest.go:967` (`Apply`), team loop at :1033, upsert at :1141-1162 | true; no loop removes a team the file stopped naming |
 | A file names one workspace; a dropped workspace is untouched | `manifest.go:970` (`m.Workspace`, singular) | true |
-| Re-apply sets posture to converge, so a held team spawns | `internal/daemon/daemon.go:1594-1603` | true. Noted, not changed by this design |
-| The daemon never sees the manifest's path | `cmd/marvel/main.go:1050-1056`: only `manifest_data` and `workspace_root` go up | true |
+| Re-apply sets posture to converge, so a held team spawns | `internal/daemon/daemon.go:1598-1607` | true. Noted, not changed by this design |
+| The daemon never saw the manifest's path | before step 1, `cmd/marvel/main.go` sent only `manifest_data` and `workspace_root`; step 1 adds `manifest_source` (`main.go:1056-1064`) | true when written; changed by step 1 |
 | No owner record exists | `api.Team`, `internal/api/types.go:1015-1052` | true |
 | Every delete kills the pane with no handoff | `Manager.Delete`, `internal/session/manager.go:1562` | true |
 
@@ -49,7 +49,7 @@ The delete call sites, and whether step 4 covers each:
 | `controller.go:2337` | shift abort deletes the new generation | not covered: those seats just launched |
 | `controller.go:2577` | shift drain of the old seat | not covered; see section 9, item 2 |
 | `schedule_clock.go:66` | scheduled firing replaced | not covered: headless runs use completion semantics (ADR-010) |
-| `daemon.go:1788-1819`, `manager.go:1927` | explicit `marvel delete` and teardown | not covered: an operator's direct act |
+| `daemon.go:1792-1823`, `manager.go:1927` | explicit `marvel delete` and teardown | not covered: an operator's direct act |
 
 One thing found in passing: the scale-down list at `controller.go:1171` is
 every session of the role, so a `marvel run` session placed in a manifest
@@ -72,6 +72,11 @@ and follow the network). A host whose name moves becomes a new source: its
 old claims are never released, so that file can no longer prune the teams it
 applied under the old name. This fails safe, since the teams stay. `describe
 team` shows the stale source, and the teams can be deleted by hand.
+
+If `marvel work` cannot compute the source (the host name or the path cannot
+be read), it sends none and prints `warning: could not compute manifest source
+(<reason>); teams applied now are never pruned`. The teams that apply names
+then take nil claims, as from an older client (rule 3).
 
 A declared id inside the file was weighed and rejected. A file copied as a
 template keeps its id, and two files with one id would each prune the
@@ -103,10 +108,14 @@ type TeamClaims struct {
 }
 ```
 
-The rules, all inside `Apply`, under the store's lock:
+Rules 1 and 3 run in each team's upsert under the store lock; rule 2 is one
+`ReleaseClaims` sweep under one lock hold, after the team loop succeeds; rules
+1 and 2 are not one atomic step, and the per-key argument below is why that is
+safe.
 
 1. An apply with a source adds or refreshes that source's claim on every
-   team the file names.
+   team the file names, and clears `ReleasedBy` and `ReleasedAt` in the same
+   lock hold, since the team is claimed again.
 2. The same apply removes that source's claim from every team, in any
    workspace, that the file does not name. A team whose `Sources` empties
    this way records `ReleasedBy` and `ReleasedAt`. Nothing is deleted; this
@@ -116,6 +125,15 @@ The rules, all inside `Apply`, under the store's lock:
    applies it again.
 
 `describe team` prints the claims.
+
+Two applies can run at once (each request has its own goroutine, and `Apply`
+holds no lock across the whole file). The rules stay safe because a claim is
+one key, `Sources[source]`, on one team. Rule 1 for source B and rule 2 for
+source A touch different keys, so they end with the same `Sources` in either
+order. Two versions of one file applied at once can leave the older version's
+claim on a team the newer one dropped; that claim holds until the file's next
+apply, which keeps the team rather than releasing it. A sourceless apply racing
+a claimed one leaves whichever ran last on each team; nil is never pruned.
 
 ### 3.3 Migration
 
@@ -184,7 +202,7 @@ kept, holds marvel run sessions:
 deferred:
   aae/night-batch    shift in progress; re-run the plan when it ends
 
-named by this file and held (re-apply converges them, daemon.go:1594):
+named by this file and held (re-apply converges them, daemon.go:1598):
   aae/builders       will spawn 2
 ```
 
@@ -210,13 +228,16 @@ marvel work <manifest> --prune <digest>
    stands and the prune is refused with both lists printed. Nothing a
    preview did not show is deleted.
 3. Each team in the set is marked `Pruning` (by source, at a time) and every
-   role's effective desired count becomes 0. A pruning team starts no
+   role's effective desired count becomes 0. The prune checks each team's
+   claims and marks it `Pruning` in one lock hold, and an apply that claims a
+   `Pruning` team clears `Pruning` in that same hold, so a claim and a prune
+   never interleave on one team. A pruning team starts no
    shift: the automatic triggers skip it and `marvel shift` refuses it, so
    no drain can bypass the ask once the prune has begun. The team's
    sessions then leave through the scale-down path, which after step 4
    asks each one for its handoff. Once a pruning team holds no session, its
    record is deleted
-   exactly as `marvel delete team` does (`daemon.go:1789-1804`): health
+   exactly as `marvel delete team` does (`daemon.go:1793-1808`): health
    state cleared and the broker user revoked. Endpoints and policies stay,
    as they do for `delete team` today.
 4. The response lists the teams marked. The client errors if the response
@@ -372,7 +393,7 @@ One PR per step, each based on the one before, merged in order.
    shift timing and belongs with marvel#1063, not here.
 3. Scale-down can shed a `marvel run` session placed in a manifest role
    (`controller.go:1171`), where the role drop skips one. Separate issue.
-4. Re-apply converges a held team (`daemon.go:1594`). The dry-run reports
+4. Re-apply converges a held team (`daemon.go:1598`). The dry-run reports
    it; whether it should is a separate question.
 
 Valid until 2026-11-10; the arcaven architect re-checks it then.
