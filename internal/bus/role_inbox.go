@@ -95,6 +95,11 @@ func (p *RoleInboxPublisher) conn(ctx context.Context) (*nats.Conn, error) {
 	if url == "" || user == "" {
 		return nil, fmt.Errorf("the bus has no address or admin identity yet")
 	}
+	if dialGuard != nil {
+		if err := dialGuard(url); err != nil {
+			return nil, err
+		}
+	}
 	timeout := 2 * time.Second
 	if dl, ok := ctx.Deadline(); ok {
 		if left := time.Until(dl); left > 0 && left < timeout {
