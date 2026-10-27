@@ -637,7 +637,7 @@ func short(sha string) string {
 // Close stops every build Prepare started in the background and waits for it
 // to return, so nothing writes under ViewsDir once Close returns. A Prepare
 // after Close starts no build. It is for whoever owns the keeper's lifetime;
-// the daemon does not call it yet.
+// the daemon calls it at shutdown.
 func (k *Keeper) Close() {
 	k.mu.Lock()
 	k.closed = true

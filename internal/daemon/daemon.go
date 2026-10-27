@@ -886,6 +886,14 @@ func (d *Daemon) shutdown(teardown bool) {
 	}
 	d.wg.Wait()
 
+	// The loops are done, so nothing can ask the keeper for another build.
+	// Close stops the view builds still in flight and waits for them, before
+	// teardown removes the seats' view directories and before the daemon
+	// exits, so no build outlives it (marvel#1116).
+	if d.views != nil {
+		d.views.Close()
+	}
+
 	if teardown {
 		for _, ws := range d.store.ListWorkspaces() {
 			if err := d.sessMgr.CleanupWorkspace(ws.Name); err != nil {
