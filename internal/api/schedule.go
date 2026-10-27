@@ -82,6 +82,23 @@ type DSTAcknowledgement struct {
 	Timezone string
 }
 
+// bypassArg returns the first harness flag in args that skips permission
+// checks, written as it appears ("--permission-mode bypassPermissions" for
+// the spaced form), or "" when there is none.
+func bypassArg(args []string) string {
+	for i, a := range args {
+		switch {
+		case a == "--dangerously-skip-permissions":
+			return a
+		case a == "--permission-mode=bypassPermissions":
+			return a
+		case a == "--permission-mode" && i+1 < len(args) && args[i+1] == "bypassPermissions":
+			return a + " " + args[i+1]
+		}
+	}
+	return ""
+}
+
 // validateSchedule checks one role's schedule block. now anchors the
 // daylight-saving scan.
 func validateSchedule(team string, r ManifestRole, now time.Time) error {
@@ -106,6 +123,11 @@ func validateSchedule(team string, r ManifestRole, now time.Time) error {
 	}
 	if r.Permissions == "bypassPermissions" {
 		return fmt.Errorf("%s: permissions %q skips permission checks and is refused on a scheduled role; use \"dontAsk\" with an allow list", where, r.Permissions)
+	}
+	// The same bypass spelled as harness flags in runtime.args. Flags a
+	// wrapper command adds on its own are not visible here at parse.
+	if flag := bypassArg(r.Runtime.Args); flag != "" {
+		return fmt.Errorf("%s: runtime.args %q skips permission checks and is refused on a scheduled role; use permissions = \"dontAsk\" with an allow list", where, flag)
 	}
 	if s.Cron == "" {
 		return fmt.Errorf("%s: schedule.cron is required", where)
