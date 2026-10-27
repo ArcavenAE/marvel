@@ -963,9 +963,20 @@ func (m *Manifest) ValidateTeamNames(existing []Team) error {
 	return nil
 }
 
-// Apply converts a manifest into store resources and creates them.
+// Apply converts a manifest into store resources and creates them, as an
+// apply with no manifest source.
 func (m *Manifest) Apply(store *Store) error {
+	return m.ApplyFrom(store, "")
+}
+
+// ApplyFrom is Apply for a manifest applied from source, written
+// "<host>:<path>"; an empty source is an older client that sent none. It keeps
+// the owner record of docs/design/work-prune.md section 3.2: rules 1 and 3 run
+// in each team's upsert under the store lock, and rule 2 is one ReleaseClaims
+// sweep under one lock hold, after the team loop succeeds.
+func (m *Manifest) ApplyFrom(store *Store, source string) error {
 	now := time.Now().UTC()
+	named := map[string]bool{}
 
 	ws := &Workspace{Name: m.Workspace.Name, Root: m.Workspace.Root, Placement: Placement(m.Workspace.Placement), Scope: m.Workspace.Scope, CreatedAt: now}
 	if m.Workspace.TrustedFolders != nil {
@@ -1131,8 +1142,10 @@ func (m *Manifest) Apply(store *Store) error {
 			Budget:     budget,
 			WorkDir:    teamAnchor(m.Workspace.Root, mt.WorkDir),
 			Generation: 1,
+			Claims:     claim(nil, source, now),
 			CreatedAt:  now,
 		}
+		named[team.Key()] = true
 		// Update roles if team already exists; route through the store
 		// lock so the mutation doesn't race concurrent readers. The budget
 		// moves with the roles: without that line an edited budget applies
@@ -1142,6 +1155,7 @@ func (m *Manifest) Apply(store *Store) error {
 			if err := store.UpdateTeam(team.Key(), func(live *Team) error {
 				live.Roles = roles
 				live.Budget = budget
+				live.Claims = claim(live.Claims, source, now)
 				// An apply that declares no placement leaves the anchor the
 				// team already has, a legacy stamp (the v1 to v2 migration's
 				// record of where a root-less team already ran) included. Any
@@ -1161,6 +1175,14 @@ func (m *Manifest) Apply(store *Store) error {
 		}
 	}
 
+	// Rule 2 runs only once every team the file names has been applied, so an
+	// apply that failed part way releases nothing.
+	if source != "" {
+		if err := store.ReleaseClaims(source, named, now); err != nil {
+			return fmt.Errorf("apply manifest: %w", err)
+		}
+	}
+
 	for _, me := range m.Endpoints {
 		ep := &Endpoint{
 			Name:      me.Name,
@@ -1173,6 +1195,25 @@ func (m *Manifest) Apply(store *Store) error {
 	}
 
 	return nil
+}
+
+// claim is the owner record a team the file names takes from this apply. A
+// source adds or refreshes its claim and clears any release, since the team is
+// claimed again (rule 1); no source sets nil, so the team is never pruned until
+// a client with a source applies it (rule 3).
+func claim(c *TeamClaims, source string, at time.Time) *TeamClaims {
+	if source == "" {
+		return nil
+	}
+	if c == nil {
+		c = &TeamClaims{}
+	}
+	if c.Sources == nil {
+		c.Sources = map[string]time.Time{}
+	}
+	c.Sources[source] = at
+	c.ReleasedBy, c.ReleasedAt = "", time.Time{}
+	return c
 }
 
 func isAlreadyExists(err error) bool {

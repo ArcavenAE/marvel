@@ -1430,10 +1430,14 @@ type applyParams struct {
 	ManifestData []byte `json:"manifest_data"`
 	// WorkspaceRoot is the absolute root marvel work resolved from the
 	// manifest file's directory. When present it replaces the manifest's own
-	// root, so the manifest bytes are posted untouched and the daemon never
-	// sees the manifest's path (docs/design/session-working-directory.md,
-	// decisions 2 and 3).
+	// root, so the manifest bytes are posted untouched
+	// (docs/design/session-working-directory.md, decisions 2 and 3).
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
+	// ManifestSource names where the manifest was applied from,
+	// "<host>:<path>". The apply records it as the claim on every team the
+	// file names; an older client sends none, and those teams take nil claims
+	// (docs/design/work-prune.md section 3).
+	ManifestSource string `json:"manifest_source,omitempty"`
 }
 
 func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
@@ -1551,7 +1555,7 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	headroomAdvisories := m.ShiftHeadroomAdvisories()
 	firstPromptAdvisories := m.FirstPromptAdvisories()
 
-	if err := m.Apply(d.store); err != nil {
+	if err := m.ApplyFrom(d.store, p.ManifestSource); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("apply manifest: %v", err)}
 	}
 	for _, a := range workDirAdvisories {

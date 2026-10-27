@@ -1048,7 +1048,23 @@ type Team struct {
 	// Posture(), which normalizes the zero value to the safe default.
 	// See question-convergence-posture, aae-orc-rwiw / cxdf.
 	ConvergencePosture ConvergencePosture `toml:"-"`
-	CreatedAt          time.Time
+	// Claims records which manifest sources have applied this team. nil means
+	// the team predates claims, or was last applied by a client that sent no
+	// source: it is never pruned (docs/design/work-prune.md section 3.2).
+	Claims    *TeamClaims `toml:"-"`
+	CreatedAt time.Time
+}
+
+// TeamClaims is the owner record of a team: the manifest sources that applied
+// it. Status, not spec, persisted with the team.
+type TeamClaims struct {
+	// Sources maps a manifest source ("<host>:<path>") to the time it last
+	// applied this team.
+	Sources map[string]time.Time
+	// ReleasedBy is the source whose apply removed the last claim, and
+	// ReleasedAt when. Set only when Sources becomes empty.
+	ReleasedBy string
+	ReleasedAt time.Time
 }
 
 // ConvergencePosture is a team's runtime stance on cold convergence toward its
