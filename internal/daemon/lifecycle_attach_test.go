@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,12 +18,7 @@ func TestAttachServicesReloadsThroughTheLifecycle(t *testing.T) {
 	if _, err := exec.LookPath("nats-server"); err != nil {
 		t.Skip("nats-server not on PATH")
 	}
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
+	_, port := freeBrokerPort(t)
 
 	d := newHandlerDaemon(t)
 	home := t.TempDir()
