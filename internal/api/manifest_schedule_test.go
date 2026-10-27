@@ -49,10 +49,12 @@ func TestScheduleRefusals(t *testing.T) {
 		name      string
 		mode      string
 		roleExtra string
-		// args, when set, is a runtime.args line for the role, and
-		// command replaces the runtime command.
+		// args, when set, is a runtime.args line for the role, command
+		// replaces the runtime command, and policy is appended to the
+		// manifest as top-level policy tables.
 		args     string
 		command  string
+		policy   string
 		schedule string
 		want     []string
 		notWant  []string
@@ -273,6 +275,31 @@ func TestScheduleRefusals(t *testing.T) {
 			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
 			want:     []string{"runtime.command", "--permission-mode bypassPermissions", "skips permission checks"},
 		},
+		{
+			// A quoted flag is one shell word; strings.Fields keeps the quotes.
+			name:     "a quoted --dangerously-skip-permissions in runtime.command",
+			mode:     "headless",
+			command:  "claude '--dangerously-skip-permissions'",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "--dangerously-skip-permissions", "skips permission checks"},
+		},
+		{
+			name:     "a quote inside the word in runtime.command",
+			mode:     "headless",
+			command:  "claude --permission-mode='bypassPermissions'",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "bypassPermissions", "skips permission checks"},
+		},
+		{
+			// projectPolicy writes the policy to the --settings file, and
+			// with permissions unset on the role nothing overrides it.
+			name:      "an inline policy whose defaultMode is bypassPermissions",
+			mode:      "headless",
+			roleExtra: `  policy = "open"`,
+			policy:    "[[policy]]\nname = \"open\"\n  [policy.settings.permissions]\n  defaultMode = \"bypassPermissions\"",
+			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:      []string{`policy "open"`, "defaultMode", "bypassPermissions", "skips permission checks"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -283,6 +310,9 @@ func TestScheduleRefusals(t *testing.T) {
 			}
 			if c.command != "" {
 				doc = strings.Replace(doc, `command = "claude"`, fmt.Sprintf("command = %q", c.command), 1)
+			}
+			if c.policy != "" {
+				doc += "\n" + c.policy + "\n"
 			}
 			_, err := ParseManifestBytes([]byte(doc))
 			if err == nil {
@@ -338,6 +368,17 @@ func TestScheduleAcceptsDontAsk(t *testing.T) {
 	}
 	if got := m.Teams[0].Roles[0].Permissions; got != "dontAsk" {
 		t.Errorf("permissions = %q, want dontAsk", got)
+	}
+}
+
+// TestScheduleAcceptsAPolicyThatChecks: an inline policy whose defaultMode
+// still checks each call, and other settings, do not refuse a schedule.
+func TestScheduleAcceptsAPolicyThatChecks(t *testing.T) {
+	t.Parallel()
+	doc := scheduleManifest("headless", `  policy = "checked"`, "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"")
+	doc += "\n[[policy]]\nname = \"checked\"\n  [policy.settings.permissions]\n  defaultMode = \"dontAsk\"\n  allow = [\"Read\"]\n"
+	if _, err := ParseManifestBytes([]byte(doc)); err != nil {
+		t.Fatalf("a scheduled role with a dontAsk policy was refused: %v", err)
 	}
 }
 
