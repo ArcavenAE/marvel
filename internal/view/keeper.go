@@ -343,14 +343,33 @@ func (k *Keeper) Refresh(sessKey, name string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("session %s declares no views", sessKey)
 	}
+	// A refresh runs under the keeper's lifetime and is counted in builds, as a
+	// prepared build is, so Close cancels it and waits for it, and one asked for
+	// after Close does not run (marvel#1119).
+	k.mu.Lock()
+	if k.closed {
+		k.mu.Unlock()
+		return nil, errClosed
+	}
+	k.lifeLocked()
+	life := k.life
+	k.builds.Add(1)
+	k.mu.Unlock()
+	defer k.builds.Done()
+
 	lines := make([]string, 0, len(picked))
 	for _, v := range picked {
 		t := k.track(decl.Session, v)
-		t.run <- struct{}{}
-		lines = append(lines, k.refreshLocked(context.Background(), t, "request"))
+		if !t.acquire(life) {
+			return lines, errClosed
+		}
+		lines = append(lines, k.refreshLocked(life, t, "request"))
 	}
 	return lines, nil
 }
+
+// errClosed is the refusal of a refresh asked for after, or waiting at, Close.
+var errClosed = errors.New("the view keeper is closed")
 
 // Tick follows every view that is due. It first syncs with the declared
 // sessions: a seat the keeper has not seen (new, or from before a daemon

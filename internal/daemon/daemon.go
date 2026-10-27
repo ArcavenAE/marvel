@@ -886,10 +886,11 @@ func (d *Daemon) shutdown(teardown bool) {
 	}
 	d.wg.Wait()
 
-	// The loops are done, so nothing can ask the keeper for another build.
-	// Close stops the view builds still in flight and waits for them, before
-	// teardown removes the seats' view directories and before the daemon
-	// exits, so no build outlives it (marvel#1116).
+	// The daemon's loops are done, but a request handler is not under d.wg and
+	// can still reach the keeper. Close marks it closed, so no prepared build
+	// and no view.refresh starts after it, and it cancels and waits for those
+	// in flight, before teardown removes the seats' view directories and before
+	// the daemon exits (marvel#1116, marvel#1119).
 	if d.views != nil {
 		d.views.Close()
 	}
