@@ -206,3 +206,26 @@ func TestPlanPruneNotesHandoffAndHeadlessWaits(t *testing.T) {
 		t.Errorf("notes = %v, want %v", got, want)
 	}
 }
+
+// A would-delete team whose only seats have finished gets no handoff or
+// headless note: a seat not in an alive state is deleted at once, never asked
+// or waited for (docs/design/work-prune.md section 6.2).
+func TestPlanPruneNotesNothingForFinishedSeats(t *testing.T) {
+	at := time.Now().UTC()
+	asks := &ShiftPolicy{Handoff: "/h/{session}.md", HandoffWindow: 2 * time.Minute}
+	s := NewStore()
+	mustTeam(t, s, Team{Name: "done", Workspace: "ws", Roles: []Role{{Name: "a", Shift: asks}}, Claims: claimsOfSources(at, planSrc)})
+	mustSession(t, s, "done", "a", "done-a-g1-0", 1, SessionSucceeded)
+	mustTeam(t, s, Team{Name: "ran", Workspace: "ws", Roles: []Role{{Name: "a", Runtime: Runtime{Mode: RuntimeModeHeadless}}}, Claims: claimsOfSources(at, planSrc)})
+	mustSession(t, s, "ran", "a", "ran-a-g1-0", 1, SessionSucceeded)
+
+	plan := PlanPrune(parsedPreview(t), planSrc, s)
+	if len(plan.WouldDelete) != 2 {
+		t.Fatalf("would delete = %+v, want ws/done and ws/ran", plan.WouldDelete)
+	}
+	for _, d := range plan.WouldDelete {
+		if d.Handoff != "" || d.Headless != "" {
+			t.Errorf("%s notes = %q, %q; want none for a team whose seats have finished", d.Team, d.Handoff, d.Headless)
+		}
+	}
+}
