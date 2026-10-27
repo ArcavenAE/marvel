@@ -2,6 +2,7 @@ package tmuxtest
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -164,16 +165,23 @@ var dialUnix = func(path string) (net.Conn, error) { return net.Dial("unix", pat
 // own when it is unset, and returns the directory it set ("" when it left the
 // variable alone). Without it a test binary runs its server in, and sweeps, the
 // operator's own /tmp/tmux-<uid>. The directory is the same on every run, so
-// the next run's sweep finds what a killed run left.
-func UseScratchTmuxTmpDir() string {
+// the next run's sweep finds what a killed run left. When no directory can be
+// made it returns an error and leaves the variable unset; a caller stops
+// rather than sweep and serve from the operator's directory (#1087).
+func UseScratchTmuxTmpDir() (string, error) { return useScratchTmuxTmpDirUnder("/tmp") }
+
+func useScratchTmuxTmpDirUnder(base string) (string, error) {
 	if os.Getenv("TMUX_TMPDIR") != "" {
-		return ""
+		return "", nil
 	}
-	dir := scratchTmuxTmpDir("/tmp")
-	if dir == "" || os.Setenv("TMUX_TMPDIR", dir) != nil {
-		return ""
+	dir, err := scratchTmuxTmpDir(base)
+	if err != nil {
+		return "", err
 	}
-	return dir
+	if err := os.Setenv("TMUX_TMPDIR", dir); err != nil {
+		return "", fmt.Errorf("tmuxtest: set TMUX_TMPDIR: %w", err)
+	}
+	return dir, nil
 }
 
 // scratchTmuxTmpDir returns the per-user directory under base for test
@@ -181,20 +189,20 @@ func UseScratchTmuxTmpDir() string {
 // is predictable, so an existing entry is used only when it is a real
 // directory this user owns with mode 0700; otherwise (a planted symlink, a
 // directory of another user) the binary gets a fresh private directory.
-func scratchTmuxTmpDir(base string) string {
+func scratchTmuxTmpDir(base string) (string, error) {
 	prefix := "marvel-test-tmux-" + strconv.Itoa(os.Getuid())
 	dir := filepath.Join(base, prefix)
 	if err := os.Mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
-		return ""
+		return "", fmt.Errorf("tmuxtest: make a scratch tmux directory: %w", err)
 	}
 	if fi, err := os.Lstat(dir); err == nil && fi.IsDir() && fi.Mode().Perm() == 0o700 {
 		if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) == os.Getuid() {
-			return dir
+			return dir, nil
 		}
 	}
 	fresh, err := os.MkdirTemp(base, prefix+"-")
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("tmuxtest: make a scratch tmux directory: %w", err)
 	}
-	return fresh
+	return fresh, nil
 }
