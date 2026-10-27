@@ -30,13 +30,46 @@ import (
 // marked as started.
 func closedLoopbackPort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	return closedLoopbackPortFrom(t, func() int {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		_ = ln.Close()
+		return port
+	})
+}
+
+// closedLoopbackPortFrom takes its ports from pick.
+func closedLoopbackPortFrom(t *testing.T, pick func() int) int {
+	t.Helper()
+	return pick()
+}
+
+// marvel#1107: the kernel hands out a closed port's number again, so a port
+// an earlier test marked started can come back from net.Listen, and the
+// guard would let a dial to it through. closedLoopbackPortFrom passes over
+// such a port. The picker here returns a marked port first.
+func TestClosedLoopbackPortIsNeverOneATestStarted(t *testing.T) {
+	marked := freePort(t)
+	fresh := closedLoopbackPort(t)
+	picks := []int{marked, fresh}
+	got := closedLoopbackPortFrom(t, func() int {
+		p := picks[0]
+		if len(picks) > 1 {
+			picks = picks[1:]
+		}
+		return p
+	})
+	if got != fresh {
+		t.Fatalf("closedLoopbackPortFrom = %d, want %d: %d is marked started", got, fresh, marked)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port
+	addr := "127.0.0.1:" + strconv.Itoa(got)
+	t.Cleanup(func() { forgetRefused(addr) })
+	if guardDial(addr) == nil {
+		t.Errorf("the guard lets %s through, so a dial to it would not be refused", addr)
+	}
 }
 
 func TestListenerAnswersAsksTheDialGuard(t *testing.T) {
