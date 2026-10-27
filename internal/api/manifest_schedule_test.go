@@ -49,9 +49,15 @@ func TestScheduleRefusals(t *testing.T) {
 		name      string
 		mode      string
 		roleExtra string
-		schedule  string
-		want      []string
-		notWant   []string
+		// args, when set, is a runtime.args line for the role, command
+		// replaces the runtime command, and policy is appended to the
+		// manifest as top-level policy tables.
+		args     string
+		command  string
+		policy   string
+		schedule string
+		want     []string
+		notWant  []string
 	}{
 		{
 			name:     "timezone missing (test 1)",
@@ -214,11 +220,101 @@ func TestScheduleRefusals(t *testing.T) {
 			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
 			want:      []string{"max_restarts does not apply to a scheduled role"},
 		},
+		{
+			// scheduled-runs.md section 8, "No bypass": a scheduled run has
+			// no human at a prompt, so it never skips the permission checks.
+			name:      "dangerous_permissions on a scheduled role",
+			mode:      "headless",
+			roleExtra: `  dangerous_permissions = true`,
+			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:      []string{"dangerous_permissions", "scheduled role", "skips permission checks"},
+		},
+		{
+			name:      "bypassPermissions on a scheduled role",
+			mode:      "headless",
+			roleExtra: `  permissions = "bypassPermissions"`,
+			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:      []string{`permissions "bypassPermissions"`, "scheduled role", "skips permission checks"},
+		},
+		{
+			// The same bypass spelled in runtime.args reaches the harness
+			// beside the flags the adapter adds.
+			name:     "--permission-mode bypassPermissions in runtime.args",
+			mode:     "headless",
+			args:     `args = ["--permission-mode", "bypassPermissions"]`,
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.args", "--permission-mode bypassPermissions", "skips permission checks"},
+		},
+		{
+			name:     "--permission-mode=bypassPermissions in runtime.args",
+			mode:     "headless",
+			args:     `args = ["--verbose", "--permission-mode=bypassPermissions"]`,
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.args", "--permission-mode=bypassPermissions", "skips permission checks"},
+		},
+		{
+			name:      "--dangerously-skip-permissions in runtime.args",
+			mode:      "headless",
+			roleExtra: `  permissions = "dontAsk"`,
+			args:      `args = ["--dangerously-skip-permissions"]`,
+			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:      []string{"runtime.args", "--dangerously-skip-permissions", "skips permission checks"},
+		},
+		{
+			// The adapter passes the command's words to the harness too.
+			name:     "--dangerously-skip-permissions in runtime.command",
+			mode:     "headless",
+			command:  "claude --dangerously-skip-permissions",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "--dangerously-skip-permissions", "skips permission checks"},
+		},
+		{
+			name:     "--permission-mode bypassPermissions in runtime.command",
+			mode:     "headless",
+			command:  "claude  --permission-mode bypassPermissions",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "--permission-mode bypassPermissions", "skips permission checks"},
+		},
+		{
+			// A quoted flag is one shell word; strings.Fields keeps the quotes.
+			name:     "a quoted --dangerously-skip-permissions in runtime.command",
+			mode:     "headless",
+			command:  "claude '--dangerously-skip-permissions'",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "--dangerously-skip-permissions", "skips permission checks"},
+		},
+		{
+			name:     "a quote inside the word in runtime.command",
+			mode:     "headless",
+			command:  "claude --permission-mode='bypassPermissions'",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "bypassPermissions", "skips permission checks"},
+		},
+		{
+			// projectPolicy writes the policy to the --settings file, and
+			// with permissions unset on the role nothing overrides it.
+			name:      "an inline policy whose defaultMode is bypassPermissions",
+			mode:      "headless",
+			roleExtra: `  policy = "open"`,
+			policy:    "[[policy]]\nname = \"open\"\n  [policy.settings.permissions]\n  defaultMode = \"bypassPermissions\"",
+			schedule:  "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:      []string{`policy "open"`, "defaultMode", "bypassPermissions", "skips permission checks"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := ParseManifestBytes([]byte(scheduleManifest(c.mode, c.roleExtra, c.schedule)))
+			doc := scheduleManifest(c.mode, c.roleExtra, c.schedule)
+			if c.args != "" {
+				doc = strings.Replace(doc, `prompt = "/refresh"`, "prompt = \"/refresh\"\n    "+c.args, 1)
+			}
+			if c.command != "" {
+				doc = strings.Replace(doc, `command = "claude"`, fmt.Sprintf("command = %q", c.command), 1)
+			}
+			if c.policy != "" {
+				doc += "\n" + c.policy + "\n"
+			}
+			_, err := ParseManifestBytes([]byte(doc))
 			if err == nil {
 				t.Fatalf("parse accepted a schedule it must refuse")
 			}
@@ -257,6 +353,32 @@ func TestScheduleAccepts(t *testing.T) {
 		if _, err := ParseManifestBytes([]byte(scheduleManifest("headless", "", schedule))); err != nil {
 			t.Errorf("schedule %q refused: %v", schedule, err)
 		}
+	}
+}
+
+// TestScheduleAcceptsDontAsk: dontAsk denies whatever the role has not
+// allowed, so it checks every call and a scheduled role may take it
+// (scheduled-runs.md section 8; it is the retrospector run's mode).
+func TestScheduleAcceptsDontAsk(t *testing.T) {
+	t.Parallel()
+	doc := scheduleManifest("headless", `  permissions = "dontAsk"`, "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"")
+	m, err := ParseManifestBytes([]byte(doc))
+	if err != nil {
+		t.Fatalf("a scheduled dontAsk role was refused: %v", err)
+	}
+	if got := m.Teams[0].Roles[0].Permissions; got != "dontAsk" {
+		t.Errorf("permissions = %q, want dontAsk", got)
+	}
+}
+
+// TestScheduleAcceptsAPolicyThatChecks: an inline policy whose defaultMode
+// still checks each call, and other settings, do not refuse a schedule.
+func TestScheduleAcceptsAPolicyThatChecks(t *testing.T) {
+	t.Parallel()
+	doc := scheduleManifest("headless", `  policy = "checked"`, "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"")
+	doc += "\n[[policy]]\nname = \"checked\"\n  [policy.settings.permissions]\n  defaultMode = \"dontAsk\"\n  allow = [\"Read\"]\n"
+	if _, err := ParseManifestBytes([]byte(doc)); err != nil {
+		t.Fatalf("a scheduled role with a dontAsk policy was refused: %v", err)
 	}
 }
 
