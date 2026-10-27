@@ -230,7 +230,8 @@ Both are filed as bd `blocks`, so the ready list shows only the chain's head.
 | 13 | #833 | aae-orc-xj69u | `get teams` and `events` across clusters | jkb6u, w5ik7 (r) |
 
 Status, 2026-10-26: link 11 (#831) is open as PR #1082, on top of the bare `-w`
-fix in PR #1081; link 12 (#832) follows on #1082 (operator go, 2026-10-24).
+fix in PR #1081; link 12 (#832) is open as PR #1083, on #1082 (operator go,
+2026-10-24).
 
 Not in the chain: #834 (read-only permission level; unscheduled, its own
 ruling), #835 (workspace name rule; its own change), and #822 (aae-orc-2ihk2),

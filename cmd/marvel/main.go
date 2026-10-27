@@ -1178,7 +1178,13 @@ Secret-looking Env values show as (redacted), as in the team document.`,
 				return err
 			}
 			if fan {
-				return runFanOutGet(cmd, names, columns, output, noTrunc, watching, cmd.Flags().Changed("output"), load)
+				interval, err := time.Duration(0), error(nil)
+				if watching {
+					if interval, err = watchInterval(watchSec); err != nil {
+						return err
+					}
+				}
+				return runFanOutGet(cmd, names, columns, output, noTrunc, watching, interval, cmd.Flags().Changed("output"), load)
 			}
 			if load {
 				switch {
@@ -3504,10 +3510,13 @@ func newWatchScreen(cols []sessionColumn, explicit, noTrunc bool) *watchSort {
 	return ws
 }
 
-func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, noTrunc bool) error {
+// withWatchTerminal runs a watch view on the terminal: raw mode, a goroutine
+// that reads keys, and a ticker at the interval. It refuses when stdin is not
+// a terminal.
+func withWatchTerminal(interval time.Duration, run func(keys <-chan byte, ticks <-chan time.Time, out func(string))) error {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
-		return fmt.Errorf("watch mode requires a terminal")
+		return errNeedTerminal
 	}
 
 	oldState, err := term.MakeRaw(fd)
@@ -3534,18 +3543,24 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, n
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	ws := newWatchScreen(cols, explicit, noTrunc)
-	watchLoop(ws, watchLoopConfig{
-		interval: interval,
-		deadline: watchFetchDeadline,
-		fetch:    func() watchData { return fetchWatchData(ws.showHeader, wantsComposer(ws.columns)) },
-		now:      time.Now,
-		out: func(frame string) {
-			// Raw mode needs \r\n instead of \n.
-			fmt.Print("\033[2J\033[H" + strings.ReplaceAll(frame, "\n", "\r\n"))
-		},
-	}, keys, ticker.C)
+	run(keys, ticker.C, func(frame string) {
+		// Raw mode needs \r\n instead of \n.
+		fmt.Print("\033[2J\033[H" + strings.ReplaceAll(frame, "\n", "\r\n"))
+	})
 	return nil
+}
+
+func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, noTrunc bool) error {
+	return withWatchTerminal(interval, func(keys <-chan byte, ticks <-chan time.Time, out func(string)) {
+		ws := newWatchScreen(cols, explicit, noTrunc)
+		watchLoop(ws, watchLoopConfig{
+			interval: interval,
+			deadline: watchFetchDeadline,
+			fetch:    func() watchData { return fetchWatchData(ws.showHeader, wantsComposer(ws.columns)) },
+			now:      time.Now,
+			out:      out,
+		}, keys, ticks)
+	})
 }
 
 // --- Table printers (non-watch) ---

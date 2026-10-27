@@ -31,6 +31,7 @@ type sdFake struct {
 	pid      int
 	started  time.Time
 	getRows  [][]api.Session
+	delay    time.Duration // how long each reply is held back
 	mu       sync.Mutex
 	gets     int
 	versions int
@@ -61,6 +62,7 @@ func startSD(t *testing.T, started time.Time, getRows ...[]api.Session) *sdFake 
 				if json.NewDecoder(c).Decode(&req) != nil {
 					return
 				}
+				time.Sleep(f.delay)
 				var data []byte
 				f.mu.Lock()
 				switch req.Method {
