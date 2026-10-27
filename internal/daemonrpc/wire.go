@@ -76,3 +76,9 @@ type EventsBatch struct {
 // when there is no cursor) and then one per delivery for the life of
 // the connection. The client ends the stream by closing its side.
 const MethodEventsWatch = "events.watch"
+
+// NoBusReply is the error a daemon answers bus.status with when its cluster has
+// no bus. A client that must tell "no bus here" from "the daemon did not
+// answer" compares against it, so the daemon and those clients share one
+// string (marvel#1102).
+const NoBusReply = "no bus is configured for this cluster; add a bus section to its entry in the client config"

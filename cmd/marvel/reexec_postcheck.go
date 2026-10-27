@@ -142,6 +142,10 @@ func checkAfterReexec(w io.Writer, before time.Time, handoff string, o reexecObs
 	return &reexecCheckError{reason: reason}
 }
 
+// isNoBusReply reports whether err is the daemon's answer to bus.status for a
+// cluster with no bus, which the live observer carries as the error's text.
+func isNoBusReply(err error) bool { return err.Error() == daemonrpc.NoBusReply }
+
 // seconds prints a wait in whole seconds, the unit the bound is stated in.
 func seconds(d time.Duration) string {
 	return fmt.Sprintf("%ds", int(d.Round(time.Second)/time.Second))
@@ -156,6 +160,11 @@ func (o reexecObserver) readOnce(before time.Time) (answered bool, why string) {
 	}
 	st, err := o.leaf()
 	if err != nil {
+		if isNoBusReply(err) {
+			// The successor answered, and its cluster has no bus: there is
+			// no hub and no leaf to wait for (marvel#1102).
+			return true, "no hub"
+		}
 		return false, ""
 	}
 	ok, reason := leafRequirement(st, o.now())
