@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Fail when a package's tests did not all run and pass: any test or subtest in
-# the package, or in a package under it, skipped or failed, or none of its
-# tests passed. CI runs it as the last command of a step, after go test -json,
-# so its status is the step's, and a skip, a failure or a run of nothing fails
+# the package, or in a package under it, skipped or failed, none of its tests
+# passed, or a package that started never reported its own result. go test
+# -json writes each package's pass or fail last, so a stream cut off before it
+# is a run that never finished. CI runs it as the last command of a step,
+# after go test -json, so its status is the step's, and a skip, a failure, an
+# unfinished package or a run of nothing fails
 # the job even where the shell would not stop at go test's own exit status
 # (set +e, shell: bash {0}). The Linux job gates internal/bus, where
 # nats-server is installed, and the macOS job the restructure packages
@@ -11,8 +14,9 @@
 #   scripts/no-skips.sh <go-test-json-file> <import-path>...
 #
 # Exit 0 when every test in each package ran and passed, 1 on a skip, a
-# failure or a package with no passing test, 2 on a usage or input error. The
-# input must be go test -json output; anything else is an error, never a pass.
+# failure, a package with no passing test or a package that never finished,
+# 2 on a usage or input error. The input must be go test -json output;
+# anything else is an error, never a pass.
 set -euo pipefail
 
 usage() {
@@ -40,6 +44,11 @@ for pkg in "$@"; do
   skipped="$(jq -r --arg p "$pkg" "$mine | select(.Action == \"skip\") | \"\(.Package) \(.Test // \"(no test files)\")\"" "$json")"
   failed="$(jq -r --arg p "$pkg" "$mine | select(.Action == \"fail\") | \"\(.Package) \(.Test // (if .FailedBuild then \"(failed to build)\" else \"(package failed)\" end))\"" "$json")"
   passed="$(jq -r --arg p "$pkg" "$mine | select(.Action == \"pass\" and .Test != null) | .Test" "$json")"
+  # Every package with an event needs its own package-level pass, fail or
+  # skip. Build events carry no Package and are left out.
+  unfinished="$(jq -rs --arg p "$pkg" "[.[] | $mine | select((.Package // \"\") != \"\")] as \$e
+    | ([\$e[] | .Package] | unique) - ([\$e[] | select(.Test == null and (.Action == \"pass\" or .Action == \"fail\" or .Action == \"skip\")) | .Package] | unique)
+    | .[]" "$json")"
 
   if [[ -n "$skipped" ]]; then
     echo "no-skips: tests in $pkg skipped, so they did not run:" >&2
@@ -59,6 +68,11 @@ for pkg in "$@"; do
       | ((\$all[] | select(.Action == \"build-output\" and (.ImportPath as \$i | \$b | index([\$i])))),
          (\$e[] | select(.Action == \"output\") | select({Package, Test} as \$k | \$f | index([\$k]))))
       | (.Output // \"\") | rtrimstr(\"\\n\")" "$json" | sed 's/^/    /' >&2
+    bad=1
+  fi
+  if [[ -n "$unfinished" ]]; then
+    echo "no-skips: packages under $pkg started and did not finish (no package-level pass or fail):" >&2
+    printf '%s\n' "$unfinished" | sed 's/^/  /' >&2
     bad=1
   fi
   if [[ -z "$passed" ]]; then
