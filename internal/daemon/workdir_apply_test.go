@@ -170,3 +170,48 @@ func TestDescribeTeamShowsAPlacementRefusal(t *testing.T) {
 		t.Errorf("Conditions after the directory returned = %v, want none", again["Conditions"])
 	}
 }
+
+// A manifest that names no root, applied from another directory, moves the
+// stored root to where the file sits; the apply says so, with both paths
+// (#1086). The same directory again, or a root the manifest names, is quiet.
+func TestApplyWarnsWhenADerivedRootMovesTheStoredOne(t *testing.T) {
+	d := newHandlerDaemon(t)
+	manifest := strings.Replace(workDirManifestYAML, "    workdir: sub\n", "", 1)
+	// The params carry the unresolved temp paths, as marvel work would; the
+	// stored root is resolved, so the comparison must be too.
+	homeRaw, stagingRaw := t.TempDir(), t.TempDir()
+	home, err := filepath.EvalSymlinks(homeRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staging, err := filepath.EvalSymlinks(stagingRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := applyWithRoot(t, d, manifest, homeRaw); resp.Error != "" {
+		t.Fatalf("first apply: %s", resp.Error)
+	}
+	resp := applyWithRoot(t, d, manifest, homeRaw)
+	if resp.Error != "" {
+		t.Fatalf("re-apply from home: %s", resp.Error)
+	}
+	if adv := strings.Join(advisoriesOf(t, resp), "; "); strings.Contains(adv, "moves") {
+		t.Errorf("re-apply from the same directory warned: %q", adv)
+	}
+	resp = applyWithRoot(t, d, manifest, stagingRaw)
+	if resp.Error != "" {
+		t.Fatalf("apply from staging: %s", resp.Error)
+	}
+	adv := strings.Join(advisoriesOf(t, resp), "; ")
+	if !strings.Contains(adv, home) || !strings.Contains(adv, staging) {
+		t.Errorf("advisories = %q, want one naming %s and %s", adv, home, staging)
+	}
+	named := strings.Replace(manifest, "  name: placed\n", "  name: placed\n  root: "+home+"\n", 1)
+	resp = applyWithRoot(t, d, named, home)
+	if resp.Error != "" {
+		t.Fatalf("apply with a named root: %s", resp.Error)
+	}
+	if adv := strings.Join(advisoriesOf(t, resp), "; "); strings.Contains(adv, "moves") {
+		t.Errorf("a root the manifest names warned: %q", adv)
+	}
+}

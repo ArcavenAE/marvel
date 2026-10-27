@@ -1446,6 +1446,9 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		return daemonrpc.Response{Error: "parse manifest: " + err.Error()}
 	}
 
+	// derived: the manifest names no root, so the one in the params is where
+	// marvel work found the file, not a root anyone chose.
+	derived := m.Workspace.Root == "" && p.WorkspaceRoot != ""
 	if p.WorkspaceRoot != "" {
 		m.Workspace.Root = p.WorkspaceRoot
 	}
@@ -1454,6 +1457,13 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	workDirAdvisories, err := m.ValidateWorkDirs()
 	if err != nil {
 		return daemonrpc.Response{Error: err.Error()}
+	}
+	if derived {
+		if live, err := d.store.GetWorkspace(m.Workspace.Name); err == nil && live.Root != "" && live.Root != m.Workspace.Root {
+			workDirAdvisories = append(workDirAdvisories, fmt.Sprintf(
+				"workspace %s root moves from %s to %s: the manifest names no workspace.root, so the directory it was applied from is taken; its teams place from there on their next restart (marvel#1086)",
+				m.Workspace.Name, live.Root, m.Workspace.Root))
+		}
 	}
 	if err := m.ValidateTrustedFolders(); err != nil {
 		return daemonrpc.Response{Error: err.Error()}
