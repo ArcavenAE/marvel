@@ -25,7 +25,10 @@ import (
 const (
 	NoticeMaxAge          = "max-age"
 	NoticeContextPressure = "context-pressure"
-	NoticeViewNotice      = "view-notice"
+	// NoticeRetire is a retiring seat's handoff ask (docs/design/work-prune.md
+	// section 6.1).
+	NoticeRetire     = "retire"
+	NoticeViewNotice = "view-notice"
 )
 
 // shortCommit is how many characters of a commit the notice names.

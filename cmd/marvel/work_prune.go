@@ -23,11 +23,12 @@ func reportPrune(w io.Writer, result json.RawMessage) error {
 		return &exitError{Code: 1, Msg: "the daemon applied the manifest but reported no prune (it predates marvel work --prune); nothing was pruned"}
 	}
 	var r struct {
-		Pruned  []string           `json:"pruned"`
-		Plan    api.PrunePlan      `json:"prune_plan"`
-		Given   string             `json:"prune_digest_given"`
-		Refused string             `json:"prune_refused"`
-		Skipped []api.PruneSkipped `json:"prune_skipped"`
+		Pruned   []string            `json:"pruned"`
+		Draining []api.PruneDraining `json:"draining"`
+		Plan     api.PrunePlan       `json:"prune_plan"`
+		Given    string              `json:"prune_digest_given"`
+		Refused  string              `json:"prune_refused"`
+		Skipped  []api.PruneSkipped  `json:"prune_skipped"`
 	}
 	if err := json.Unmarshal(result, &r); err != nil {
 		return &exitError{Code: 1, Msg: "decode the prune result; the apply stood", Err: err}
@@ -47,6 +48,10 @@ func reportPrune(w io.Writer, result json.RawMessage) error {
 	}
 	for _, k := range r.Pruned {
 		fmt.Fprintf(&b, "pruned %s\n", k)
+	}
+	// A step 3 daemon sends no draining key, which reads as none.
+	for _, d := range r.Draining {
+		fmt.Fprintf(&b, "draining %s   %s asked for their handoff; the team is deleted once they have left\n", d.Team, plural(d.Seats, "seat"))
 	}
 	for _, s := range r.Skipped {
 		fmt.Fprintf(&b, "not pruned %s   %s\n", s.Team, s.Reason)

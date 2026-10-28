@@ -105,8 +105,10 @@ func TestMarkPruningRunsTheCheckOnTheTeamAndItsSeats(t *testing.T) {
 }
 
 // The re-check passes only a team released by this source with nothing
-// claiming it, no run session, no shift and no live seat. A live headless seat
-// is deferred like an interactive one until step 4 (rulings Q3, Q9).
+// claiming it, no run session, no shift and no live headless seat. A live
+// interactive seat passes: step 4 retires it as the team drains (step 4
+// ruling, Q6). A live headless seat is deferred until the headless arm is
+// built (rulings Q3, Q9; step 4 ruling Q7).
 func TestPruneRecheck(t *testing.T) {
 	at := time.Date(2026, 10, 28, 1, 0, 0, 0, time.UTC)
 	released := func() *TeamClaims {
@@ -126,7 +128,7 @@ func TestPruneRecheck(t *testing.T) {
 		{"no claims", Team{}, nil, "claimed"},
 		{"a run session", Team{Claims: released()}, []Session{{Role: "worker", Generation: 0, State: SessionRunning}}, "run session"},
 		{"mid-shift", Team{Claims: released(), Shift: ShiftState{Phase: ShiftDraining}}, nil, "shift in progress"},
-		{"a live interactive seat", Team{Claims: released()}, []Session{{Role: "worker", Generation: 1, State: SessionRunning}}, "live seat, needs step 4"},
+		{"a live interactive seat", Team{Claims: released()}, []Session{{Role: "worker", Generation: 1, State: SessionRunning}}, ""},
 		{"a live headless seat", Team{Claims: released(), Roles: []Role{{Name: "batch", Runtime: headless}}}, []Session{{Role: "batch", Generation: 1, State: SessionRunning}}, "live seat, needs step 4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

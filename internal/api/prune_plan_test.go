@@ -103,9 +103,13 @@ func planStore(t *testing.T) *Store {
 	mustSession(t, s, "scratch", "worker", "scratch-run", 0, SessionRunning)
 	// Mid-shift: deferred.
 	mustTeam(t, s, Team{Name: "night", Workspace: "ws", Claims: claimsOfSources(at, planSrc), Shift: ShiftState{Phase: ShiftDraining}})
-	// A live seat: deferred until step 4.
+	// A live interactive seat: listed to delete, and retired with a handoff
+	// ask as the team drains (step 4).
 	mustTeam(t, s, Team{Name: "busy", Workspace: "ws", Claims: claimsOfSources(at, planSrc)})
 	mustSession(t, s, "busy", "worker", "busy-worker-g1-0", 1, SessionPending)
+	// A live headless seat: deferred until the headless arm is built.
+	mustTeam(t, s, Team{Name: "batch", Workspace: "ws", Claims: claimsOfSources(at, planSrc), Roles: []Role{{Name: "run", Runtime: Runtime{Mode: RuntimeModeHeadless}}}})
+	mustSession(t, s, "batch", "run", "batch-run-g1-0", 1, SessionRunning)
 	// Named by the file and held. worker has none of its two seats and extra
 	// has three for its one, so a re-apply spawns 2: the excess counts as none.
 	mustTeam(t, s, Team{Name: "held", Workspace: "ws", Claims: claimsOfSources(at, planSrc)})
@@ -130,13 +134,15 @@ func TestPlanPruneSortsEveryTeamIntoItsGroup(t *testing.T) {
 	for _, d := range plan.WouldDelete {
 		deleted = append(deleted, d.Team)
 	}
-	if want := []string{"ws/gone", "ws/released"}; !reflect.DeepEqual(deleted, want) {
+	if want := []string{"ws/busy", "ws/gone", "ws/released"}; !reflect.DeepEqual(deleted, want) {
 		t.Errorf("would delete = %v, want %v", deleted, want)
 	}
-	if len(plan.WouldDelete) > 0 {
-		gone := plan.WouldDelete[0]
-		if want := []PruneSeat{{Session: "ws/gone-worker-g1-0", State: SessionFailed}}; !reflect.DeepEqual(gone.Seats, want) {
-			t.Errorf("ws/gone seats = %+v, want %+v", gone.Seats, want)
+	for _, d := range plan.WouldDelete {
+		if d.Team != "ws/gone" {
+			continue
+		}
+		if want := []PruneSeat{{Session: "ws/gone-worker-g1-0", State: SessionFailed}}; !reflect.DeepEqual(d.Seats, want) {
+			t.Errorf("ws/gone seats = %+v, want %+v", d.Seats, want)
 		}
 	}
 	if len(plan.KeptShared) != 1 || plan.KeptShared[0].Team != "ws/shared" {
@@ -152,7 +158,7 @@ func TestPlanPruneSortsEveryTeamIntoItsGroup(t *testing.T) {
 		t.Errorf("kept for run sessions = %+v, want %+v", plan.KeptRun, want)
 	}
 	want := []PruneDeferred{
-		{Team: "ws/busy", Reason: "live seat, needs step 4"},
+		{Team: "ws/batch", Reason: "live seat, needs step 4"},
 		{Team: "ws/night", Reason: "shift in progress; re-run the plan when it ends"},
 	}
 	if !reflect.DeepEqual(plan.Deferred, want) {
@@ -173,8 +179,10 @@ func TestPlanPruneDigestCoversTheSourceAndTheSet(t *testing.T) {
 		t.Fatalf("digest = %q, want 8 lowercase hex characters", plan.Digest)
 	}
 	input := "source " + planSrc + "\n" +
+		"team ws/busy\n" +
 		"team ws/gone\n" +
 		"team ws/released\n" +
+		"session ws/busy-worker-g1-0\n" +
 		"session ws/gone-worker-g1-0\n"
 	sum := sha256.Sum256([]byte(input))
 	if want := hex.EncodeToString(sum[:])[:8]; plan.Digest != want {
@@ -192,8 +200,9 @@ func TestPlanPruneDigestCoversTheSourceAndTheSet(t *testing.T) {
 
 // The handoff note on a team's alive seats: declared, none or some roles,
 // counting only interactive roles, and a headless note when a headless role
-// holds an alive seat (the step 2 ruling, Q8). Until step 4 such a team is
-// deferred rather than listed, so the notes are checked on pruneDelete itself.
+// holds an alive seat (the step 2 ruling, Q8). A team with a live headless
+// seat is still deferred rather than listed, so the notes are checked on
+// pruneDelete itself.
 func TestPruneDeleteNotesHandoffAndHeadlessWaits(t *testing.T) {
 	asks := &ShiftPolicy{Handoff: "/h/{session}.md", HandoffWindow: 2 * time.Minute}
 	headless := Runtime{Mode: RuntimeModeHeadless}

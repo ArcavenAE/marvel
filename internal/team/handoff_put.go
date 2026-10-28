@@ -114,6 +114,13 @@ func (c *Controller) PutHandoff(token, text string) (HandoffPut, error) {
 	}
 	now := c.nowUTC()
 	if err := c.store.UpdateTeam(plan.teamKey, func(live *api.Team) error {
+		if plan.retire {
+			if r, ok := live.Retiring[plan.sess.Key()]; ok {
+				r.PutAt = now
+				live.Retiring[plan.sess.Key()] = r
+			}
+			return nil
+		}
 		if r, ok := live.ShiftRequests[plan.role]; ok && r.Session == plan.sess.Key() {
 			r.PutAt = now
 			live.ShiftRequests[plan.role] = r
@@ -149,6 +156,9 @@ type handoffPutPlan struct {
 	// held is the identity of the directory held open since the request, nil
 	// for a request restored after a restart.
 	held os.FileInfo
+	// retire says the request is the seat's pending retirement, not its
+	// role's shift request.
+	retire bool
 }
 
 // liveSessionForPut is the gate's liveness rule: the session the token was
@@ -172,6 +182,9 @@ func (c *Controller) liveSessionForPut(token string, req *api.ShiftRequest) (api
 	return live, nil
 }
 
+// redStub is false in the red commit only.
+var redStub = false
+
 func (c *Controller) planHandoffPutLocked(token, text string) (handoffPutPlan, error) {
 	sess, err := c.liveSessionForPut(token, nil)
 	if err != nil {
@@ -186,6 +199,24 @@ func (c *Controller) planHandoffPutLocked(token, text string) (handoffPutPlan, e
 	t, err := c.store.GetTeam(teamKey)
 	if err != nil {
 		return plan, fmt.Errorf("%w: team %s: %v", ErrHandoffNotRequested, teamKey, err)
+	}
+	// A retiring seat is answered exactly as one holding a shift request, so a
+	// seat that cannot write its own file can answer a retire notice (the
+	// step 4 ruling, Q1).
+	if rr, ok := t.Retiring[sess.Key()]; ok && redStub { // STUB (red commit)
+		req := rr.AsShiftRequest()
+		if _, err := c.liveSessionForPut(token, &req); err != nil {
+			return plan, err
+		}
+		if rr.Path == "" || rr.Marker == "" {
+			return plan, fmt.Errorf("%w: role %s", ErrHandoffNoPath, sess.Role)
+		}
+		plan.teamKey, plan.role, plan.generation, plan.req, plan.retire = teamKey, sess.Role, t.Generation, req, true
+		plan.path, plan.body = rr.Path, handoffBody(text, rr.Marker)
+		if info, ok := c.heldRetireDirInfoLocked(rr); ok {
+			plan.held = info
+		}
+		return plan, nil
 	}
 	var role *api.Role
 	for i := range t.Roles {
@@ -226,6 +257,15 @@ func (c *Controller) recheckHandoffPutLocked(token string, plan handoffPutPlan) 
 	t, err := c.store.GetTeam(plan.teamKey)
 	if err != nil {
 		return fmt.Errorf("%w: team %s: %v", ErrHandoffNotRequested, plan.teamKey, err)
+	}
+	if plan.retire {
+		rr, ok := t.Retiring[plan.sess.Key()]
+		if !ok || !rr.RequestedAt.Equal(plan.req.RequestedAt) {
+			return fmt.Errorf("%w: the retirement of %s changed while the handoff was written", ErrHandoffNotRequested, plan.sess.Key())
+		}
+		req := rr.AsShiftRequest()
+		_, err := c.liveSessionForPut(token, &req)
+		return err
 	}
 	req, ok := t.ShiftRequests[plan.role]
 	if !ok || req.Session != plan.sess.Key() || !req.RequestedAt.Equal(plan.req.RequestedAt) || req.Escalated {

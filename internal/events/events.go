@@ -199,8 +199,12 @@ const (
 	// KindTeamPruned records a team marvel work --prune deleted, with the
 	// manifest source whose prune it was (docs/design/work-prune.md
 	// section 5).
-	KindTeamPruned    Kind = "team.pruned"
-	KindRoleSaturated Kind = "role.saturated"
+	KindTeamPruned Kind = "team.pruned"
+	// KindSessionRetired records how a seat removed with a handoff ask left:
+	// handoff-written, handoff-missing or not-asked, with the reason
+	// (docs/design/work-prune.md section 6.3).
+	KindSessionRetired Kind = "session.retired"
+	KindRoleSaturated  Kind = "role.saturated"
 	// KindRoleReplicasInvalid records a stored role whose replica count is
 	// below the scale minimum, reported once at daemon start. Only a daemon
 	// from before marvel#365 could have stored one; the row is left as it is
@@ -513,6 +517,7 @@ var allKinds = []Kind{
 	KindShiftRoleReady,
 	KindShiftDrainedEmpty,
 	KindTeamPruned,
+	KindSessionRetired,
 	KindRoleSaturated,
 	KindRoleReplicasInvalid,
 	KindRoleRemoved,

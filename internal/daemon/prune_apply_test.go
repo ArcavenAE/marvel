@@ -188,11 +188,44 @@ func TestApplyPruneAnswersAnEmptyArray(t *testing.T) {
 	if string(raw["pruned"]) != "[]" || len(r.Pruned) != 0 {
 		t.Errorf("pruned = %s, want []", raw["pruned"])
 	}
+	if string(raw["draining"]) != "[]" {
+		t.Errorf("draining = %s, want []", raw["draining"])
+	}
+}
+
+// A team with a live interactive seat is marked and left to drain, not
+// deleted in the request: pruned keeps step 3's meaning, the teams deleted
+// now, and draining lists the marked team with its seat count (step 4
+// ruling, Q6).
+func TestApplyPruneListsALiveTeamAsDraining(t *testing.T) {
+	d := pruneApplyDaemon(t, func(s *api.Store, at time.Time) {
+		addPruneTeam(t, s, api.Team{Name: "two", Claims: claimed(at, pruneSrc)})
+		addPruneSession(t, s, api.Session{Name: "two-worker-g1-0", Team: "two", Role: "worker", Generation: 1, State: api.SessionRunning})
+	})
+	digest := previewDigest(t, d)
+	resp := applyPrune(t, d, pruneSrc, digest)
+	var reply struct {
+		Pruned   []string            `json:"pruned"`
+		Draining []api.PruneDraining `json:"draining"`
+	}
+	if resp.Error != "" {
+		t.Fatalf("apply --prune: %s", resp.Error)
+	}
+	if err := json.Unmarshal(resp.Result, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(reply.Pruned, ",") != "ws/gone" {
+		t.Errorf("pruned %q, want only ws/gone, deleted in the request", reply.Pruned)
+	}
+	if len(reply.Draining) != 1 || reply.Draining[0].Team != "ws/two" || reply.Draining[0].Seats != 1 {
+		t.Errorf("draining = %+v, want ws/two with 1 seat", reply.Draining)
+	}
 }
 
 // The teams the ticket names are kept or deferred: one claimed by two sources,
-// one with a marvel run session, one mid-shift, and one with a live seat,
-// interactive or headless (section 5). The apply's own reconcile reaps a seeded
+// one with a marvel run session, one mid-shift, and one with a live headless
+// seat (section 5; step 4 ruling Q7). A live interactive seat no longer defers
+// its team: TestApplyPruneListsALiveTeamAsDraining covers it. The apply's own reconcile reaps a seeded
 // session that has no pane, so that the run session survives the prune is
 // checked in the controller's TestPruneLeavesARunSessionAndItsTeam.
 func TestApplyPruneKeepsWhatIsNotThisFilesToDelete(t *testing.T) {
@@ -212,10 +245,6 @@ func TestApplyPruneKeepsWhatIsNotThisFilesToDelete(t *testing.T) {
 		{"mid-shift", func(at time.Time) api.Team {
 			return api.Team{Name: "two", Claims: claimed(at, pruneSrc), Shift: api.ShiftState{Phase: api.ShiftDraining}}
 		}, nil},
-		{
-			"a live interactive seat", func(at time.Time) api.Team { return api.Team{Name: "two", Claims: claimed(at, pruneSrc)} },
-			&api.Session{Name: "two-worker-g1-0", Team: "two", Role: "worker", Generation: 1, State: api.SessionRunning},
-		},
 		{"a live headless seat", func(at time.Time) api.Team {
 			return api.Team{Name: "two", Claims: claimed(at, pruneSrc), Roles: []api.Role{{Name: "batch", Runtime: headless}}}
 		}, &api.Session{Name: "two-batch-g1-0", Team: "two", Role: "batch", Generation: 1, State: api.SessionRunning}},

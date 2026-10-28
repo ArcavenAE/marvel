@@ -131,8 +131,10 @@ func PlanPrune(m *Manifest, source string, store PruneReader) PrunePlan {
 
 // pruneVerdict applies rules 2 to 4 of the prune set to a team this source may
 // prune: it is kept while it holds marvel run sessions (runs > 0), deferred
-// mid-shift or while it has a live seat (deferred is the reason), and
-// otherwise deleted. The plan and the prune itself both decide through it.
+// mid-shift or while it has a live headless seat (deferred is the reason), and
+// otherwise deleted. A live interactive seat no longer defers it: step 4 asks
+// each such seat for its handoff as the team drains. The plan and the prune
+// itself both decide through it.
 func pruneVerdict(t *Team, sessions []Session) (runs int, deferred string) {
 	alive, aliveHeadless := false, false
 	for _, s := range sessions {
@@ -160,6 +162,7 @@ func pruneVerdict(t *Team, sessions []Session) (runs int, deferred string) {
 		// like any live seat, and this branch is the one place that changes.
 		return 0, "live seat, needs step 4"
 	case alive:
+		// STUB (red commit): still deferred.
 		return 0, "live seat, needs step 4"
 	}
 	return 0, ""

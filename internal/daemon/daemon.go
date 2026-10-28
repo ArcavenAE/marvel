@@ -458,6 +458,19 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// operator would, with literal keystrokes and Enter (marvel#437 D5). It is
 	// a draft typed into a seat, so it is recorded like any inject, from marvel.
 	teamCtrl.Notify = d.notifyHandoff
+	// A retiring seat's last screen is saved before its pane is killed, and a
+	// team a reconcile pass prunes has its broker user revoked after the pass,
+	// as marvel delete team does (docs/design/work-prune.md sections 5, 6.3).
+	teamCtrl.CaptureScreen = func(sess api.Session) (string, error) {
+		if sess.PaneID == "" {
+			return "", fmt.Errorf("session %s has no pane", sess.Key())
+		}
+		return d.driver.CapturePaneRange(sess.PaneID, -retiredHistory, retiredScreenEnd)
+	}
+	if home != "" {
+		teamCtrl.RetiredDir = filepath.Join(home, "retired")
+	}
+	teamCtrl.OnPruned = func([]string) { d.regenerateBus("prune") }
 	// Each seat's read-only views are built at spawn by the session manager
 	// and followed on a tick here (marvel#609).
 	if layout, lerr := paths.Default(); lerr == nil {
@@ -506,7 +519,7 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 // records: the max-age and context-pressure asks are handoff requests,
 // anything else is a notice.
 func noticeNoun(origin string) string {
-	if origin == team.NoticeMaxAge || origin == team.NoticeContextPressure {
+	if origin == team.NoticeMaxAge || origin == team.NoticeContextPressure || origin == team.NoticeRetire {
 		return "handoff"
 	}
 	return "notice"

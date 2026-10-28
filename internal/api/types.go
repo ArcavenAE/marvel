@@ -1055,8 +1055,47 @@ type Team struct {
 	// Pruning is set while a prune removes the team: every role's desired
 	// count reads 0 and the team starts no shift. An apply that names the team
 	// clears it (docs/design/work-prune.md section 5).
-	Pruning   *TeamPruning `toml:"-"`
+	Pruning *TeamPruning `toml:"-"`
+	// Retiring holds the seats being removed with a handoff ask, keyed by
+	// session key (docs/design/work-prune.md section 6). Status, persisted, so
+	// a daemon restart inside the window resumes each one. A retiring seat is
+	// not counted as actual for its role.
+	Retiring  map[string]RetireRequest `toml:"-"`
 	CreatedAt time.Time
+}
+
+// RetireRequest is one seat's pending retirement: when it was asked, for how
+// long it may take, and where it was asked to write its handoff.
+type RetireRequest struct {
+	// Session is the key of the session asked.
+	Session string
+	// Role is the session's role, kept here because a dropped role is gone
+	// from the team's roles by the time its seats are retired.
+	Role string
+	// RequestedAt is when the notice was sent, and Window how long the seat
+	// has from then.
+	RequestedAt time.Time
+	Window      time.Duration
+	// Path and Marker are the handoff file and its terminal line, empty when
+	// the role declares no handoff: the window is then a plain grace.
+	Path   string
+	Marker string
+	// NoticeUndelivered and DirError are as on ShiftRequest: why the notice
+	// never reached the seat, and why the handoff directory could not be made.
+	NoticeUndelivered string
+	DirError          string
+	// DirDev and DirIno identify the handoff directory as it was when marvel
+	// asked, for handoff.put, as on ShiftRequest.
+	DirDev uint64
+	DirIno uint64
+	// PutAt is when a handoff.put for this request was accepted.
+	PutAt time.Time
+}
+
+// AsShiftRequest is the request in the shape handoff.put writes against: the
+// same session, time and directory identity.
+func (r RetireRequest) AsShiftRequest() ShiftRequest {
+	return ShiftRequest{Session: r.Session, RequestedAt: r.RequestedAt, DirDev: r.DirDev, DirIno: r.DirIno}
 }
 
 // TeamPruning records which manifest source's prune marked a team, and when.
