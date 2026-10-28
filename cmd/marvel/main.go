@@ -1338,7 +1338,11 @@ func getResources(resourceType string, cols []sessionColumn, header string, fit 
 // deleting anything. It is both an operator preview and a spawn-free way to
 // exercise the convergence decision in dev/test.
 func planCmd() *cobra.Command {
-	return &cobra.Command{
+	var (
+		file            string
+		prune, detailed bool
+	)
+	cmd := &cobra.Command{
 		Use:   "plan [workspace/team]",
 		Short: "Preview the convergence delta per team without spawning (dry run)",
 		Long: `Print the plan the next reconcile tick would enact — desired vs alive
@@ -1351,9 +1355,23 @@ With no argument every team is shown. An optional workspace/team narrows the
 preview; a bare name matches that workspace or that team.
 
 Teams mid-shift are omitted: their convergence runs at shift-aware
-generations, which this steady-state preview does not model.`,
+generations, which this steady-state preview does not model.
+
+With -f <manifest> --prune it instead previews what marvel work --prune would
+delete for that file, and why every other team is kept. It writes nothing
+(docs/design/work-prune.md section 4).`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			switch {
+			case file != "" && !prune:
+				return fmt.Errorf("marvel plan -f needs --prune: the full manifest plan is not built yet (aae-orc-qawkf)")
+			case prune && file == "":
+				return fmt.Errorf("--prune needs -f <manifest>")
+			case file != "" && len(args) > 0:
+				return fmt.Errorf("marvel plan -f takes no workspace/team argument; the manifest names its teams")
+			case prune:
+				return planPrune(cmd, file, detailed)
+			}
 			filter := ""
 			if len(args) == 1 {
 				filter = args[0]
@@ -1361,6 +1379,10 @@ generations, which this steady-state preview does not model.`,
 			return planConvergence(filter)
 		},
 	}
+	cmd.Flags().StringVarP(&file, "file", "f", "", "the manifest to plan (with --prune)")
+	cmd.Flags().BoolVar(&prune, "prune", false, "preview what marvel work --prune would delete for -f <manifest>")
+	cmd.Flags().BoolVar(&detailed, "detailed-exitcode", false, "with --prune, exit 2 when something would be deleted")
+	return cmd
 }
 
 func planConvergence(filter string) error {

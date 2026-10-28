@@ -165,8 +165,13 @@ becomes a part of its `evaluate`.
 **The prune set.** A team is in this file's prune set only when all four
 hold:
 
-1. its `Claims` is non-nil, its `Sources` is empty, and `ReleasedBy` is this
-   file's source;
+1. the file does not name it (by full key, `workspace/name`), and the apply
+   would leave it released by this file: its `Claims` is non-nil, its
+   `Sources` less this file's source is empty, and either this source is in
+   `Sources` or `ReleasedBy` is this source. The plan runs before the apply,
+   so it predicts rule 2 of section 3.2 rather than reading its result; step
+   3 recomputes after its apply, and the digest check catches any
+   difference;
 2. it holds no `marvel run` session (`Generation == 0`). Such a session
    belongs to the operator, as the role-drop path already says
    (`controller.go:940-942`), and scale-down would otherwise shed it
@@ -174,20 +179,45 @@ hold:
 3. it is not mid-shift (`Shift.Phase` is none). A shift's drain and abort
    (`controller.go:2577`, `:2337`) call `Delete` directly, so a prune waits
    for the shift to end;
-4. until step 4 lands, it has no running seat (section 5).
+4. until step 4 lands, it has no live seat: no session in an alive state
+   (pending, running or crashloop-backoff, `SessionState.CountsAsAlive`),
+   section 5.
 
 A team that meets rule 1 and fails 2, 3 or 4 is listed as kept or deferred,
 with the rule it failed, and is not deleted.
+
+The other groups:
+
+- **Kept, claimed by another file too:** the file does not name it, this
+  source is in its `Sources`, and `Sources` less this source is non-empty.
+- **Kept, unclaimed:** every team with nil claims, in any workspace, that the
+  file does not name.
+- **Held:** a team the file names, that exists, and whose posture is hold. It
+  will spawn the sum over the file's roles of declared replicas less that
+  role's alive sessions, and is listed only when that sum is above zero. A team
+  the apply would create is left to the full manifest plan (aae-orc-qawkf).
+- A team another source released (`Sources` empty, `ReleasedBy` another
+  source), or one only other sources claim, is not listed: it belongs to that
+  file's preview.
+
+`prune_plan` is parse only: it parses the manifest as `apply` does and runs
+none of `apply`'s other pre-flights (admission, the name clash, `LookPath`);
+those are the full manifest plan's. It skips the `workspace_root` transform,
+which is a plain assignment that cannot fail and plays no part in the prune
+set. It refuses an empty `manifest_source`, as the client does, so a parse
+error and a missing source are its only exit 1.
 
 It writes nothing: no store, no events, no tmux. It prints:
 
 ```
 prune plan for workspace/aae from host-a:/srv/manifests/main.toml
 digest 3f9c1a07
+pre-flight checks not evaluated (aae-orc-qawkf)
 
 would delete (claimed only by this file, which no longer names them):
-  aae/old-research   3 seats  2 running, 1 parked   handoff: declared, window 5m
+  aae/old-research   3 seats  1 failed, 2 running   handoff: declared, window 5m
   aae/ops-trial      0 seats
+  aae/nightly-sync   1 seat  1 running   headless: waits up to 5m
 
 kept, claimed by another file too:
   aae/shared-ops     also host-a:/srv/manifests/ops.toml (applied 2026-10-27T18:02Z)
@@ -202,15 +232,31 @@ kept, holds marvel run sessions:
 deferred:
   aae/night-batch    shift in progress; re-run the plan when it ends
 
-named by this file and held (re-apply converges them, daemon.go:1598):
+named by this file and held (re-apply converges them):
   aae/builders       will spawn 2
 ```
 
-Each "would delete" line names its seats, their state, and whether a handoff
-can be asked for (the role declares `shift.handoff`) and its window. The
-digest is a hash over the sorted list of team keys and session keys in the
-"would delete" group. The "held" group reports the posture behaviour section
-2 records; it is printed, not changed.
+The sample shows the output once step 4 lands; until then a team with an
+alive seat, such as aae/old-research, is listed under deferred as 'live seat,
+needs step 4'.
+
+Each "would delete" line names its seats and their state, the states in
+alphabetical order. Counting only the interactive roles that hold an alive
+seat, it says `handoff: declared, window W`
+when every one declares `shift.handoff` (W is the longest `handoff_window`,
+default 5m), `handoff: none` when none does, and `handoff: some roles`
+otherwise. A team with a headless role holding an alive seat adds `headless: waits
+up to W`, the role's `handoff_window` (section 6.2). The notes are text
+output only.
+
+The digest is the first 8 lowercase hex characters of a sha256 over the
+line `source <manifest_source>`, then the sorted `team <key>` lines and the
+sorted `session <key>` lines of the "would delete" group, each line ending in
+a newline. It binds a preview to its file and its set, against accidents
+rather than attackers, so 32 bits is enough.
+
+The "held" group reports the posture behaviour section 2 records; it is
+printed, not changed.
 
 Exit codes follow `manifest-plan.md` section 6, as ruled 2026-10-19: 0
 evaluated, 1 could not evaluate (an older daemon included), and 2 when
