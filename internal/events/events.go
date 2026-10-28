@@ -196,7 +196,11 @@ const (
 	// surface, not judge — but the event lets an operator or a test tell the
 	// two apart, which len(oldGen)==0 alone could not. See aae-orc-094e.
 	KindShiftDrainedEmpty Kind = "team.shift-drained-empty"
-	KindRoleSaturated     Kind = "role.saturated"
+	// KindTeamPruned records a team marvel work --prune deleted, with the
+	// manifest source whose prune it was (docs/design/work-prune.md
+	// section 5).
+	KindTeamPruned    Kind = "team.pruned"
+	KindRoleSaturated Kind = "role.saturated"
 	// KindRoleReplicasInvalid records a stored role whose replica count is
 	// below the scale minimum, reported once at daemon start. Only a daemon
 	// from before marvel#365 could have stored one; the row is left as it is
@@ -508,6 +512,7 @@ var allKinds = []Kind{
 	KindHandoffPutRefused,
 	KindShiftRoleReady,
 	KindShiftDrainedEmpty,
+	KindTeamPruned,
 	KindRoleSaturated,
 	KindRoleReplicasInvalid,
 	KindRoleRemoved,

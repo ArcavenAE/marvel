@@ -1156,6 +1156,9 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				live.Roles = roles
 				live.Budget = budget
 				live.Claims = claim(live.Claims, source, now)
+				// A team the file names again stops pruning, in the same hold
+				// that claims it (docs/design/work-prune.md section 5).
+				live.Pruning = nil
 				// An apply that declares no placement leaves the anchor the
 				// team already has, a legacy stamp (the v1 to v2 migration's
 				// record of where a root-less team already ran) included. Any

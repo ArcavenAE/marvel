@@ -271,24 +271,30 @@ marvel work <manifest> --prune <digest>
 1. The client sends `manifest_source`, `prune: true` and `prune_digest`.
 2. The daemon runs the normal apply, then recomputes the prune set exactly as
    `prune_plan` does. If its digest differs from `prune_digest`, the apply
-   stands and the prune is refused with both lists printed. Nothing a
-   preview did not show is deleted.
+   stands and the prune is refused with the current set and both digests
+   printed. Nothing a preview did not show is deleted.
 3. Each team in the set is marked `Pruning` (by source, at a time) and every
-   role's effective desired count becomes 0. The prune checks each team's
-   claims and marks it `Pruning` in one lock hold, and an apply that claims a
+   role's effective desired count becomes 0. The prune re-checks each team
+   against the four rules and marks it `Pruning` in one lock hold, and an apply that claims a
    `Pruning` team clears `Pruning` in that same hold, so a claim and a prune
    never interleave on one team. A pruning team starts no
    shift: the automatic triggers skip it and `marvel shift` refuses it, so
    no drain can bypass the ask once the prune has begun. The team's
    sessions then leave through the scale-down path, which after step 4
-   asks each one for its handoff. Once a pruning team holds no session, its
+   asks each one for its handoff. Once a pruning team holds no live session, its
    record is deleted
-   exactly as `marvel delete team` does (`daemon.go:1793-1808`): health
+   exactly as `marvel delete team` does (`Controller.DeleteTeam`,
+   `internal/team/prune.go`): health
    state cleared and the broker user revoked. Endpoints and policies stay,
-   as they do for `delete team` today.
-4. The response lists the teams marked. The client errors if the response
-   has no `pruned` field, which is how an older daemon that dropped `prune`
-   is caught: it applied, and it pruned nothing.
+   as they do for `delete team` today. Step 3 deletes each marked team at
+   once, in the same request, because no team it marks has a seat alive.
+   The last re-check and the record delete are one store-lock hold, so an
+   apply that claims the team first keeps it; the team's finished sessions
+   are deleted after the record.
+4. The response lists the teams deleted in `pruned`, always an array, and
+   the teams kept or deferred with their reasons. The client errors if the
+   response has no `pruned` array, or a null one, which is how an older
+   daemon that dropped `prune` is caught: it applied, and it pruned nothing.
 
 **Scope until step 4 lands:** step 3 prunes only a team with no running
 seat, interactive or headless. A team with one is listed as "deferred: live

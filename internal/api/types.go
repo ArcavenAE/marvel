@@ -1051,8 +1051,19 @@ type Team struct {
 	// Claims records which manifest sources have applied this team. nil means
 	// the team predates claims, or was last applied by a client that sent no
 	// source: it is never pruned (docs/design/work-prune.md section 3.2).
-	Claims    *TeamClaims `toml:"-"`
+	Claims *TeamClaims `toml:"-"`
+	// Pruning is set while a prune removes the team: every role's desired
+	// count reads 0 and the team starts no shift. An apply that names the team
+	// clears it (docs/design/work-prune.md section 5).
+	Pruning   *TeamPruning `toml:"-"`
 	CreatedAt time.Time
+}
+
+// TeamPruning records which manifest source's prune marked a team, and when.
+// Status, not spec, persisted with the team.
+type TeamPruning struct {
+	Source string
+	At     time.Time
 }
 
 // TeamClaims is the owner record of a team: the manifest sources that applied
@@ -1091,6 +1102,16 @@ const (
 	// maintenance (crash-loop restarts, replica top-ups) is never suppressed.
 	PostureConverge ConvergencePosture = "converge"
 )
+
+// DesiredReplicas is how many seats of role r the team wants: the declared
+// count, or 0 while the team is being pruned. Read desired through it, never
+// from Replicas directly.
+func (t *Team) DesiredReplicas(r *Role) int {
+	if t.Pruning != nil {
+		return 0
+	}
+	return r.Replicas
+}
 
 // Posture returns the team's convergence posture, normalizing the zero value
 // (an unset field — a team record written before the field existed, or one the

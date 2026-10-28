@@ -138,6 +138,11 @@ type Controller struct {
 
 	// now is an injection point for tests; nil means time.Now().UTC().
 	now func() time.Time
+	// pruneHook, when set, runs inside Prune at the named step for a team:
+	// "delete" just before the step that deletes the team's record, and
+	// "sessions" just before its sessions are deleted. Tests use it to change
+	// the store in those windows; it is nil in the daemon.
+	pruneHook func(key, step string)
 	// jitter draws a firing's random delay up to its schedule's jitter;
 	// nil means a uniform draw. Tests set it to return zero.
 	jitter func(max time.Duration) time.Duration
@@ -361,7 +366,7 @@ func (c *Controller) ProjectHeldRoleRows(store *api.Store) ([]api.Session, map[s
 			// Crashed row IS representation the operator sees, so a role
 			// that kept one is not synthesized.
 			rows := store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
-			gap := role.Replicas - len(rows)
+			gap := t.DesiredReplicas(role) - len(rows)
 			if gap <= 0 {
 				// The role kept its terminal rows, so there is nothing to
 				// synthesize — but a frozen or saturated role's row reads
@@ -441,6 +446,12 @@ func terminalRoleReason(role *api.Role, rh RoleHealth) string {
 func (c *Controller) ClearRoleHealthForTeam(workspace, team string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.clearRoleHealthForTeamLocked(workspace, team)
+}
+
+// clearRoleHealthForTeamLocked is ClearRoleHealthForTeam for a caller that
+// holds c.mu.
+func (c *Controller) clearRoleHealthForTeamLocked(workspace, team string) {
 	prefix := workspace + "/" + team + "/"
 	for k := range c.roleHealth {
 		if strings.HasPrefix(k, prefix) {
@@ -1169,7 +1180,7 @@ type admissionIntent struct {
 // role shifts and the team generation advances. Caller holds c.mu.
 func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) RolePlan {
 	current := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
-	desired := role.Replicas
+	desired := t.DesiredReplicas(role)
 	// Replica accounting, not process liveness: a completed headless run
 	// holds its slot (ADR-010). Every other CountAlive caller in the tree
 	// is asking the liveness question and must keep using CountAlive.
@@ -1959,6 +1970,11 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 	if t.Shift.Phase != api.ShiftNone {
 		return fmt.Errorf("team %s: shift already in progress (phase: %s)", teamKey, t.Shift.Phase)
 	}
+	// A pruning team starts no shift, from marvel shift or a trigger, so no
+	// drain can bypass the prune (docs/design/work-prune.md section 5).
+	if t.Pruning != nil {
+		return fmt.Errorf("team %s is being pruned; it starts no shift", teamKey)
+	}
 
 	// Build role list in shift order (supervisor last).
 	var roles []string
@@ -2096,7 +2112,8 @@ func shiftOrder(roles []api.Role) []string {
 // Shift initiations, from either path, count against the fleet-wide per-tick
 // budget, and a team starts at most one shift per tick.
 func (c *Controller) evaluateShiftTriggers(t *api.Team) {
-	if t.Shift.Phase != api.ShiftNone {
+	// A pruning team opens no handoff request either.
+	if t.Shift.Phase != api.ShiftNone || t.Pruning != nil {
 		return
 	}
 	now := c.nowUTC()
@@ -2362,7 +2379,7 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 	// Failed or Crashed successor must not satisfy the launch and suppress
 	// the live replacement that should take its place. See aae-orc-6kgq.
 	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
-	desired := role.Replicas
+	desired := t.DesiredReplicas(role)
 	// A scheduled role spawns only through its firing, in planRole, so a
 	// shift launches nothing for it and passes straight to draining.
 	if role.Schedule != nil {
