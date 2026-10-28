@@ -236,9 +236,8 @@ named by this file and held (re-apply converges them):
   aae/builders       will spawn 2
 ```
 
-The sample shows the output once step 4 lands; until then a team with an
-alive seat, such as aae/old-research, is listed under deferred as 'live seat,
-needs step 4'.
+A team with a running headless seat is listed under deferred as 'live
+headless seat, awaits the headless arm' until that arm lands (section 5).
 
 Each "would delete" line names its seats and their state, the states in
 alphabetical order. Counting only the interactive roles that hold an alive
@@ -300,11 +299,15 @@ marvel work <manifest> --prune <digest>
    applied, and it pruned nothing. A response with no `draining` key reads as
    none.
 
-**Scope until step 4 lands:** step 3 prunes only a team with no running
-seat, interactive or headless. A team with one is listed as "deferred: live
-seat, needs step 4" and kept. So at no point in the chain is a running seat
-killed without either a handoff ask or, for a headless run that cannot take
-one, a bounded wait for it to finish (section 6.2).
+**Scope until the headless arm lands:** step 4 retires interactive seats
+(section 6), so a team whose live seats are all interactive is pruned once
+each has been asked and has left. A team with a running headless seat is
+listed as "deferred: live headless seat, awaits the headless arm" and kept,
+until the operator rules on the headless case in section 6.2. So no prune
+kills a running seat without either a handoff ask or, for a headless run that
+cannot take one, a bounded wait for it to finish. Until then, scale-down and a
+role drop still delete a running headless seat at once, as they did before
+this design.
 
 A team being pruned that a later apply names again stops pruning: the apply
 clears `Pruning`, reclaims it, and the reconciler converges it back. Seats
