@@ -637,12 +637,14 @@ func TestRetiredScreenNeverOverwritesAnEarlierOne(t *testing.T) {
 	}
 }
 
-// The saved screen holds the last retiredScreenLines lines of the pane's
-// history and no more (section 6.3).
+// The saved screen holds the last 500 lines of the pane's history and no more
+// (section 6.3, the step 4 ruling Q9). The count is written out, not read from
+// retiredScreenLines, so a changed bound fails here.
 func TestRetiredScreenKeepsTheLastLinesOnly(t *testing.T) {
 	f := newRetireFixture(t, "test-retire-lines", sleepRole(testShiftRole, 1))
 	var history []string
-	for i := 1; i <= retiredScreenLines+100; i++ {
+	const bound = 500
+	for i := 1; i <= bound+100; i++ {
 		history = append(history, fmt.Sprintf("line %d", i))
 	}
 	f.ctrl.CaptureScreen = func(api.Session) (string, error) { return strings.Join(history, "\n") + "\n", nil }
@@ -659,8 +661,27 @@ func TestRetiredScreenKeepsTheLastLinesOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(string(body), "\n"), "\n")
-	want := history[len(history)-retiredScreenLines:]
-	if len(lines) != retiredScreenLines || lines[0] != want[0] || lines[len(lines)-1] != want[len(want)-1] {
-		t.Errorf("saved %d lines, %q to %q; want %d, %q to %q", len(lines), lines[0], lines[len(lines)-1], retiredScreenLines, want[0], want[len(want)-1])
+	want := history[len(history)-bound:]
+	if len(lines) != bound || lines[0] != want[0] || lines[len(lines)-1] != want[len(want)-1] {
+		t.Errorf("saved %d lines, %q to %q; want %d, %q to %q", len(lines), lines[0], lines[len(lines)-1], bound, want[0], want[len(want)-1])
+	}
+}
+
+// Retiring the last seat of a role the manifest still declares, as a scale-down
+// to zero does, ends the seat and nothing else: the role keeps its health and
+// no role.removed is recorded.
+func TestRetiringAKeptRolesLastSeatDoesNotRemoveTheRole(t *testing.T) {
+	f := newRetireFixture(t, "test-retire-kept", sleepRole(testShiftRole, 1))
+	roleKey := "test-retire-kept/squad/" + testShiftRole
+	f.ctrl.roleHealth[roleKey] = &RoleHealth{RestartCount: 2}
+	sess := f.seat(testShiftRole, 0)
+	f.retire(sess)
+	f.clock.Advance(api.DefaultShiftHandoffWindow)
+	f.advance()
+	if !f.gone(sess) {
+		t.Fatal("the seat outlived its grace")
+	}
+	if n := len(f.ring.Snapshot(events.Filter{Kind: events.KindRoleRemoved}, 0)); n != 0 || f.ctrl.roleHealth[roleKey] == nil {
+		t.Errorf("role.removed = %d, health %+v; want no event and the health kept", n, f.ctrl.roleHealth[roleKey])
 	}
 }
