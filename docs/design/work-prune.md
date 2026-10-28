@@ -292,9 +292,13 @@ marvel work <manifest> --prune <digest>
    apply that claims the team first keeps it; the team's finished sessions
    are deleted after the record.
 4. The response lists the teams deleted in `pruned`, always an array, and
-   the teams kept or deferred with their reasons. The client errors if the
-   response has no `pruned` array, or a null one, which is how an older
-   daemon that dropped `prune` is caught: it applied, and it pruned nothing.
+   the teams kept or deferred with their reasons. From step 4 it also lists,
+   in `draining`, always an array, the teams marked and left to drain, each
+   with its seat count; the reconcile deletes each once its last seat has
+   gone. The client errors if the response has no `pruned` array, or a null
+   one, which is how an older daemon that dropped `prune` is caught: it
+   applied, and it pruned nothing. A response with no `draining` key reads as
+   none.
 
 **Scope until step 4 lands:** step 3 prunes only a team with no running
 seat, interactive or headless. A team with one is listed as "deferred: live
@@ -357,8 +361,10 @@ rises again, a fresh seat spawns; the retiring one is not recalled.
   at the window is recorded as `cancelled` in the run history, as a kill of
   a live run already is.
 - **Not waited for, deleted at once:** a seat not in the running state (a
-  finished headless run included), and a team-wide delete by an operator
-  (out of scope, section 2).
+  pending seat, and a finished headless run, included), and a team-wide
+  delete by an operator (out of scope, section 2).
+- **A seat of a dropped role** gets the plain grace, because its role's
+  handoff declaration went with the apply that dropped it.
 
 A prune runs all its seats' windows at once, so a prune ends within the
 longest window plus a tick.
@@ -367,8 +373,12 @@ longest window plus a tick.
 
 At the end of the window the pane is killed. That is the ruling as given:
 "wait, bounded, before killing its pane". Before the kill, marvel saves the
-pane's last 500 lines to `<marvel home>/retired/<session>.txt`, mode 0600,
-so what the seat had on screen survives.
+pane's last 500 lines, scrollback included, to
+`<marvel home>/retired/<workspace>/<name>-<stamp>.txt`, where the stamp is
+basic ISO 8601 UTC with no colons (`20261027T024915Z`). The directory is mode
+0700 and the file 0600, created new and never overwritten, so what the seat
+had on screen survives. A screen that cannot be saved is named in the event
+and does not hold the kill back.
 
 Every retirement emits `session.retired` with one outcome:
 `handoff-written`, `handoff-missing` (with the reason: window passed,
@@ -404,6 +414,7 @@ A re-apply that wants the seat back gets a new one.
 | A notice into a pane parked at a dialog (marvel#1063) | The window bounds it | The seat never sees the ask; the screen is saved |
 | Scale-down and role drops change timing | Seats leave up to one window later than today | Spend during the window; it is bounded and reported |
 | A pruning team re-applied mid-prune | `Pruning` cleared, the team converges back | Seats already asked leave anyway (6.4) |
+| Retired screens accumulate | Each is small and named by workspace, seat and time | They collect under `<marvel home>/retired`, and marvel deletes none |
 
 ## 8. Build plan (flat tickets after this merges; a rule-(d) chain)
 
