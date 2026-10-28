@@ -1,6 +1,7 @@
 package team
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -610,5 +611,56 @@ func TestHealthLeavesARetiringSeatAlone(t *testing.T) {
 	got, err := f.store.GetSession(sess.Key())
 	if err != nil || got.State != api.SessionRunning || got.FailureCount != 0 {
 		t.Fatalf("session %+v, %v; want it running, uncounted and not restarted", got.State, err)
+	}
+}
+
+// A saved screen never replaces one already on disk: a second retirement of a
+// seat with the same name in the same second keeps the first screen and says
+// the new one was not saved (section 6.3).
+func TestRetiredScreenNeverOverwritesAnEarlierOne(t *testing.T) {
+	f := newRetireFixture(t, "test-retire-excl", sleepRole(testShiftRole, 1))
+	sess := f.seat(testShiftRole, 0)
+	dir := filepath.Join(f.retired, sess.Workspace)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, sess.Name+"-"+f.clock.Now().UTC().Format("20060102T150405Z")+".txt")
+	if err := os.WriteFile(path, []byte("earlier screen\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := f.ctrl.saveRetiredScreen(sess)
+	if !strings.HasPrefix(got, "screen not saved: ") {
+		t.Errorf("saveRetiredScreen = %q, want screen not saved", got)
+	}
+	if body, err := os.ReadFile(path); err != nil || string(body) != "earlier screen\n" {
+		t.Errorf("earlier screen = %q, %v; want it untouched", body, err)
+	}
+}
+
+// The saved screen holds the last retiredScreenLines lines of the pane's
+// history and no more (section 6.3).
+func TestRetiredScreenKeepsTheLastLinesOnly(t *testing.T) {
+	f := newRetireFixture(t, "test-retire-lines", sleepRole(testShiftRole, 1))
+	var history []string
+	for i := 1; i <= retiredScreenLines+100; i++ {
+		history = append(history, fmt.Sprintf("line %d", i))
+	}
+	f.ctrl.CaptureScreen = func(api.Session) (string, error) { return strings.Join(history, "\n") + "\n", nil }
+	sess := f.seat(testShiftRole, 0)
+	if got := f.ctrl.saveRetiredScreen(sess); !strings.HasPrefix(got, "screen saved to ") {
+		t.Fatalf("saveRetiredScreen = %q, want saved", got)
+	}
+	screens := f.savedScreens()
+	if len(screens) != 1 {
+		t.Fatalf("saved screens = %q, want one", screens)
+	}
+	body, err := os.ReadFile(screens[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(body), "\n"), "\n")
+	want := history[len(history)-retiredScreenLines:]
+	if len(lines) != retiredScreenLines || lines[0] != want[0] || lines[len(lines)-1] != want[len(want)-1] {
+		t.Errorf("saved %d lines, %q to %q; want %d, %q to %q", len(lines), lines[0], lines[len(lines)-1], retiredScreenLines, want[0], want[len(want)-1])
 	}
 }

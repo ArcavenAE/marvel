@@ -212,3 +212,31 @@ func TestDeleteTeamIfChecksAndDeletesInOneHold(t *testing.T) {
 		t.Errorf("DeleteTeamIf deleted a session; the caller does that: %v", err)
 	}
 }
+
+// The prune's record delete holds a marked team while a seat is live or a
+// retirement is still recorded, even once no seat counts as alive, and passes
+// the inner check's reason through.
+func TestPruneDeleteCheckHoldsATeamWhileASeatIsLeaving(t *testing.T) {
+	pass := func(*Team, []Session) string { return "" }
+	ended := []Session{{Role: "a", Generation: 1, State: SessionCrashed}}
+	running := []Session{{Role: "a", Generation: 1, State: SessionRunning}}
+	cases := []struct {
+		name     string
+		check    func(*Team, []Session) string
+		team     Team
+		sessions []Session
+		want     string
+	}{
+		{"nothing left", pass, Team{}, ended, ""},
+		{"a live seat", pass, Team{}, running, ReasonDraining},
+		{"a recorded retirement and no live seat", pass, Team{Retiring: map[string]RetireRequest{"ws/a-g1-0": {Session: "ws/a-g1-0", Role: "a"}}}, ended, ReasonDraining},
+		{"the inner check refuses", func(*Team, []Session) string { return "claimed" }, Team{}, running, "claimed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PruneDeleteCheck(tc.check)(&tc.team, tc.sessions); got != tc.want {
+				t.Errorf("PruneDeleteCheck = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
