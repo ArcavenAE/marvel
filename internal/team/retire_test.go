@@ -9,6 +9,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/session"
 )
 
 // These tests start no pane: a retirement is driven through the store, and a
@@ -34,6 +35,20 @@ func newRetireFixture(t *testing.T, ws string, roles ...api.Role) *retireFixture
 	t.Helper()
 	store, _, ctrl, cleanup := setup(t)
 	t.Cleanup(cleanup)
+	return newRetireFixtureOn(t, store, ctrl, ws, roles...)
+}
+
+// newBoltRetireFixture is newRetireFixture on a store backed by bolt, for the
+// tests that read what a restart finds persisted.
+func newBoltRetireFixture(t *testing.T, ws string, roles ...api.Role) *retireFixture {
+	t.Helper()
+	store, ctrl, cleanup := setupWithBolt(t, filepath.Join(t.TempDir(), "marvel.db"))
+	t.Cleanup(cleanup)
+	return newRetireFixtureOn(t, store, ctrl, ws, roles...)
+}
+
+func newRetireFixtureOn(t *testing.T, store *api.Store, ctrl *Controller, ws string, roles ...api.Role) *retireFixture {
+	t.Helper()
 	f := &retireFixture{t: t, store: store, ctrl: ctrl, teamKey: ws + "/squad", retired: t.TempDir(), dir: realTempDir(t)}
 	f.clock = newTestClock(listEpoch)
 	ctrl.now = f.clock.Now
@@ -381,35 +396,117 @@ func TestRetireEndsTheSeatsShiftRequestAndTriggersSkipIt(t *testing.T) {
 
 // A role dropped from the manifest is retired with the plain grace, and its
 // role.removed, health and holds wait until its last seat has gone (the step 4
-// ruling, Q5).
+// ruling, Q5). A daemon restart inside the grace still finishes the role, from
+// what the store holds: its persisted health is forgotten, so a re-added role
+// inherits no old freeze or backoff.
 func TestDroppedRoleIsRemovedOnceItsLastSeatLeaves(t *testing.T) {
-	f := newRetireFixture(t, "test-retire-drop", sleepRole(testShiftRole, 1), sleepRole("helper", 1))
-	sess := f.seat("helper", 0)
-	roleKey := "test-retire-drop/squad/helper"
-	f.ctrl.roleHealth[roleKey] = &RoleHealth{RestartCount: 2}
-	if err := f.store.UpdateTeam(f.teamKey, func(live *api.Team) error {
-		live.Roles = live.Roles[:1]
-		return nil
-	}); err != nil {
-		t.Fatal(err)
+	for _, restart := range []bool{false, true} {
+		name := "no restart"
+		if restart {
+			name = "restart inside the grace"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newBoltRetireFixture(t, "test-retire-drop", sleepRole(testShiftRole, 1), sleepRole("helper", 1))
+			sess := f.seat("helper", 0)
+			roleKey := "test-retire-drop/squad/helper"
+			f.ctrl.roleHealth[roleKey] = &RoleHealth{RestartCount: 2}
+			f.ctrl.persistRoleHealth(roleKey, f.ctrl.roleHealth[roleKey])
+			if err := f.store.UpdateTeam(f.teamKey, func(live *api.Team) error {
+				live.Roles = live.Roles[:1]
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			tm := f.team()
+			f.ctrl.mu.Lock()
+			f.ctrl.reconcileOrphanedSessions(&tm)
+			f.ctrl.mu.Unlock()
+			if len(f.notices) != 1 || !strings.HasSuffix(f.notices[0], "write your handoff now; you have 5m0s") {
+				t.Fatalf("notices = %q, want the plain-grace notice", f.notices)
+			}
+			if n := len(f.ring.Snapshot(events.Filter{Kind: events.KindRoleRemoved}, 0)); n != 0 || f.ctrl.roleHealth[roleKey] == nil {
+				t.Fatalf("role.removed = %d, health %+v; want none until the seat leaves", n, f.ctrl.roleHealth[roleKey])
+			}
+			if restart {
+				restarted := NewController(f.store, f.ctrl.sessMgr)
+				restarted.now, restarted.Events = f.clock.Now, f.ring
+				if err := restarted.RehydrateRoleHealth(); err != nil {
+					t.Fatal(err)
+				}
+				if restarted.roleHealth[roleKey] == nil {
+					t.Fatal("the restart did not reload the role's persisted health")
+				}
+				f.ctrl = restarted
+			}
+			f.clock.Advance(api.DefaultShiftHandoffWindow)
+			f.advance()
+			if !f.gone(sess) {
+				t.Fatal("the dropped role's seat outlived its grace")
+			}
+			if n := len(f.ring.Snapshot(events.Filter{Kind: events.KindRoleRemoved}, 0)); n != 1 || f.ctrl.roleHealth[roleKey] != nil {
+				t.Errorf("role.removed = %d, health %+v; want one event and the health gone", n, f.ctrl.roleHealth[roleKey])
+			}
+			recs, err := f.store.ListRoleHealth()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, rec := range recs {
+				if rec.Key == roleKey {
+					t.Errorf("persisted health %+v outlived the role", rec)
+				}
+			}
+		})
 	}
-	tm := f.team()
-	f.ctrl.mu.Lock()
-	f.ctrl.reconcileOrphanedSessions(&tm)
-	f.ctrl.mu.Unlock()
-	if len(f.notices) != 1 || !strings.HasSuffix(f.notices[0], "write your handoff now; you have 5m0s") {
-		t.Fatalf("notices = %q, want the plain-grace notice", f.notices)
-	}
-	if n := len(f.ring.Snapshot(events.Filter{Kind: events.KindRoleRemoved}, 0)); n != 0 || f.ctrl.roleHealth[roleKey] == nil {
-		t.Fatalf("role.removed = %d, health %+v; want none until the seat leaves", n, f.ctrl.roleHealth[roleKey])
-	}
-	f.clock.Advance(api.DefaultShiftHandoffWindow)
-	f.advance()
-	if !f.gone(sess) {
-		t.Fatal("the dropped role's seat outlived its grace")
-	}
-	if n := len(f.ring.Snapshot(events.Filter{Kind: events.KindRoleRemoved}, 0)); n != 1 || f.ctrl.roleHealth[roleKey] != nil {
-		t.Errorf("role.removed = %d, health %+v; want one event and the health gone", n, f.ctrl.roleHealth[roleKey])
+}
+
+// A retiring seat that writes its handoff and exits on its own is reaped
+// before the retire pass runs. The reap does not charge its role or, under
+// restart_policy=never, freeze it: the seat was leaving, so its exit is no
+// crash, and the retirement ends handoff-written.
+func TestReapDoesNotChargeARetiringSeat(t *testing.T) {
+	for _, policy := range []api.RestartPolicy{api.RestartNever, api.RestartAlways} {
+		t.Run(string(policy), func(t *testing.T) {
+			role := handoffRole(realTempDir(t))
+			role.Replicas = 2
+			role.RestartPolicy = policy
+			f := newRetireFixture(t, "test-retire-reap-"+string(policy), role)
+			roleKey := strings.TrimSuffix(f.teamKey, "/squad") + "/squad/" + testShiftRole
+			f.seat(testShiftRole, 0)
+			leaving := f.seat(testShiftRole, 1)
+			f.retire(leaving)
+			path, _ := api.ExpandHandoffPath(role.Shift.Handoff, leaving.Name)
+			if err := os.WriteFile(path, []byte("notes\n"+putMarker+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f.clock.Advance(time.Second)
+			f.advance() // this read sees the marker
+
+			// The seat exits before the next tick; ReapDead marks it crashed
+			// and the reap path accounts for it, as reapDeadLocked does.
+			if err := f.store.UpdateSession(leaving.Key(), func(live *api.Session) error {
+				live.State = api.SessionCrashed
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			f.ctrl.mu.Lock()
+			charged := make(map[string]*reapCharge)
+			f.ctrl.noteReapedCrash(session.ReapedSession{Key: leaving.Key(), Workspace: leaving.Workspace, Team: leaving.Team, Role: leaving.Role}, charged)
+			f.ctrl.emitReapAccounting(charged)
+			f.ctrl.mu.Unlock()
+			f.clock.Advance(time.Second)
+			f.advance()
+
+			if got := f.outcomes(); len(got) != 1 || !strings.Contains(got[0], "outcome=handoff-written") {
+				t.Fatalf("session.retired = %q, want handoff-written", got)
+			}
+			if rh := f.ctrl.roleHealth[roleKey]; rh != nil && (rh.RestartCount != 0 || !rh.BackoffUntil.IsZero()) {
+				t.Errorf("role health %+v; want the role neither charged nor frozen", *rh)
+			}
+			if n := len(f.ring.Snapshot(events.Filter{Kind: events.KindSessionFailed}, 0)); n != 0 {
+				t.Errorf("session.failed = %d; want none for a seat that was leaving", n)
+			}
+		})
 	}
 }
 
