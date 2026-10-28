@@ -464,3 +464,54 @@ func TestRetiringSeatHandsOffThroughThePut(t *testing.T) {
 		t.Fatalf("session.retired = %q, want handoff-written", got)
 	}
 }
+
+// A marker written just before the deadline is honoured: a read begun before
+// the deadline cannot show it is absent, so the kill waits for a read begun
+// after it, which finds the marker (section 6.2).
+func TestRetireWaitsForAReadBegunAfterTheDeadline(t *testing.T) {
+	f := newRetireFixture(t, "test-retire-late", handoffRole(realTempDir(t)))
+	role := f.team().Roles[0]
+	sess := f.seat(testShiftRole, 0)
+	f.retire(sess)
+	f.clock.Advance(api.DefaultShiftHandoffWindow - time.Second)
+	f.advance() // a read before the deadline finds nothing
+	path, _ := api.ExpandHandoffPath(role.Shift.Handoff, sess.Name)
+	if err := os.WriteFile(path, []byte(putMarker+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.Advance(2 * time.Second)
+	f.advance() // past the deadline, the last finished read began before it
+	if f.gone(sess) {
+		t.Fatal("killed on a read begun before the deadline")
+	}
+	f.clock.Advance(time.Second)
+	f.advance()
+	if got := f.outcomes(); len(got) != 1 || !strings.Contains(got[0], "outcome=handoff-written") {
+		t.Fatalf("session.retired = %q, want handoff-written", got)
+	}
+}
+
+// The health path does not restart a retiring seat, however stale its
+// heartbeat: its retirement records how it ends (the step 4 ruling, Q12).
+func TestHealthLeavesARetiringSeatAlone(t *testing.T) {
+	role := sleepRole(testShiftRole, 1)
+	role.RestartPolicy = api.RestartAlways
+	role.HealthCheck = &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: time.Millisecond, FailureThreshold: 1}
+	f := newRetireFixture(t, "test-retire-health", role)
+	sess := f.seat(testShiftRole, 0)
+	if err := f.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.LastHeartbeat = time.Now().UTC().Add(-time.Hour)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.retire(sess)
+	f.ctrl.mu.Lock()
+	f.ctrl.evaluateHealth()
+	f.ctrl.evaluateHealth()
+	f.ctrl.mu.Unlock()
+	got, err := f.store.GetSession(sess.Key())
+	if err != nil || got.State != api.SessionRunning || got.FailureCount != 0 {
+		t.Fatalf("session %+v, %v; want it running, uncounted and not restarted", got.State, err)
+	}
+}

@@ -142,8 +142,8 @@ func TestApplyPruneMismatchAppliesAndPrunesNothing(t *testing.T) {
 	digest := previewDigest(t, d)
 
 	r, raw := decodePrune(t, applyPrune(t, d, pruneSrc, "ffffffff"))
-	if string(raw["pruned"]) != "[]" {
-		t.Errorf("pruned = %s, want []", raw["pruned"])
+	if string(raw["pruned"]) != "[]" || string(raw["draining"]) != "[]" {
+		t.Errorf("pruned = %s, draining = %s; want both []", raw["pruned"], raw["draining"])
 	}
 	if r.Refused == "" || r.Given != "ffffffff" || r.Plan.Digest != digest {
 		t.Errorf("refused %q, given %q, current digest %q; want a refusal with ffffffff and %s", r.Refused, r.Given, r.Plan.Digest, digest)
