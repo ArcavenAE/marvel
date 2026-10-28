@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"reflect"
 	"regexp"
 	"testing"
@@ -14,13 +15,31 @@ const (
 	planOther = "host-a:/srv/manifests/ops.toml"
 )
 
-// previewManifest names only ws/held, with a role of two replicas.
+// previewManifest names ws/held, with a role short of two replicas and a role
+// over its one, and ws/steady, which converges.
 const previewManifest = `
 [workspace]
 name = "ws"
 
 [[team]]
 name = "held"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 2
+
+    [team.role.runtime]
+    command = "bash"
+
+  [[team.role]]
+  name = "extra"
+  replicas = 1
+
+    [team.role.runtime]
+    command = "bash"
+
+[[team]]
+name = "steady"
 
   [[team.role]]
   name = "worker"
@@ -87,8 +106,14 @@ func planStore(t *testing.T) *Store {
 	// A live seat: deferred until step 4.
 	mustTeam(t, s, Team{Name: "busy", Workspace: "ws", Claims: claimsOfSources(at, planSrc)})
 	mustSession(t, s, "busy", "worker", "busy-worker-g1-0", 1, SessionPending)
-	// Named by the file and held, with no live seat: will spawn 2.
+	// Named by the file and held. worker has none of its two seats and extra
+	// has three for its one, so a re-apply spawns 2: the excess counts as none.
 	mustTeam(t, s, Team{Name: "held", Workspace: "ws", Claims: claimsOfSources(at, planSrc)})
+	for i := range 3 {
+		mustSession(t, s, "held", "extra", fmt.Sprintf("held-extra-g1-%d", i), 1, SessionRunning)
+	}
+	// Named by the file and converging: not held, so not listed.
+	mustTeam(t, s, Team{Name: "steady", Workspace: "ws", Claims: claimsOfSources(at, planSrc), ConvergencePosture: PostureConverge})
 	// Not this file's: another source released it, and another claims it alone.
 	mustTeam(t, s, Team{Name: "theirs", Workspace: "ws", Claims: &TeamClaims{Sources: map[string]time.Time{}, ReleasedBy: planOther, ReleasedAt: at}})
 	mustTeam(t, s, Team{Name: "ops", Workspace: "ws", Claims: claimsOfSources(at, planOther)})
@@ -181,6 +206,8 @@ func TestPruneDeleteNotesHandoffAndHeadlessWaits(t *testing.T) {
 		{"declared", []Role{{Name: "a", Shift: asks}}, true, "handoff: declared, window 2m", ""},
 		{"none", []Role{{Name: "a"}}, true, "handoff: none", ""},
 		{"some", []Role{{Name: "a", Shift: asks}, {Name: "b"}}, true, "handoff: some roles", ""},
+		{"longest", []Role{{Name: "a", Shift: &ShiftPolicy{Handoff: "/h/{session}.md", HandoffWindow: 7 * time.Minute}}, {Name: "b", Shift: asks}}, true, "handoff: declared, window 7m", ""},
+		{"longest headless", []Role{{Name: "a", Runtime: headless, Shift: &ShiftPolicy{HandoffWindow: 7 * time.Minute}}, {Name: "b", Runtime: headless, Shift: asks}}, true, "", "headless: waits up to 7m"},
 		{"batch", []Role{{Name: "a", Runtime: headless}}, true, "", "headless: waits up to 5m"},
 		{"empty", []Role{{Name: "a", Shift: asks}}, false, "", ""},
 	} {
