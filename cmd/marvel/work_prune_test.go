@@ -100,6 +100,30 @@ func TestWorkPruneRefusesAMalformedDigestBeforeSending(t *testing.T) {
 	}
 }
 
+// --prune takes no value: it sends prune=true and no digest, and prints the
+// set the apply pruned (operator ruling, 2026-10-28).
+func TestWorkPruneTakesNoValue(t *testing.T) {
+	asked := applyFakeDaemon(t, appliedPrefix+`,"pruned":["ws/gone"],"draining":[],"prune_plan":{}}`)
+	out, err := runWork(writeManifest(t), "--prune")
+	if err != nil {
+		t.Fatalf("work --prune = %v", err)
+	}
+	if !strings.Contains(out, "pruned ws/gone") {
+		t.Errorf("output %q, want the pruned team", out)
+	}
+	got := asked()
+	if len(got) != 1 || got[0].Method != "apply" {
+		t.Fatalf("requests = %+v, want one apply", got)
+	}
+	var p map[string]any
+	if err := json.Unmarshal(got[0].Params, &p); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p["prune_digest"]; p["prune"] != true || ok || p["manifest_source"] == nil {
+		t.Errorf("params = %v, want prune and manifest_source and no prune_digest", p)
+	}
+}
+
 // The prune rides on apply as prune and prune_digest beside the source.
 func TestWorkPruneSendsTheDigestWithTheApply(t *testing.T) {
 	asked := applyFakeDaemon(t, appliedPrefix+`,"pruned":["ws/gone"],"prune_plan":{},"prune_digest_given":"0123abcd"}`)

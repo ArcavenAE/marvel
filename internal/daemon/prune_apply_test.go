@@ -112,13 +112,13 @@ func teamExists(d *Daemon, key string) bool {
 	return err == nil
 }
 
-// The digest the preview printed prunes the set: the apply stands, ws/gone and
-// its session are deleted, and team.pruned records it (section 5, Q11).
-func TestApplyPruneDeletesThePreviewedSet(t *testing.T) {
+// A plain prune, with no digest, deletes the set the apply computes: the apply
+// stands, ws/gone and its session are deleted, and team.pruned records it
+// (section 5, Q11; operator ruling, 2026-10-28).
+func TestApplyPruneDeletesTheComputedSet(t *testing.T) {
 	d := pruneApplyDaemon(t, nil)
-	digest := previewDigest(t, d)
 
-	r, _ := decodePrune(t, applyPrune(t, d, pruneSrc, digest))
+	r, _ := decodePrune(t, applyPrune(t, d, pruneSrc, ""))
 	if strings.Join(r.Pruned, ",") != "ws/gone" || r.Refused != "" {
 		t.Fatalf("pruned %q, refused %q; want ws/gone pruned", r.Pruned, r.Refused)
 	}
