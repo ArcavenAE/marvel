@@ -1,9 +1,6 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -21,7 +18,6 @@ type PruneReader interface {
 type PrunePlan struct {
 	Workspace     string
 	Source        string
-	Digest        string
 	WouldDelete   []PruneDelete
 	KeptShared    []PruneShared
 	KeptUnclaimed []string
@@ -32,10 +28,9 @@ type PrunePlan struct {
 
 // PruneDelete is a team the prune would delete, with its seats.
 type PruneDelete struct {
-	Team     string
-	Seats    []PruneSeat
-	Handoff  string
-	Headless string
+	Team    string
+	Seats   []PruneSeat
+	Handoff string
 }
 
 // PruneSeat is one session of a team the prune would delete.
@@ -125,7 +120,6 @@ func PlanPrune(m *Manifest, source string, store PruneReader) PrunePlan {
 			plan.WouldDelete = append(plan.WouldDelete, pruneDelete(t, sessions))
 		}
 	}
-	plan.Digest = pruneDigest(source, plan.WouldDelete)
 	return plan
 }
 
@@ -156,12 +150,12 @@ func pruneVerdict(t *Team, sessions []Session) (runs int, deferred string) {
 	case t.Shift.Phase != ShiftNone:
 		return 0, "shift in progress; re-run the plan when it ends"
 	case aliveHeadless:
-		// A running headless seat reads no notice. How it leaves (section 6.2:
-		// a bounded wait for its run, then the kill, with no ask) awaits the
-		// operator's answer, and the headless arm builds it. Until then its team
-		// is deferred, unlike a team whose live seats are all interactive. The
-		// answer changes this branch and retireHeadless (internal/team/retire.go).
-		return 0, "live headless seat, awaits the headless arm"
+		// A running headless seat reads no notice, and it is left alone by
+		// operator ruling 2026-10-28 (section 6.2): marvel does not retire it.
+		// Its team is deferred, unlike a team whose live seats are all
+		// interactive; retireHeadless (internal/team/retire.go) is the other
+		// half.
+		return 0, "live headless seat, left alone by operator ruling 2026-10-28"
 	case alive:
 		// Listed to delete: the prune marks the team and retires each live
 		// seat with a handoff ask, then deletes the team once it is empty.
@@ -189,10 +183,10 @@ func willSpawn(mt *ManifestTeam, sessions []Session) int {
 	return n
 }
 
-// pruneDelete lists a team's seats with the note on how its alive seats would
-// leave: an interactive role is asked for its handoff when it declares one, and
-// a headless role's run is waited for (section 6.2). Until step 4, a team with
-// an alive seat is deferred, so a listed team carries no note.
+// pruneDelete lists a team's seats with the note on how its alive interactive
+// seats would leave: each is asked for its handoff when its role declares one.
+// A team with a live headless seat is deferred (pruneVerdict) and never listed
+// here, so a headless role adds no note.
 func pruneDelete(t *Team, sessions []Session) PruneDelete {
 	d := PruneDelete{Team: t.Key()}
 	roles := map[string]*Role{}
@@ -209,8 +203,7 @@ func pruneDelete(t *Team, sessions []Session) PruneDelete {
 		}
 	}
 	var interactive, declared int
-	var window, headless time.Duration
-	hasHeadless := false
+	var window time.Duration
 	// In name order, so the notes do not depend on map iteration.
 	names := make([]string, 0, len(seated))
 	for name := range seated {
@@ -220,8 +213,6 @@ func pruneDelete(t *Team, sessions []Session) PruneDelete {
 	for _, name := range names {
 		r := roles[name]
 		if r != nil && r.Runtime.Mode == RuntimeModeHeadless {
-			hasHeadless = true
-			headless = max(headless, r.Shift.HandoffWindowOrDefault())
 			continue
 		}
 		interactive++
@@ -239,9 +230,6 @@ func pruneDelete(t *Team, sessions []Session) PruneDelete {
 	default:
 		d.Handoff = "handoff: some roles"
 	}
-	if hasHeadless {
-		d.Headless = "headless: waits up to " + shortDuration(headless)
-	}
 	return d
 }
 
@@ -253,32 +241,6 @@ func shortDuration(d time.Duration) string {
 		return strings.TrimSuffix(s, "0s")
 	}
 	return s
-}
-
-// pruneDigest is the first 8 hex characters of a sha256 over "source <source>",
-// then the sorted "team <key>" lines and the sorted "session <key>" lines of
-// the teams the prune would delete (the step 2 ruling, Q4). It binds a preview
-// to its file and its set; it guards against accidents, not attackers.
-func pruneDigest(source string, deletes []PruneDelete) string {
-	var teams, seats []string
-	for _, d := range deletes {
-		teams = append(teams, d.Team)
-		for _, s := range d.Seats {
-			seats = append(seats, s.Session)
-		}
-	}
-	sort.Strings(teams)
-	sort.Strings(seats)
-	var b strings.Builder
-	fmt.Fprintf(&b, "source %s\n", source)
-	for _, k := range teams {
-		fmt.Fprintf(&b, "team %s\n", k)
-	}
-	for _, k := range seats {
-		fmt.Fprintf(&b, "session %s\n", k)
-	}
-	sum := sha256.Sum256([]byte(b.String()))
-	return hex.EncodeToString(sum[:])[:8]
 }
 
 // role is the team's role named name, or nil when it declares none, as for a

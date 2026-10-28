@@ -170,8 +170,7 @@ hold:
    `Sources` less this file's source is empty, and either this source is in
    `Sources` or `ReleasedBy` is this source. The plan runs before the apply,
    so it predicts rule 2 of section 3.2 rather than reading its result; step
-   3 recomputes after its apply, and the digest check catches any
-   difference;
+   3 recomputes after its apply and prunes the set it finds then;
 2. it holds no `marvel run` session (`Generation == 0`). Such a session
    belongs to the operator, as the role-drop path already says
    (`controller.go:940-942`), and scale-down would otherwise shed it
@@ -179,7 +178,8 @@ hold:
 3. it is not mid-shift (`Shift.Phase` is none). A shift's drain and abort
    (`controller.go:2577`, `:2337`) call `Delete` directly, so a prune waits
    for the shift to end;
-4. until the headless arm lands, it has no running headless seat: no
+4. it has no running headless seat, since headless seats are left alone by
+   operator ruling 2026-10-28: no
    session of a headless role in an alive state (pending, running or
    crashloop-backoff, `SessionState.CountsAsAlive`), section 5. A live
    interactive seat does not hold the team back; step 4 retires it
@@ -213,13 +213,11 @@ It writes nothing: no store, no events, no tmux. It prints:
 
 ```
 prune plan for workspace/aae from host-a:/srv/manifests/main.toml
-digest 3f9c1a07
 pre-flight checks not evaluated (aae-orc-qawkf)
 
 would delete (claimed only by this file, which no longer names them):
   aae/old-research   3 seats  1 failed, 2 running   handoff: declared, window 5m
   aae/ops-trial      0 seats
-  aae/nightly-sync   1 seat  1 running   headless: waits up to 5m
 
 kept, claimed by another file too:
   aae/shared-ops     also host-a:/srv/manifests/ops.toml (applied 2026-10-27T18:02Z)
@@ -233,28 +231,21 @@ kept, holds marvel run sessions:
 
 deferred:
   aae/night-batch    shift in progress; re-run the plan when it ends
+  aae/nightly-sync   live headless seat, left alone by operator ruling 2026-10-28
 
 named by this file and held (re-apply converges them):
   aae/builders       will spawn 2
 ```
 
 A team with a running headless seat is listed under deferred as 'live
-headless seat, awaits the headless arm' until that arm lands (section 5).
+headless seat, left alone by operator ruling 2026-10-28' (section 5).
 
 Each "would delete" line names its seats and their state, the states in
 alphabetical order. Counting only the interactive roles that hold an alive
 seat, it says `handoff: declared, window W`
 when every one declares `shift.handoff` (W is the longest `handoff_window`,
 default 5m), `handoff: none` when none does, and `handoff: some roles`
-otherwise. A team with a headless role holding an alive seat adds `headless: waits
-up to W`, the role's `handoff_window` (section 6.2). The notes are text
-output only.
-
-The digest is the first 8 lowercase hex characters of a sha256 over the
-line `source <manifest_source>`, then the sorted `team <key>` lines and the
-sorted `session <key>` lines of the "would delete" group, each line ending in
-a newline. It binds a preview to its file and its set, against accidents
-rather than attackers, so 32 bits is enough.
+otherwise. The notes are text output only.
 
 The "held" group reports the posture behaviour section 2 records; it is
 printed, not changed.
@@ -266,14 +257,19 @@ something would be deleted, returned only under `--detailed-exitcode`.
 ## 5. Step 3: `marvel work --prune`
 
 ```
-marvel work <manifest> --prune <digest>
+marvel work <manifest> --prune
 ```
 
-1. The client sends `manifest_source`, `prune: true` and `prune_digest`.
+`--prune` takes no value. A digest from the preview was required until the
+operator ruled it out on 2026-10-28: "no it's needless hurdles and doesnt
+protect what is important, it's a false protection". `marvel plan -f
+<manifest> --prune` stays as an optional preview of the set, never a
+precondition. A client from after the ruling, against a daemon from before
+it, is refused for the missing digest, and nothing is applied.
+
+1. The client sends `manifest_source` and `prune: true`.
 2. The daemon runs the normal apply, then recomputes the prune set exactly as
-   `prune_plan` does. If its digest differs from `prune_digest`, the apply
-   stands and the prune is refused with the current set and both digests
-   printed. Nothing a preview did not show is deleted.
+   `prune_plan` does, and prunes that set.
 3. Each team in the set is marked `Pruning` (by source, at a time) and every
    role's effective desired count becomes 0. The prune re-checks each team
    against the four rules and marks it `Pruning` in one lock hold, and an apply that claims a
@@ -303,15 +299,13 @@ marvel work <manifest> --prune <digest>
    applied, and it pruned nothing. A response with no `draining` key reads as
    none.
 
-**Scope until the headless arm lands:** step 4 retires interactive seats
-(section 6), so a team whose live seats are all interactive is pruned once
-each has been asked and has left. A team with a running headless seat is
-listed as "deferred: live headless seat, awaits the headless arm" and kept,
-until the operator rules on the headless case in section 6.2. So no prune
-kills a running seat without either a handoff ask or, for a headless run that
-cannot take one, a bounded wait for it to finish. Until then, scale-down and a
-role drop still delete a running headless seat at once, as they did before
-this design.
+**Headless seats are left alone by operator ruling 2026-10-28:** step 4
+retires interactive seats (section 6), so a team whose live seats are all
+interactive is pruned once each has been asked and has left. A team with a
+running headless seat is listed as "deferred: live headless seat, left alone
+by operator ruling 2026-10-28" and kept. So no prune kills a running seat
+without a handoff ask. Scale-down and a role drop delete a running headless
+seat at once, as they did before this design.
 
 A team being pruned that a later apply names again stops pruning: the apply
 clears `Pruning`, reclaims it, and the reconciler converges it back. Seats
@@ -336,7 +330,7 @@ already asked for their handoff are not un-asked (section 6.4).
 At each covered call site (section 2), `Delete` is replaced by `Retire`.
 `Retire` reuses the shift handoff request (`internal/team/shift_handoff.go:109`,
 `requestHandoff`) for an interactive seat, with a new notice (a running
-headless seat is waited on instead, section 6.2):
+headless seat is left alone by operator ruling 2026-10-28, section 6.2):
 
 ```
 retire: this seat is being removed; write your handoff now to <path>, ending with the line "<marker>"; you have <window>
@@ -360,13 +354,11 @@ rises again, a fresh seat spawns; the retiring one is not recalled.
 - **The role declares no handoff path:** the notice goes without a path, and
   the seat gets the same default window as a plain grace. There is nothing
   to watch, so the pane goes at the end of the window.
-- **A running headless seat:** it is not asked, because a headless run
-  reads no keystrokes, so a typed notice would reach nothing. Its run's own
-  end is its record (ADR-010): marvel waits for the run to finish, up to
-  the role's `handoff_window` (default 5 minutes), then kills the pane.
-  A run that finishes is recorded by the reaper as it is today; one killed
-  at the window is recorded as `cancelled` in the run history, as a kill of
-  a live run already is.
+- **A running headless seat:** left alone by operator ruling 2026-10-28.
+  It is not asked, because a headless run reads no keystrokes, so a typed
+  notice would reach nothing, and marvel does not retire it. Scale-down and
+  a role drop delete it at once, as before this design, and a prune defers
+  its team (section 4, rule 4).
 - **Not waited for, deleted at once:** a seat not in the running state (a
   pending seat, and a finished headless run, included), and a team-wide
   delete by an operator (out of scope, section 2).
@@ -389,11 +381,12 @@ and does not hold the kill back.
 
 Every retirement emits `session.retired` with one outcome:
 `handoff-written`, `handoff-missing` (with the reason: window passed,
-notice undelivered, or the directory could not be made), `run-finished`
-or `run-cancelled` for a running headless seat, or `not-asked` (with the
-reason). `handoff-missing` and `run-cancelled` are warnings, and go to the
-team's supervisor seat by the existing missing-handoff delivery
-(`handoff-missing-delivery.md`) when that seat is not itself retiring.
+notice undelivered, or the directory could not be made), or `not-asked`
+(with the reason). A running headless seat is left alone by operator ruling
+2026-10-28, so no retirement ends `run-finished` or `run-cancelled`.
+`handoff-missing` is a warning, and goes to the team's supervisor seat by
+the existing missing-handoff delivery (`handoff-missing-delivery.md`) when
+that seat is not itself retiring.
 
 A handoff file is never deleted by marvel. It stays at its path for the next
 seat or a person to read.
@@ -413,9 +406,9 @@ A re-apply that wants the seat back gets a new one.
 
 | Risk | Mitigation | What is left |
 |---|---|---|
-| A prune from the wrong file | Path identity; the digest binds the prune to a preview of that file | An operator who previews and confirms the wrong file |
+| A prune from the wrong file | Path identity; the optional preview shows the set | An operator who prunes from the wrong file |
 | A prune deletes a team another file still names | Claims: a team any other source claims is never in the set | A file that names the team but has not been applied since claims existed holds no claim, so it does not protect the team. Its next apply recreates the team, with fresh seats |
-| A flag added by habit | `--prune` takes a digest, so a copied command line with an old digest is refused | none known |
+| A flag added by habit | none: the operator ruled the digest out on 2026-10-28 (section 5) | A copied command line prunes the set as it stands |
 | An older daemon drops `prune` | The client requires `pruned` in the response | none known |
 | A pane killed mid-turn | Step 4: the ask, the window, the saved screen | A seat that ignores the notice loses unsaved work after the window |
 | A notice into a pane parked at a dialog (marvel#1063) | The window bounds it | The seat never sees the ask; the screen is saved |
@@ -432,14 +425,14 @@ One PR per step, each based on the one before, merged in order.
    source claims what it names and releases what it does not, across
    workspaces; an apply with no source sets nil; a nil-claims team survives
    every later rule.
-2. **`prune_plan` and `marvel plan -f --prune`.** Read-only; the groups and
-   digest of section 4. Red tests: each group, including a team kept for a
-   run session and one deferred mid-shift; the digest moves when a
-   session is added; nothing is written (store, events, tmux); an older
-   daemon fails the client closed. Blocked by 1.
-3. **`marvel work --prune <digest>`.** The digest check, `Pruning`, the
+2. **`prune_plan` and `marvel plan -f --prune`.** Read-only; the groups of
+   section 4. Red tests: each group, including a team kept for a
+   run session and one deferred mid-shift; nothing is written (store,
+   events, tmux); an older daemon fails the client closed. Blocked by 1.
+   Built with a digest, removed by the 2026-10-28 ruling (section 5).
+3. **`marvel work --prune`.** `Pruning`, the
    team delete once empty, the `pruned` response field, and the deferral of
-   teams with a running seat. Red tests: a digest mismatch prunes nothing; a
+   teams with a running seat. Red tests: a
    team claimed by two sources is kept; a team holding a `marvel run`
    session is kept and the run session survives; a team mid-shift is
    deferred; a re-apply clears `Pruning`; a team
@@ -456,8 +449,8 @@ One PR per step, each based on the one before, merged in order.
 
 ## 9. Open items
 
-1. **For the operator (sent as a card):** `--prune` takes the preview's
-   digest (default), or plain `--prune` deletes what the apply computes.
+1. **Ruled 2026-10-28:** plain `--prune` deletes what the apply computes;
+   the preview is optional (section 5).
 2. Operator `marvel shift` drains the old seat without a handoff
    (`controller.go:2577`). Step 4's `Retire` could cover it; that changes
    shift timing and belongs with marvel#1063, not here.

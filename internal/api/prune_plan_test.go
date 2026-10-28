@@ -1,11 +1,8 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"reflect"
-	"regexp"
 	"testing"
 	"time"
 )
@@ -107,7 +104,7 @@ func planStore(t *testing.T) *Store {
 	// ask as the team drains (step 4).
 	mustTeam(t, s, Team{Name: "busy", Workspace: "ws", Claims: claimsOfSources(at, planSrc)})
 	mustSession(t, s, "busy", "worker", "busy-worker-g1-0", 1, SessionPending)
-	// A live headless seat: deferred until the headless arm is built.
+	// A live headless seat: deferred, left alone by operator ruling 2026-10-28.
 	mustTeam(t, s, Team{Name: "batch", Workspace: "ws", Claims: claimsOfSources(at, planSrc), Roles: []Role{{Name: "run", Runtime: Runtime{Mode: RuntimeModeHeadless}}}})
 	mustSession(t, s, "batch", "run", "batch-run-g1-0", 1, SessionRunning)
 	// Named by the file and held. worker has none of its two seats and extra
@@ -158,7 +155,7 @@ func TestPlanPruneSortsEveryTeamIntoItsGroup(t *testing.T) {
 		t.Errorf("kept for run sessions = %+v, want %+v", plan.KeptRun, want)
 	}
 	want := []PruneDeferred{
-		{Team: "ws/batch", Reason: "live headless seat, awaits the headless arm"},
+		{Team: "ws/batch", Reason: "live headless seat, left alone by operator ruling 2026-10-28"},
 		{Team: "ws/night", Reason: "shift in progress; re-run the plan when it ends"},
 	}
 	if !reflect.DeepEqual(plan.Deferred, want) {
@@ -169,56 +166,25 @@ func TestPlanPruneSortsEveryTeamIntoItsGroup(t *testing.T) {
 	}
 }
 
-// The digest is the first 8 hex characters of a sha256 over the source, then
-// the sorted team keys and session keys the prune would delete (the step 2
-// ruling, Q4).
-func TestPlanPruneDigestCoversTheSourceAndTheSet(t *testing.T) {
-	s := planStore(t)
-	plan := PlanPrune(parsedPreview(t), planSrc, s)
-	if !regexp.MustCompile(`^[0-9a-f]{8}$`).MatchString(plan.Digest) {
-		t.Fatalf("digest = %q, want 8 lowercase hex characters", plan.Digest)
-	}
-	input := "source " + planSrc + "\n" +
-		"team ws/busy\n" +
-		"team ws/gone\n" +
-		"team ws/released\n" +
-		"session ws/busy-worker-g1-0\n" +
-		"session ws/gone-worker-g1-0\n"
-	sum := sha256.Sum256([]byte(input))
-	if want := hex.EncodeToString(sum[:])[:8]; plan.Digest != want {
-		t.Errorf("digest = %s, want %s over:\n%s", plan.Digest, want, input)
-	}
-
-	if other := PlanPrune(parsedPreview(t), planOther, s); other.Digest == plan.Digest {
-		t.Errorf("two sources share digest %s", plan.Digest)
-	}
-	mustSession(t, s, "gone", "worker", "gone-worker-g1-1", 1, SessionSucceeded)
-	if moved := PlanPrune(parsedPreview(t), planSrc, s); moved.Digest == plan.Digest {
-		t.Errorf("digest %s did not move when a session joined the set", plan.Digest)
-	}
-}
-
 // The handoff note on a team's alive seats: declared, none or some roles,
-// counting only interactive roles, and a headless note when a headless role
-// holds an alive seat (the step 2 ruling, Q8). A team with a live headless
-// seat is still deferred rather than listed, so the notes are checked on
+// counting only interactive roles, so a team whose seated roles are all
+// headless gets no note (the step 2 ruling, Q8). The note is checked on
 // pruneDelete itself.
-func TestPruneDeleteNotesHandoffAndHeadlessWaits(t *testing.T) {
+func TestPruneDeleteNotesHandoff(t *testing.T) {
 	asks := &ShiftPolicy{Handoff: "/h/{session}.md", HandoffWindow: 2 * time.Minute}
 	headless := Runtime{Mode: RuntimeModeHeadless}
 	for _, tc := range []struct {
-		name          string
-		roles         []Role
-		seated        bool
-		handoff, wait string
+		name    string
+		roles   []Role
+		seated  bool
+		handoff string
 	}{
-		{"declared", []Role{{Name: "a", Shift: asks}}, true, "handoff: declared, window 2m", ""},
-		{"none", []Role{{Name: "a"}}, true, "handoff: none", ""},
-		{"some", []Role{{Name: "a", Shift: asks}, {Name: "b"}}, true, "handoff: some roles", ""},
-		{"longest", []Role{{Name: "a", Shift: &ShiftPolicy{Handoff: "/h/{session}.md", HandoffWindow: 7 * time.Minute}}, {Name: "b", Shift: asks}}, true, "handoff: declared, window 7m", ""},
-		{"longest headless", []Role{{Name: "a", Runtime: headless, Shift: &ShiftPolicy{HandoffWindow: 7 * time.Minute}}, {Name: "b", Runtime: headless, Shift: asks}}, true, "", "headless: waits up to 7m"},
-		{"batch", []Role{{Name: "a", Runtime: headless}}, true, "", "headless: waits up to 5m"},
-		{"empty", []Role{{Name: "a", Shift: asks}}, false, "", ""},
+		{"declared", []Role{{Name: "a", Shift: asks}}, true, "handoff: declared, window 2m"},
+		{"none", []Role{{Name: "a"}}, true, "handoff: none"},
+		{"some", []Role{{Name: "a", Shift: asks}, {Name: "b"}}, true, "handoff: some roles"},
+		{"longest", []Role{{Name: "a", Shift: &ShiftPolicy{Handoff: "/h/{session}.md", HandoffWindow: 7 * time.Minute}}, {Name: "b", Shift: asks}}, true, "handoff: declared, window 7m"},
+		{"all headless", []Role{{Name: "a", Runtime: headless, Shift: asks}, {Name: "b", Runtime: headless}}, true, ""},
+		{"empty", []Role{{Name: "a", Shift: asks}}, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			team := Team{Name: tc.name, Workspace: "ws", Roles: tc.roles}
@@ -229,16 +195,16 @@ func TestPruneDeleteNotesHandoffAndHeadlessWaits(t *testing.T) {
 				}
 			}
 			d := pruneDelete(&team, sessions)
-			if d.Handoff != tc.handoff || d.Headless != tc.wait {
-				t.Errorf("notes = %q, %q; want %q, %q", d.Handoff, d.Headless, tc.handoff, tc.wait)
+			if d.Handoff != tc.handoff {
+				t.Errorf("note = %q, want %q", d.Handoff, tc.handoff)
 			}
 		})
 	}
 }
 
-// A would-delete team whose only seats have finished gets no handoff or
-// headless note: a seat not in an alive state is deleted at once, never asked
-// or waited for (docs/design/work-prune.md section 6.2).
+// A would-delete team whose only seats have finished gets no handoff note: a
+// seat not in an alive state is deleted at once, never asked
+// (docs/design/work-prune.md section 6.2).
 func TestPlanPruneNotesNothingForFinishedSeats(t *testing.T) {
 	at := time.Now().UTC()
 	asks := &ShiftPolicy{Handoff: "/h/{session}.md", HandoffWindow: 2 * time.Minute}
@@ -253,8 +219,8 @@ func TestPlanPruneNotesNothingForFinishedSeats(t *testing.T) {
 		t.Fatalf("would delete = %+v, want ws/done and ws/ran", plan.WouldDelete)
 	}
 	for _, d := range plan.WouldDelete {
-		if d.Handoff != "" || d.Headless != "" {
-			t.Errorf("%s notes = %q, %q; want none for a team whose seats have finished", d.Team, d.Handoff, d.Headless)
+		if d.Handoff != "" {
+			t.Errorf("%s note = %q, want none for a team whose seats have finished", d.Team, d.Handoff)
 		}
 	}
 }

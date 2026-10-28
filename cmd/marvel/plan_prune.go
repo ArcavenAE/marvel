@@ -61,7 +61,6 @@ func planPrune(cmd *cobra.Command, path string, detailed bool) error {
 func printPrunePlan(w io.Writer, plan api.PrunePlan) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "prune plan for workspace/%s from %s\n", plan.Workspace, plan.Source)
-	fmt.Fprintf(&b, "digest %s\n", plan.Digest)
 	fmt.Fprintln(&b, "pre-flight checks not evaluated (aae-orc-qawkf)")
 	if len(plan.WouldDelete) == 0 {
 		fmt.Fprintln(&b, "\nwould delete: nothing")
@@ -69,10 +68,8 @@ func printPrunePlan(w io.Writer, plan api.PrunePlan) error {
 		fmt.Fprintln(&b, "\nwould delete (claimed only by this file, which no longer names them):")
 		for _, d := range plan.WouldDelete {
 			line := "  " + d.Team + "   " + seatSummary(d.Seats)
-			for _, note := range []string{d.Handoff, d.Headless} {
-				if note != "" {
-					line += "   " + note
-				}
+			if d.Handoff != "" {
+				line += "   " + d.Handoff
 			}
 			fmt.Fprintln(&b, line)
 		}

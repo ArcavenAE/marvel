@@ -1449,10 +1449,9 @@ type applyParams struct {
 	// (docs/design/work-prune.md section 3).
 	ManifestSource string `json:"manifest_source,omitempty"`
 	// Prune asks the apply to remove the teams this source put there and no
-	// longer names, when PruneDigest matches the prune set computed after the
-	// apply (docs/design/work-prune.md section 5).
-	Prune       bool   `json:"prune,omitempty"`
-	PruneDigest string `json:"prune_digest,omitempty"`
+	// longer names, as the prune set computed after the apply stands
+	// (docs/design/work-prune.md section 5).
+	Prune bool `json:"prune,omitempty"`
 }
 
 func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
@@ -1473,15 +1472,10 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	if err := api.ScheduleHistoryCap(m, d.scheduleHistoryMax); err != nil {
 		return daemonrpc.Response{Error: "parse manifest: " + err.Error()}
 	}
-	// A prune is refused before anything is stored when it cannot be checked:
-	// no source to own the teams, or a digest that is not a digest.
-	if p.Prune {
-		if strings.TrimSpace(p.ManifestSource) == "" {
-			return daemonrpc.Response{Error: "prune needs a manifest source; nothing was applied"}
-		}
-		if err := api.AcceptPruneDigest(p.PruneDigest, nil); err != nil {
-			return daemonrpc.Response{Error: err.Error() + "; nothing was applied"}
-		}
+	// A prune with no source to own the teams is refused before anything is
+	// stored.
+	if p.Prune && strings.TrimSpace(p.ManifestSource) == "" {
+		return daemonrpc.Response{Error: "prune needs a manifest source; nothing was applied"}
 	}
 
 	// derived: the manifest names no root, so the one in the params is where
@@ -1587,7 +1581,7 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	// the reconcile below, so a team it marks is never converged first.
 	var pruned *pruneResult
 	if p.Prune {
-		r := d.prune(m, p.ManifestSource, p.PruneDigest)
+		r := d.prune(m, p.ManifestSource)
 		pruned = &r
 	}
 	for _, a := range workDirAdvisories {

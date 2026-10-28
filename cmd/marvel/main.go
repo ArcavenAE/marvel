@@ -1038,23 +1038,17 @@ func relTime(now, t time.Time) string {
 }
 
 func workCmd() *cobra.Command {
-	var pruneDigest string
+	var prune bool
 	cmd := &cobra.Command{
 		Use:   "work <manifest.toml>",
 		Short: "Load a manifest and reconcile desired state",
 		Long: `Load a manifest and reconcile desired state.
 
-With --prune <digest>, the apply also removes the teams this file put there and
-no longer names. The digest is the one marvel plan -f <manifest> --prune printed;
-when the prune set has changed since, the apply stands and nothing is pruned.`,
+With --prune, the apply also removes the teams this file put there and no
+longer names, as the prune set stands when the apply runs. marvel plan -f
+<manifest> --prune previews that set; running it first is optional.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			prune := cmd.Flags().Changed("prune")
-			if prune {
-				if err := api.AcceptPruneDigest(pruneDigest, nil); err != nil {
-					return &exitError{Code: 1, Msg: err.Error() + "; nothing was applied"}
-				}
-			}
 			data, err := os.ReadFile(args[0])
 			if err != nil {
 				return fmt.Errorf("read manifest: %w", err)
@@ -1079,7 +1073,6 @@ when the prune set has changed since, the apply stands and nothing is pruned.`,
 			}
 			if prune {
 				p["prune"] = true
-				p["prune_digest"] = pruneDigest
 			}
 			params, _ := json.Marshal(p)
 			resp, err := send(daemonrpc.Request{
@@ -1112,7 +1105,7 @@ when the prune set has changed since, the apply stands and nothing is pruned.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&pruneDigest, "prune", "", "also remove the teams this file no longer names; takes the digest marvel plan -f <manifest> --prune printed")
+	cmd.Flags().BoolVar(&prune, "prune", false, "also remove the teams this file no longer names; marvel plan -f <manifest> --prune previews them")
 	return cmd
 }
 
