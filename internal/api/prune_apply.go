@@ -70,10 +70,6 @@ const ReasonDraining = "draining: seats are still leaving"
 // ReasonDraining. The prune's record delete runs it, so a retiring seat counts
 // as live until it is gone.
 func PruneDeleteCheck(check func(*Team, []Session) string) func(*Team, []Session) string {
-	// STUB (red commit): no drain rule.
-	if true {
-		return check
-	}
 	return func(t *Team, sessions []Session) string {
 		if reason := check(t, sessions); reason != "" {
 			return reason

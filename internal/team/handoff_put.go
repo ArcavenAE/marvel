@@ -182,9 +182,6 @@ func (c *Controller) liveSessionForPut(token string, req *api.ShiftRequest) (api
 	return live, nil
 }
 
-// redStub is false in the red commit only.
-var redStub = false
-
 func (c *Controller) planHandoffPutLocked(token, text string) (handoffPutPlan, error) {
 	sess, err := c.liveSessionForPut(token, nil)
 	if err != nil {
@@ -203,7 +200,7 @@ func (c *Controller) planHandoffPutLocked(token, text string) (handoffPutPlan, e
 	// A retiring seat is answered exactly as one holding a shift request, so a
 	// seat that cannot write its own file can answer a retire notice (the
 	// step 4 ruling, Q1).
-	if rr, ok := t.Retiring[sess.Key()]; ok && redStub { // STUB (red commit)
+	if rr, ok := t.Retiring[sess.Key()]; ok {
 		req := rr.AsShiftRequest()
 		if _, err := c.liveSessionForPut(token, &req); err != nil {
 			return plan, err

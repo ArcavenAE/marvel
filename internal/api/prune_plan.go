@@ -162,8 +162,9 @@ func pruneVerdict(t *Team, sessions []Session) (runs int, deferred string) {
 		// like any live seat, and this branch is the one place that changes.
 		return 0, "live seat, needs step 4"
 	case alive:
-		// STUB (red commit): still deferred.
-		return 0, "live seat, needs step 4"
+		// Listed to delete: the prune marks the team and retires each live
+		// seat with a handoff ask, then deletes the team once it is empty.
+		return 0, ""
 	}
 	return 0, ""
 }

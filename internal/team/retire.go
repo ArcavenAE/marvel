@@ -78,11 +78,6 @@ func withoutRetiring(t *api.Team, sessions []api.Session) []api.Session {
 // with the apply, so the seat gets the plain grace. A seat that is not running
 // is deleted at once, not asked. Caller holds c.mu.
 func (c *Controller) retireSession(t *api.Team, role *api.Role, sess api.Session, now time.Time) {
-	// STUB (red commit): today's plain delete.
-	_ = c.sessMgr.Delete(sess.Key())
-	if true {
-		return
-	}
 	if isRetiring(t, sess.Key()) {
 		return
 	}
@@ -162,10 +157,6 @@ func (c *Controller) retireSession(t *api.Team, role *api.Role, sess api.Session
 // runs at the start of every reconcile of the team, a shift in progress
 // included. Caller holds c.mu.
 func (c *Controller) advanceRetirements(t *api.Team, now time.Time) {
-	// STUB (red commit): retirements are not driven.
-	if true {
-		return
-	}
 	if len(t.Retiring) == 0 {
 		return
 	}

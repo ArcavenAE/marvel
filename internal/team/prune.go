@@ -98,10 +98,6 @@ func (c *Controller) Prune(keys []string, p api.TeamPruning, check func(*api.Tea
 // prune's rules 1 to 3 in the hold that deletes its record. A team that now
 // fails one is kept and loses its mark. Caller holds c.mu.
 func (c *Controller) finishPrune(t *api.Team) {
-	// STUB (red commit): no tick path.
-	if true {
-		return
-	}
 	source := t.Pruning.Source
 	reason, sessions, err := c.store.DeleteTeamIf(t.Key(), api.PruneDeleteCheck(api.PruneRecheck(source)))
 	switch {
