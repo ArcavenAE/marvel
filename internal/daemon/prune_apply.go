@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -81,4 +82,13 @@ func (d *Daemon) prune(m *api.Manifest, source, given string) pruneResult {
 		d.regenerateBus("prune")
 	}
 	return r
+}
+
+// captureRetiredScreen reads a retiring seat's pane history for the screen
+// saved before its kill. It only reads the pane.
+func (d *Daemon) captureRetiredScreen(sess api.Session) (string, error) {
+	if sess.PaneID == "" {
+		return "", fmt.Errorf("session %s has no pane", sess.Key())
+	}
+	return d.driver.CapturePaneRange(sess.PaneID, -retiredHistory, retiredScreenEnd)
 }

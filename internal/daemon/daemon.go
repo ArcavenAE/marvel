@@ -461,12 +461,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// A retiring seat's last screen is saved before its pane is killed, and a
 	// team a reconcile pass prunes has its broker user revoked after the pass,
 	// as marvel delete team does (docs/design/work-prune.md sections 5, 6.3).
-	teamCtrl.CaptureScreen = func(sess api.Session) (string, error) {
-		if sess.PaneID == "" {
-			return "", fmt.Errorf("session %s has no pane", sess.Key())
-		}
-		return d.driver.CapturePaneRange(sess.PaneID, -retiredHistory, retiredScreenEnd)
-	}
+	teamCtrl.CaptureScreen = d.captureRetiredScreen
 	if home != "" {
 		teamCtrl.RetiredDir = filepath.Join(home, "retired")
 	}

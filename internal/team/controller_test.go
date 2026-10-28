@@ -123,9 +123,10 @@ func TestReconcileScaleDown(t *testing.T) {
 	}
 	ctrl.ReconcileOnce()
 
-	sessions := store.ListSessionsByTeamRole("test-scaledown", "agents", "worker")
+	// The excess seats are retired with a handoff ask, not killed at once.
+	sessions := keptSessions(t, store, "test-scaledown/agents", store.ListSessionsByTeamRole("test-scaledown", "agents", "worker"))
 	if len(sessions) != 1 {
-		t.Fatalf("expected 1 session after scale down, got %d", len(sessions))
+		t.Fatalf("expected 1 session kept after scale down, got %d", len(sessions))
 	}
 }
 
@@ -191,9 +192,9 @@ func TestReconcileMultipleRoles(t *testing.T) {
 	}
 	ctrl.ReconcileOnce()
 
-	workers = store.ListSessionsByTeamRole("test-multi", "squad", "worker")
+	workers = keptSessions(t, store, "test-multi/squad", store.ListSessionsByTeamRole("test-multi", "squad", "worker"))
 	if len(workers) != 1 {
-		t.Fatalf("expected 1 worker after scale, got %d", len(workers))
+		t.Fatalf("expected 1 worker kept after scale, got %d", len(workers))
 	}
 
 	supervisors = store.ListSessionsByTeamRole("test-multi", "squad", "supervisor")
@@ -1415,12 +1416,21 @@ func TestOrphanedSessionsDrainedOnRoleRemoval(t *testing.T) {
 
 	ctrl.ReconcileOnce()
 
-	if got := len(store.ListSessionsByTeam("test-orphan", "squad")); got != 1 {
-		t.Fatalf("expected 1 total session after role b removed, got %d", got)
+	// Role b's seat is retired with the plain grace, so it stays until the
+	// grace ends.
+	if got := len(keptSessions(t, store, "test-orphan/squad", store.ListSessionsByTeam("test-orphan", "squad"))); got != 1 {
+		t.Fatalf("expected 1 session kept after role b removed, got %d", got)
 	}
 	if got := len(store.ListSessionsByTeamRole("test-orphan", "squad", "a")); got != 1 {
 		t.Fatalf("expected role a still running, got %d", got)
 	}
+	// The role's health and role.removed wait until its last seat has left:
+	// run the tick past the seat's grace.
+	if _, ok := ctrl.roleHealth["test-orphan/squad/b"]; !ok {
+		t.Fatal("role b's crash-loop state was forgotten while its seat was still retiring")
+	}
+	ctrl.now = func() time.Time { return time.Now().UTC().Add(api.DefaultShiftHandoffWindow + time.Minute) }
+	ctrl.ReconcileOnce()
 	if got := len(store.ListSessionsByTeamRole("test-orphan", "squad", "b")); got != 0 {
 		t.Fatalf("expected role b drained, got %d sessions", got)
 	}
@@ -3347,4 +3357,16 @@ func TestSelectiveShiftDrainsTheRolesOwnOldSeat(t *testing.T) {
 			t.Errorf("shift-drained-empty for reader: %s (its old seat existed at gen 1)", ev.Message)
 		}
 	}
+}
+
+// keptSessions drops the sessions the team is retiring: a scale-down or a
+// dropped role retires its seats with a handoff ask, so they stay stored until
+// their window ends.
+func keptSessions(t *testing.T, store *api.Store, teamKey string, sessions []api.Session) []api.Session {
+	t.Helper()
+	tm, err := store.GetTeam(teamKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return withoutRetiring(&tm, sessions)
 }

@@ -140,8 +140,14 @@ name = "squad"
 	if err := json.Unmarshal(resp.Result, &sessions); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(sessions) != 1 {
-		t.Fatalf("expected 1 session after scale, got %d", len(sessions))
+	// Scale-down retires the excess seat with a handoff ask, so it stays
+	// until its window ends; the seats not retiring are the ones kept.
+	squad, err := d.store.GetTeam("test-daemon/squad")
+	if err != nil {
+		t.Fatalf("get team: %v", err)
+	}
+	if len(sessions)-len(squad.Retiring) != 1 || len(squad.Retiring) != 1 {
+		t.Fatalf("expected 1 session kept and 1 retiring after scale, got %d sessions, %d retiring", len(sessions), len(squad.Retiring))
 	}
 
 	// Scale without role should error
