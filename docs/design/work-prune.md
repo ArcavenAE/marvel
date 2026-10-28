@@ -271,8 +271,8 @@ marvel work <manifest> --prune <digest>
 1. The client sends `manifest_source`, `prune: true` and `prune_digest`.
 2. The daemon runs the normal apply, then recomputes the prune set exactly as
    `prune_plan` does. If its digest differs from `prune_digest`, the apply
-   stands and the prune is refused with both lists printed. Nothing a
-   preview did not show is deleted.
+   stands and the prune is refused with the current set and both digests
+   printed. Nothing a preview did not show is deleted.
 3. Each team in the set is marked `Pruning` (by source, at a time) and every
    role's effective desired count becomes 0. The prune checks each team's
    claims and marks it `Pruning` in one lock hold, and an apply that claims a
@@ -285,7 +285,8 @@ marvel work <manifest> --prune <digest>
    record is deleted
    exactly as `marvel delete team` does (`daemon.go:1793-1808`): health
    state cleared and the broker user revoked. Endpoints and policies stay,
-   as they do for `delete team` today.
+   as they do for `delete team` today. Step 3 deletes each marked team at
+   once, in the same request, because no team it marks has a seat alive.
 4. The response lists the teams marked. The client errors if the response
    has no `pruned` field, which is how an older daemon that dropped `prune`
    is caught: it applied, and it pruned nothing.
