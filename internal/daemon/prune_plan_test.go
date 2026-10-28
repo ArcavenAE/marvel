@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -70,8 +71,15 @@ type storeView struct {
 	Sessions   []api.Session
 }
 
+// viewOf reads the store into a comparable view. The store's lists come from
+// ranging over its maps, so their order changes between calls; each is sorted
+// by key so the compare sees a write and never an order flip.
 func viewOf(s *api.Store) storeView {
-	return storeView{s.ListWorkspaces(), s.ListTeams(), s.ListSessions()}
+	v := storeView{s.ListWorkspaces(), s.ListTeams(), s.ListSessions()}
+	sort.Slice(v.Workspaces, func(i, j int) bool { return v.Workspaces[i].Name < v.Workspaces[j].Name })
+	sort.Slice(v.Teams, func(i, j int) bool { return v.Teams[i].Key() < v.Teams[j].Key() })
+	sort.Slice(v.Sessions, func(i, j int) bool { return v.Sessions[i].Key() < v.Sessions[j].Key() })
+	return v
 }
 
 // prune_plan is read-only: it answers with the plan and writes nothing to the
