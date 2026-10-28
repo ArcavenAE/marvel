@@ -83,23 +83,6 @@ func runWork(args ...string) (string, error) {
 
 const appliedPrefix = `{"status":"applied","workspace":"ws","advisories":[],"behind":0`
 
-// A malformed digest is refused before anything is sent (rulings Q5, Q7).
-func TestWorkPruneRefusesAMalformedDigestBeforeSending(t *testing.T) {
-	for _, digest := range []string{"", "ABCDEF01", "abc", "0123abcd0"} {
-		t.Run(digest, func(t *testing.T) {
-			asked := applyFakeDaemon(t, appliedPrefix+`}`)
-			_, err := runWork(writeManifest(t), "--prune", digest)
-			var ee *exitError
-			if !errors.As(err, &ee) || ee.Code != 1 || !strings.Contains(ee.Msg, "nothing was applied") {
-				t.Fatalf("work --prune %q = %v, want exit 1 saying nothing was applied", digest, err)
-			}
-			if got := asked(); len(got) != 0 {
-				t.Errorf("sent %d request(s), want none", len(got))
-			}
-		})
-	}
-}
-
 // --prune takes no value: it sends prune=true and no digest, and prints the
 // set the apply pruned (operator ruling, 2026-10-28).
 func TestWorkPruneTakesNoValue(t *testing.T) {
@@ -124,29 +107,6 @@ func TestWorkPruneTakesNoValue(t *testing.T) {
 	}
 }
 
-// The prune rides on apply as prune and prune_digest beside the source.
-func TestWorkPruneSendsTheDigestWithTheApply(t *testing.T) {
-	asked := applyFakeDaemon(t, appliedPrefix+`,"pruned":["ws/gone"],"prune_plan":{},"prune_digest_given":"0123abcd"}`)
-	out, err := runWork(writeManifest(t), "--prune", "0123abcd")
-	if err != nil {
-		t.Fatalf("work --prune = %v", err)
-	}
-	if !strings.Contains(out, "pruned ws/gone") {
-		t.Errorf("output %q, want the pruned team", out)
-	}
-	got := asked()
-	if len(got) != 1 || got[0].Method != "apply" {
-		t.Fatalf("requests = %+v, want one apply", got)
-	}
-	var p map[string]any
-	if err := json.Unmarshal(got[0].Params, &p); err != nil {
-		t.Fatal(err)
-	}
-	if p["prune"] != true || p["prune_digest"] != "0123abcd" || p["manifest_source"] == nil {
-		t.Errorf("params = %v, want prune, prune_digest and manifest_source", p)
-	}
-}
-
 // An older daemon drops prune and answers with no pruned key, or a pruned that
 // is null; either way the client says nothing was pruned and exits 1
 // (section 5 item 4, ruling Q12).
@@ -157,7 +117,7 @@ func TestWorkPruneFailsWhenTheResponseHasNoPrunedArray(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			applyFakeDaemon(t, tc.result)
-			_, err := runWork(writeManifest(t), "--prune", "0123abcd")
+			_, err := runWork(writeManifest(t), "--prune")
 			var ee *exitError
 			if !errors.As(err, &ee) || ee.Code != 1 || !strings.Contains(ee.Msg, "nothing was pruned") {
 				t.Fatalf("work --prune = %v, want exit 1 saying nothing was pruned", err)
@@ -166,27 +126,10 @@ func TestWorkPruneFailsWhenTheResponseHasNoPrunedArray(t *testing.T) {
 	}
 }
 
-// A refused prune prints the current set and both digests, and exits 1 with
-// the apply standing (rulings Q6, Q7).
-func TestWorkPruneReportsAMismatch(t *testing.T) {
-	applyFakeDaemon(t, appliedPrefix+`,"pruned":[],"prune_digest_given":"ffffffff","prune_refused":"prune digest does not match the current prune set",`+
-		`"prune_plan":{"Workspace":"ws","Source":"h:/m.toml","Digest":"0123abcd","WouldDelete":[{"Team":"ws/gone","Seats":[]}]}}`)
-	out, err := runWork(writeManifest(t), "--prune", "ffffffff")
-	var ee *exitError
-	if !errors.As(err, &ee) || ee.Code != 1 || !strings.Contains(ee.Msg, "nothing was pruned") {
-		t.Fatalf("work --prune = %v, want exit 1 saying nothing was pruned", err)
-	}
-	for _, want := range []string{"ffffffff", "0123abcd", "ws/gone"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output %q is missing %q", out, want)
-		}
-	}
-}
-
 // An empty set, or teams a re-check skipped, is still exit 0 (ruling Q7).
 func TestWorkPruneExitsZeroForAnEmptyOrSkippedSet(t *testing.T) {
-	applyFakeDaemon(t, appliedPrefix+`,"pruned":[],"prune_plan":{},"prune_digest_given":"0123abcd","prune_skipped":[{"Team":"ws/two","Reason":"deferred: live headless seat, awaits the headless arm"}]}`)
-	out, err := runWork(writeManifest(t), "--prune", "0123abcd")
+	applyFakeDaemon(t, appliedPrefix+`,"pruned":[],"prune_plan":{},"prune_skipped":[{"Team":"ws/two","Reason":"deferred: live headless seat, left alone by operator ruling 2026-10-28"}]}`)
+	out, err := runWork(writeManifest(t), "--prune")
 	if err != nil {
 		t.Fatalf("work --prune = %v, want exit 0", err)
 	}
@@ -199,16 +142,16 @@ func TestWorkPruneExitsZeroForAnEmptyOrSkippedSet(t *testing.T) {
 // pruned teams and exits 0. A step 3 daemon sends no draining key, which reads
 // as none (step 4 ruling, Q6).
 func TestWorkPrunePrintsDrainingTeams(t *testing.T) {
-	applyFakeDaemon(t, appliedPrefix+`,"pruned":["ws/gone"],"draining":[{"Team":"ws/two","Seats":2}],"prune_plan":{},"prune_digest_given":"0123abcd"}`)
-	out, err := runWork(writeManifest(t), "--prune", "0123abcd")
+	applyFakeDaemon(t, appliedPrefix+`,"pruned":["ws/gone"],"draining":[{"Team":"ws/two","Seats":2}],"prune_plan":{}}`)
+	out, err := runWork(writeManifest(t), "--prune")
 	if err != nil {
 		t.Fatalf("work --prune = %v, want exit 0", err)
 	}
 	if !strings.Contains(out, "pruned ws/gone") || !strings.Contains(out, "draining ws/two   2 seats") {
 		t.Errorf("output %q, want the pruned team and the draining one", out)
 	}
-	applyFakeDaemon(t, appliedPrefix+`,"pruned":["ws/gone"],"prune_plan":{},"prune_digest_given":"0123abcd"}`)
-	out, err = runWork(writeManifest(t), "--prune", "0123abcd")
+	applyFakeDaemon(t, appliedPrefix+`,"pruned":["ws/gone"],"prune_plan":{}}`)
+	out, err = runWork(writeManifest(t), "--prune")
 	if err != nil || strings.Contains(out, "draining") {
 		t.Errorf("against a step 3 daemon: %q, %v; want no draining line and exit 0", out, err)
 	}

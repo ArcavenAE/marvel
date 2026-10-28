@@ -151,7 +151,7 @@ func TestPlanFileFlagsAreRefusedWithoutTheirPartner(t *testing.T) {
 	}
 }
 
-// The preview prints each group of section 4, the digest and the line that
+// The preview prints each group of section 4 and the line that
 // says apply's other pre-flights were not evaluated (the step 2 ruling, Q6). It
 // exits 0, and 2 under --detailed-exitcode when something would be deleted.
 func TestPlanPrunePrintsTheGroupsAndExitsByWhatItFound(t *testing.T) {
@@ -159,7 +159,6 @@ func TestPlanPrunePrintsTheGroupsAndExitsByWhatItFound(t *testing.T) {
 	plan := &api.PrunePlan{
 		Workspace: "ws",
 		Source:    "host-a:/srv/manifests/main.toml",
-		Digest:    "3f9c1a07",
 		WouldDelete: []api.PruneDelete{
 			{Team: "aae/old-research", Seats: []api.PruneSeat{{Session: "aae/old-research-worker-g1-0", State: api.SessionFailed}}, Handoff: "handoff: declared, window 5m0s"},
 			{Team: "aae/ops-trial"},
@@ -178,7 +177,6 @@ func TestPlanPrunePrintsTheGroupsAndExitsByWhatItFound(t *testing.T) {
 	}
 	for _, want := range []string{
 		"prune plan for workspace/ws from host-a:/srv/manifests/main.toml",
-		"digest 3f9c1a07",
 		"pre-flight checks not evaluated (aae-orc-qawkf)",
 		"would delete (claimed only by this file, which no longer names them):",
 		"aae/old-research   1 seat  1 failed   handoff: declared, window 5m0s",

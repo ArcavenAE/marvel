@@ -1,11 +1,8 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"reflect"
-	"regexp"
 	"testing"
 	"time"
 )
@@ -107,7 +104,7 @@ func planStore(t *testing.T) *Store {
 	// ask as the team drains (step 4).
 	mustTeam(t, s, Team{Name: "busy", Workspace: "ws", Claims: claimsOfSources(at, planSrc)})
 	mustSession(t, s, "busy", "worker", "busy-worker-g1-0", 1, SessionPending)
-	// A live headless seat: deferred until the headless arm is built.
+	// A live headless seat: deferred, left alone by operator ruling 2026-10-28.
 	mustTeam(t, s, Team{Name: "batch", Workspace: "ws", Claims: claimsOfSources(at, planSrc), Roles: []Role{{Name: "run", Runtime: Runtime{Mode: RuntimeModeHeadless}}}})
 	mustSession(t, s, "batch", "run", "batch-run-g1-0", 1, SessionRunning)
 	// Named by the file and held. worker has none of its two seats and extra
@@ -158,7 +155,7 @@ func TestPlanPruneSortsEveryTeamIntoItsGroup(t *testing.T) {
 		t.Errorf("kept for run sessions = %+v, want %+v", plan.KeptRun, want)
 	}
 	want := []PruneDeferred{
-		{Team: "ws/batch", Reason: "live headless seat, awaits the headless arm"},
+		{Team: "ws/batch", Reason: "live headless seat, left alone by operator ruling 2026-10-28"},
 		{Team: "ws/night", Reason: "shift in progress; re-run the plan when it ends"},
 	}
 	if !reflect.DeepEqual(plan.Deferred, want) {
@@ -166,35 +163,6 @@ func TestPlanPruneSortsEveryTeamIntoItsGroup(t *testing.T) {
 	}
 	if want := []PruneHeld{{Team: "ws/held", WillSpawn: 2}}; !reflect.DeepEqual(plan.Held, want) {
 		t.Errorf("held = %+v, want %+v", plan.Held, want)
-	}
-}
-
-// The digest is the first 8 hex characters of a sha256 over the source, then
-// the sorted team keys and session keys the prune would delete (the step 2
-// ruling, Q4).
-func TestPlanPruneDigestCoversTheSourceAndTheSet(t *testing.T) {
-	s := planStore(t)
-	plan := PlanPrune(parsedPreview(t), planSrc, s)
-	if !regexp.MustCompile(`^[0-9a-f]{8}$`).MatchString(plan.Digest) {
-		t.Fatalf("digest = %q, want 8 lowercase hex characters", plan.Digest)
-	}
-	input := "source " + planSrc + "\n" +
-		"team ws/busy\n" +
-		"team ws/gone\n" +
-		"team ws/released\n" +
-		"session ws/busy-worker-g1-0\n" +
-		"session ws/gone-worker-g1-0\n"
-	sum := sha256.Sum256([]byte(input))
-	if want := hex.EncodeToString(sum[:])[:8]; plan.Digest != want {
-		t.Errorf("digest = %s, want %s over:\n%s", plan.Digest, want, input)
-	}
-
-	if other := PlanPrune(parsedPreview(t), planOther, s); other.Digest == plan.Digest {
-		t.Errorf("two sources share digest %s", plan.Digest)
-	}
-	mustSession(t, s, "gone", "worker", "gone-worker-g1-1", 1, SessionSucceeded)
-	if moved := PlanPrune(parsedPreview(t), planSrc, s); moved.Digest == plan.Digest {
-		t.Errorf("digest %s did not move when a session joined the set", plan.Digest)
 	}
 }
 

@@ -56,23 +56,9 @@ func addPruneSession(t *testing.T, s *api.Store, sess api.Session) {
 	}
 }
 
-// previewDigest is the digest marvel plan -f --prune shows for pruneManifest.
-func previewDigest(t *testing.T, d *Daemon) string {
+func applyPrune(t *testing.T, d *Daemon, source string) daemonrpc.Response {
 	t.Helper()
-	resp := prunePlanRequest(t, d, pruneSrc)
-	if resp.Error != "" {
-		t.Fatalf("prune_plan: %s", resp.Error)
-	}
-	var plan api.PrunePlan
-	if err := json.Unmarshal(resp.Result, &plan); err != nil {
-		t.Fatal(err)
-	}
-	return plan.Digest
-}
-
-func applyPrune(t *testing.T, d *Daemon, source, digest string) daemonrpc.Response {
-	t.Helper()
-	p := map[string]any{"manifest_data": []byte(pruneManifest), "prune": true, "prune_digest": digest}
+	p := map[string]any{"manifest_data": []byte(pruneManifest), "prune": true}
 	if source != "" {
 		p["manifest_source"] = source
 	}
@@ -86,8 +72,6 @@ func applyPrune(t *testing.T, d *Daemon, source, digest string) daemonrpc.Respon
 type pruneReply struct {
 	Pruned  []string           `json:"pruned"`
 	Plan    api.PrunePlan      `json:"prune_plan"`
-	Given   string             `json:"prune_digest_given"`
-	Refused string             `json:"prune_refused"`
 	Skipped []api.PruneSkipped `json:"prune_skipped"`
 }
 
@@ -118,9 +102,9 @@ func teamExists(d *Daemon, key string) bool {
 func TestApplyPruneDeletesTheComputedSet(t *testing.T) {
 	d := pruneApplyDaemon(t, nil)
 
-	r, _ := decodePrune(t, applyPrune(t, d, pruneSrc, ""))
-	if strings.Join(r.Pruned, ",") != "ws/gone" || r.Refused != "" {
-		t.Fatalf("pruned %q, refused %q; want ws/gone pruned", r.Pruned, r.Refused)
+	r, _ := decodePrune(t, applyPrune(t, d, pruneSrc))
+	if strings.Join(r.Pruned, ",") != "ws/gone" {
+		t.Fatalf("pruned %q, want ws/gone", r.Pruned)
 	}
 	if teamExists(d, "ws/gone") || len(d.store.ListSessionsByTeam("ws", "gone")) != 0 {
 		t.Error("ws/gone or its session is still stored")
@@ -134,48 +118,16 @@ func TestApplyPruneDeletesTheComputedSet(t *testing.T) {
 	}
 }
 
-// A well-formed digest that is not the current set's applies the manifest and
-// prunes nothing, and the response carries the current set and both digests
-// (section 5 item 2, rulings Q6, Q7).
-func TestApplyPruneMismatchAppliesAndPrunesNothing(t *testing.T) {
-	d := pruneApplyDaemon(t, nil)
-	digest := previewDigest(t, d)
-
-	r, raw := decodePrune(t, applyPrune(t, d, pruneSrc, "ffffffff"))
-	if string(raw["pruned"]) != "[]" || string(raw["draining"]) != "[]" {
-		t.Errorf("pruned = %s, draining = %s; want both []", raw["pruned"], raw["draining"])
-	}
-	if r.Refused == "" || r.Given != "ffffffff" || r.Plan.Digest != digest {
-		t.Errorf("refused %q, given %q, current digest %q; want a refusal with ffffffff and %s", r.Refused, r.Given, r.Plan.Digest, digest)
-	}
-	if len(r.Plan.WouldDelete) != 1 || r.Plan.WouldDelete[0].Team != "ws/gone" {
-		t.Errorf("current set = %+v, want ws/gone", r.Plan.WouldDelete)
-	}
-	if !teamExists(d, "ws/gone") || !teamExists(d, "ws/kept") {
-		t.Error("want ws/gone kept and ws/kept applied")
-	}
-}
-
-// A malformed digest or a missing source is refused before anything is
-// applied, so the file's teams are not even created (rulings Q5, Q7).
+// A prune with no source is refused before anything is applied, so the
+// file's teams are not even created (rulings Q5, Q7).
 func TestApplyPruneRefusesBeforeTheApply(t *testing.T) {
-	for _, tc := range []struct {
-		name, source, digest, want string
-	}{
-		{"malformed digest", pruneSrc, "FFFFFFFF", "nothing was applied"},
-		{"short digest", pruneSrc, "abc", "nothing was applied"},
-		{"no source", "", "0123abcd", "manifest source"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			d := pruneApplyDaemon(t, nil)
-			resp := applyPrune(t, d, tc.source, tc.digest)
-			if resp.Error == "" || !strings.Contains(resp.Error, tc.want) {
-				t.Fatalf("apply = %q, %s; want a refusal with %q", resp.Error, resp.Result, tc.want)
-			}
-			if teamExists(d, "ws/kept") || !teamExists(d, "ws/gone") {
-				t.Error("the refused prune applied or deleted something")
-			}
-		})
+	d := pruneApplyDaemon(t, nil)
+	resp := applyPrune(t, d, "")
+	if resp.Error == "" || !strings.Contains(resp.Error, "manifest source") {
+		t.Fatalf("apply = %q, %s; want a refusal naming the manifest source", resp.Error, resp.Result)
+	}
+	if teamExists(d, "ws/kept") || !teamExists(d, "ws/gone") {
+		t.Error("the refused prune applied or deleted something")
 	}
 }
 
@@ -183,8 +135,7 @@ func TestApplyPruneRefusesBeforeTheApply(t *testing.T) {
 // since the client tells an older daemon by that key (ruling Q12).
 func TestApplyPruneAnswersAnEmptyArray(t *testing.T) {
 	d := newHandlerDaemon(t)
-	digest := previewDigest(t, d)
-	r, raw := decodePrune(t, applyPrune(t, d, pruneSrc, digest))
+	r, raw := decodePrune(t, applyPrune(t, d, pruneSrc))
 	if string(raw["pruned"]) != "[]" || len(r.Pruned) != 0 {
 		t.Errorf("pruned = %s, want []", raw["pruned"])
 	}
@@ -202,8 +153,7 @@ func TestApplyPruneListsALiveTeamAsDraining(t *testing.T) {
 		addPruneTeam(t, s, api.Team{Name: "two", Claims: claimed(at, pruneSrc)})
 		addPruneSession(t, s, api.Session{Name: "two-worker-g1-0", Team: "two", Role: "worker", Generation: 1, State: api.SessionRunning})
 	})
-	digest := previewDigest(t, d)
-	resp := applyPrune(t, d, pruneSrc, digest)
+	resp := applyPrune(t, d, pruneSrc)
 	var reply struct {
 		Pruned   []string            `json:"pruned"`
 		Draining []api.PruneDraining `json:"draining"`
@@ -256,8 +206,7 @@ func TestApplyPruneKeepsWhatIsNotThisFilesToDelete(t *testing.T) {
 					addPruneSession(t, s, *tc.session)
 				}
 			})
-			digest := previewDigest(t, d)
-			r, _ := decodePrune(t, applyPrune(t, d, pruneSrc, digest))
+			r, _ := decodePrune(t, applyPrune(t, d, pruneSrc))
 			if strings.Join(r.Pruned, ",") != "ws/gone" {
 				t.Errorf("pruned %q, want only ws/gone", r.Pruned)
 			}

@@ -7,44 +7,10 @@ import (
 	"time"
 )
 
-// The digest is exactly 8 lowercase hex characters, never normalised, and
-// with a plan it must equal the plan's (rulings Q5, Q6).
-func TestAcceptPruneDigest(t *testing.T) {
-	plan := &PrunePlan{Digest: "0123abcd"}
-	for _, tc := range []struct {
-		name     string
-		given    string
-		plan     *PrunePlan
-		ok       bool
-		mismatch bool
-	}{
-		{"well formed, form only", "0123abcd", nil, true, false},
-		{"upper case", "0123ABCD", nil, false, false},
-		{"seven characters", "0123abc", nil, false, false},
-		{"nine characters", "0123abcde", nil, false, false},
-		{"empty", "", nil, false, false},
-		{"padded", " 0123abcd", nil, false, false},
-		{"not hex", "0123abcg", nil, false, false},
-		{"matches the plan", "0123abcd", plan, true, false},
-		{"another digest", "ffffffff", plan, false, true},
-		{"malformed against a plan", "0123ABCD", plan, false, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := AcceptPruneDigest(tc.given, tc.plan)
-			if (err == nil) != tc.ok {
-				t.Fatalf("AcceptPruneDigest(%q) = %v, want ok=%v", tc.given, err, tc.ok)
-			}
-			if got := errors.Is(err, ErrPruneDigestMismatch); got != tc.mismatch {
-				t.Errorf("mismatch = %v, want %v (err %v)", got, tc.mismatch, err)
-			}
-		})
-	}
-}
-
 // The prune recomputes its set after the apply with the same PlanPrune the
 // preview ran before it. For a store nothing else touched, the two give one
-// digest and one set (ruling Q4).
-func TestPrunePlanBeforeAndAfterTheApplyShareADigest(t *testing.T) {
+// set (ruling Q4).
+func TestPrunePlanBeforeAndAfterTheApplyShareASet(t *testing.T) {
 	s := planStore(t)
 	m := parsedPreview(t)
 	before := PlanPrune(m, planSrc, s)
@@ -52,9 +18,6 @@ func TestPrunePlanBeforeAndAfterTheApplyShareADigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := PlanPrune(m, planSrc, s)
-	if before.Digest != after.Digest {
-		t.Errorf("digest before the apply %s, after %s", before.Digest, after.Digest)
-	}
 	if b, a := deleteKeys(before), deleteKeys(after); b != a || b == "" {
 		t.Errorf("would delete before %q, after %q; want one non-empty set", b, a)
 	}
@@ -107,8 +70,8 @@ func TestMarkPruningRunsTheCheckOnTheTeamAndItsSeats(t *testing.T) {
 // The re-check passes only a team released by this source with nothing
 // claiming it, no run session, no shift and no live headless seat. A live
 // interactive seat passes: step 4 retires it as the team drains (step 4
-// ruling, Q6). A live headless seat is deferred until the headless arm is
-// built (rulings Q3, Q9; step 4 ruling Q7).
+// ruling, Q6). A live headless seat is deferred, left alone by operator
+// ruling 2026-10-28 (rulings Q3, Q9; step 4 ruling Q7).
 func TestPruneRecheck(t *testing.T) {
 	at := time.Date(2026, 10, 28, 1, 0, 0, 0, time.UTC)
 	released := func() *TeamClaims {
@@ -129,7 +92,7 @@ func TestPruneRecheck(t *testing.T) {
 		{"a run session", Team{Claims: released()}, []Session{{Role: "worker", Generation: 0, State: SessionRunning}}, "run session"},
 		{"mid-shift", Team{Claims: released(), Shift: ShiftState{Phase: ShiftDraining}}, nil, "shift in progress"},
 		{"a live interactive seat", Team{Claims: released()}, []Session{{Role: "worker", Generation: 1, State: SessionRunning}}, ""},
-		{"a live headless seat", Team{Claims: released(), Roles: []Role{{Name: "batch", Runtime: headless}}}, []Session{{Role: "batch", Generation: 1, State: SessionRunning}}, "live headless seat, awaits the headless arm"},
+		{"a live headless seat", Team{Claims: released(), Roles: []Role{{Name: "batch", Runtime: headless}}}, []Session{{Role: "batch", Generation: 1, State: SessionRunning}}, "live headless seat, left alone by operator ruling 2026-10-28"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tm := tc.team

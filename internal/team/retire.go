@@ -38,13 +38,12 @@ const (
 // retiredScreenLines is how much of a pane's history is saved before the kill.
 const retiredScreenLines = 500
 
-// errHeadlessNotBuilt is retireHeadless's answer until the operator rules on
-// how a running headless seat leaves.
+// errHeadlessNotBuilt is retireHeadless's answer: a running headless seat is
+// left alone by operator ruling 2026-10-28, so it is never retired.
 var errHeadlessNotBuilt = errors.New("retiring a running headless seat is not built")
 
-// retireHeadless is the one place a running headless seat's retirement will
-// live. Section 6.2 has marvel wait for the run to finish, up to the window,
-// then kill it with no ask; that awaits the operator's answer, so today it
+// retireHeadless is where a running headless seat would be retired. Headless
+// seats are left alone by operator ruling 2026-10-28 (section 6.2), so it
 // returns errHeadlessNotBuilt and the caller keeps the delete it always made.
 // The prune defers a team with a live headless seat (pruneVerdict), so no
 // prune reaches here.

@@ -1,9 +1,7 @@
 package daemon
 
 import (
-	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -17,10 +15,6 @@ type pruneResult struct {
 	Pruned []string
 	// Plan is the prune set computed after the apply.
 	Plan api.PrunePlan
-	// Given is the digest the client sent, and Refused why the prune did not
-	// run when it did not match Plan.Digest.
-	Given   string
-	Refused string
 	// Draining lists the teams marked whose seats are still leaving. It is
 	// always an array, [] when there are none.
 	Draining []api.PruneDraining
@@ -48,30 +42,18 @@ func (r pruneResult) addTo(out map[string]any) {
 	}
 	out["draining"] = draining
 	out["prune_plan"] = r.Plan
-	out["prune_digest_given"] = r.Given
-	if r.Refused != "" {
-		out["prune_refused"] = r.Refused
-	}
 	if len(r.Skipped) > 0 {
 		out["prune_skipped"] = r.Skipped
 	}
 }
 
 // prune recomputes the prune set on the store the apply left, with the same
-// PlanPrune the preview ran, and deletes it only when given is its digest. The
-// teams are marked, re-checked and deleted in one hold of the controller's
-// lock; their broker users are revoked after that hold, as marvel delete team
-// does.
-func (d *Daemon) prune(m *api.Manifest, source, given string) pruneResult {
+// PlanPrune the preview ran, and deletes that set. The teams are marked,
+// re-checked and deleted in one hold of the controller's lock; their broker
+// users are revoked after that hold, as marvel delete team does.
+func (d *Daemon) prune(m *api.Manifest, source string) pruneResult {
 	plan := api.PlanPrune(m, source, d.store)
-	r := pruneResult{Plan: plan, Given: given}
-	if err := api.AcceptPruneDigest(given, &plan); err != nil {
-		if !errors.Is(err, api.ErrPruneDigestMismatch) {
-			log.Printf("prune: %s: %v", source, err)
-		}
-		r.Refused = err.Error()
-		return r
-	}
+	r := pruneResult{Plan: plan}
 	keys := make([]string, 0, len(plan.WouldDelete))
 	for _, del := range plan.WouldDelete {
 		keys = append(keys, del.Team)
