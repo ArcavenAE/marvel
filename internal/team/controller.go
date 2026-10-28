@@ -138,6 +138,11 @@ type Controller struct {
 
 	// now is an injection point for tests; nil means time.Now().UTC().
 	now func() time.Time
+	// pruneHook, when set, runs inside Prune at the named step for a team:
+	// "delete" just before the step that deletes the team's record, and
+	// "sessions" just before its sessions are deleted. Tests use it to change
+	// the store in those windows; it is nil in the daemon.
+	pruneHook func(key, step string)
 	// jitter draws a firing's random delay up to its schedule's jitter;
 	// nil means a uniform draw. Tests set it to return zero.
 	jitter func(max time.Duration) time.Duration

@@ -61,6 +61,9 @@ func (c *Controller) Prune(keys []string, p api.TeamPruning, check func(*api.Tea
 			skipped = append(skipped, api.PruneSkipped{Team: key, Reason: reason})
 			continue
 		}
+		if c.pruneHook != nil {
+			c.pruneHook(key, "delete")
+		}
 		if err := c.deleteTeamLocked(t); err != nil {
 			c.unmarkPruning(key)
 			skipped = append(skipped, api.PruneSkipped{Team: key, Reason: err.Error()})

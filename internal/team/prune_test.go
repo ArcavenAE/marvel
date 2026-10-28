@@ -198,3 +198,42 @@ func TestPruneLeavesARunSessionAndItsTeam(t *testing.T) {
 		t.Errorf("team = %+v, %v; want it stored and unmarked", got.Pruning, err)
 	}
 }
+
+// An apply of another file that claims the team after the re-check, while the
+// prune is still deleting, keeps the team: the last check and the record
+// delete are one hold of the store's lock (review finding 1).
+func TestPruneKeepsATeamClaimedAfterTheRecheck(t *testing.T) {
+	store, ctrl, ring := pruneFixture(t)
+	other := "host-b:/srv/manifests/ops.toml"
+	ctrl.pruneHook = func(key, step string) {
+		if step != "delete" {
+			return
+		}
+		if err := store.UpdateTeam(key, func(live *api.Team) error {
+			live.Claims = &api.TeamClaims{Sources: map[string]time.Time{other: listEpoch}}
+			live.Pruning = nil
+			return nil
+		}); err != nil {
+			t.Errorf("claim %s: %v", key, err)
+		}
+	}
+	mark := api.TeamPruning{Source: pruneTestSource, At: listEpoch}
+
+	deleted, skipped := ctrl.Prune([]string{"test-prune/gone"}, mark, api.PruneRecheck(pruneTestSource))
+	if len(deleted) != 0 || len(skipped) != 1 {
+		t.Fatalf("deleted %q, skipped %+v; want the claimed team kept", deleted, skipped)
+	}
+	got, err := store.GetTeam("test-prune/gone")
+	if err != nil {
+		t.Fatalf("the team another file claimed was deleted: %v", err)
+	}
+	if _, ok := got.Claims.Sources[other]; !ok || got.Pruning != nil {
+		t.Errorf("team claims %+v, pruning %+v; want the other file's claim and no mark", got.Claims, got.Pruning)
+	}
+	if n := len(store.ListSessionsByTeam("test-prune", "gone")); n != 1 {
+		t.Errorf("sessions = %d, want the team's one session kept", n)
+	}
+	if n := len(ring.Snapshot(events.Filter{Kind: events.KindTeamPruned}, 0)); n != 0 {
+		t.Errorf("team.pruned events = %d, want 0", n)
+	}
+}
