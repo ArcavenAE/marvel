@@ -358,9 +358,7 @@ func (c *Controller) dropRetirement(t *api.Team, req api.RetireRequest) {
 		return
 	}
 	delete(t.Retiring, req.Session)
-	if roleOf(t, req.Role) == nil {
-		c.finishRoleRemoval(t, req.Role)
-	}
+	c.finishRoleRemoval(t, req.Role)
 }
 
 // roleOf is the team's role named name, or nil.
@@ -391,29 +389,32 @@ func (c *Controller) roleRemains(t *api.Team, role string) bool {
 
 // finishRoleRemoval forgets a dropped role's health, admission and bus holds
 // and records role.removed, once the role's last seat has gone (the step 4
-// ruling, Q5). Until then a retiring seat still holds the role.
+// ruling, Q5). Until then a retiring seat still holds the role. It decides
+// from what the store holds (the role absent from the team, no session of it
+// left, no retirement for it), so a restart inside the grace still finishes
+// the role.
 func (c *Controller) finishRoleRemoval(t *api.Team, role string) {
-	if c.roleRemains(t, role) {
+	if roleOf(t, role) != nil || c.roleRemains(t, role) {
 		return
 	}
 	roleKey := t.Workspace + "/" + t.Name + "/" + role
-	n, asked := c.roleDrained[roleKey]
-	if !asked {
-		return
+	msg := "role removed from manifest; its last seat has gone"
+	if n, ok := c.roleDrained[roleKey]; ok {
+		msg = fmt.Sprintf("role removed from manifest, drained %d session(s)", n)
 	}
 	delete(c.roleDrained, roleKey)
 	delete(c.roleHealth, roleKey)
 	c.forgetRoleHealth(roleKey)
 	delete(c.admissionHolds, roleKey)
 	delete(c.busHolds, roleKey)
-	log.Printf("reconcile: role %s removed from team %s, drained %d session(s)", role, t.Key(), n)
+	log.Printf("reconcile: role %s of team %s: %s", role, t.Key(), msg)
 	events.Emit(c.Events, events.Event{
 		Kind:      events.KindRoleRemoved,
 		Severity:  events.SeverityWarning,
 		Workspace: t.Workspace,
 		Team:      t.Name,
 		Role:      role,
-		Message:   fmt.Sprintf("role removed from manifest, drained %d session(s)", n),
+		Message:   msg,
 	})
 }
 

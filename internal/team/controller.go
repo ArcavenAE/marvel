@@ -782,6 +782,11 @@ func (c *Controller) noteReapedCrash(r session.ReapedSession, charged map[string
 	if err != nil {
 		return
 	}
+	// A retiring seat was leaving: its exit is no crash, so it charges
+	// nothing and freezes nothing. Its retirement records how it ended.
+	if isRetiring(&t, r.Key) {
+		return
+	}
 	var role *api.Role
 	for i := range t.Roles {
 		if t.Roles[i].Name == r.Role {
