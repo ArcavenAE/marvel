@@ -281,7 +281,7 @@ marvel work <manifest> --prune <digest>
    shift: the automatic triggers skip it and `marvel shift` refuses it, so
    no drain can bypass the ask once the prune has begun. The team's
    sessions then leave through the scale-down path, which after step 4
-   asks each one for its handoff. Once a pruning team holds no session, its
+   asks each one for its handoff. Once a pruning team holds no live session, its
    record is deleted
    exactly as `marvel delete team` does (`Controller.DeleteTeam`,
    `internal/team/prune.go`): health
