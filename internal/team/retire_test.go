@@ -685,3 +685,99 @@ func TestRetiringAKeptRolesLastSeatDoesNotRemoveTheRole(t *testing.T) {
 		t.Errorf("role.removed = %d, health %+v; want no event and the health kept", n, f.ctrl.roleHealth[roleKey])
 	}
 }
+
+// crash marks sess as ended on its own, as ReapDead leaves a seat whose pane
+// has gone.
+func (f *retireFixture) crash(sess api.Session) {
+	f.t.Helper()
+	if err := f.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.State = api.SessionCrashed
+		return nil
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// A seat told it is being removed writes its handoff and exits before any
+// marker read has finished. The retirement waits for a read begun after the
+// exit, which finds the marker, and ends handoff-written, not a false
+// handoff-missing (the step 4 ruling on a seat that exits, 2026-10-28).
+func TestRetireReadsOnceMoreAfterTheSeatExits(t *testing.T) {
+	f := newRetireFixture(t, "test-retire-exit-write", handoffRole(realTempDir(t)))
+	role := f.team().Roles[0]
+	sess := f.seat(testShiftRole, 0)
+	f.retire(sess)
+	path, _ := api.ExpandHandoffPath(role.Shift.Handoff, sess.Name)
+	if err := os.WriteFile(path, []byte("notes\n"+putMarker+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.crash(sess)
+	for i := 0; i < 3 && len(f.outcomes()) == 0; i++ {
+		f.clock.Advance(time.Second)
+		f.advance()
+	}
+	if got := f.outcomes(); len(got) != 1 || !strings.Contains(got[0], "outcome=handoff-written") {
+		t.Fatalf("session.retired = %q, want handoff-written", got)
+	}
+	if !f.gone(sess) {
+		t.Error("the ended seat is still stored")
+	}
+}
+
+// A read that began before the seat exited, and found no marker, does not
+// decide the outcome: the seat may have written after it began (the step 4
+// ruling on a seat that exits, 2026-10-28).
+func TestRetireIgnoresAReadBegunBeforeTheExit(t *testing.T) {
+	f := newRetireFixture(t, "test-retire-exit-stale", handoffRole(realTempDir(t)))
+	role := f.team().Roles[0]
+	sess := f.seat(testShiftRole, 0)
+	f.retire(sess)
+	f.advance() // a read before the exit finds no file
+	path, _ := api.ExpandHandoffPath(role.Shift.Handoff, sess.Name)
+	if err := os.WriteFile(path, []byte(putMarker+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.crash(sess)
+	f.clock.Advance(time.Second)
+	f.advance() // the last finished read began before the exit
+	if got := f.outcomes(); len(got) != 0 {
+		t.Fatalf("session.retired = %q on a read begun before the exit; want no outcome yet", got)
+	}
+	f.clock.Advance(time.Second)
+	f.advance()
+	if got := f.outcomes(); len(got) != 1 || !strings.Contains(got[0], "outcome=handoff-written") {
+		t.Fatalf("session.retired = %q, want handoff-written", got)
+	}
+}
+
+// A seat that exits with no handoff ends handoff-missing, "seat ended", and no
+// later than its window, even when no read begun after the exit ever finishes
+// (the step 4 ruling on a seat that exits, 2026-10-28).
+func TestRetireEndsASeatThatExitsWithNoHandoffByTheWindow(t *testing.T) {
+	f := newRetireFixture(t, "test-retire-exit-none", handoffRole(realTempDir(t)))
+	sess := f.seat(testShiftRole, 0)
+	f.retire(sess)
+	f.advance() // a read before the exit finds no file
+
+	// From here no read finishes until the test releases it.
+	release := make(chan struct{})
+	f.ctrl.handoffProbes.check = func(string, string) bool { <-release; return false }
+	t.Cleanup(func() { close(release); f.ctrl.handoffProbes.wait() })
+	tick := func() {
+		tm := f.team()
+		f.ctrl.mu.Lock()
+		f.ctrl.advanceRetirements(&tm, f.clock.Now())
+		f.ctrl.mu.Unlock()
+	}
+	f.crash(sess)
+	f.clock.Advance(time.Second)
+	tick()
+	f.clock.Advance(api.DefaultShiftHandoffWindow)
+	tick()
+	if got := f.outcomes(); len(got) != 1 || !strings.Contains(got[0], "outcome=handoff-missing: seat ended") {
+		t.Fatalf("session.retired = %q, want handoff-missing seat ended by the window", got)
+	}
+	if !f.gone(sess) {
+		t.Error("the ended seat is still stored")
+	}
+}
