@@ -27,8 +27,8 @@ import (
 const retireNotice = "retire: this seat is being removed; write your handoff now"
 
 // Outcomes of a retirement, as session.retired reports them (section 6.3).
-// run-finished and run-cancelled belong to the headless arm, which is not
-// built.
+// There is no run-finished or run-cancelled: headless seats are left alone by
+// operator ruling 2026-10-28, so none is retired.
 const (
 	retireHandoffWritten = "handoff-written"
 	retireHandoffMissing = "handoff-missing"
@@ -40,7 +40,7 @@ const retiredScreenLines = 500
 
 // errHeadlessNotBuilt is retireHeadless's answer: a running headless seat is
 // left alone by operator ruling 2026-10-28, so it is never retired.
-var errHeadlessNotBuilt = errors.New("retiring a running headless seat is not built")
+var errHeadlessNotBuilt = errors.New("a running headless seat is left alone by operator ruling 2026-10-28")
 
 // retireHeadless is where a running headless seat would be retired. Headless
 // seats are left alone by operator ruling 2026-10-28 (section 6.2), so it

@@ -178,7 +178,8 @@ hold:
 3. it is not mid-shift (`Shift.Phase` is none). A shift's drain and abort
    (`controller.go:2577`, `:2337`) call `Delete` directly, so a prune waits
    for the shift to end;
-4. until the headless arm lands, it has no running headless seat: no
+4. it has no running headless seat, since headless seats are left alone by
+   operator ruling 2026-10-28: no
    session of a headless role in an alive state (pending, running or
    crashloop-backoff, `SessionState.CountsAsAlive`), section 5. A live
    interactive seat does not hold the team back; step 4 retires it
@@ -237,7 +238,7 @@ named by this file and held (re-apply converges them):
 ```
 
 A team with a running headless seat is listed under deferred as 'live
-headless seat, awaits the headless arm' until that arm lands (section 5).
+headless seat, left alone by operator ruling 2026-10-28' (section 5).
 
 Each "would delete" line names its seats and their state, the states in
 alphabetical order. Counting only the interactive roles that hold an alive
@@ -300,15 +301,13 @@ it, is refused for the missing digest, and nothing is applied.
    applied, and it pruned nothing. A response with no `draining` key reads as
    none.
 
-**Scope until the headless arm lands:** step 4 retires interactive seats
-(section 6), so a team whose live seats are all interactive is pruned once
-each has been asked and has left. A team with a running headless seat is
-listed as "deferred: live headless seat, awaits the headless arm" and kept,
-until the operator rules on the headless case in section 6.2. So no prune
-kills a running seat without either a handoff ask or, for a headless run that
-cannot take one, a bounded wait for it to finish. Until then, scale-down and a
-role drop still delete a running headless seat at once, as they did before
-this design.
+**Headless seats are left alone by operator ruling 2026-10-28:** step 4
+retires interactive seats (section 6), so a team whose live seats are all
+interactive is pruned once each has been asked and has left. A team with a
+running headless seat is listed as "deferred: live headless seat, left alone
+by operator ruling 2026-10-28" and kept. So no prune kills a running seat
+without a handoff ask. Scale-down and a role drop delete a running headless
+seat at once, as they did before this design.
 
 A team being pruned that a later apply names again stops pruning: the apply
 clears `Pruning`, reclaims it, and the reconciler converges it back. Seats
@@ -333,7 +332,7 @@ already asked for their handoff are not un-asked (section 6.4).
 At each covered call site (section 2), `Delete` is replaced by `Retire`.
 `Retire` reuses the shift handoff request (`internal/team/shift_handoff.go:109`,
 `requestHandoff`) for an interactive seat, with a new notice (a running
-headless seat is waited on instead, section 6.2):
+headless seat is left alone by operator ruling 2026-10-28, section 6.2):
 
 ```
 retire: this seat is being removed; write your handoff now to <path>, ending with the line "<marker>"; you have <window>
@@ -384,11 +383,12 @@ and does not hold the kill back.
 
 Every retirement emits `session.retired` with one outcome:
 `handoff-written`, `handoff-missing` (with the reason: window passed,
-notice undelivered, or the directory could not be made), `run-finished`
-or `run-cancelled` for a running headless seat, or `not-asked` (with the
-reason). `handoff-missing` and `run-cancelled` are warnings, and go to the
-team's supervisor seat by the existing missing-handoff delivery
-(`handoff-missing-delivery.md`) when that seat is not itself retiring.
+notice undelivered, or the directory could not be made), or `not-asked`
+(with the reason). A running headless seat is left alone by operator ruling
+2026-10-28, so no retirement ends `run-finished` or `run-cancelled`.
+`handoff-missing` is a warning, and goes to the team's supervisor seat by
+the existing missing-handoff delivery (`handoff-missing-delivery.md`) when
+that seat is not itself retiring.
 
 A handoff file is never deleted by marvel. It stays at its path for the next
 seat or a person to read.

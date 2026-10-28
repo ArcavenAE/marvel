@@ -517,8 +517,8 @@ func TestReapDoesNotChargeARetiringSeat(t *testing.T) {
 }
 
 // A running headless seat keeps today's delete: no notice, no wait, nothing
-// recorded as a retirement, because the headless arm awaits the operator's
-// answer (the step 4 ruling, Q7).
+// recorded as a retirement, because headless seats are left alone by operator
+// ruling 2026-10-28 (the step 4 ruling, Q7).
 func TestRetireLeavesAHeadlessSeatToTodaysDelete(t *testing.T) {
 	role := sleepRole(testShiftRole, 1)
 	role.Runtime.Mode = api.RuntimeModeHeadless
