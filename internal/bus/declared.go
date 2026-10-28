@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -184,6 +185,7 @@ func DeclaredPrincipals(s Spec) ([]Principal, error) {
 		}
 		return teams[i].Team < teams[j].Team
 	})
+	peers := peerInboxes(teams, s.HubURL != "")
 	seen := map[string]string{}
 	for _, t := range teams {
 		if err := validToken("workspace", t.Workspace); err != nil {
@@ -240,14 +242,52 @@ func DeclaredPrincipals(s Spec) ([]Principal, error) {
 			// role in global-role-declaration.md section 4): the team user's
 			// own-subtree grants, the global publishes, and a subscribe
 			// narrowed to the cluster's supervisor inbox, not global.<domain>.>.
+			//
+			// Peer publish (operator ruling 2026-10-28): the role inbox of every
+			// other applied team's global role on this cluster, exact subjects,
+			// publish only, on this user and never the team user. A local
+			// agent. publish does not cross the hub (global-bus-tier.md
+			// section 4), so the reach stops at the cluster.
+			rolePub := append(slices.Clone(basePub), globalPub...)
+			for _, p := range peers {
+				if p.team != t.Team {
+					rolePub = append(rolePub, p.subject)
+				}
+			}
 			out = append(out, Principal{
 				Name: t.Team + "." + ru.Role, Scope: ScopeBinding, Team: t.Team,
-				Publish:   append(slices.Clone(basePub), globalPub...),
+				Publish:   rolePub,
 				Subscribe: append(slices.Clone(baseSub), fmt.Sprintf("global.%s.supervisor.inbox", s.Domain)),
-				Origin:    "global-role-declaration.md section 4 (marvel#518): the role's own user, so its global reach does not ride the team user",
+				Origin:    "global-role-declaration.md section 4 (marvel#518): the role's own user, so its global reach does not ride the team user; publish on the other teams' global role inboxes on this cluster per the operator ruling of 2026-10-28",
 				Password:  ru.Password,
 			})
 		}
 	}
 	return out, nil
+}
+
+// peerInbox is one global role's inbox subject and the team it belongs to.
+type peerInbox struct {
+	team    string
+	subject string
+}
+
+// peerInboxes lists the role inbox of every global role on the cluster, in
+// subject order so the rendered file is the same from one render to the next.
+// With no hub no per-role user renders, so the list is empty and no user
+// carries a peer grant. The subjects are exact: no wildcard token, so a team
+// applied later, or a role the cluster does not admit, is not reachable until
+// it is rendered into GlobalRoles.
+func peerInboxes(teams []TeamUser, hasHub bool) []peerInbox {
+	if !hasHub {
+		return nil
+	}
+	var out []peerInbox
+	for _, t := range teams {
+		for _, ru := range t.GlobalRoles {
+			out = append(out, peerInbox{team: t.Team, subject: fmt.Sprintf("agent.%s.%s.role.%s.inbox", t.Workspace, t.Team, ru.Role)})
+		}
+	}
+	slices.SortFunc(out, func(a, b peerInbox) int { return strings.Compare(a.subject, b.subject) })
+	return out
 }

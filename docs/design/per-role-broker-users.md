@@ -263,3 +263,31 @@ reviewed; marvel-builder builds only after that.
   fix or only defense in depth. It is not run: it would touch a live broker
   with a seat's credentials, so it waits for an operator yes or a scratch hub.
   The design does not depend on the answer; section 9 says what changes.
+
+## 11. Peer publish on one cluster
+
+The operator ruled on 2026-10-28 that each supervisor may publish to other
+supervisors' direct subjects on its own cluster. Before this, a supervisor
+reached a peer on its cluster only through the cluster fan-out
+(`global.<cluster>.supervisor.inbox`), which every supervisor receives.
+
+The grant is on the per-role user only, never the team user: each
+`<team>.<role>` user publishes `agent.<workspace>.<team>.role.<role>.inbox`
+for every global role of every other applied team on the cluster. The
+subjects are exact (no wildcard token), enumerated from the same
+`GlobalRoles` list the renderer already holds, so a team removed at apply
+drops out in the same render that drops its users, and a role the cluster
+does not admit is not listed. It is publish only: nothing is added to any
+subscribe list.
+
+What it leaves out on purpose: the seat id inbox (a wildcard over seats would
+reach every seat in the team), any role that does not resolve to a global
+role (so a research supervisor stays out until the cluster admits it), and any
+other cluster. A local `agent.` publish adds nothing at the hub
+(`global-bus-tier.md` section 4), so the reach ends at the cluster. With no
+hub no per-role user renders, so no peer grant renders either.
+
+A host picks the change up when its daemon runs a build that has it and the
+next render happens; the broker reloads on SIGHUP. A supervisor connected
+before the reload gets the grant on the same connection
+(`TestSupervisorPeerGrantReachesAnAlreadyConnectedClientOnReload`).
