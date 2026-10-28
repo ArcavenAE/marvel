@@ -116,26 +116,53 @@ func PlanPrune(m *Manifest, source string, store PruneReader) PrunePlan {
 		if !mine && t.Claims.ReleasedBy != source {
 			continue
 		}
-		runs, alive := 0, false
-		for _, s := range sessions {
-			if s.Generation == 0 {
-				runs++
-			}
-			alive = alive || s.State.CountsAsAlive()
-		}
-		switch {
+		switch runs, deferred := pruneVerdict(t, sessions); {
 		case runs > 0:
 			plan.KeptRun = append(plan.KeptRun, PruneRun{Team: key, Runs: runs})
-		case t.Shift.Phase != ShiftNone:
-			plan.Deferred = append(plan.Deferred, PruneDeferred{Team: key, Reason: "shift in progress; re-run the plan when it ends"})
-		case alive:
-			plan.Deferred = append(plan.Deferred, PruneDeferred{Team: key, Reason: "live seat, needs step 4"})
+		case deferred != "":
+			plan.Deferred = append(plan.Deferred, PruneDeferred{Team: key, Reason: deferred})
 		default:
 			plan.WouldDelete = append(plan.WouldDelete, pruneDelete(t, sessions))
 		}
 	}
 	plan.Digest = pruneDigest(source, plan.WouldDelete)
 	return plan
+}
+
+// pruneVerdict applies rules 2 to 4 of the prune set to a team this source may
+// prune: it is kept while it holds marvel run sessions (runs > 0), deferred
+// mid-shift or while it has a live seat (deferred is the reason), and
+// otherwise deleted. The plan and the prune itself both decide through it.
+func pruneVerdict(t *Team, sessions []Session) (runs int, deferred string) {
+	alive, aliveHeadless := false, false
+	for _, s := range sessions {
+		if s.Generation == 0 {
+			runs++
+		}
+		if !s.State.CountsAsAlive() {
+			continue
+		}
+		if r := t.role(s.Role); r != nil && r.Runtime.Mode == RuntimeModeHeadless {
+			aliveHeadless = true
+		} else {
+			alive = true
+		}
+	}
+	switch {
+	case runs > 0:
+		return runs, ""
+	case t.Shift.Phase != ShiftNone:
+		return 0, "shift in progress; re-run the plan when it ends"
+	case aliveHeadless:
+		// A running headless seat reads no notice. How it leaves (section 6.2:
+		// a bounded wait for its run, then the kill, with no ask) awaits the
+		// operator's answer, and step 4 builds it. Until then it is deferred
+		// like any live seat, and this branch is the one place that changes.
+		return 0, "live seat, needs step 4"
+	case alive:
+		return 0, "live seat, needs step 4"
+	}
+	return 0, ""
 }
 
 // willSpawn is how many seats a re-apply of mt would start: over its roles, the
@@ -247,4 +274,15 @@ func pruneDigest(source string, deletes []PruneDelete) string {
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])[:8]
+}
+
+// role is the team's role named name, or nil when it declares none, as for a
+// marvel run session placed under a role the manifest does not name.
+func (t *Team) role(name string) *Role {
+	for i := range t.Roles {
+		if t.Roles[i].Name == name {
+			return &t.Roles[i]
+		}
+	}
+	return nil
 }

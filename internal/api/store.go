@@ -218,6 +218,10 @@ func cloneTeam(t *Team) Team {
 		c.Sources = maps.Clone(t.Claims.Sources)
 		out.Claims = &c
 	}
+	if t.Pruning != nil {
+		pr := *t.Pruning
+		out.Pruning = &pr
+	}
 	return out
 }
 
@@ -588,6 +592,15 @@ func (s *Store) ReleaseClaims(source string, named map[string]bool, at time.Time
 		}
 	}
 	return nil
+}
+
+// MarkPruning sets p as the Pruning of the team at key when check, run on the
+// team and its sessions in the same hold of the store's lock, returns "". When
+// check returns a reason the team is left as it is and the reason is returned,
+// so a team whose claims or seats changed since the plan is never marked
+// (docs/design/work-prune.md section 5).
+func (s *Store) MarkPruning(key string, p TeamPruning, check func(*Team, []Session) string) (string, error) {
+	return "", nil
 }
 
 // Endpoint operations

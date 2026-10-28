@@ -361,7 +361,7 @@ func (c *Controller) ProjectHeldRoleRows(store *api.Store) ([]api.Session, map[s
 			// Crashed row IS representation the operator sees, so a role
 			// that kept one is not synthesized.
 			rows := store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
-			gap := role.Replicas - len(rows)
+			gap := t.DesiredReplicas(role) - len(rows)
 			if gap <= 0 {
 				// The role kept its terminal rows, so there is nothing to
 				// synthesize — but a frozen or saturated role's row reads
@@ -441,6 +441,12 @@ func terminalRoleReason(role *api.Role, rh RoleHealth) string {
 func (c *Controller) ClearRoleHealthForTeam(workspace, team string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.clearRoleHealthForTeamLocked(workspace, team)
+}
+
+// clearRoleHealthForTeamLocked is ClearRoleHealthForTeam for a caller that
+// holds c.mu.
+func (c *Controller) clearRoleHealthForTeamLocked(workspace, team string) {
 	prefix := workspace + "/" + team + "/"
 	for k := range c.roleHealth {
 		if strings.HasPrefix(k, prefix) {
@@ -1169,7 +1175,7 @@ type admissionIntent struct {
 // role shifts and the team generation advances. Caller holds c.mu.
 func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) RolePlan {
 	current := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
-	desired := role.Replicas
+	desired := t.DesiredReplicas(role)
 	// Replica accounting, not process liveness: a completed headless run
 	// holds its slot (ADR-010). Every other CountAlive caller in the tree
 	// is asking the liveness question and must keep using CountAlive.
@@ -2362,7 +2368,7 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 	// Failed or Crashed successor must not satisfy the launch and suppress
 	// the live replacement that should take its place. See aae-orc-6kgq.
 	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
-	desired := role.Replicas
+	desired := t.DesiredReplicas(role)
 	// A scheduled role spawns only through its firing, in planRole, so a
 	// shift launches nothing for it and passes straight to draining.
 	if role.Schedule != nil {

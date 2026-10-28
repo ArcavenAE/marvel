@@ -1440,6 +1440,11 @@ type applyParams struct {
 	// file names; an older client sends none, and those teams take nil claims
 	// (docs/design/work-prune.md section 3).
 	ManifestSource string `json:"manifest_source,omitempty"`
+	// Prune asks the apply to remove the teams this source put there and no
+	// longer names, when PruneDigest matches the prune set computed after the
+	// apply (docs/design/work-prune.md section 5).
+	Prune       bool   `json:"prune,omitempty"`
+	PruneDigest string `json:"prune_digest,omitempty"`
 }
 
 func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
@@ -1459,6 +1464,16 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	}
 	if err := api.ScheduleHistoryCap(m, d.scheduleHistoryMax); err != nil {
 		return daemonrpc.Response{Error: "parse manifest: " + err.Error()}
+	}
+	// A prune is refused before anything is stored when it cannot be checked:
+	// no source to own the teams, or a digest that is not a digest.
+	if p.Prune {
+		if strings.TrimSpace(p.ManifestSource) == "" {
+			return daemonrpc.Response{Error: "prune needs a manifest source; nothing was applied"}
+		}
+		if err := api.AcceptPruneDigest(p.PruneDigest, nil); err != nil {
+			return daemonrpc.Response{Error: err.Error() + "; nothing was applied"}
+		}
 	}
 
 	// derived: the manifest names no root, so the one in the params is where
@@ -1560,6 +1575,13 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	if err := m.ApplyFrom(d.store, p.ManifestSource); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("apply manifest: %v", err)}
 	}
+	// The prune runs on the store the apply left, before the posture loop and
+	// the reconcile below, so a team it marks is never converged first.
+	var pruned *pruneResult
+	if p.Prune {
+		r := d.prune(m, p.ManifestSource, p.PruneDigest)
+		pruned = &r
+	}
 	for _, a := range workDirAdvisories {
 		log.Printf("apply: %s", a)
 	}
@@ -1626,7 +1648,7 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	for _, mt := range m.Teams {
 		teamNames = append(teamNames, mt.Name)
 	}
-	return respond(map[string]any{
+	out := map[string]any{
 		"status":     "applied",
 		"workspace":  m.Workspace.Name,
 		"advisories": append(append(workDirAdvisories, advisories...), scheduleAdvisories...),
@@ -1634,7 +1656,11 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		// role's. Information, not a warning: under operator ruling D4 this
 		// is the normal state right after an apply.
 		"behind": d.behindCount(m.Workspace.Name, teamNames),
-	})
+	}
+	if pruned != nil {
+		pruned.addTo(out)
+	}
+	return respond(out)
 }
 
 // Get params
@@ -1798,14 +1824,7 @@ func (d *Daemon) handleDelete(params json.RawMessage) daemonrpc.Response {
 		if getErr != nil {
 			return daemonrpc.Response{Error: getErr.Error()}
 		}
-		sessions := d.store.ListSessionsByTeam(t.Workspace, t.Name)
-		for _, s := range sessions {
-			_ = d.sessMgr.Delete(s.Key())
-		}
-		err = d.store.DeleteTeam(p.Name)
-		// Clear accumulated crash-loop state for this team's roles so a
-		// subsequent re-apply starts fresh. See ArcavenAE/marvel#29.
-		d.teamCtrl.ClearRoleHealthForTeam(t.Workspace, t.Name)
+		err = d.teamCtrl.DeleteTeam(t)
 		// The team's broker user goes with it; rewrite and reload is revocation.
 		d.regenerateBus("delete team " + p.Name)
 	case "workspace":
