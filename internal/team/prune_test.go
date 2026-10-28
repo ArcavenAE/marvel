@@ -112,7 +112,7 @@ func TestPruneDeletesTheTeamsThatPassAndRecordsEach(t *testing.T) {
 	store, ctrl, ring := pruneFixture(t)
 	mark := api.TeamPruning{Source: pruneTestSource, At: listEpoch}
 
-	deleted, skipped := ctrl.Prune([]string{"test-prune/gone", "test-prune/also"}, mark, api.PruneRecheck(pruneTestSource))
+	deleted, _, skipped := ctrl.Prune([]string{"test-prune/gone", "test-prune/also"}, mark, api.PruneRecheck(pruneTestSource))
 	if strings.Join(deleted, ",") != "test-prune/also,test-prune/gone" || len(skipped) != 0 {
 		t.Fatalf("deleted %q, skipped %+v; want both deleted, in key order", deleted, skipped)
 	}
@@ -153,7 +153,7 @@ func TestPruneKeepsATeamThatFailsEitherCheck(t *testing.T) {
 		return ""
 	}
 
-	deleted, skipped := ctrl.Prune([]string{"test-prune/gone", "test-prune/also"}, mark, check)
+	deleted, _, skipped := ctrl.Prune([]string{"test-prune/gone", "test-prune/also"}, mark, check)
 	if len(deleted) != 0 {
 		t.Fatalf("deleted %q, want none", deleted)
 	}
@@ -187,7 +187,7 @@ func TestPruneLeavesARunSessionAndItsTeam(t *testing.T) {
 	seedSession(t, store, api.Session{Name: "gone-run", Workspace: "test-prune", Team: "gone", Role: "crew", Generation: 0, State: api.SessionRunning})
 	mark := api.TeamPruning{Source: pruneTestSource, At: listEpoch}
 
-	deleted, skipped := ctrl.Prune([]string{"test-prune/gone"}, mark, api.PruneRecheck(pruneTestSource))
+	deleted, _, skipped := ctrl.Prune([]string{"test-prune/gone"}, mark, api.PruneRecheck(pruneTestSource))
 	if len(deleted) != 0 || len(skipped) != 1 || !strings.Contains(skipped[0].Reason, "run session") {
 		t.Fatalf("deleted %q, skipped %+v; want ws/gone kept for its run session", deleted, skipped)
 	}
@@ -219,7 +219,7 @@ func TestPruneKeepsATeamClaimedAfterTheRecheck(t *testing.T) {
 	}
 	mark := api.TeamPruning{Source: pruneTestSource, At: listEpoch}
 
-	deleted, skipped := ctrl.Prune([]string{"test-prune/gone"}, mark, api.PruneRecheck(pruneTestSource))
+	deleted, _, skipped := ctrl.Prune([]string{"test-prune/gone"}, mark, api.PruneRecheck(pruneTestSource))
 	if len(deleted) != 0 || len(skipped) != 1 {
 		t.Fatalf("deleted %q, skipped %+v; want the claimed team kept", deleted, skipped)
 	}
@@ -250,7 +250,7 @@ func TestPruneLeavesASessionAddedAfterTheRecordDelete(t *testing.T) {
 	}
 	mark := api.TeamPruning{Source: pruneTestSource, At: listEpoch}
 
-	deleted, _ := ctrl.Prune([]string{"test-prune/gone"}, mark, api.PruneRecheck(pruneTestSource))
+	deleted, _, _ := ctrl.Prune([]string{"test-prune/gone"}, mark, api.PruneRecheck(pruneTestSource))
 	if strings.Join(deleted, ",") != "test-prune/gone" {
 		t.Fatalf("deleted %q, want test-prune/gone", deleted)
 	}
@@ -259,5 +259,69 @@ func TestPruneLeavesASessionAddedAfterTheRecordDelete(t *testing.T) {
 	}
 	if _, err := store.GetSession("test-prune/gone-crew-g1-0"); err == nil {
 		t.Error("the team's own finished session was not deleted")
+	}
+}
+
+// A pruned team's crash-loop state is forgotten with it, on the delete in the
+// request and on the reconcile that finishes a drained team, so a re-apply of
+// the same team starts fresh (step 4 acceptance, from the review of #1126).
+func TestPruneForgetsTheTeamsRoleHealth(t *testing.T) {
+	store, ctrl, _ := pruneFixture(t)
+	mark := api.TeamPruning{Source: pruneTestSource, At: listEpoch}
+	ctrl.roleHealth["test-prune/gone/crew"] = &RoleHealth{RestartCount: 3}
+	ctrl.roleHealth["test-prune/also/crew"] = &RoleHealth{RestartCount: 3}
+
+	if deleted, _, _ := ctrl.Prune([]string{"test-prune/gone"}, mark, api.PruneRecheck(pruneTestSource)); len(deleted) != 1 {
+		t.Fatalf("deleted %q, want test-prune/gone", deleted)
+	}
+	if ctrl.roleHealth["test-prune/gone/crew"] != nil {
+		t.Error("the prune in the request kept the team's role health")
+	}
+
+	if err := store.UpdateTeam("test-prune/also", func(live *api.Team) error {
+		live.Pruning = &mark
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var told []string
+	ctrl.OnPruned = func(keys []string) { told = append(told, keys...) }
+	ctrl.ReconcileOnce()
+	if _, err := store.GetTeam("test-prune/also"); err == nil {
+		t.Fatal("the reconcile did not delete the drained pruning team")
+	}
+	if ctrl.roleHealth["test-prune/also/crew"] != nil {
+		t.Error("the reconcile's prune kept the team's role health")
+	}
+	if strings.Join(told, ",") != "test-prune/also" {
+		t.Errorf("OnPruned told %q, want test-prune/also", told)
+	}
+}
+
+// A marked team that still has a live seat is left to drain: it is not deleted
+// in the request, and the reconcile retires its seat and deletes the team only
+// once the seat is gone (step 4 ruling, Q6).
+func TestPruneDrainsATeamWithALiveSeat(t *testing.T) {
+	store, ctrl, _ := pruneFixture(t)
+	ctrl.Notify = func(api.Session, string, string) error { return nil }
+	clock := newTestClock(listEpoch)
+	ctrl.now = clock.Now
+	seedSession(t, store, api.Session{Name: "gone-crew-g1-1", Workspace: "test-prune", Team: "gone", Role: "crew", Generation: 1, State: api.SessionRunning, CreatedAt: listEpoch.Add(-time.Hour)})
+	mark := api.TeamPruning{Source: pruneTestSource, At: listEpoch}
+
+	deleted, draining, _ := ctrl.Prune([]string{"test-prune/gone"}, mark, api.PruneRecheck(pruneTestSource))
+	if len(deleted) != 0 || len(draining) != 1 || draining[0].Team != "test-prune/gone" || draining[0].Seats != 1 {
+		t.Fatalf("deleted %q, draining %+v; want the team draining with one seat", deleted, draining)
+	}
+	ctrl.ReconcileOnce()
+	got, err := store.GetTeam("test-prune/gone")
+	if err != nil || got.Pruning == nil || len(got.Retiring) != 1 {
+		t.Fatalf("team %+v, %v; want it kept, marked, with its seat retiring", got.Retiring, err)
+	}
+	clock.Advance(api.DefaultShiftHandoffWindow)
+	ctrl.ReconcileOnce()
+	ctrl.ReconcileOnce()
+	if _, err := store.GetTeam("test-prune/gone"); err == nil {
+		t.Error("the team outlived its last seat")
 	}
 }

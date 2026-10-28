@@ -179,9 +179,11 @@ hold:
 3. it is not mid-shift (`Shift.Phase` is none). A shift's drain and abort
    (`controller.go:2577`, `:2337`) call `Delete` directly, so a prune waits
    for the shift to end;
-4. until step 4 lands, it has no live seat: no session in an alive state
-   (pending, running or crashloop-backoff, `SessionState.CountsAsAlive`),
-   section 5.
+4. until the headless arm lands, it has no running headless seat: no
+   session of a headless role in an alive state (pending, running or
+   crashloop-backoff, `SessionState.CountsAsAlive`), section 5. A live
+   interactive seat does not hold the team back; step 4 retires it
+   (section 6).
 
 A team that meets rule 1 and fails 2, 3 or 4 is listed as kept or deferred,
 with the rule it failed, and is not deleted.
@@ -236,9 +238,8 @@ named by this file and held (re-apply converges them):
   aae/builders       will spawn 2
 ```
 
-The sample shows the output once step 4 lands; until then a team with an
-alive seat, such as aae/old-research, is listed under deferred as 'live seat,
-needs step 4'.
+A team with a running headless seat is listed under deferred as 'live
+headless seat, awaits the headless arm' until that arm lands (section 5).
 
 Each "would delete" line names its seats and their state, the states in
 alphabetical order. Counting only the interactive roles that hold an alive
@@ -280,27 +281,37 @@ marvel work <manifest> --prune <digest>
    never interleave on one team. A pruning team starts no
    shift: the automatic triggers skip it and `marvel shift` refuses it, so
    no drain can bypass the ask once the prune has begun. The team's
-   sessions then leave through the scale-down path, which after step 4
-   asks each one for its handoff. Once a pruning team holds no live session, its
+   sessions then leave through the scale-down path, which asks each one
+   for its handoff (section 6). Once a pruning team holds no live session, its
    record is deleted
    exactly as `marvel delete team` does (`Controller.DeleteTeam`,
    `internal/team/prune.go`): health
    state cleared and the broker user revoked. Endpoints and policies stay,
-   as they do for `delete team` today. Step 3 deletes each marked team at
-   once, in the same request, because no team it marks has a seat alive.
+   as they do for `delete team` today. A marked team with no live seat is
+   deleted at once, in the same request; one with live interactive seats is
+   listed in `draining`, and the reconcile deletes it once its last seat has
+   been retired.
    The last re-check and the record delete are one store-lock hold, so an
    apply that claims the team first keeps it; the team's finished sessions
    are deleted after the record.
 4. The response lists the teams deleted in `pruned`, always an array, and
-   the teams kept or deferred with their reasons. The client errors if the
-   response has no `pruned` array, or a null one, which is how an older
-   daemon that dropped `prune` is caught: it applied, and it pruned nothing.
+   the teams kept or deferred with their reasons. From step 4 it also lists,
+   in `draining`, always an array, the teams marked and left to drain, each
+   with its seat count; the reconcile deletes each once its last seat has
+   gone. The client errors if the response has no `pruned` array, or a null
+   one, which is how an older daemon that dropped `prune` is caught: it
+   applied, and it pruned nothing. A response with no `draining` key reads as
+   none.
 
-**Scope until step 4 lands:** step 3 prunes only a team with no running
-seat, interactive or headless. A team with one is listed as "deferred: live
-seat, needs step 4" and kept. So at no point in the chain is a running seat
-killed without either a handoff ask or, for a headless run that cannot take
-one, a bounded wait for it to finish (section 6.2).
+**Scope until the headless arm lands:** step 4 retires interactive seats
+(section 6), so a team whose live seats are all interactive is pruned once
+each has been asked and has left. A team with a running headless seat is
+listed as "deferred: live headless seat, awaits the headless arm" and kept,
+until the operator rules on the headless case in section 6.2. So no prune
+kills a running seat without either a handoff ask or, for a headless run that
+cannot take one, a bounded wait for it to finish. Until then, scale-down and a
+role drop still delete a running headless seat at once, as they did before
+this design.
 
 A team being pruned that a later apply names again stops pruning: the apply
 clears `Pruning`, reclaims it, and the reconciler converges it back. Seats
@@ -357,8 +368,10 @@ rises again, a fresh seat spawns; the retiring one is not recalled.
   at the window is recorded as `cancelled` in the run history, as a kill of
   a live run already is.
 - **Not waited for, deleted at once:** a seat not in the running state (a
-  finished headless run included), and a team-wide delete by an operator
-  (out of scope, section 2).
+  pending seat, and a finished headless run, included), and a team-wide
+  delete by an operator (out of scope, section 2).
+- **A seat of a dropped role** gets the plain grace, because its role's
+  handoff declaration went with the apply that dropped it.
 
 A prune runs all its seats' windows at once, so a prune ends within the
 longest window plus a tick.
@@ -367,8 +380,12 @@ longest window plus a tick.
 
 At the end of the window the pane is killed. That is the ruling as given:
 "wait, bounded, before killing its pane". Before the kill, marvel saves the
-pane's last 500 lines to `<marvel home>/retired/<session>.txt`, mode 0600,
-so what the seat had on screen survives.
+pane's last 500 lines, scrollback included, to
+`<marvel home>/retired/<workspace>/<name>-<stamp>.txt`, where the stamp is
+basic ISO 8601 UTC with no colons (`20261027T024915Z`). The directory is mode
+0700 and the file 0600, created new and never overwritten, so what the seat
+had on screen survives. A screen that cannot be saved is named in the event
+and does not hold the kill back.
 
 Every retirement emits `session.retired` with one outcome:
 `handoff-written`, `handoff-missing` (with the reason: window passed,
@@ -404,6 +421,7 @@ A re-apply that wants the seat back gets a new one.
 | A notice into a pane parked at a dialog (marvel#1063) | The window bounds it | The seat never sees the ask; the screen is saved |
 | Scale-down and role drops change timing | Seats leave up to one window later than today | Spend during the window; it is bounded and reported |
 | A pruning team re-applied mid-prune | `Pruning` cleared, the team converges back | Seats already asked leave anyway (6.4) |
+| Retired screens accumulate | Each is small and named by workspace, seat and time | They collect under `<marvel home>/retired`, and marvel deletes none |
 
 ## 8. Build plan (flat tickets after this merges; a rule-(d) chain)
 

@@ -131,8 +131,10 @@ func PlanPrune(m *Manifest, source string, store PruneReader) PrunePlan {
 
 // pruneVerdict applies rules 2 to 4 of the prune set to a team this source may
 // prune: it is kept while it holds marvel run sessions (runs > 0), deferred
-// mid-shift or while it has a live seat (deferred is the reason), and
-// otherwise deleted. The plan and the prune itself both decide through it.
+// mid-shift or while it has a live headless seat (deferred is the reason), and
+// otherwise deleted. A live interactive seat no longer defers it: step 4 asks
+// each such seat for its handoff as the team drains. The plan and the prune
+// itself both decide through it.
 func pruneVerdict(t *Team, sessions []Session) (runs int, deferred string) {
 	alive, aliveHeadless := false, false
 	for _, s := range sessions {
@@ -156,11 +158,14 @@ func pruneVerdict(t *Team, sessions []Session) (runs int, deferred string) {
 	case aliveHeadless:
 		// A running headless seat reads no notice. How it leaves (section 6.2:
 		// a bounded wait for its run, then the kill, with no ask) awaits the
-		// operator's answer, and step 4 builds it. Until then it is deferred
-		// like any live seat, and this branch is the one place that changes.
-		return 0, "live seat, needs step 4"
+		// operator's answer, and the headless arm builds it. Until then its team
+		// is deferred, unlike a team whose live seats are all interactive. The
+		// answer changes this branch and retireHeadless (internal/team/retire.go).
+		return 0, "live headless seat, awaits the headless arm"
 	case alive:
-		return 0, "live seat, needs step 4"
+		// Listed to delete: the prune marks the team and retires each live
+		// seat with a handoff ask, then deletes the team once it is empty.
+		return 0, ""
 	}
 	return 0, ""
 }

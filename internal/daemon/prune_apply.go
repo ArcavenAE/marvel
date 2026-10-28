@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -20,9 +21,20 @@ type pruneResult struct {
 	// run when it did not match Plan.Digest.
 	Given   string
 	Refused string
+	// Draining lists the teams marked whose seats are still leaving. It is
+	// always an array, [] when there are none.
+	Draining []api.PruneDraining
 	// Skipped lists teams of the set that a re-check kept or deferred.
 	Skipped []api.PruneSkipped
 }
+
+// retiredHistory and retiredScreenEnd bound the capture of a retiring pane:
+// its history back 500 lines through the end of the visible screen. tmux
+// clamps an end past the last line, and the controller keeps the last 500.
+const (
+	retiredHistory   = 500
+	retiredScreenEnd = 10000
+)
 
 func (r pruneResult) addTo(out map[string]any) {
 	pruned := r.Pruned
@@ -30,6 +42,11 @@ func (r pruneResult) addTo(out map[string]any) {
 		pruned = []string{}
 	}
 	out["pruned"] = pruned
+	draining := r.Draining
+	if draining == nil {
+		draining = []api.PruneDraining{}
+	}
+	out["draining"] = draining
 	out["prune_plan"] = r.Plan
 	out["prune_digest_given"] = r.Given
 	if r.Refused != "" {
@@ -60,9 +77,18 @@ func (d *Daemon) prune(m *api.Manifest, source, given string) pruneResult {
 		keys = append(keys, del.Team)
 	}
 	mark := api.TeamPruning{Source: source, At: time.Now().UTC()}
-	r.Pruned, r.Skipped = d.teamCtrl.Prune(keys, mark, api.PruneRecheck(source))
+	r.Pruned, r.Draining, r.Skipped = d.teamCtrl.Prune(keys, mark, api.PruneRecheck(source))
 	if len(r.Pruned) > 0 {
 		d.regenerateBus("prune")
 	}
 	return r
+}
+
+// captureRetiredScreen reads a retiring seat's pane history for the screen
+// saved before its kill. It only reads the pane.
+func (d *Daemon) captureRetiredScreen(sess api.Session) (string, error) {
+	if sess.PaneID == "" {
+		return "", fmt.Errorf("session %s has no pane", sess.Key())
+	}
+	return d.driver.CapturePaneRange(sess.PaneID, -retiredHistory, retiredScreenEnd)
 }

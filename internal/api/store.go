@@ -223,6 +223,9 @@ func cloneTeam(t *Team) Team {
 		pr := *t.Pruning
 		out.Pruning = &pr
 	}
+	if len(t.Retiring) > 0 {
+		out.Retiring = maps.Clone(t.Retiring)
+	}
 	return out
 }
 

@@ -143,6 +143,31 @@ type Controller struct {
 	// "sessions" just before its sessions are deleted. Tests use it to change
 	// the store in those windows; it is nil in the daemon.
 	pruneHook func(key, step string)
+
+	// CaptureScreen reads a session's pane history, and RetiredDir is where a
+	// retired seat's last screen is saved (<marvel home>/retired). The daemon
+	// sets both; with either unset a retirement saves no screen and says so.
+	CaptureScreen func(sess api.Session) (string, error)
+	RetiredDir    string
+	// OnPruned, when set, is told the teams a reconcile pass deleted as the
+	// end of a prune, after c.mu is released, so the daemon can revoke their
+	// broker users as marvel delete team does.
+	OnPruned func(teams []string)
+
+	// retireSeen marks the retirements this controller has looked at since it
+	// started, so a seat found dead on the first look is a pane that did not
+	// survive a restart. retireEnded records when a retiring seat was first
+	// seen no longer alive, so its outcome waits for a marker read begun at
+	// or after that moment. retireDirs holds each retirement's handoff
+	// directory open, as handoffDirs does for a shift request. roleDrained
+	// counts, per dropped role, the seats asked to leave, for role.removed.
+	// prunedThisTick collects the teams a pass deleted for OnPruned. All under
+	// c.mu.
+	retireSeen     map[string]bool
+	retireEnded    map[string]time.Time
+	retireDirs     map[string]heldDir
+	roleDrained    map[string]int
+	prunedThisTick []string
 	// jitter draws a firing's random delay up to its schedule's jitter;
 	// nil means a uniform draw. Tests set it to return zero.
 	jitter func(max time.Duration) time.Duration
@@ -516,8 +541,18 @@ func (c *Controller) ClearRoleHealthForRole(workspace, team, role string) bool {
 // ReconcileOnce runs one reconciliation pass for all teams.
 // Reaps dead sessions first so the reconciler sees accurate state.
 func (c *Controller) ReconcileOnce() {
+	pruned := c.reconcileOnceLocked()
+	if len(pruned) > 0 && c.OnPruned != nil {
+		c.OnPruned(pruned)
+	}
+}
+
+// reconcileOnceLocked is the pass itself, under c.mu. It returns the teams it
+// deleted as the end of a prune.
+func (c *Controller) reconcileOnceLocked() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.prunedThisTick = nil
 
 	// The reap path converges with the health path on the crash-loop
 	// bookkeeping: a clean exit that vacates the pane is just as much a
@@ -557,6 +592,7 @@ func (c *Controller) ReconcileOnce() {
 		c.reconcileTeam(&teams[i])
 	}
 	c.reconcileScheduleFreshness(teams)
+	return c.prunedThisTick
 }
 
 // dropStaleRefusals clears the standing placement refusal of a role whose team
@@ -749,6 +785,11 @@ func (c *Controller) noteReapedCrash(r session.ReapedSession, charged map[string
 	if err != nil {
 		return
 	}
+	// A retiring seat was leaving: its exit is no crash, so it charges
+	// nothing and freezes nothing. Its retirement records how it ended.
+	if isRetiring(&t, r.Key) {
+		return
+	}
 	var role *api.Role
 	for i := range t.Roles {
 		if t.Roles[i].Name == r.Role {
@@ -899,6 +940,12 @@ func (c *Controller) freezeRole(workspace, team, role string) {
 }
 
 func (c *Controller) reconcileTeam(t *api.Team) {
+	// Retirements move on first, a shift in progress included, so a seat being
+	// removed is killed on time whatever else the team is doing
+	// (docs/design/work-prune.md section 6).
+	c.resumeRetireDirs(t)
+	c.advanceRetirements(t, c.nowUTC())
+
 	// Drain sessions whose role no longer exists in the manifest before
 	// anything else. Manifest.Apply replaces live.Roles wholesale, so a
 	// role removed from a re-applied manifest leaves its sessions running:
@@ -929,6 +976,9 @@ func (c *Controller) reconcileTeam(t *api.Team) {
 	for i := range t.Roles {
 		c.reconcileRole(t, &t.Roles[i])
 	}
+	if t.Pruning != nil {
+		c.finishPrune(t)
+	}
 }
 
 // reconcileOrphanedSessions deletes every session whose role is absent
@@ -943,7 +993,8 @@ func (c *Controller) reconcileOrphanedSessions(t *api.Team) {
 	for i := range t.Roles {
 		known[t.Roles[i].Name] = struct{}{}
 	}
-	drained := make(map[string]int)
+	now := c.nowUTC()
+	dropped := map[string]bool{}
 	for _, sess := range c.store.ListSessionsByTeam(t.Workspace, t.Name) {
 		if _, ok := known[sess.Role]; ok {
 			continue
@@ -951,30 +1002,22 @@ func (c *Controller) reconcileOrphanedSessions(t *api.Team) {
 		// A session made by marvel run carries no generation. It belongs to
 		// the operator, not to the manifest, so a role the manifest does not
 		// declare is no reason to drain it.
-		if sess.Generation == 0 {
+		if sess.Generation == 0 || isRetiring(t, sess.Key()) {
 			continue
 		}
-		if err := c.sessMgr.Delete(sess.Key()); err != nil {
-			log.Printf("reconcile: delete orphaned session %s (role %s removed): %v", sess.Key(), sess.Role, err)
-			continue
+		// The role's handoff declaration went with the apply, so its seat is
+		// asked with the plain grace (the step 4 ruling, Q5).
+		if c.roleDrained == nil {
+			c.roleDrained = make(map[string]int)
 		}
-		drained[sess.Role]++
+		c.roleDrained[t.Workspace+"/"+t.Name+"/"+sess.Role]++
+		c.retireSession(t, nil, sess, now)
+		dropped[sess.Role] = true
 	}
-	for role, n := range drained {
-		roleKey := t.Workspace + "/" + t.Name + "/" + role
-		delete(c.roleHealth, roleKey)
-		c.forgetRoleHealth(roleKey)
-		delete(c.admissionHolds, roleKey)
-		delete(c.busHolds, roleKey)
-		log.Printf("reconcile: role %s removed from team %s, drained %d session(s)", role, t.Key(), n)
-		events.Emit(c.Events, events.Event{
-			Kind:      events.KindRoleRemoved,
-			Severity:  events.SeverityWarning,
-			Workspace: t.Workspace,
-			Team:      t.Name,
-			Role:      role,
-			Message:   fmt.Sprintf("role removed from manifest, drained %d session(s)", n),
-		})
+	// The role's health, holds and role.removed wait until its last seat has
+	// gone; a seat still retiring holds the role.
+	for role := range dropped {
+		c.finishRoleRemoval(t, role)
 	}
 }
 
@@ -1179,7 +1222,9 @@ type admissionIntent struct {
 // (shiftLaunch/shiftDrain), so non-shifting roles aren't disrupted when one
 // role shifts and the team generation advances. Caller holds c.mu.
 func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) RolePlan {
-	current := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)
+	// A retiring seat is not counted as actual, and is never chosen to shed
+	// twice (section 6.1).
+	current := withoutRetiring(t, c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name))
 	desired := t.DesiredReplicas(role)
 	// Replica accounting, not process liveness: a completed headless run
 	// holds its slot (ADR-010). Every other CountAlive caller in the tree
@@ -1438,10 +1483,9 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		}
 	}
 
+	now := c.nowUTC()
 	for _, sess := range plan.Delete {
-		if err := c.sessMgr.Delete(sess.Key()); err != nil {
-			log.Printf("reconcile: delete session %s: %v", sess.Key(), err)
-		}
+		c.retireSession(t, role, sess, now)
 	}
 }
 
@@ -1525,6 +1569,11 @@ func (c *Controller) evaluateHealth() {
 		teamKey := fmt.Sprintf("%s/%s", sess.Workspace, sess.Team)
 		t, ok := teamCache[teamKey]
 		if !ok {
+			continue
+		}
+		// A retiring seat is not restarted: its retirement records how it
+		// ended (the step 4 ruling, Q12).
+		if isRetiring(&t, sess.Key()) {
 			continue
 		}
 
@@ -2220,7 +2269,7 @@ func (c *Controller) autoShift(t *api.Team, role *api.Role, sess, msg string) bo
 // reading). A reading older than api.DefaultQuietWindow, the cluster's default
 // quiet window, does not count.
 func (c *Controller) firstSessionOverRemainder(t *api.Team, role *api.Role, headroom int) (sessionKey string, tokens, limit int, ok bool) {
-	live := aliveSessions(c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name))
+	live := withoutRetiring(t, aliveSessions(c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name)))
 	now := c.nowUTC()
 	for i := range live {
 		s := &live[i]
@@ -2378,7 +2427,7 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 	// abortStuckShift), so the live filter belongs at this call site: a
 	// Failed or Crashed successor must not satisfy the launch and suppress
 	// the live replacement that should take its place. See aae-orc-6kgq.
-	live := aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation))
+	live := withoutRetiring(t, aliveSessions(c.store.ListSessionsByTeamRoleGeneration(t.Workspace, t.Name, role.Name, t.Generation)))
 	desired := t.DesiredReplicas(role)
 	// A scheduled role spawns only through its firing, in planRole, so a
 	// shift launches nothing for it and passes straight to draining.
@@ -2547,8 +2596,9 @@ func (c *Controller) shiftDrain(t *api.Team, role *api.Role) {
 	// that role, so after one --role shift the two disagree and a lookup at
 	// OldGeneration finds nothing while the role's real old seat keeps
 	// running (ArcavenAE/marvel#345).
-	oldGen := sessionsOutsideGeneration(
-		c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name), t.Generation)
+	// A retiring seat leaves by its retirement, not by the drain.
+	oldGen := withoutRetiring(t, sessionsOutsideGeneration(
+		c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name), t.Generation))
 
 	if len(oldGen) == 0 {
 		// Old generation empty — advance to the next role. Drained tells a

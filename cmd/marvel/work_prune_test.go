@@ -161,12 +161,31 @@ func TestWorkPruneReportsAMismatch(t *testing.T) {
 
 // An empty set, or teams a re-check skipped, is still exit 0 (ruling Q7).
 func TestWorkPruneExitsZeroForAnEmptyOrSkippedSet(t *testing.T) {
-	applyFakeDaemon(t, appliedPrefix+`,"pruned":[],"prune_plan":{},"prune_digest_given":"0123abcd","prune_skipped":[{"Team":"ws/two","Reason":"deferred: live seat, needs step 4"}]}`)
+	applyFakeDaemon(t, appliedPrefix+`,"pruned":[],"prune_plan":{},"prune_digest_given":"0123abcd","prune_skipped":[{"Team":"ws/two","Reason":"deferred: live headless seat, awaits the headless arm"}]}`)
 	out, err := runWork(writeManifest(t), "--prune", "0123abcd")
 	if err != nil {
 		t.Fatalf("work --prune = %v, want exit 0", err)
 	}
 	if !strings.Contains(out, "pruned: nothing") || !strings.Contains(out, "ws/two") {
 		t.Errorf("output %q, want nothing pruned and the skipped team", out)
+	}
+}
+
+// A step 4 daemon lists teams left to drain; the client prints them beside the
+// pruned teams and exits 0. A step 3 daemon sends no draining key, which reads
+// as none (step 4 ruling, Q6).
+func TestWorkPrunePrintsDrainingTeams(t *testing.T) {
+	applyFakeDaemon(t, appliedPrefix+`,"pruned":["ws/gone"],"draining":[{"Team":"ws/two","Seats":2}],"prune_plan":{},"prune_digest_given":"0123abcd"}`)
+	out, err := runWork(writeManifest(t), "--prune", "0123abcd")
+	if err != nil {
+		t.Fatalf("work --prune = %v, want exit 0", err)
+	}
+	if !strings.Contains(out, "pruned ws/gone") || !strings.Contains(out, "draining ws/two   2 seats") {
+		t.Errorf("output %q, want the pruned team and the draining one", out)
+	}
+	applyFakeDaemon(t, appliedPrefix+`,"pruned":["ws/gone"],"prune_plan":{},"prune_digest_given":"0123abcd"}`)
+	out, err = runWork(writeManifest(t), "--prune", "0123abcd")
+	if err != nil || strings.Contains(out, "draining") {
+		t.Errorf("against a step 3 daemon: %q, %v; want no draining line and exit 0", out, err)
 	}
 }

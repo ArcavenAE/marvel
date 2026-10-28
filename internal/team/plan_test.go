@@ -401,7 +401,7 @@ func TestPlanThenApplyScaleDownDeletesExactly(t *testing.T) {
 	ctrl.applyRolePlan(&tm, &tm.Roles[0], plan)
 	ctrl.mu.Unlock()
 
-	survivors := store.ListSessionsByTeamRole(ws, team, role)
+	survivors := keptSessions(t, store, ws+"/"+team, store.ListSessionsByTeamRole(ws, team, role))
 	if len(survivors) != 1 {
 		t.Fatalf("expected 1 survivor, got %d", len(survivors))
 	}

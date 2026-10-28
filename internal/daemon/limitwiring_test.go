@@ -338,6 +338,7 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 	wantUse := map[string]bool{
 		"*Daemon.handleCapture d.driver.CapturePane":                 true,
 		"*Daemon.handleCapture d.driver.CapturePaneRange":            true,
+		"*Daemon.captureRetiredScreen d.driver.CapturePaneRange":     true, // a retiring seat's last screen, read only
 		"*Daemon.handleCapture d.driver.CapturePaneEscapes":          true,
 		"*Daemon.handleCapture d.driver.CapturePaneRangeEscapes":     true,
 		"*Daemon.readComposerAfterNudge d.driver.CapturePane":        true,

@@ -71,7 +71,7 @@ func (c *Controller) firstSessionOverAge(t *api.Team, role *api.Role, cond api.S
 		maxDefer = api.DefaultShiftMaxDefer
 	}
 	for _, s := range c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name) {
-		if s.State != api.SessionRunning || s.CreatedAt.IsZero() {
+		if s.State != api.SessionRunning || s.CreatedAt.IsZero() || isRetiring(t, s.Key()) {
 			continue
 		}
 		age := now.Sub(s.CreatedAt)
@@ -107,31 +107,8 @@ func lastWorked(s api.Session) time.Time {
 // requestHandoff asks sess for its handoff and records the pending request on
 // the team, durably, so a daemon restart inside the window resumes it.
 func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftCondition, sess api.Session, ask handoffAsk, now time.Time) {
-	text := ask.notice
-	dirError := ""
-	var dirDev, dirIno uint64
-	var heldDir *os.File
-	if role.Shift.Handoff != "" {
-		if path, err := handoffPath(role.Shift.Handoff, sess); err == nil {
-			text += fmt.Sprintf(" to %s, ending with the line %q; you have %s", path, role.Shift.HandoffMarker, role.Shift.HandoffWindowOrDefault())
-			// {session} carries the generation, so each successor's handoff
-			// directory is new and nothing else would create it (marvel#608).
-			// MkdirAll leaves an existing directory's mode alone. A failure
-			// does not hold the notice back: it is named in the event and in
-			// the missing reason.
-			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-				dirError = fmt.Sprintf("create handoff directory: %v", err)
-			} else if dev, ino, err := dirIdentity(filepath.Dir(path)); err == nil {
-				// Recorded for handoff.put, which writes only into this same
-				// directory. Not a refusal here: a seat that writes its own
-				// file is unaffected by what the path resolves through.
-				dirDev, dirIno = dev, ino
-			}
-			if f, err := os.Open(filepath.Dir(path)); err == nil {
-				heldDir = f
-			}
-		}
-	}
+	prep := prepareHandoffNotice(ask.notice, role.Shift.Handoff, role.Shift.HandoffMarker, role.Shift.HandoffWindowOrDefault(), sess)
+	text, dirError, dirDev, dirIno, heldDir := prep.text, prep.dirError, prep.dirDev, prep.dirIno, prep.heldDir
 	delivery, undelivered := "delivered", ""
 	if c.Notify == nil {
 		undelivered = "no notifier"
@@ -177,6 +154,49 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 		Message: fmt.Sprintf("cause=%s: %s; notice %s; handoff window %s",
 			cond.On, ask.detail, delivery, role.Shift.HandoffWindowOrDefault()) + dirNote,
 	})
+}
+
+// handoffNoticePrep is a handoff notice ready to send: its text, the file it
+// names, and the directory marvel made for that file, held open.
+type handoffNoticePrep struct {
+	text, path, dirError string
+	dirDev, dirIno       uint64
+	heldDir              *os.File
+}
+
+// prepareHandoffNotice builds the notice that opens with lead and, when the
+// role declares a handoff template that resolves for sess, names the file, its
+// marker and the window, and makes the file's directory. Every handoff ask, a
+// shift's or a retirement's, is built here, so everything from "write your
+// handoff now" on reads the same for each.
+func prepareHandoffNotice(lead, template, marker string, window time.Duration, sess api.Session) handoffNoticePrep {
+	prep := handoffNoticePrep{text: lead}
+	if template == "" {
+		return prep
+	}
+	path, err := handoffPath(template, sess)
+	if err != nil {
+		return prep
+	}
+	prep.path = path
+	prep.text += fmt.Sprintf(" to %s, ending with the line %q; you have %s", path, marker, window)
+	// {session} carries the generation, so each successor's handoff
+	// directory is new and nothing else would create it (marvel#608).
+	// MkdirAll leaves an existing directory's mode alone. A failure does not
+	// hold the notice back: it is named in the event and in the missing
+	// reason.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		prep.dirError = fmt.Sprintf("create handoff directory: %v", err)
+	} else if dev, ino, err := dirIdentity(filepath.Dir(path)); err == nil {
+		// Recorded for handoff.put, which writes only into this same
+		// directory. Not a refusal here: a seat that writes its own file is
+		// unaffected by what the path resolves through.
+		prep.dirDev, prep.dirIno = dev, ino
+	}
+	if f, err := os.Open(filepath.Dir(path)); err == nil {
+		prep.heldDir = f
+	}
+	return prep
 }
 
 // advanceShiftRequest moves a pending request on: drop it when its session is

@@ -42,19 +42,22 @@ func (c *Controller) deleteSessionsLocked(keys []string) {
 // Prune marks, re-checks and deletes each team of a prune set in one hold of
 // c.mu, so no reconcile pass runs between the mark and the delete
 // (docs/design/work-prune.md section 5). check is the prune's rule set for one
-// team: "" when it may be deleted, else why it is kept or deferred. It runs at
-// the mark, in the store's lock, and again in the store hold that deletes the
-// team's record, so an apply that claims the team before that hold keeps it.
-// The team's sessions are deleted after the record, exactly those the last
-// check saw. A team that fails either check is not deleted, its Pruning is
-// cleared, and it is returned in skipped with the reason. Deleted teams are
-// returned in key order.
-func (c *Controller) Prune(keys []string, p api.TeamPruning, check func(*api.Team, []api.Session) string) (deleted []string, skipped []api.PruneSkipped) {
+// team: "" when it may be pruned, else why it is kept or deferred. It runs at
+// the mark, in the store's lock, and again in the store hold that would delete
+// the team's record, with the drain rule after it. A team with no seat left
+// is deleted there, its sessions after the record, exactly those the last
+// check saw. A team whose seats are still leaving stays marked and is
+// returned in draining: the reconcile retires its seats, and finishPrune
+// deletes it once it is empty. A team that fails a check is not deleted, its
+// Pruning is cleared, and it is returned in skipped with the reason. Each list
+// is in key order.
+func (c *Controller) Prune(keys []string, p api.TeamPruning, check func(*api.Team, []api.Session) string) (deleted []string, draining []api.PruneDraining, skipped []api.PruneSkipped) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	deleted = []string{}
+	deleted, draining = []string{}, []api.PruneDraining{}
 	keys = append([]string(nil), keys...)
 	sort.Strings(keys)
+	deleteCheck := api.PruneDeleteCheck(check)
 	for _, key := range keys {
 		reason, err := c.store.MarkPruning(key, p, check)
 		if err != nil {
@@ -68,9 +71,14 @@ func (c *Controller) Prune(keys []string, p api.TeamPruning, check func(*api.Tea
 		if c.pruneHook != nil {
 			c.pruneHook(key, "delete")
 		}
-		reason, sessions, err := c.store.DeleteTeamIf(key, check)
+		reason, sessions, err := c.store.DeleteTeamIf(key, deleteCheck)
 		if err != nil {
 			reason = err.Error()
+		}
+		if reason == api.ReasonDraining {
+			ws, name, _ := strings.Cut(key, "/")
+			draining = append(draining, api.PruneDraining{Team: key, Seats: api.CountAlive(c.store.ListSessionsByTeam(ws, name))})
+			continue
 		}
 		if reason != "" {
 			c.unmarkPruning(key)
@@ -80,19 +88,48 @@ func (c *Controller) Prune(keys []string, p api.TeamPruning, check func(*api.Tea
 		if c.pruneHook != nil {
 			c.pruneHook(key, "sessions")
 		}
-		c.deleteSessionsLocked(sessions)
-		ws, name, _ := strings.Cut(key, "/")
-		c.clearRoleHealthForTeamLocked(ws, name)
+		c.finishPrunedTeamLocked(key, sessions, p.Source)
 		deleted = append(deleted, key)
-		events.Emit(c.Events, events.Event{
-			Kind:      events.KindTeamPruned,
-			Severity:  events.SeverityInfo,
-			Workspace: ws,
-			Team:      name,
-			Message:   "team pruned by " + p.Source,
-		})
 	}
-	return deleted, skipped
+	return deleted, draining, skipped
+}
+
+// finishPrune deletes a marked team whose seats have all left, re-running the
+// prune's rules 1 to 3 in the hold that deletes its record. A team that now
+// fails one is kept and loses its mark. Caller holds c.mu.
+func (c *Controller) finishPrune(t *api.Team) {
+	source := t.Pruning.Source
+	reason, sessions, err := c.store.DeleteTeamIf(t.Key(), api.PruneDeleteCheck(api.PruneRecheck(source)))
+	switch {
+	case err != nil:
+		log.Printf("prune: %s: %v", t.Key(), err)
+		return
+	case reason == api.ReasonDraining:
+		return
+	case reason != "":
+		log.Printf("prune: %s not deleted: %s", t.Key(), reason)
+		c.unmarkPruning(t.Key())
+		return
+	}
+	c.finishPrunedTeamLocked(t.Key(), sessions, source)
+	c.prunedThisTick = append(c.prunedThisTick, t.Key())
+}
+
+// finishPrunedTeamLocked is what follows a pruned team's record delete: its
+// finished sessions go, exactly those the last check saw, its roles' health is
+// forgotten so a re-apply starts fresh, and team.pruned records it. Caller
+// holds c.mu.
+func (c *Controller) finishPrunedTeamLocked(key string, sessions []string, source string) {
+	c.deleteSessionsLocked(sessions)
+	ws, name, _ := strings.Cut(key, "/")
+	c.clearRoleHealthForTeamLocked(ws, name)
+	events.Emit(c.Events, events.Event{
+		Kind:      events.KindTeamPruned,
+		Severity:  events.SeverityInfo,
+		Workspace: ws,
+		Team:      name,
+		Message:   "team pruned by " + source,
+	})
 }
 
 // unmarkPruning clears a team's Pruning, so a team the prune did not delete
