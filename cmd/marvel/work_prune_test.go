@@ -107,6 +107,28 @@ func TestWorkPruneTakesNoValue(t *testing.T) {
 	}
 }
 
+// Without --prune, work sends neither prune nor prune_digest, so a plain
+// apply never prunes.
+func TestWorkWithoutPruneSendsNoPrune(t *testing.T) {
+	asked := applyFakeDaemon(t, appliedPrefix+`}`)
+	if _, err := runWork(writeManifest(t)); err != nil {
+		t.Fatalf("work = %v", err)
+	}
+	got := asked()
+	if len(got) != 1 || got[0].Method != "apply" {
+		t.Fatalf("requests = %+v, want one apply", got)
+	}
+	var p map[string]any
+	if err := json.Unmarshal(got[0].Params, &p); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"prune", "prune_digest"} {
+		if _, ok := p[k]; ok {
+			t.Errorf("params carry %s: %v", k, p)
+		}
+	}
+}
+
 // An older daemon drops prune and answers with no pruned key, or a pruned that
 // is null; either way the client says nothing was pruned and exits 1
 // (section 5 item 4, ruling Q12).
