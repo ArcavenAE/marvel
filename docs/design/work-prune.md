@@ -218,7 +218,6 @@ pre-flight checks not evaluated (aae-orc-qawkf)
 would delete (claimed only by this file, which no longer names them):
   aae/old-research   3 seats  1 failed, 2 running   handoff: declared, window 5m
   aae/ops-trial      0 seats
-  aae/nightly-sync   1 seat  1 running   headless: waits up to 5m
 
 kept, claimed by another file too:
   aae/shared-ops     also host-a:/srv/manifests/ops.toml (applied 2026-10-27T18:02Z)
@@ -232,6 +231,7 @@ kept, holds marvel run sessions:
 
 deferred:
   aae/night-batch    shift in progress; re-run the plan when it ends
+  aae/nightly-sync   live headless seat, left alone by operator ruling 2026-10-28
 
 named by this file and held (re-apply converges them):
   aae/builders       will spawn 2
@@ -245,9 +245,7 @@ alphabetical order. Counting only the interactive roles that hold an alive
 seat, it says `handoff: declared, window W`
 when every one declares `shift.handoff` (W is the longest `handoff_window`,
 default 5m), `handoff: none` when none does, and `handoff: some roles`
-otherwise. A team with a headless role holding an alive seat adds `headless: waits
-up to W`, the role's `handoff_window` (section 6.2). The notes are text
-output only.
+otherwise. The notes are text output only.
 
 The "held" group reports the posture behaviour section 2 records; it is
 printed, not changed.

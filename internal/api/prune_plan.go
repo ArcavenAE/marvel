@@ -28,10 +28,9 @@ type PrunePlan struct {
 
 // PruneDelete is a team the prune would delete, with its seats.
 type PruneDelete struct {
-	Team     string
-	Seats    []PruneSeat
-	Handoff  string
-	Headless string
+	Team    string
+	Seats   []PruneSeat
+	Handoff string
 }
 
 // PruneSeat is one session of a team the prune would delete.
@@ -184,10 +183,10 @@ func willSpawn(mt *ManifestTeam, sessions []Session) int {
 	return n
 }
 
-// pruneDelete lists a team's seats with the note on how its alive seats would
-// leave: an interactive role is asked for its handoff when it declares one, and
-// a headless role's run is waited for (section 6.2). Until step 4, a team with
-// an alive seat is deferred, so a listed team carries no note.
+// pruneDelete lists a team's seats with the note on how its alive interactive
+// seats would leave: each is asked for its handoff when its role declares one.
+// A team with a live headless seat is deferred (pruneVerdict) and never listed
+// here, so a headless role adds no note.
 func pruneDelete(t *Team, sessions []Session) PruneDelete {
 	d := PruneDelete{Team: t.Key()}
 	roles := map[string]*Role{}
@@ -204,8 +203,7 @@ func pruneDelete(t *Team, sessions []Session) PruneDelete {
 		}
 	}
 	var interactive, declared int
-	var window, headless time.Duration
-	hasHeadless := false
+	var window time.Duration
 	// In name order, so the notes do not depend on map iteration.
 	names := make([]string, 0, len(seated))
 	for name := range seated {
@@ -215,8 +213,6 @@ func pruneDelete(t *Team, sessions []Session) PruneDelete {
 	for _, name := range names {
 		r := roles[name]
 		if r != nil && r.Runtime.Mode == RuntimeModeHeadless {
-			hasHeadless = true
-			headless = max(headless, r.Shift.HandoffWindowOrDefault())
 			continue
 		}
 		interactive++
@@ -233,9 +229,6 @@ func pruneDelete(t *Team, sessions []Session) PruneDelete {
 		d.Handoff = "handoff: none"
 	default:
 		d.Handoff = "handoff: some roles"
-	}
-	if hasHeadless {
-		d.Headless = "headless: waits up to " + shortDuration(headless)
 	}
 	return d
 }
