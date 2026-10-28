@@ -160,7 +160,7 @@ func pruneVerdict(t *Team, sessions []Session) (runs int, deferred string) {
 		// a bounded wait for its run, then the kill, with no ask) awaits the
 		// operator's answer, and step 4 builds it. Until then it is deferred
 		// like any live seat, and this branch is the one place that changes.
-		return 0, "live seat, needs step 4"
+		return 0, "live headless seat, awaits the headless arm"
 	case alive:
 		// Listed to delete: the prune marks the team and retires each live
 		// seat with a handoff ask, then deletes the team once it is empty.

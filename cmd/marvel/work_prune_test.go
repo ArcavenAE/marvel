@@ -161,7 +161,7 @@ func TestWorkPruneReportsAMismatch(t *testing.T) {
 
 // An empty set, or teams a re-check skipped, is still exit 0 (ruling Q7).
 func TestWorkPruneExitsZeroForAnEmptyOrSkippedSet(t *testing.T) {
-	applyFakeDaemon(t, appliedPrefix+`,"pruned":[],"prune_plan":{},"prune_digest_given":"0123abcd","prune_skipped":[{"Team":"ws/two","Reason":"deferred: live seat, needs step 4"}]}`)
+	applyFakeDaemon(t, appliedPrefix+`,"pruned":[],"prune_plan":{},"prune_digest_given":"0123abcd","prune_skipped":[{"Team":"ws/two","Reason":"deferred: live headless seat, awaits the headless arm"}]}`)
 	out, err := runWork(writeManifest(t), "--prune", "0123abcd")
 	if err != nil {
 		t.Fatalf("work --prune = %v, want exit 0", err)

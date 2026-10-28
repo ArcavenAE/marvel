@@ -129,7 +129,7 @@ func TestPruneRecheck(t *testing.T) {
 		{"a run session", Team{Claims: released()}, []Session{{Role: "worker", Generation: 0, State: SessionRunning}}, "run session"},
 		{"mid-shift", Team{Claims: released(), Shift: ShiftState{Phase: ShiftDraining}}, nil, "shift in progress"},
 		{"a live interactive seat", Team{Claims: released()}, []Session{{Role: "worker", Generation: 1, State: SessionRunning}}, ""},
-		{"a live headless seat", Team{Claims: released(), Roles: []Role{{Name: "batch", Runtime: headless}}}, []Session{{Role: "batch", Generation: 1, State: SessionRunning}}, "live seat, needs step 4"},
+		{"a live headless seat", Team{Claims: released(), Roles: []Role{{Name: "batch", Runtime: headless}}}, []Session{{Role: "batch", Generation: 1, State: SessionRunning}}, "live headless seat, awaits the headless arm"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tm := tc.team

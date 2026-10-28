@@ -158,7 +158,7 @@ func TestPlanPruneSortsEveryTeamIntoItsGroup(t *testing.T) {
 		t.Errorf("kept for run sessions = %+v, want %+v", plan.KeptRun, want)
 	}
 	want := []PruneDeferred{
-		{Team: "ws/batch", Reason: "live seat, needs step 4"},
+		{Team: "ws/batch", Reason: "live headless seat, awaits the headless arm"},
 		{Team: "ws/night", Reason: "shift in progress; re-run the plan when it ends"},
 	}
 	if !reflect.DeepEqual(plan.Deferred, want) {
