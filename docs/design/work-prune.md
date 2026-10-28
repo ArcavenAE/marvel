@@ -288,6 +288,9 @@ marvel work <manifest> --prune <digest>
    state cleared and the broker user revoked. Endpoints and policies stay,
    as they do for `delete team` today. Step 3 deletes each marked team at
    once, in the same request, because no team it marks has a seat alive.
+   The last re-check and the record delete are one store-lock hold, so an
+   apply that claims the team first keeps it; the team's finished sessions
+   are deleted after the record.
 4. The response lists the teams deleted in `pruned`, always an array, and
    the teams kept or deferred with their reasons. The client errors if the
    response has no `pruned` array, or a null one, which is how an older

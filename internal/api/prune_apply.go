@@ -22,8 +22,8 @@ type PruneSkipped struct {
 // nil plan it checks only the form, before the apply: exactly 8 lowercase hex
 // characters, not normalised. With a plan, after the apply, it also requires
 // the digest to equal plan.Digest, refusing with ErrPruneDigestMismatch.
-// Whether --prune carries a digest at all is open with the operator (card
-// prune1027-1); the answer changes this function and nothing else.
+// Whether --prune carries a digest at all is open with the operator
+// (aae-orc-9w9lc); the answer changes this function and nothing else.
 func AcceptPruneDigest(given string, plan *PrunePlan) error {
 	if len(given) != 8 || strings.Trim(given, "0123456789abcdef") != "" {
 		return fmt.Errorf("prune digest %q is not 8 lowercase hex characters", given)
