@@ -179,7 +179,13 @@ func pruneDelete(t *Team, sessions []Session) PruneDelete {
 	var interactive, declared int
 	var window, headless time.Duration
 	hasHeadless := false
+	// In name order, so the notes do not depend on map iteration.
+	names := make([]string, 0, len(seated))
 	for name := range seated {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		r := roles[name]
 		if r != nil && r.Runtime.Mode == RuntimeModeHeadless {
 			hasHeadless = true
