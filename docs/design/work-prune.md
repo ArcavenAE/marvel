@@ -179,9 +179,11 @@ hold:
 3. it is not mid-shift (`Shift.Phase` is none). A shift's drain and abort
    (`controller.go:2577`, `:2337`) call `Delete` directly, so a prune waits
    for the shift to end;
-4. until step 4 lands, it has no live seat: no session in an alive state
-   (pending, running or crashloop-backoff, `SessionState.CountsAsAlive`),
-   section 5.
+4. until the headless arm lands, it has no running headless seat: no
+   session of a headless role in an alive state (pending, running or
+   crashloop-backoff, `SessionState.CountsAsAlive`), section 5. A live
+   interactive seat does not hold the team back; step 4 retires it
+   (section 6).
 
 A team that meets rule 1 and fails 2, 3 or 4 is listed as kept or deferred,
 with the rule it failed, and is not deleted.
@@ -279,14 +281,16 @@ marvel work <manifest> --prune <digest>
    never interleave on one team. A pruning team starts no
    shift: the automatic triggers skip it and `marvel shift` refuses it, so
    no drain can bypass the ask once the prune has begun. The team's
-   sessions then leave through the scale-down path, which after step 4
-   asks each one for its handoff. Once a pruning team holds no live session, its
+   sessions then leave through the scale-down path, which asks each one
+   for its handoff (section 6). Once a pruning team holds no live session, its
    record is deleted
    exactly as `marvel delete team` does (`Controller.DeleteTeam`,
    `internal/team/prune.go`): health
    state cleared and the broker user revoked. Endpoints and policies stay,
-   as they do for `delete team` today. Step 3 deletes each marked team at
-   once, in the same request, because no team it marks has a seat alive.
+   as they do for `delete team` today. A marked team with no live seat is
+   deleted at once, in the same request; one with live interactive seats is
+   listed in `draining`, and the reconcile deletes it once its last seat has
+   been retired.
    The last re-check and the record delete are one store-lock hold, so an
    apply that claims the team first keeps it; the team's finished sessions
    are deleted after the record.
