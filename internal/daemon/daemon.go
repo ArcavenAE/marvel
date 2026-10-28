@@ -2233,6 +2233,11 @@ func (d *Daemon) handleRun(params json.RawMessage) daemonrpc.Response {
 	if p.Role == "" {
 		p.Role = "adhoc"
 	}
+	// A run into a team being pruned would be deleted with it, so it is
+	// refused (docs/design/work-prune.md section 5, ruling Q8).
+	if t, err := d.store.GetTeam(p.Workspace + "/" + p.Team); err == nil && t.Pruning != nil {
+		return daemonrpc.Response{Error: fmt.Sprintf("team %s is being pruned; marvel run into it is refused", t.Key())}
+	}
 
 	mode := api.RuntimeModeInteractive
 	switch p.Mode {

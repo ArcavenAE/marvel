@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"sort"
 	"sync"
 	"time"
 
@@ -600,6 +601,29 @@ func (s *Store) ReleaseClaims(source string, named map[string]bool, at time.Time
 // so a team whose claims or seats changed since the plan is never marked
 // (docs/design/work-prune.md section 5).
 func (s *Store) MarkPruning(key string, p TeamPruning, check func(*Team, []Session) string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.teams[key]
+	if !ok {
+		return "", fmt.Errorf("team %s: %w", key, ErrNotFound)
+	}
+	var sessions []Session
+	for _, sess := range s.sessions {
+		if sess.Workspace == t.Workspace && sess.Team == t.Name {
+			sessions = append(sessions, cloneSession(sess))
+		}
+	}
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Key() < sessions[j].Key() })
+	view := cloneTeam(t)
+	if reason := check(&view, sessions); reason != "" {
+		return reason, nil
+	}
+	prev := t.Pruning
+	t.Pruning = &p
+	if err := s.persistPut(bucketTeams, key, t); err != nil {
+		t.Pruning = prev
+		return "", fmt.Errorf("mark %s pruning: %w", key, err)
+	}
 	return "", nil
 }
 

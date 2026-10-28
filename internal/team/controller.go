@@ -1965,6 +1965,11 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 	if t.Shift.Phase != api.ShiftNone {
 		return fmt.Errorf("team %s: shift already in progress (phase: %s)", teamKey, t.Shift.Phase)
 	}
+	// A pruning team starts no shift, from marvel shift or a trigger, so no
+	// drain can bypass the prune (docs/design/work-prune.md section 5).
+	if t.Pruning != nil {
+		return fmt.Errorf("team %s is being pruned; it starts no shift", teamKey)
+	}
 
 	// Build role list in shift order (supervisor last).
 	var roles []string
@@ -2102,7 +2107,8 @@ func shiftOrder(roles []api.Role) []string {
 // Shift initiations, from either path, count against the fleet-wide per-tick
 // budget, and a team starts at most one shift per tick.
 func (c *Controller) evaluateShiftTriggers(t *api.Team) {
-	if t.Shift.Phase != api.ShiftNone {
+	// A pruning team opens no handoff request either.
+	if t.Shift.Phase != api.ShiftNone || t.Pruning != nil {
 		return
 	}
 	now := c.nowUTC()

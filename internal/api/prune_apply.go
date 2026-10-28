@@ -2,6 +2,8 @@ package api
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 )
 
 // ErrPruneDigestMismatch is the refusal of a prune whose digest is not the
@@ -23,6 +25,12 @@ type PruneSkipped struct {
 // Whether --prune carries a digest at all is open with the operator (card
 // prune1027-1); the answer changes this function and nothing else.
 func AcceptPruneDigest(given string, plan *PrunePlan) error {
+	if len(given) != 8 || strings.Trim(given, "0123456789abcdef") != "" {
+		return fmt.Errorf("prune digest %q is not 8 lowercase hex characters", given)
+	}
+	if plan != nil && given != plan.Digest {
+		return fmt.Errorf("%w: given %s, the current set's is %s", ErrPruneDigestMismatch, given, plan.Digest)
+	}
 	return nil
 }
 
@@ -31,5 +39,17 @@ func AcceptPruneDigest(given string, plan *PrunePlan) error {
 // deferred. After the apply, a team this source may prune holds no claim and
 // was released by this source; anything else means a file claimed it since.
 func PruneRecheck(source string) func(*Team, []Session) string {
-	return func(*Team, []Session) string { return "" }
+	return func(t *Team, sessions []Session) string {
+		if t.Claims == nil || len(t.Claims.Sources) > 0 || t.Claims.ReleasedBy != source {
+			return "kept: claimed since the preview"
+		}
+		runs, deferred := pruneVerdict(t, sessions)
+		if runs > 0 {
+			return fmt.Sprintf("kept: holds %d marvel run session(s)", runs)
+		}
+		if deferred != "" {
+			return "deferred: " + deferred
+		}
+		return ""
+	}
 }

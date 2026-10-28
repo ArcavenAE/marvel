@@ -179,3 +179,22 @@ func TestPruneKeepsATeamThatFailsEitherCheck(t *testing.T) {
 		t.Errorf("team.pruned events = %d, want 0", n)
 	}
 }
+
+// A team holding a marvel run session is kept by the check at the mark, and
+// the run session survives the prune (section 5).
+func TestPruneLeavesARunSessionAndItsTeam(t *testing.T) {
+	store, ctrl, _ := pruneFixture(t)
+	seedSession(t, store, api.Session{Name: "gone-run", Workspace: "test-prune", Team: "gone", Role: "crew", Generation: 0, State: api.SessionRunning})
+	mark := api.TeamPruning{Source: pruneTestSource, At: listEpoch}
+
+	deleted, skipped := ctrl.Prune([]string{"test-prune/gone"}, mark, api.PruneRecheck(pruneTestSource))
+	if len(deleted) != 0 || len(skipped) != 1 || !strings.Contains(skipped[0].Reason, "run session") {
+		t.Fatalf("deleted %q, skipped %+v; want ws/gone kept for its run session", deleted, skipped)
+	}
+	if _, err := store.GetSession("test-prune/gone-run"); err != nil {
+		t.Errorf("the run session did not survive: %v", err)
+	}
+	if got, err := store.GetTeam("test-prune/gone"); err != nil || got.Pruning != nil {
+		t.Errorf("team = %+v, %v; want it stored and unmarked", got.Pruning, err)
+	}
+}

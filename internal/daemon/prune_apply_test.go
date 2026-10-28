@@ -191,8 +191,10 @@ func TestApplyPruneAnswersAnEmptyArray(t *testing.T) {
 }
 
 // The teams the ticket names are kept or deferred: one claimed by two sources,
-// one with a marvel run session (which survives), one mid-shift, and one with a
-// live seat, interactive or headless (section 5).
+// one with a marvel run session, one mid-shift, and one with a live seat,
+// interactive or headless (section 5). The apply's own reconcile reaps a seeded
+// session that has no pane, so that the run session survives the prune is
+// checked in the controller's TestPruneLeavesARunSessionAndItsTeam.
 func TestApplyPruneKeepsWhatIsNotThisFilesToDelete(t *testing.T) {
 	headless := api.Runtime{Mode: api.RuntimeModeHeadless}
 	for _, tc := range []struct {
@@ -236,11 +238,6 @@ func TestApplyPruneKeepsWhatIsNotThisFilesToDelete(t *testing.T) {
 			}
 			if got.Pruning != nil {
 				t.Errorf("ws/two was marked: %+v", got.Pruning)
-			}
-			if tc.session != nil {
-				if _, err := d.store.GetSession("ws/" + tc.session.Name); err != nil {
-					t.Errorf("session %s did not survive: %v", tc.session.Name, err)
-				}
 			}
 		})
 	}

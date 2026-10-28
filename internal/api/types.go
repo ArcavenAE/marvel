@@ -1107,6 +1107,9 @@ const (
 // count, or 0 while the team is being pruned. Read desired through it, never
 // from Replicas directly.
 func (t *Team) DesiredReplicas(r *Role) int {
+	if t.Pruning != nil {
+		return 0
+	}
 	return r.Replicas
 }
 
