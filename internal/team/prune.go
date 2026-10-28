@@ -1,8 +1,10 @@
 package team
 
 import (
+	"errors"
 	"log"
 	"sort"
+	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
@@ -20,21 +22,33 @@ func (c *Controller) DeleteTeam(t api.Team) error {
 
 // deleteTeamLocked is DeleteTeam for a caller that holds c.mu.
 func (c *Controller) deleteTeamLocked(t api.Team) error {
+	var keys []string
 	for _, s := range c.store.ListSessionsByTeam(t.Workspace, t.Name) {
-		_ = c.sessMgr.Delete(s.Key())
+		keys = append(keys, s.Key())
 	}
+	c.deleteSessionsLocked(keys)
 	err := c.store.DeleteTeam(t.Key())
 	c.clearRoleHealthForTeamLocked(t.Workspace, t.Name)
 	return err
+}
+
+// deleteSessionsLocked deletes the sessions named by keys. Caller holds c.mu.
+func (c *Controller) deleteSessionsLocked(keys []string) {
+	for _, k := range keys {
+		_ = c.sessMgr.Delete(k)
+	}
 }
 
 // Prune marks, re-checks and deletes each team of a prune set in one hold of
 // c.mu, so no reconcile pass runs between the mark and the delete
 // (docs/design/work-prune.md section 5). check is the prune's rule set for one
 // team: "" when it may be deleted, else why it is kept or deferred. It runs at
-// the mark, in the store's lock, and again just before the delete; a team that
-// fails either is not deleted, its Pruning is cleared, and it is returned in
-// skipped with the reason. Deleted teams are returned in key order.
+// the mark, in the store's lock, and again in the store hold that deletes the
+// team's record, so an apply that claims the team before that hold keeps it.
+// The team's sessions are deleted after the record, exactly those the last
+// check saw. A team that fails either check is not deleted, its Pruning is
+// cleared, and it is returned in skipped with the reason. Deleted teams are
+// returned in key order.
 func (c *Controller) Prune(keys []string, p api.TeamPruning, check func(*api.Team, []api.Session) string) (deleted []string, skipped []api.PruneSkipped) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -51,54 +65,43 @@ func (c *Controller) Prune(keys []string, p api.TeamPruning, check func(*api.Tea
 			skipped = append(skipped, api.PruneSkipped{Team: key, Reason: reason})
 			continue
 		}
-		t, err := c.store.GetTeam(key)
-		if err != nil {
-			skipped = append(skipped, api.PruneSkipped{Team: key, Reason: err.Error()})
-			continue
+		if c.pruneHook != nil {
+			c.pruneHook(key, "delete")
 		}
-		if reason := c.recheckPrune(&t, check); reason != "" {
+		reason, sessions, err := c.store.DeleteTeamIf(key, check)
+		if err != nil {
+			reason = err.Error()
+		}
+		if reason != "" {
 			c.unmarkPruning(key)
 			skipped = append(skipped, api.PruneSkipped{Team: key, Reason: reason})
 			continue
 		}
 		if c.pruneHook != nil {
-			c.pruneHook(key, "delete")
+			c.pruneHook(key, "sessions")
 		}
-		if err := c.deleteTeamLocked(t); err != nil {
-			c.unmarkPruning(key)
-			skipped = append(skipped, api.PruneSkipped{Team: key, Reason: err.Error()})
-			continue
-		}
+		c.deleteSessionsLocked(sessions)
+		ws, name, _ := strings.Cut(key, "/")
+		c.clearRoleHealthForTeamLocked(ws, name)
 		deleted = append(deleted, key)
 		events.Emit(c.Events, events.Event{
 			Kind:      events.KindTeamPruned,
 			Severity:  events.SeverityInfo,
-			Workspace: t.Workspace,
-			Team:      t.Name,
+			Workspace: ws,
+			Team:      name,
 			Message:   "team pruned by " + p.Source,
 		})
 	}
 	return deleted, skipped
 }
 
-// recheckPrune runs check once more just before the delete. A team an apply
-// named since the mark has lost its Pruning, and is kept.
-func (c *Controller) recheckPrune(t *api.Team, check func(*api.Team, []api.Session) string) string {
-	if t.Pruning == nil {
-		return "kept: named again by an apply"
-	}
-	sessions := c.store.ListSessionsByTeam(t.Workspace, t.Name)
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Key() < sessions[j].Key() })
-	return check(t, sessions)
-}
-
 // unmarkPruning clears a team's Pruning, so a team the prune did not delete
-// converges as before.
+// converges as before. A team already gone has nothing to clear.
 func (c *Controller) unmarkPruning(key string) {
 	if err := c.store.UpdateTeam(key, func(live *api.Team) error {
 		live.Pruning = nil
 		return nil
-	}); err != nil {
+	}); err != nil && !errors.Is(err, api.ErrNotFound) {
 		log.Printf("prune: clear the mark on %s: %v", key, err)
 	}
 }

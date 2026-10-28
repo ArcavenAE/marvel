@@ -237,3 +237,27 @@ func TestPruneKeepsATeamClaimedAfterTheRecheck(t *testing.T) {
 		t.Errorf("team.pruned events = %d, want 0", n)
 	}
 }
+
+// A session that lands after the team's record is deleted, as a marvel run
+// into the now absent team would, survives the prune: the prune deletes only
+// the sessions its last check saw (the architect's condition on finding 1).
+func TestPruneLeavesASessionAddedAfterTheRecordDelete(t *testing.T) {
+	store, ctrl, _ := pruneFixture(t)
+	ctrl.pruneHook = func(key, step string) {
+		if step == "sessions" && key == "test-prune/gone" {
+			seedSession(t, store, api.Session{Name: "gone-late", Workspace: "test-prune", Team: "gone", Role: "crew", Generation: 0, State: api.SessionRunning})
+		}
+	}
+	mark := api.TeamPruning{Source: pruneTestSource, At: listEpoch}
+
+	deleted, _ := ctrl.Prune([]string{"test-prune/gone"}, mark, api.PruneRecheck(pruneTestSource))
+	if strings.Join(deleted, ",") != "test-prune/gone" {
+		t.Fatalf("deleted %q, want test-prune/gone", deleted)
+	}
+	if _, err := store.GetSession("test-prune/gone-late"); err != nil {
+		t.Errorf("the session added after the record delete was deleted: %v", err)
+	}
+	if _, err := store.GetSession("test-prune/gone-crew-g1-0"); err == nil {
+		t.Error("the team's own finished session was not deleted")
+	}
+}

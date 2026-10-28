@@ -627,6 +627,44 @@ func (s *Store) MarkPruning(key string, p TeamPruning, check func(*Team, []Sessi
 	return "", nil
 }
 
+// DeleteTeamIf deletes the record of the team at key when it is still marked
+// Pruning and check, run on the team and its sessions in the same hold of the
+// store's lock, returns "". It returns the keys of the sessions check saw, so
+// the caller deletes exactly those and never a session that lands after the
+// record is gone. When the team is no longer marked, or check returns a
+// reason, nothing is deleted and the reason is returned: an apply that claims
+// the team before this hold keeps it (docs/design/work-prune.md section 5).
+func (s *Store) DeleteTeamIf(key string, check func(*Team, []Session) string) (reason string, sessions []string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.teams[key]
+	if !ok {
+		return "", nil, fmt.Errorf("team %s: %w", key, ErrNotFound)
+	}
+	if t.Pruning == nil {
+		return "kept: named again by an apply", nil, nil
+	}
+	var seen []Session
+	for _, sess := range s.sessions {
+		if sess.Workspace == t.Workspace && sess.Team == t.Name {
+			seen = append(seen, cloneSession(sess))
+		}
+	}
+	sort.Slice(seen, func(i, j int) bool { return seen[i].Key() < seen[j].Key() })
+	view := cloneTeam(t)
+	if reason := check(&view, seen); reason != "" {
+		return reason, nil, nil
+	}
+	if err := s.persistDelete(bucketTeams, key); err != nil {
+		return "", nil, err
+	}
+	delete(s.teams, key)
+	for i := range seen {
+		sessions = append(sessions, seen[i].Key())
+	}
+	return "", sessions, nil
+}
+
 // Endpoint operations
 
 // CreateEndpoint clones the input into the store.

@@ -174,3 +174,39 @@ func TestDesiredReplicasIsZeroWhilePruning(t *testing.T) {
 		t.Errorf("desired while pruning = %d, want 0", got)
 	}
 }
+
+// DeleteTeamIf deletes the record only while the team is marked and the
+// check passes, both in one hold, and returns the session keys it checked
+// (review finding 1).
+func TestDeleteTeamIfChecksAndDeletesInOneHold(t *testing.T) {
+	pass := func(*Team, []Session) string { return "" }
+	s := planStore(t)
+	if reason, _, err := s.DeleteTeamIf("ws/gone", pass); err != nil || !strings.Contains(reason, "named again") {
+		t.Fatalf("DeleteTeamIf on an unmarked team = %q, %v; want it kept", reason, err)
+	}
+	if err := s.UpdateTeam("ws/gone", func(live *Team) error {
+		live.Pruning = &TeamPruning{Source: planSrc}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if reason, _, err := s.DeleteTeamIf("ws/gone", func(*Team, []Session) string { return "no" }); err != nil || reason != "no" {
+		t.Fatalf("DeleteTeamIf with a failing check = %q, %v; want the reason back", reason, err)
+	}
+	if _, err := s.GetTeam("ws/gone"); err != nil {
+		t.Fatalf("a team that failed the check was deleted: %v", err)
+	}
+	reason, sessions, err := s.DeleteTeamIf("ws/gone", pass)
+	if err != nil || reason != "" {
+		t.Fatalf("DeleteTeamIf = %q, %v", reason, err)
+	}
+	if strings.Join(sessions, ",") != "ws/gone-worker-g1-0" {
+		t.Errorf("sessions = %q, want the team's one session", sessions)
+	}
+	if _, err := s.GetTeam("ws/gone"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetTeam after the delete = %v, want ErrNotFound", err)
+	}
+	if _, err := s.GetSession("ws/gone-worker-g1-0"); err != nil {
+		t.Errorf("DeleteTeamIf deleted a session; the caller does that: %v", err)
+	}
+}
