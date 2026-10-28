@@ -195,6 +195,10 @@ func (c *Controller) advanceRetirement(t *api.Team, req api.RetireRequest, now t
 			// First look since this controller started: the pane did not
 			// survive the restart.
 			c.emitRetired(t, sess, retireNotAsked, "pane gone", "")
+		case !c.retireEndSettled(req, read, haveRead, now):
+			// A seat told to leave often writes its handoff and exits at
+			// once; wait for a read that cannot have missed the file.
+			return
 		case haveRead && read.complete:
 			c.emitRetired(t, sess, retireHandoffWritten, "the seat ended after writing its handoff", "")
 		default:
@@ -221,6 +225,31 @@ func (c *Controller) advanceRetirement(t *api.Team, req api.RetireRequest, now t
 	}
 	reason := retireMissingReason(req)
 	c.killRetired(t, sess, req, retireHandoffMissing, reason+c.deliverRetireMissing(t, sess, req, reason, now))
+}
+
+// retireEndSettled reports whether the outcome of a retiring seat that is no
+// longer alive can be decided now. It notes when the seat was first seen
+// ended, and settles on a finished marker read begun at or after that moment,
+// since an earlier read may have begun before the seat wrote its file. At the
+// window it settles on the newest read there is. A retirement with no handoff
+// path has no file to wait for and settles at once (the step 4 ruling on a
+// seat that exits, 2026-10-28). Caller holds c.mu.
+func (c *Controller) retireEndSettled(req api.RetireRequest, read handoffProbeResult, haveRead bool, now time.Time) bool {
+	if req.Path == "" {
+		return true
+	}
+	if c.retireEnded == nil {
+		c.retireEnded = make(map[string]time.Time)
+	}
+	endedAt, ok := c.retireEnded[req.Session]
+	if !ok {
+		endedAt = now
+		c.retireEnded[req.Session] = endedAt
+	}
+	if haveRead && !read.startedAt.Before(endedAt) {
+		return true
+	}
+	return !now.Before(req.RequestedAt.Add(req.Window))
 }
 
 // retireMissingReason says why no handoff was observed by the end of the
@@ -349,6 +378,7 @@ func (c *Controller) deliverRetireMissing(t *api.Team, sess api.Session, req api
 func (c *Controller) dropRetirement(t *api.Team, req api.RetireRequest) {
 	c.handoffProbes.forget(req.Session)
 	delete(c.retireSeen, req.Session)
+	delete(c.retireEnded, req.Session)
 	c.releaseRetireDir(req.Session)
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 		delete(live.Retiring, req.Session)

@@ -495,6 +495,11 @@ func TestReapDoesNotChargeARetiringSeat(t *testing.T) {
 			f.ctrl.noteReapedCrash(session.ReapedSession{Key: leaving.Key(), Workspace: leaving.Workspace, Team: leaving.Team, Role: leaving.Role}, charged)
 			f.ctrl.emitReapAccounting(charged)
 			f.ctrl.mu.Unlock()
+			// The read that saw the marker began before the exit, so the
+			// outcome waits for one begun after it: this tick starts it, the
+			// next settles on it.
+			f.clock.Advance(time.Second)
+			f.advance()
 			f.clock.Advance(time.Second)
 			f.advance()
 

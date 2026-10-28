@@ -156,12 +156,15 @@ type Controller struct {
 
 	// retireSeen marks the retirements this controller has looked at since it
 	// started, so a seat found dead on the first look is a pane that did not
-	// survive a restart. retireDirs holds each retirement's handoff
+	// survive a restart. retireEnded records when a retiring seat was first
+	// seen no longer alive, so its outcome waits for a marker read begun at
+	// or after that moment. retireDirs holds each retirement's handoff
 	// directory open, as handoffDirs does for a shift request. roleDrained
 	// counts, per dropped role, the seats asked to leave, for role.removed.
 	// prunedThisTick collects the teams a pass deleted for OnPruned. All under
 	// c.mu.
 	retireSeen     map[string]bool
+	retireEnded    map[string]time.Time
 	retireDirs     map[string]heldDir
 	roleDrained    map[string]int
 	prunedThisTick []string
