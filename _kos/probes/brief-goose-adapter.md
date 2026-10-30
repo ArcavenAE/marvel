@@ -10,6 +10,7 @@ The orchestrator graph's harness survey (finding 2w6k, 2026-10-08) already ranks
 
 ## Overlap check
 
+- Prior art: `docs/design/goose-adapter-v1.md` (written at goose v1.54.0, 2026-10-10) and its tickets, including aae-orc-q13fv (goose A, the v1.54.0 characterization probe, P1 to P6). This brief extends that work to v1.57.0 and does not replace it. Research arm 1 of I-51 at v1.57.0 partly answers P4 and P5; P1 to P3 and P6 are still open.
 - The harness survey (finding 2w6k) ranks harnesses; it does not measure goose. This probe builds on its citations and does not repeat the survey.
 - `internal/runtime/opencode.go` and `internal/runtime/opencode/mapping.md` are the pattern for a non-Claude headless adapter: run mode, a JSON stream parser, a composer contract. The goose adapter is expected to follow that shape. This probe checks the expectation; it does not assume it.
 - finding-020 (crush context-pressure channel) and the interactive context-remainder probe set the bar for context and token reporting. The operator's I-47 rollup idea consumes the same signal.
