@@ -254,6 +254,11 @@ type ManifestRuntime struct {
 	// SuccessorPrompt = false turns off the fixed first message a successor
 	// gets. Unset leaves it on. See api.Runtime.SuccessorPrompt.
 	SuccessorPrompt *bool `toml:"successor_prompt,omitempty" yaml:"successor_prompt,omitempty"`
+	// PromptArtifactSha256 is the hash of the prompt artifact the role library
+	// projected this role from, 64 hex characters. marvel does not produce it;
+	// it carries the value into the seat stamp as marvel.prompt_artifact.sha256
+	// (aae-orc-mdr0n). See api.Runtime.PromptArtifactSha256.
+	PromptArtifactSha256 string `toml:"prompt_artifact_sha256,omitempty" yaml:"prompt_artifact_sha256,omitempty"`
 	// ContextWindow overrides the model-to-limit table, in tokens.
 	ContextWindow int `toml:"context_window,omitempty" yaml:"context_window,omitempty"`
 	// ContextFeed opts an interactive session into cooperative context
@@ -466,6 +471,14 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			// would silently project nothing, so reject it here.
 			if r.Runtime.ContextFeed != "" && r.Runtime.ContextFeed != ContextFeedStatusline {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.context_feed %q is not valid (valid: %q)", i, j, r.Runtime.ContextFeed, ContextFeedStatusline)
+			}
+			// The role library's hash is carried, never read, so a malformed one
+			// is refused here rather than stamped. The value is not echoed.
+			if h := r.Runtime.PromptArtifactSha256; h != "" {
+				if !validSha256Hex(h) {
+					return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.prompt_artifact_sha256 must be 64 hex characters", i, j)
+				}
+				m.Teams[i].Roles[j].Runtime.PromptArtifactSha256 = strings.ToLower(h)
 			}
 			if r.ContainerImage != "" && !ValidContainerImage(r.ContainerImage) {
 				return nil, fmt.Errorf("parse manifest: team %q role %q: container_image %q is not a plain image reference", t.Name, r.Name, r.ContainerImage)
@@ -1045,17 +1058,18 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 		var roles []Role
 		for _, mr := range mt.Roles {
 			rt := Runtime{
-				Name:            mr.Runtime.Image,
-				Command:         mr.Runtime.Command,
-				Args:            mr.Runtime.Args,
-				Script:          mr.Runtime.Script,
-				Mode:            mr.Runtime.Mode,
-				Prompt:          mr.Runtime.Prompt,
-				SuccessorPrompt: mr.Runtime.SuccessorPrompt,
-				ContextWindow:   mr.Runtime.ContextWindow,
-				ContextFeed:     mr.Runtime.ContextFeed,
-				Env:             mr.Runtime.Env,
-				Backend:         mr.Runtime.Backend,
+				Name:                 mr.Runtime.Image,
+				Command:              mr.Runtime.Command,
+				Args:                 mr.Runtime.Args,
+				Script:               mr.Runtime.Script,
+				Mode:                 mr.Runtime.Mode,
+				Prompt:               mr.Runtime.Prompt,
+				SuccessorPrompt:      mr.Runtime.SuccessorPrompt,
+				ContextWindow:        mr.Runtime.ContextWindow,
+				ContextFeed:          mr.Runtime.ContextFeed,
+				PromptArtifactSha256: mr.Runtime.PromptArtifactSha256,
+				Env:                  mr.Runtime.Env,
+				Backend:              mr.Runtime.Backend,
 			}
 			rt.Name = mr.Runtime.AdapterName()
 			role := Role{
@@ -1330,4 +1344,17 @@ func validatePolicySettingsFile(i int, p ManifestPolicy) error {
 		return fmt.Errorf("policy[%d] %q: settings_file %q must be an absolute path or start with ~/", i, p.Name, p.SettingsFile)
 	}
 	return nil
+}
+
+// validSha256Hex reports whether s is 64 hexadecimal characters, in either case.
+func validSha256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", rune(s[i])) {
+			return false
+		}
+	}
+	return true
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -718,5 +719,44 @@ func TestBoltStore_SettingSourcesDeliveryRoundTrips(t *testing.T) {
 	}
 	if old.SettingSources != "user,project,local" || old.SettingSourcesDelivery != "" {
 		t.Errorf("legacy record: sources %q delivery %q, want the sources and no delivery", old.SettingSources, old.SettingSourcesDelivery)
+	}
+}
+
+// The prompt hashes a launch recorded survive a daemon restart, and appear
+// under their field names in the JSON a reader of get session -o json sees
+// (aae-orc-mdr0n S12).
+func TestBoltStore_PromptHashesRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	first, system := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	if err := s1.CreateSession(&Session{Name: "s-0", Workspace: "ws", Team: "t", Role: "r", FirstPromptSha256: first, SystemPromptSha256: system}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	got, err := s2.GetSession("ws/s-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FirstPromptSha256 != first || got.SystemPromptSha256 != system {
+		t.Errorf("hashes after reopen: first %q system %q", got.FirstPromptSha256, got.SystemPromptSha256)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"FirstPromptSha256":"` + first + `"`, `"SystemPromptSha256":"` + system + `"`} {
+		if !strings.Contains(string(raw), key) {
+			t.Errorf("session JSON lacks %s", key)
+		}
 	}
 }
