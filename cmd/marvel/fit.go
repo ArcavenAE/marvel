@@ -15,7 +15,8 @@ import (
 // The width fit for `get sessions` (docs/design/get-sessions-output.md
 // section 4.2). Diagnostic only: nothing gates on what it hides.
 //
-// A fit drops columns by a fixed priority and never reflows. The tiers are
+// A fit drops columns by a fixed priority and never reflows. What it keeps
+// prints in the default column order, not in priority order. The tiers are
 // data: a name that is not a registered column yet (LAST-ACTIVE, TOUT, RATE,
 // AGE, ACTIVE%) is skipped, so each of those joins by one entry here when its
 // ticket lands.
@@ -193,6 +194,10 @@ func fitSessionTable(sessions []api.Session, cols []sessionColumn, o fitOptions)
 		fitted = fitted[:len(fitted)-1]
 		table = renderTrimmed(sessions, fitted, o)
 	}
+	// The priority list decided what stays; the default order decides how it
+	// prints. The lead columns stay first.
+	fitted = append(slices.Clone(fitted[:len(o.lead)]), inPrintOrder(fitted[len(o.lead):])...)
+	table = renderTrimmed(sessions, fitted, o)
 	shown := make(map[string]bool, len(fitted))
 	for _, c := range fitted {
 		shown[c.name] = true

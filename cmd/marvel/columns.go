@@ -90,7 +90,16 @@ const columnRest = "rest"
 // composer captures every seat's pane.
 var restReserved = map[string]bool{"composer": true}
 
-// defaultSessionColumns is today's table, in today's order.
+// defaultColumnNames is the order the default table prints: who the seat is,
+// whether it is doing work, then which model, then the process figures in
+// registry order. It reorders the same columns the table already had.
+var defaultColumnNames = []string{
+	"workspace", "team", "role", "generation", "name", "state", "health",
+	"context", "llm", "cpu", "rss", "desk", "runtime",
+}
+
+// defaultSessionColumns is the default table: the registered columns that are
+// not opt-in, in defaultColumnNames order.
 func defaultSessionColumns() []sessionColumn {
 	out := make([]sessionColumn, 0, len(sessionColumnRegistry))
 	for _, c := range sessionColumnRegistry {
@@ -98,6 +107,27 @@ func defaultSessionColumns() []sessionColumn {
 			out = append(out, c)
 		}
 	}
+	return inPrintOrder(out)
+}
+
+// inPrintOrder sorts cols into the order the default table prints: the
+// defaultColumnNames first, in that order, then any other column in registry
+// order. The sort is stable, so a list with a repeated name keeps its copies
+// together.
+func inPrintOrder(cols []sessionColumn) []sessionColumn {
+	rank := func(name string) int {
+		if i := slices.Index(defaultColumnNames, name); i >= 0 {
+			return i
+		}
+		for i, c := range sessionColumnRegistry {
+			if c.name == name {
+				return len(defaultColumnNames) + i
+			}
+		}
+		return len(defaultColumnNames) + len(sessionColumnRegistry)
+	}
+	out := slices.Clone(cols)
+	slices.SortStableFunc(out, func(a, b sessionColumn) int { return rank(a.name) - rank(b.name) })
 	return out
 }
 
