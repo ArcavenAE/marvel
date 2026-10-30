@@ -118,6 +118,14 @@ func (l Layout) StateDir() string { return filepath.Join(l.Home, "state") }
 // session key (docs/design/readonly-view.md section 3).
 func (l Layout) ViewsDir() string { return filepath.Join(l.StateDir(), "views") }
 
+// HarnessHomesDir is the base for the per-session private harness homes. The
+// name is "h" on purpose: a harness may open a unix socket under its home
+// (codex puts its app-server control socket there), and the whole path has to
+// stay under MaxUnixSocketPath, the 104-byte sun_path limit on macOS. A longer
+// name spends bytes the marvel home's own length may already need. See
+// session.defaultHarnessHomeDir.
+func (l Layout) HarnessHomesDir() string { return filepath.Join(l.Home, "h") }
+
 // VersionsDir holds the version store: the prior build the direct install
 // channel keeps when it replaces one, and the record naming the active and
 // prior builds (docs/design/zero-downtime-upgrade.md section 5).

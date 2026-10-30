@@ -76,6 +76,45 @@ func TestPrivateHomeIsStableAcrossRelaunch(t *testing.T) {
 	}
 }
 
+// Moving the default base must not move a seat that is already running: a
+// session whose record names a private home keeps it on relaunch, so its
+// codex sessions and history stay where they are (marvel#1142).
+func TestRelaunchKeepsTheRecordedHomeAfterTheBaseMoves(t *testing.T) {
+	t.Parallel()
+	mgr := homeManager(t)
+	old := filepath.Join(t.TempDir(), "oldhome")
+	if err := os.Mkdir(old, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	sess := sessionFor("coder", "codex")
+	sess.HarnessHome = old
+
+	mgr.planLaunch(sess)
+
+	if sess.HarnessHome != old {
+		t.Errorf("relaunch moved the home: got %q, want the recorded %q", sess.HarnessHome, old)
+	}
+}
+
+// A recorded home that is no longer a private directory of this user is not
+// followed: the launch computes one under the current base instead.
+func TestRelaunchIgnoresARecordedHomeThatIsNotPrivate(t *testing.T) {
+	t.Parallel()
+	mgr := homeManager(t)
+	open := filepath.Join(t.TempDir(), "openhome")
+	if err := os.Mkdir(open, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	sess := sessionFor("coder", "codex")
+	sess.HarnessHome = open
+
+	mgr.planLaunch(sess)
+
+	if sess.HarnessHome == open || sess.HarnessHome == "" {
+		t.Errorf("a group/world-readable recorded home was followed: %q", sess.HarnessHome)
+	}
+}
+
 // Two sessions must not share a home, or the rollouts mix again and the
 // binding this exists to provide is gone.
 func TestPrivateHomesAreDistinctPerSession(t *testing.T) {
