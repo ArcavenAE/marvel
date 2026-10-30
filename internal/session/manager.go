@@ -93,9 +93,10 @@ type Manager struct {
 	// The login lives in the home (linked from the operator's), and a login is
 	// not rebuilt without a human, which is why this is not a temp tier.
 	HarnessHomeDir string
-	// SocketLimit overrides paths.MaxUnixSocketPath for the check on a recorded
-	// home. Zero means the platform's limit; only tests set it.
-	SocketLimit int
+	// socketLimitOverride replaces paths.MaxUnixSocketPath for the check on a
+	// recorded home. Zero means the platform's limit; only tests set it, so it
+	// is unexported and unreachable from config, flags or the API.
+	socketLimitOverride int
 	// BackendOverlayDir holds the per-session backend settings overlays
 	// (design-backend-swaps.md, Layer A). Defaults to a per-layout temp
 	// directory, overridable with MARVEL_BACKEND_OVERLAY_DIR so a shakedown
@@ -1058,11 +1059,11 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 }
 
 // socketLimit is the unix socket path ceiling a recorded home is held to. It is
-// the platform's, unless a test sets SocketLimit to exercise the other rules
-// under a temp directory that is itself long.
+// the platform's, unless a test sets socketLimitOverride to exercise the other
+// rules under a temp directory that is itself long.
 func (m *Manager) socketLimit() int {
-	if m.SocketLimit > 0 {
-		return m.SocketLimit
+	if m.socketLimitOverride > 0 {
+		return m.socketLimitOverride
 	}
 	return paths.MaxUnixSocketPath
 }
