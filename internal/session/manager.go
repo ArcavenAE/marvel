@@ -93,6 +93,9 @@ type Manager struct {
 	// The login lives in the home (linked from the operator's), and a login is
 	// not rebuilt without a human, which is why this is not a temp tier.
 	HarnessHomeDir string
+	// SocketLimit overrides paths.MaxUnixSocketPath for the check on a recorded
+	// home. Zero means the platform's limit; only tests set it.
+	SocketLimit int
 	// BackendOverlayDir holds the per-session backend settings overlays
 	// (design-backend-swaps.md, Layer A). Defaults to a per-layout temp
 	// directory, overridable with MARVEL_BACKEND_OVERLAY_DIR so a shakedown
@@ -1003,11 +1006,11 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 	}
 	dir := m.harnessHomeFor(lctx.Session.Key())
 	if rec := lctx.Session.HarnessHome; rec != "" {
-		if recordedHomeUsable(rec) {
+		if why := recordedHomeRefusal(rec, spec.Socket, m.socketLimit()); why == "" {
 			dir = rec
 		} else {
-			log.Printf("session %s: recorded harness home %s is not a private directory of this user, using %s",
-				lctx.Session.Key(), rec, dir)
+			log.Printf("session %s: recorded harness home %s is not kept (%s), using %s",
+				lctx.Session.Key(), rec, why, dir)
 		}
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -1054,16 +1057,41 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 	lctx.Session.AccountHome = spec.Source
 }
 
-// recordedHomeUsable reports whether a harness home a session record names is
-// still a directory private to this user: a real directory (not a link), mode
-// 0700, owned by the caller. It is the same shape harnessHomeBase demands of a
-// base, so a record cannot point a launch at a directory another account made.
-func recordedHomeUsable(dir string) bool {
+// socketLimit is the unix socket path ceiling a recorded home is held to. It is
+// the platform's, unless a test sets SocketLimit to exercise the other rules
+// under a temp directory that is itself long.
+func (m *Manager) socketLimit() int {
+	if m.SocketLimit > 0 {
+		return m.SocketLimit
+	}
+	return paths.MaxUnixSocketPath
+}
+
+// recordedHomeRefusal says why a harness home a session record names is not
+// kept on relaunch, or "" when it is. It must still be a directory private to
+// this user (a real directory, not a link, mode 0700, owned by the caller), the
+// same shape harnessHomeBase demands of a base, so a record cannot point a
+// launch at a directory another account made. And the harness's socket under
+// it, as handed and resolved, must fit a unix socket path: the base check
+// covers new homes, and this covers one a record carries in from before it.
+func recordedHomeRefusal(dir, socket string, limit int) string {
 	fi, err := os.Lstat(dir)
 	if err != nil {
-		return false
+		return "cannot be read"
 	}
-	return fi.IsDir() && fi.Mode().Perm() == 0o700 && ownedByMe(fi)
+	if !fi.IsDir() || fi.Mode().Perm() != 0o700 || !ownedByMe(fi) {
+		return "not a private directory of this user"
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "cannot be resolved"
+	}
+	for _, p := range []string{dir, resolved} {
+		if n := len(filepath.Join(p, socket)); socket != "" && n >= limit {
+			return fmt.Sprintf("the harness socket under it would be %d bytes, over the %d-byte unix socket limit", n, limit)
+		}
+	}
+	return ""
 }
 
 // checkHomeSocket logs when the socket a harness opens under its home would

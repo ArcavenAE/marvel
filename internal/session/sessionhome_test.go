@@ -82,6 +82,7 @@ func TestPrivateHomeIsStableAcrossRelaunch(t *testing.T) {
 func TestRelaunchKeepsTheRecordedHomeAfterTheBaseMoves(t *testing.T) {
 	t.Parallel()
 	mgr := homeManager(t)
+	mgr.SocketLimit = 1 << 20 // the temp directory is long; the length rule has its own test
 	old := filepath.Join(t.TempDir(), "oldhome")
 	if err := os.Mkdir(old, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -101,6 +102,7 @@ func TestRelaunchKeepsTheRecordedHomeAfterTheBaseMoves(t *testing.T) {
 func TestRelaunchIgnoresARecordedHomeThatIsNotPrivate(t *testing.T) {
 	t.Parallel()
 	mgr := homeManager(t)
+	mgr.SocketLimit = 1 << 20 // isolate the privacy rule from the length rule
 	open := filepath.Join(t.TempDir(), "openhome")
 	if err := os.Mkdir(open, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -112,6 +114,27 @@ func TestRelaunchIgnoresARecordedHomeThatIsNotPrivate(t *testing.T) {
 
 	if sess.HarnessHome == open || sess.HarnessHome == "" {
 		t.Errorf("a group/world-readable recorded home was followed: %q", sess.HarnessHome)
+	}
+}
+
+// The socket-length rule that decides a new base also decides a recorded home:
+// one whose harness socket would pass the unix socket limit is not kept, so a
+// relaunch falls back to a home that fits instead of a codex that exits at
+// start (aae-orc-pt8k).
+func TestRelaunchIgnoresARecordedHomeWhoseSocketCannotFit(t *testing.T) {
+	t.Parallel()
+	mgr := homeManager(t)
+	long := filepath.Join(t.TempDir(), strings.Repeat("h", 80))
+	if err := os.Mkdir(long, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	sess := sessionFor("coder", "codex")
+	sess.HarnessHome = long
+
+	mgr.planLaunch(sess)
+
+	if sess.HarnessHome == long || sess.HarnessHome == "" {
+		t.Errorf("a recorded home with an over-long socket was kept: %q", sess.HarnessHome)
 	}
 }
 

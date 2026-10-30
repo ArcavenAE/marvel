@@ -491,7 +491,9 @@ The seeded file is rewritten at every launch; change the manifest or your
 own config instead of editing it.
 
 The homes live under the marvel home, so a temp cleanup never removes a running
-seat's login. A seat started before this change keeps the home its record names.
+seat's login. A relaunch that carries the session record keeps the home it names, if that
+home is still private to the user and its socket fits. A seat the reconciler
+deletes and respawns has no record, so it gets a home under the current base.
 
 The home path is kept short on purpose. An interactive codex (0.157 and
 later) opens a control socket inside its home, and a unix socket path has a
