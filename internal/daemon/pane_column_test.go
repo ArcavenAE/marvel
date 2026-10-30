@@ -7,23 +7,41 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/composer"
 )
 
-// The banner row is synthetic: the row shape was read on live panes for
+// The banner rows are synthetic: the row shapes were read on live panes for
 // marvel#1142 and only the one row, with no account, path or host, is
 // reproduced here.
 const (
-	bannerRow     = "                                        ✔ Update installed · Restart to update"
-	bannerHintRow = "  new task? /clear to save 119.2k to… · ✔ Update installed · Restart to update"
+	bannerText    = "✔ Update installed · Restart to update"
+	bannerRow     = "                                        " + bannerText
+	bannerHintRow = "  new task? /clear to save 119.2k to… · " + bannerText
 )
 
-// withBanner puts a banner row a few rows above the bottom of a screen, where
-// claude drew it.
-func withBanner(screen, row string) string {
+// withBanner puts the row where claude draws it: directly above the top rule
+// of the composer box.
+func withBanner(t *testing.T, screen, row string) string {
+	t.Helper()
+	return atComposer(t, screen, 0, row)
+}
+
+// atComposer inserts row `above` rows above the composer's top rule (0 is
+// directly above it).
+func atComposer(t *testing.T, screen string, above int, row string) string {
+	t.Helper()
 	lines := strings.Split(strings.TrimRight(screen, "\n"), "\n")
-	at := max(len(lines)-5, 0)
-	lines = slices.Insert(lines, at, row)
-	return strings.Join(lines, "\n") + "\n"
+	for i := len(lines) - 1; i > 0; i-- {
+		if strings.Contains(lines[i], "❯") {
+			if _, ok := composer.ClaudeRowAboveComposer(screen); !ok {
+				t.Fatal("fixture has no composer box")
+			}
+			at := max(i-1-above, 0) // i-1 is the top rule
+			return strings.Join(slices.Insert(lines, at, row), "\n") + "\n"
+		}
+	}
+	t.Fatal("fixture has no prompt row")
+	return ""
 }
 
 func TestPaneWordReadsTheSixWords(t *testing.T) {
@@ -33,12 +51,11 @@ func TestPaneWordReadsTheSixWords(t *testing.T) {
 		screen    string
 		want, gap string
 	}{
-		"an open turn is working": {busy, paneWorking, ""},
-		// Synthetic placement, below the composer, so the reader still sees the spinner.
-		"an open turn beside the banner wins": {busy + bannerRow + "\n", paneWorking, ""},
+		"an open turn is working":             {busy, paneWorking, ""},
+		"an open turn beside the banner wins": {withBanner(t, busy, bannerRow), paneWorking, ""},
 		"an empty composer is idle":           {idle, paneIdle, ""},
-		"the banner on an idle seat":          {withBanner(idle, bannerRow), paneRestart, ""},
-		"the banner after a hint":             {withBanner(idle, bannerHintRow), paneRestart, ""},
+		"the banner on an idle seat":          {withBanner(t, idle, bannerRow), paneRestart, ""},
+		"the banner after a hint":             {withBanner(t, idle, bannerHintRow), paneRestart, ""},
 		"a screen the reader cannot place":    {"hello\n", paneUnknown, gapReaderUnsure},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -50,29 +67,38 @@ func TestPaneWordReadsTheSixWords(t *testing.T) {
 	}
 }
 
-// The banner words quoted in chat text, or in a command, are not the banner:
-// the row must end in the check mark and the words.
-func TestRestartBannerNeedsTheCheckMarkAtTheRowEnd(t *testing.T) {
+// No transcript row is the banner. A row that ends in the banner text, as an
+// assistant reply or as the user's prompt, reads idle whether it is the last
+// row above the composer or sits higher in the transcript, and so do rows
+// that only look like the banner.
+func TestRestartBannerIsOnlyTheRowAboveTheComposer(t *testing.T) {
+	idle := composerFixture(t, "1-empty-idle.ansi.txt")
 	for name, tc := range map[string]struct {
-		row  string
-		want bool
+		row   string
+		above int
+		want  string
 	}{
-		"the banner":           {bannerRow, true},
-		"the banner, hinted":   {bannerHintRow, true},
-		"the words, no mark":   {"  Update installed · Restart to update", false},
-		"quoted in a command":  {"  grep -E 'Restart to update|Update installed' x", false},
-		"text after the words": {"  ✔ Update installed · Restart to update now", false},
+		"the banner":                        {bannerRow, 0, paneRestart},
+		"the banner, hinted":                {bannerHintRow, 0, paneRestart},
+		"an assistant row, last":            {"● quoting the banner: " + bannerText, 0, paneIdle},
+		"an assistant row, indented":        {"  " + bannerText, 0, paneIdle},
+		"a user prompt row, last":           {"> please explain " + bannerText, 0, paneIdle},
+		"a user prompt row, high":           {"❯ please explain " + bannerText, 3, paneIdle},
+		"the banner row, in the transcript": {bannerRow, 2, paneIdle},
+		"the banner, a row below it":        {bannerRow, 1, paneIdle},
+		"the words without the mark":        {"                                        Update installed · Restart to update", 0, paneIdle},
+		"text after the words":              {bannerRow + " now", 0, paneIdle},
+		"a command quoting the words":       {"  grep -E 'Restart to update|Update installed' x", 0, paneIdle},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := hasRestartBanner("above\n" + tc.row + "\n❯ \n"); got != tc.want {
-				t.Fatalf("hasRestartBanner = %v, want %v", got, tc.want)
+			p := &fakePane{foreground: "2.1.290", escapes: atComposer(t, idle, tc.above, tc.row)}
+			if got, gap := paneWord(p, runningSeat("claude"), false, nil); got != tc.want || gap != "" {
+				t.Fatalf("pane = %q, %q; want %q", got, gap, tc.want)
 			}
 		})
 	}
-	// Only the last rows are searched: a banner scrolled far up is not one.
-	far := bannerRow + "\n" + strings.Repeat("line\n", restartBannerRows+2)
-	if hasRestartBanner(far) {
-		t.Fatal("a banner above the searched rows counted")
+	if hasRestartBanner(bannerRow + "\n") {
+		t.Fatal("a banner with no composer box counted")
 	}
 }
 

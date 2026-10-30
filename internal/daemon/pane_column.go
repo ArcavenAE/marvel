@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"regexp"
-	"strings"
 	"sync"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -24,7 +23,8 @@ import (
 //     prompt.
 //   - prompt also covers the composer reader's menu_unsafe, the one prompt a
 //     reader recognizes without the watchdog (codex's update menu).
-//   - restart is claude's "Update installed · Restart to update" banner.
+//   - restart is claude's "Update installed · Restart to update" banner, on the
+//     row directly above the composer box.
 //
 // A word that cannot be told from another is unknown; nothing is guessed. The
 // read is the same read-only path as COMPOSER (a foreground query and one
@@ -43,36 +43,23 @@ const (
 // gapShell is the fixed reason a seat whose pane is at a shell reads unknown.
 const gapShell = "pane at a shell, no harness in front"
 
-// restartBannerRows is how many of the screen's last non-blank rows are
-// searched for the banner. It sat 5 rows above the bottom of a 24 row screen
-// on the panes read for #1142.
-const restartBannerRows = 8
+// claudeRestartBanner is the row claude draws directly above its composer box
+// once an update is installed. Two shapes were read on live panes: the banner
+// alone, right-aligned (at least 8 leading spaces), and the banner after a
+// "new task?" hint. The check mark is required, the row must end with the
+// words, and the match is on that one row, so the plain words in chat text or
+// in a command that quotes them do not match.
+var claudeRestartBanner = regexp.MustCompile(
+	`^(?: {8,}|  new task\? /clear to save [0-9.]+[kM]? to… · )✔ Update installed · Restart to update$`)
 
-// claudeRestartBanner is the end of the row claude draws once an update is
-// installed: a check mark, then the words. A row may carry a hint before it
-// ("new task? /clear to save 119k tokens · ✔ Update installed ..."), so the row
-// is matched at its end, not from its start. The check mark is required: the
-// plain words in chat text, or in a command that quotes them, do not match.
-var claudeRestartBanner = regexp.MustCompile(`✔ Update installed · Restart to update\s*$`)
-
-var sgrSequence = regexp.MustCompile(`\x1b\[[0-9;:]*m`)
-
-// hasRestartBanner reports whether one of the last rows of a capture is the
-// claude restart banner. The capture may carry SGR escapes.
+// hasRestartBanner reports whether the row directly above the composer's top
+// rule is the claude restart banner. A transcript row is never that row: the
+// composer box sits below the transcript, so a row above it that is not the
+// banner is the last transcript row, and only the banner's own shapes match.
+// The capture may carry SGR escapes.
 func hasRestartBanner(capture string) bool {
-	rows := strings.Split(sgrSequence.ReplaceAllString(capture, ""), "\n")
-	seen := 0
-	for i := len(rows) - 1; i >= 0 && seen < restartBannerRows; i-- {
-		row := strings.TrimRight(rows[i], " \t\r")
-		if row == "" {
-			continue
-		}
-		seen++
-		if claudeRestartBanner.MatchString(row) {
-			return true
-		}
-	}
-	return false
+	row, ok := composer.ClaudeRowAboveComposer(capture)
+	return ok && claudeRestartBanner.MatchString(row)
 }
 
 // paneWord is the PANE value for one session, with the reason when it is

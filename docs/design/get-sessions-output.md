@@ -277,7 +277,7 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
 | `logged-out` | the harness-state watchdog's stored verdict, logged-out |
 | `prompt` | the watchdog's stored verdict, parked; or the composer reader's `menu_unsafe` (codex's update menu) |
 | `working` | the composer reader, `mid_turn` |
-| `restart` | claude's "Update installed · Restart to update" row, in the last 8 non-blank rows of the screen, at the row's end, with its check mark |
+| `restart` | claude's "Update installed · Restart to update" row, only on the row directly above the composer's top rule, in the two shapes read live (the banner right-aligned, or after a "new task?" hint), with its check mark; a transcript row never matches |
 | `idle` | the composer reader, `empty` or `holds_text`, with no banner |
 | `unknown` | everything else, with a GAP line where marvel knows why |
 

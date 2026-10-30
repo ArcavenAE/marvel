@@ -206,3 +206,36 @@ func applySGR(dim bool, params string) bool {
 	}
 	return dim
 }
+
+// ClaudeRowAboveComposer returns the row directly above the top rule of
+// claude's composer box, with its leading spaces and without trailing ones. It
+// is how a reader finds a status row the harness draws there, such as the
+// update banner, without taking a transcript row for one. ok is false when the
+// capture holds no closed composer box or the box has no row above it.
+func ClaudeRowAboveComposer(capture string) (row string, ok bool) {
+	raw := strings.Split(capture, "\n")
+	clean := make([]string, len(raw))
+	for i, l := range raw {
+		clean[i] = strings.TrimRight(ansiSeq.ReplaceAllString(l, ""), " ")
+	}
+	for i := len(clean) - 1; i > 0; i-- {
+		// A blank draft is the bare prompt: its trailing space is trimmed above.
+		isPrompt := clean[i] == strings.TrimRight(claudePrompt, " ") || strings.HasPrefix(clean[i], claudePrompt)
+		if !isPrompt || !ruleLine.MatchString(clean[i-1]) {
+			continue
+		}
+		for j := i + 1; j < len(clean); j++ {
+			if ruleLine.MatchString(clean[j]) {
+				if i < 2 {
+					return "", false
+				}
+				return clean[i-2], true
+			}
+			if !strings.HasPrefix(clean[j], "  ") {
+				break
+			}
+		}
+		return "", false
+	}
+	return "", false
+}
