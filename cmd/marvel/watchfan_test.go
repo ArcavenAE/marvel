@@ -292,7 +292,15 @@ func TestEachClusterAgesOnItsOwnAsOf(t *testing.T) {
 	r.waitStarted("a", 2)
 	r.waitStarted("b", 2)
 	r.answer("b", 2, "b-two")
-	r.waitEvent("a's stale mark", func(e fanEvent) bool { return e.Kind == "stale" && e.Cluster == "a" && e.Applied })
+	// The two events arrive in either order: a's stale mark from a timer, b's
+	// answer through its fetch goroutine and the results channel. Wait for both
+	// before asking for the frame.
+	var sawStale, sawResult bool
+	r.waitEvent("a's stale mark and b's second result", func(e fanEvent) bool {
+		sawStale = sawStale || (e.Kind == "stale" && e.Cluster == "a" && e.Applied)
+		sawResult = sawResult || (e.Kind == "result" && e.Cluster == "b" && e.Seq == 2 && e.Applied)
+		return sawStale && sawResult
+	})
 	f = r.redraw()
 	for _, want := range []string{
 		"cluster a: not answering, data as of 12:00:01",
