@@ -40,6 +40,40 @@ func newFirstPrompt(source, text string) FirstPrompt {
 	return fp
 }
 
+// existingResourceAttributes is the value marvel appends to: the role's
+// declared runtime.env entry if it has one, else the daemon's own environment's.
+// It reads those two sources and never the launch environment map, which also
+// holds credentials such as the bus password, so nothing it returns can carry
+// one.
+func existingResourceAttributes(ctx *LaunchContext) string {
+	if v, declared := ctx.Role.Runtime.Env[resourceAttributesEnv]; declared {
+		return v
+	}
+	return os.Getenv(resourceAttributesEnv)
+}
+
+// foreignPairs returns the pairs of an OTEL_RESOURCE_ATTRIBUTES value that are
+// not under marvel's namespace, as written and in order. A pair under it is
+// dropped and logged by key only, so marvel's values for its own namespace
+// always win.
+func foreignPairs(session, existing string) []string {
+	var out []string
+	for _, pair := range strings.Split(existing, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		key, _, _ := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if strings.HasPrefix(key, stampNamespace) {
+			log.Printf("warning: session %s: %s key %q dropped, marvel owns the %s namespace", session, resourceAttributesEnv, key, stampNamespace)
+			continue
+		}
+		out = append(out, pair)
+	}
+	return out
+}
+
 // stampSeat sets OTEL_RESOURCE_ATTRIBUTES in env: the value the role declared,
 // else the daemon's own, then marvel's pairs. Pairs under the marvel. namespace
 // in the existing value are dropped and logged by key only, so marvel's values
@@ -49,23 +83,7 @@ func newFirstPrompt(source, text string) FirstPrompt {
 // The two hashes are of the exact bytes passed; pass "" for one marvel did not
 // pass or cannot read.
 func stampSeat(ctx *LaunchContext, env map[string]string, systemPromptSha, firstPromptSha string) {
-	existing, declared := env[resourceAttributesEnv]
-	if !declared {
-		existing = os.Getenv(resourceAttributesEnv)
-	}
-	var out []string
-	for _, pair := range strings.Split(existing, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		key, _, _ := strings.Cut(pair, "=")
-		if strings.HasPrefix(strings.TrimSpace(key), stampNamespace) {
-			log.Printf("warning: session %s: %s key %q dropped, marvel owns the %s namespace", ctx.Session.Name, resourceAttributesEnv, strings.TrimSpace(key), stampNamespace)
-			continue
-		}
-		out = append(out, pair)
-	}
+	out := foreignPairs(ctx.Session.Name, existingResourceAttributes(ctx))
 
 	seat, _ := seatURI(ctx, "", true)
 	for _, kv := range [][2]string{
