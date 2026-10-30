@@ -405,3 +405,61 @@ func TestStampCarriesThePromptArtifactHashWhenDeclared(t *testing.T) {
 		t.Errorf("a hash was stamped with none declared")
 	}
 }
+
+// CodeQL on the stamp: the merged env map also holds the bus password, so the
+// existing value is read from the role's declaration or the daemon's own
+// environment and never from that map. A poisoned entry in the map must not be
+// seen.
+func TestStampReadsTheRoleDeclaredValueNotTheMergedMap(t *testing.T) {
+	t.Setenv(resourceAttrs, "from.daemon=1")
+	ctx := claudeCtx("claude")
+	ctx.Role.Runtime.Env = map[string]string{resourceAttrs: "from.role=1"}
+	env := map[string]string{resourceAttrs: "from.map=1", "DIRECTOR_NATS_PASS": "x"}
+	stampSeat(ctx, env, "", "")
+	got := env[resourceAttrs]
+	if !strings.HasPrefix(got, "from.role=1,marvel.workspace=") {
+		t.Errorf("%s = %q, want the role's declared pairs first", resourceAttrs, got)
+	}
+	if strings.Contains(got, "from.map") || strings.Contains(got, "from.daemon") {
+		t.Errorf("%s = %q, want neither the merged map's value nor the daemon's", resourceAttrs, got)
+	}
+}
+
+func TestStampReadsTheDaemonsValueNotTheMergedMapWhenTheRoleDeclaresNone(t *testing.T) {
+	t.Setenv(resourceAttrs, "from.daemon=1")
+	ctx := claudeCtx("claude")
+	env := map[string]string{resourceAttrs: "from.map=1"}
+	stampSeat(ctx, env, "", "")
+	got := env[resourceAttrs]
+	if !strings.HasPrefix(got, "from.daemon=1,marvel.workspace=") || strings.Contains(got, "from.map") {
+		t.Errorf("%s = %q, want the daemon's pairs first and not the map's", resourceAttrs, got)
+	}
+}
+
+// The stamp's log line names a dropped key and nothing else, so a bus password
+// the launch environment holds never reaches it, or the stamp.
+func TestStampLogLineNeverCarriesTheBusPassword(t *testing.T) {
+	t.Setenv(resourceAttrs, "")
+	const password = "hunter2-bus-password-9f3a"
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(log.Writer()) })
+
+	ctx := claudeCtx("claude")
+	ctx.BusURL, ctx.BusUser, ctx.BusPassword = "nats://127.0.0.1:4222", "squad", password
+	ctx.Role.Runtime.Env = map[string]string{resourceAttrs: "marvel.role=x,marvel.team=y,keep=1"}
+	r := prepareStamped(t, ctx)
+
+	if r.Env["DIRECTOR_NATS_PASS"] != password {
+		t.Fatalf("setup: the launch environment does not hold the password")
+	}
+	if !strings.Contains(buf.String(), "marvel.role") || !strings.Contains(buf.String(), "marvel.team") {
+		t.Errorf("the dropped keys were not logged: %q", buf.String())
+	}
+	if strings.Contains(buf.String(), password) {
+		t.Errorf("the log carries the bus password: %q", buf.String())
+	}
+	if strings.Contains(r.Env[resourceAttrs], password) {
+		t.Errorf("the stamp carries the bus password")
+	}
+}
