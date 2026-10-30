@@ -72,9 +72,13 @@ seats in the report.
 A. Answered in code: yes. Every heartbeat stamps `ContextAt` with the beat
 time (`internal/api/store.go:1015`), and the did-work clear
 (`internal/daemon/watchdog.go:262`) drops a screen-describing state once
-`ContextAt` moves past it. Beats continuing while logged out was observed
-(marvel#801), not read in code. So for a seat that keeps beating, the quiet
-gate is closed by design.
+`ContextAt` moves past it. marvel#801 records the mechanism on an idle
+seat: the statusline beat re-stamps every 15 s whether or not the seat
+works. That a logged-out seat keeps beating is inferred from it and from
+the seats in this finding's source report, which read running and alive
+while their panes showed the expired notice; no beat log of a logged-out
+seat was read. So for a seat that keeps beating, the quiet gate is closed
+by design.
 
 B. The watchdog captures client-workspace panes while COMPOSER and PANE never
 do. Is the asymmetry intended?
