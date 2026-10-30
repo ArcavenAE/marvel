@@ -22,11 +22,11 @@ The orchestrator graph's harness survey (finding 2w6k, 2026-10-08) already ranks
 | here | the design's answer | left for this probe |
 |---|---|---|
 | Q1, H1 | G1 (four line types), G2 (`complete` only without a terminal error), G3 (no per-request usage); section 3 parser and the three run outcomes | whether `message` events are whole messages or chunks (arm 1 at v1.57.0: one event per chunk, same id) |
-| Q2, H2 | G11 (goose mints the id; `--session-id` needs `--resume`; names are not unique; a bare `--resume` takes the newest), G12, M4; `SessionIDAssigner` is no, `-n` is a label, never a pin | nothing. H2's resume-by-name idea is refuted by G11 |
-| Q3, H3 | G3, M5, M6; section 5: level only from `sessions.db` (ticket H), no OTLP receiver | nothing |
+| Q2, H2 | G11 (goose mints the id; `--session-id` is accepted only with `--resume`; names are not unique; a bare `--resume` takes the newest), G12, M4; `SessionIDAssigner` is no, and `-n` is a label, never a pin | H2 holds in source: an id cannot be set before launch, and resume by id works with `--resume`. Section 3 and M4 rule out pinning a launch by name, not resume by id. P5 (two launches in one root, the newest row is this launch's) is partly answered by arm 1 and still open |
+| Q3, H3 | G3, M5, M6; section 5: level only from `sessions.db` (ticket H), no OTLP receiver | P6 (per-request usage in the stream, and the row's level columns against the `complete` totals) is still open. Whether the reading feeds the I-47 rollup is not in the design |
 | Q4 | `ComposerCapable` is no in v1 (headless only) | out of v1 scope; arm 1 recorded the composer anyway |
 | Q5, H4 | not covered; extensions are narrowed with `--no-profile --with-builtin` | all of it: director-mcp as an extension and the 120 s wait |
-| Q6, H5 | section 6 and the operator's ruling of 2026-10-10, "(a) with (c) as future option": v1 keeps the keyring and projects no `GOOSE_DISABLE_KEYRING` | H5 is restated against that ruling: the probe's env-only, keyring-off run (arm 1) is a scratch measurement, not the v1 posture |
+| Q6, H5 | section 6 and the operator's ruling of 2026-10-10, "(a) with (c) as future option". The design reads that ruling as v1 keeping the keyring and projecting no `GOOSE_DISABLE_KEYRING`; that reading is the design's. Auth paths: section 8 sets the probe provider to an API key or Bedrock, not ACP, and the "Not in v1" line lists ACP providers | H5 is restated below to match the ruling. Arm 1's keyring-off run was a scratch measurement, not the v1 posture. Vertex is not covered by the design |
 | Q7 | G4 to G7 and section 4: `approve` plus a seeded `permission.yaml` fails closed; `auto` only in a sandbox (ticket K); never `chat`, which reports a skipped tool call as success (G7) | whether G4 to G7 still hold at v1.57.0 |
 | H6 | not covered | all of it |
 
@@ -48,7 +48,7 @@ The design's pin (v1.54.0, valid until 2026-10-24) has passed; this probe runs a
 - H2. goose writes a session id that marvel can read after launch but not set before it. Resume by id works from the CLI.
 - H3. Token counts are in the stream per turn; context-window remaining is not, and must come from OTLP or the model's limit.
 - H4. director-mcp loads as a stdio extension, but goose's tool-call timeout ends the 120 s wait before it returns, so a seat needs a shorter wait or a timeout setting.
-- H5. The keyring default writes a provider key at rest. A seat must use an environment-only or ACP path to stay inside SOUL section 3.
+- H5. Under the 2026-10-10 ruling a v1 seat keeps the keyring and reads the operator's own goose entry. A private `GOOSE_PATH_ROOT` does not move that entry (G10), and goose writes no other copy of the key at rest. A keyring-off posture is not tested (director, 2026-10-30).
 - H6. On the generic adapter a goose seat launches and takes a prompt, but marvel sees it only by capture-pane. It breaks first at bus wake (no MCP channel configured) or at a first-run trust or model prompt.
 
 ## Method
