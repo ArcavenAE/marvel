@@ -65,20 +65,30 @@ func hasRestartBanner(capture string) bool {
 	return ok && claudeRestartBanner.MatchString(row)
 }
 
+// storedPaneWord is the PANE word the watchdog's stored verdict gives, when it
+// gives one. It needs no capture and shows nothing new, so it is read from the
+// session itself every time, never from a cache (the cache holds screen
+// readings only; see readPane).
+func storedPaneWord(s api.Session) (string, bool) {
+	if hs := s.HarnessState; hs != nil {
+		switch hs.State {
+		case api.HarnessStateLoggedOut:
+			return paneLoggedOut, true
+		case api.HarnessStateParked:
+			return panePrompt, true
+		}
+	}
+	return "", false
+}
+
 // paneWord is the PANE value for one session, with the reason when it is
 // unknown. "" means not read: the session has no running pane.
 func paneWord(pane composerPane, s api.Session, client bool, clientErr error) (word, gap string) {
 	if s.PaneID == "" || s.State != api.SessionRunning {
 		return "", ""
 	}
-	// The watchdog's stored verdict needs no capture and shows nothing new.
-	if hs := s.HarnessState; hs != nil {
-		switch hs.State {
-		case api.HarnessStateLoggedOut:
-			return paneLoggedOut, ""
-		case api.HarnessStateParked:
-			return panePrompt, ""
-		}
+	if w, ok := storedPaneWord(s); ok {
+		return w, ""
 	}
 	if clientErr != nil {
 		return paneUnknown, gapManifest

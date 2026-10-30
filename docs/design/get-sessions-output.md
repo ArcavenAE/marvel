@@ -296,10 +296,18 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
 - **Coverage.** The banner row was read on claude 2.1.289 to 2.1.314. No new
   login or trust screen was captured for this column; those two words come
   from the watchdog's patterns as they are.
-- **Cost.** The same read-only path as COMPOSER: one foreground query and one
-  capture per running seat that is not in a client workspace, and only when
-  the PANE or COMPOSER column is selected. Selecting both shares one capture
-  per pane. A stored verdict needs no capture.
+- **Cost.** The same read-only path as COMPOSER: one foreground query and
+  one capture per running seat that is not in a client workspace, shared by
+  the two columns. A stored verdict needs no capture and is read from the
+  session at every query; the tick cache holds screen readings only.
+- **The tick cache.** The daemon's tick (every `ReconcileInterval`, read at
+  most every 10 s) reads the panes while a `get sessions` asked for PANE or
+  COMPOSER in the last 5 minutes, and `get sessions` serves the last reading,
+  so a warm query makes no tmux call. A reading older than 30 s is not served:
+  that seat is read afresh and the entry refilled. A workspace turned client is
+  gated on every query, so its cached reading is dropped, not served. A
+  daemon nobody queries makes no pane read for these columns. A served word is
+  up to 30 s behind the screen, and `restart` is a screen reading, not proof.
 
 ## 5. Every number is diagnostic
 

@@ -357,10 +357,11 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.paneMenuSource d.driver.PaneForeground":             true,
 	}
 	wantValue := map[string]bool{
-		"*Daemon.handleInjectAs": true, // preflightRefusal(d.driver, ...), bareDigitRefusal(d.driver, ...), sendInject(d.driver, ...)
-		"*Daemon.notifyHandoff":  true, // preflightRefusal(d.driver, ...)
-		"*Daemon.newLimitAction": true, // limitSender(d.driver)
-		"*Daemon.handleGet":      true, // stampComposer(d.driver, ...), typed as composerPane: three reads, no keys
+		"*Daemon.handleInjectAs":   true, // preflightRefusal(d.driver, ...), bareDigitRefusal(d.driver, ...), sendInject(d.driver, ...)
+		"*Daemon.notifyHandoff":    true, // preflightRefusal(d.driver, ...)
+		"*Daemon.newLimitAction":   true, // limitSender(d.driver)
+		"*Daemon.refreshPaneReads": true, // paneReads.refresh(d.driver, ...), typed as composerPane: three reads, no keys
+		"*Daemon.stampPaneReads":   true, // paneReads.stamp(d.driver, ...), the same
 	}
 	wiring := map[string]bool{"CapturePaneJoined": true, "PaneForeground": true}
 	p := parseDaemon(t)
