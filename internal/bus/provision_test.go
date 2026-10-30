@@ -62,7 +62,7 @@ func TestProvisionCreatesThenFindsAgainstRealBroker(t *testing.T) {
 		t.Fatal(err)
 	}
 	ic := inbox.CachedInfo().Config
-	if strings.Join(ic.Subjects, ",") != "agent.*.*.*.inbox,agent.*.*.role.*.inbox" || ic.MaxAge != 24*time.Hour || ic.MaxMsgSize != 65536 || ic.Duplicates != 2*time.Minute || ic.Storage != jetstream.FileStorage || ic.Retention != jetstream.LimitsPolicy {
+	if strings.Join(ic.Subjects, ",") != "agent.*.*.*.inbox,agent.*.*.role.*.inbox" || ic.MaxAge != 168*time.Hour || ic.MaxMsgSize != 65536 || ic.Duplicates != 2*time.Minute || ic.Storage != jetstream.FileStorage || ic.Retention != jetstream.LimitsPolicy {
 		t.Errorf("AGENT_INBOX config = %+v", ic)
 	}
 	audit, err := js.Stream(ctx, AuditStream)

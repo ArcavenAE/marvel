@@ -215,10 +215,10 @@ func TestRenderSessionTableWithHeartbeat(t *testing.T) {
 }
 
 func TestRenderSessionTableUnsampled(t *testing.T) {
-	table := renderSessionTable([]api.Session{{
+	table := renderSessionTableCols([]api.Session{{
 		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
 		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "forestage"},
-	}})
+	}}, columnsOrFatal(t, "name,cpu,rss", nil))
 	if got := column(t, table, "CPU%"); got != "-" {
 		t.Errorf("CPU%% = %q before the first sampler pass, want %q", got, "-")
 	}
@@ -228,7 +228,7 @@ func TestRenderSessionTableUnsampled(t *testing.T) {
 }
 
 func TestRenderSessionTableSampled(t *testing.T) {
-	table := renderSessionTable([]api.Session{{
+	table := renderSessionTableCols([]api.Session{{
 		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
 		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "forestage"},
 		SessionMetrics: api.SessionMetrics{
@@ -236,7 +236,7 @@ func TestRenderSessionTableSampled(t *testing.T) {
 			RSSBytes:   512 * 1024 * 1024,
 			MetricsAt:  time.Now().UTC(),
 		},
-	}})
+	}}, columnsOrFatal(t, "name,cpu,rss", nil))
 	if got := column(t, table, "CPU%"); got != "12.8" {
 		t.Errorf("CPU%% = %q, want %q", got, "12.8")
 	}
@@ -247,11 +247,11 @@ func TestRenderSessionTableSampled(t *testing.T) {
 
 // An idle sampled session must be distinguishable from an unsampled one.
 func TestRenderSessionTableSampledIdle(t *testing.T) {
-	table := renderSessionTable([]api.Session{{
+	table := renderSessionTableCols([]api.Session{{
 		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
 		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "forestage"},
 		SessionMetrics: api.SessionMetrics{MetricsAt: time.Now().UTC()},
-	}})
+	}}, columnsOrFatal(t, "name,cpu,rss", nil))
 	if got := column(t, table, "CPU%"); got != "0.0" {
 		t.Errorf("CPU%% = %q for a sampled idle session, want %q", got, "0.0")
 	}

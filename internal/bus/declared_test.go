@@ -42,7 +42,7 @@ func TestDeclaredObjectsKeepPrecondition6Parameters(t *testing.T) {
 		byName[o.Name] = o
 	}
 	inbox := byName[InboxStream].Stream
-	if inbox == nil || len(inbox.Subjects) != 2 || inbox.MaxAge != 24*time.Hour || inbox.MaxMsgSize != 65536 || inbox.Duplicates != 2*time.Minute || inbox.Storage != jetstream.FileStorage || inbox.Retention != jetstream.LimitsPolicy {
+	if inbox == nil || len(inbox.Subjects) != 2 || inbox.MaxAge != 168*time.Hour || inbox.MaxMsgSize != 65536 || inbox.Duplicates != 2*time.Minute || inbox.Storage != jetstream.FileStorage || inbox.Retention != jetstream.LimitsPolicy {
 		t.Errorf("AGENT_INBOX = %+v", inbox)
 	}
 	audit := byName[AuditStream].Stream
@@ -314,4 +314,26 @@ func TestManagerSeatPassFileAndRecovery(t *testing.T) {
 	if n := len(RecoverPasswords(filepath.Join(dir, "missing"))); n != 0 {
 		t.Errorf("recovered %d from a missing file", n)
 	}
+}
+
+// AGENT_INBOX keeps a message 7 days (operator ruling I-65, 2026-10-30). A
+// 24h value let an idle seat's mail expire unread, so the number is pinned by
+// itself: a change must name the ruling that moves it.
+func TestInboxRetentionIsSevenDays(t *testing.T) {
+	if InboxMaxAge != 7*24*time.Hour {
+		t.Fatalf("InboxMaxAge = %v, want 168h", InboxMaxAge)
+	}
+	for _, o := range DeclaredObjects() {
+		if o.Name != InboxStream {
+			continue
+		}
+		if o.Stream == nil || o.Stream.MaxAge != InboxMaxAge {
+			t.Fatalf("declared AGENT_INBOX MaxAge = %v, want InboxMaxAge", o.Stream)
+		}
+		if !strings.Contains(o.Origin, "I-65") {
+			t.Errorf("origin %q does not name the I-65 ruling", o.Origin)
+		}
+		return
+	}
+	t.Fatal("AGENT_INBOX is not declared")
 }
