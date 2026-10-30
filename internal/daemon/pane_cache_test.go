@@ -251,3 +251,40 @@ func TestCachedReadingIsNotServedOnceTheWorkspaceIsClient(t *testing.T) {
 		t.Fatal("the cached reading of a client-workspace seat was kept")
 	}
 }
+
+// The cache holds the screen reading, not the watchdog's verdict. A seat read
+// while it carried a logged-out verdict shows the screen word as soon as the
+// verdict is cleared, with no new read; before the verdict was kept out of the
+// cached reading it kept showing logged-out for up to the TTL.
+func TestClearedVerdictShowsTheScreenWordAtTheNextQuery(t *testing.T) {
+	p := &slowPane{escapes: composerFixture(t, "1-empty-idle.ansi.txt")}
+	var c paneCache
+	now := time.Now()
+	withVerdict := fleet(1)
+	withVerdict[0].HarnessState = &api.HarnessState{State: api.HarnessStateLoggedOut}
+	c.stamp(p, withVerdict, noClient, now)
+	if withVerdict[0].Pane != paneLoggedOut {
+		t.Fatalf("pane = %q with a logged-out verdict, want logged-out", withVerdict[0].Pane)
+	}
+	if p.count() == 0 {
+		t.Fatal("the screen was not read while the verdict was set, so the cache holds nothing to serve once it clears")
+	}
+
+	cleared := fleet(1)
+	before := p.count()
+	c.stamp(p, cleared, noClient, now.Add(time.Second))
+	if cleared[0].Pane != paneIdle {
+		t.Fatalf("pane = %q one second after the verdict cleared, want idle (the screen word)", cleared[0].Pane)
+	}
+	if p.count() != before {
+		t.Fatal("clearing the verdict caused a pane read; the cached screen reading should serve")
+	}
+
+	// And the other way: a verdict that appears shows at once over a cached word.
+	set := fleet(1)
+	set[0].HarnessState = &api.HarnessState{State: api.HarnessStateParked}
+	c.stamp(p, set, noClient, now.Add(2*time.Second))
+	if set[0].Pane != panePrompt {
+		t.Fatalf("pane = %q with a parked verdict, want prompt", set[0].Pane)
+	}
+}

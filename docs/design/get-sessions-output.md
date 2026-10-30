@@ -298,7 +298,7 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
 - **Cost.** The same read-only path as COMPOSER: one foreground query and
   one capture per running seat that is not in a client workspace, shared by
   the two columns. A stored verdict needs no capture and is read from the
-  session every time.
+  session at every query; the tick cache holds screen readings only.
 - **The tick cache.** The daemon's tick (every `ReconcileInterval`, read at
   most every 10 s) reads the panes while a `get sessions` asked for PANE or
   COMPOSER in the last 5 minutes, and `get sessions` serves the last reading,

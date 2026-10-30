@@ -22,8 +22,10 @@ import (
 // What changes, and is stated in the PR: a served reading is up to paneReadTTL
 // old. A reading older than that is not served; the query reads that seat
 // afresh (and refreshes the entry), so the column fails to a fresh read, never
-// to a stale word. The watchdog's stored verdict is never cached: it is read
-// from the session every time.
+// to a stale word. The cache holds screen readings only. The watchdog's stored
+// verdict is never cached: readPane reads the screen on a copy of the session
+// with the verdict cleared, and stamp applies the verdict the session carries
+// at that query, so a verdict that is cleared or set shows at the next query.
 //
 // The tick reads only while someone is asking: a query marks the cache wanted
 // for paneWantedFor, and a tick past that does nothing, so a daemon nobody
@@ -89,8 +91,11 @@ func (c *paneCache) put(key string, r paneReading) {
 }
 
 // readPane reads one seat afresh, through a pane that shares one capture
-// between the two columns.
+// between the two columns. It reads the screen only: the session's stored
+// verdict is cleared on the copy it reads, so the reading it returns never
+// carries it, and stamp applies the live verdict.
 func readPane(pane composerPane, s api.Session, client func(string) (bool, error), now time.Time) paneReading {
+	s.HarnessState = nil
 	c, cerr := client(s.Workspace)
 	cw, cg := composerWord(pane, s, c, cerr)
 	pw, pg := paneWord(pane, s, c, cerr)

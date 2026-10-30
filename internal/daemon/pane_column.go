@@ -64,7 +64,8 @@ func hasRestartBanner(capture string) bool {
 
 // storedPaneWord is the PANE word the watchdog's stored verdict gives, when it
 // gives one. It needs no capture and shows nothing new, so it is read from the
-// session itself every time, never from a cache.
+// session itself every time, never from a cache (the cache holds screen
+// readings only; see readPane).
 func storedPaneWord(s api.Session) (string, bool) {
 	if hs := s.HarnessState; hs != nil {
 		switch hs.State {
