@@ -164,8 +164,12 @@ func DeclaredPrincipals(s Spec) ([]Principal, error) {
 		out = append(out, Principal{
 			Name: SeatUserName, Scope: ScopeService,
 			// Publish-only across workspaces: every inbox, every broadcast,
-			// the audit trail. The one cross-workspace publisher the
-			// asymmetry permits (global-bus-tier.md section 4.1, R-95).
+			// the audit trail. The one publisher that reaches every inbox in
+			// every workspace (global-bus-tier.md section 4.1, R-95). The
+			// per-role supervisor users below also publish across
+			// workspaces since the operator ruling of 2026-10-28, but only to
+			// the exact role inboxes of other teams' global roles, never a
+			// wildcard.
 			Publish: append([]string{
 				"agent.*.*.*.inbox", "agent.*.*.role.*.inbox",
 				"agent.*.*.broadcast", "agent.*.broadcast", "agent.audit",
