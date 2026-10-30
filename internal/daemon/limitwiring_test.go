@@ -331,7 +331,7 @@ func TestEveryKeyPressInTheDaemonIsInventoried(t *testing.T) {
 }
 
 // The driver is reached in the daemon only through these methods, from these
-// functions, and escapes as a bare value only into these two. In the two wiring
+// functions, and escapes as a bare value only into these. In the two wiring
 // files only the two read-only methods appear.
 func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 	t.Parallel()
@@ -357,11 +357,10 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.paneMenuSource d.driver.PaneForeground":             true,
 	}
 	wantValue := map[string]bool{
-		"*Daemon.handleInjectAs":   true, // preflightRefusal(d.driver, ...), bareDigitRefusal(d.driver, ...), sendInject(d.driver, ...)
-		"*Daemon.notifyHandoff":    true, // preflightRefusal(d.driver, ...)
-		"*Daemon.newLimitAction":   true, // limitSender(d.driver)
-		"*Daemon.refreshPaneReads": true, // paneReads.refresh(d.driver, ...), typed as composerPane: three reads, no keys
-		"*Daemon.stampPaneReads":   true, // paneReads.stamp(d.driver, ...), the same
+		"*Daemon.handleInjectAs": true, // preflightRefusal(d.driver, ...), bareDigitRefusal(d.driver, ...), sendInject(d.driver, ...)
+		"*Daemon.notifyHandoff":  true, // preflightRefusal(d.driver, ...)
+		"*Daemon.newLimitAction": true, // limitSender(d.driver)
+		"*Daemon.paneSource":     true, // returned as composerPane (three reads, no keys), for paneReads.refresh and stamp
 	}
 	wiring := map[string]bool{"CapturePaneJoined": true, "PaneForeground": true}
 	p := parseDaemon(t)
