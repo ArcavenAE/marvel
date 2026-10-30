@@ -101,9 +101,8 @@ func sessionsView(t *testing.T, sessions []api.Session, cols string, fit fitOpti
 	return renderSessionsView(sessions, columnsOrFatal(t, cols, nil), "cluster  alpha\n\n", fit)
 }
 
-// LAST-ACTIVE is in the wide set and not in the default table, so a pipe
-// prints what it always printed.
-func TestLastActiveColumnInWideNotInDefault(t *testing.T) {
+// LAST-ACTIVE is in the wide set and in the default table.
+func TestLastActiveColumnInWideAndInDefault(t *testing.T) {
 	has := func(cols []sessionColumn) bool {
 		for _, c := range cols {
 			if c.name == "last-active" {
@@ -115,8 +114,8 @@ func TestLastActiveColumnInWideNotInDefault(t *testing.T) {
 	if !has(columnsOrFatal(t, "wide", nil)) {
 		t.Error("the wide set should include last-active")
 	}
-	if has(defaultSessionColumns()) {
-		t.Error("the default table should not include last-active")
+	if !has(defaultSessionColumns()) {
+		t.Error("the default table should include last-active")
 	}
 	if !has(columnsOrFatal(t, "last-active", nil)) {
 		t.Error("last-active should be selectable by name")

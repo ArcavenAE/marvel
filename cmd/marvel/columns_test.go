@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,6 +23,14 @@ var todaysHeaders = []string{
 	"CTX%", "CPU%", "RSS", "DESK", "RUNTIME", "LLM",
 }
 
+// defaultHeaders is the default table: who the seat is, whether it is doing
+// work, then which model. CPU%, RSS, DESK and RUNTIME stay selectable and in
+// the wide set.
+var defaultHeaders = []string{
+	"WORKSPACE", "TEAM", "ROLE", "GEN", "AGENT NAME", "STATE", "HEALTH",
+	"CTX%", "ACTIVE%", "LAST-ACTIVE", "AGE", "LLM",
+}
+
 func columnsOrFatal(t *testing.T, flag string, pref []string) []sessionColumn {
 	t.Helper()
 	cols, err := selectSessionColumns(flag, pref)
@@ -31,12 +40,29 @@ func columnsOrFatal(t *testing.T, flag string, pref []string) []sessionColumn {
 	return cols
 }
 
-// With neither a flag nor a preference the table is today's, so nothing
-// changes for an operator who sets nothing.
-func TestColumnsDefaultIsTodaysTable(t *testing.T) {
+// With neither a flag nor a preference the table is the default order.
+func TestColumnsDefaultOrder(t *testing.T) {
 	got := headersOf(columnsOrFatal(t, "", nil))
-	if !reflect.DeepEqual(got, todaysHeaders) {
-		t.Errorf("default headers = %v, want %v", got, todaysHeaders)
+	if !reflect.DeepEqual(got, defaultHeaders) {
+		t.Errorf("default headers = %v, want %v", got, defaultHeaders)
+	}
+}
+
+// The opt-in set decides which registered columns are in the default and
+// defaultColumnNames decides their order. They must name the same columns, or
+// one of them is stale.
+func TestDefaultOrderAndOptInAgree(t *testing.T) {
+	var fromOptIn []string
+	for _, c := range sessionColumnRegistry {
+		if !optInColumns[c.name] {
+			fromOptIn = append(fromOptIn, c.name)
+		}
+	}
+	a, b := slices.Clone(fromOptIn), slices.Clone(defaultColumnNames)
+	slices.Sort(a)
+	slices.Sort(b)
+	if !reflect.DeepEqual(a, b) {
+		t.Errorf("columns not opt-in = %v, defaultColumnNames = %v", a, b)
 	}
 }
 
