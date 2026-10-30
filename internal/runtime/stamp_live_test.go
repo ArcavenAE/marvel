@@ -23,18 +23,49 @@ import (
 // profile that denies the network, so a stray login on the host cannot reach a
 // model.
 func TestClaudeTelemetryCarriesTheStamp(t *testing.T) {
+	t.Setenv(resourceAttributesEnv, "")
+	ctx := claudeCtx("claude")
+	ctx.Cluster = "c1"
+	r := prepareStamped(t, ctx)
+	got := claudeTelemetry(t, r.Env[resourceAttributesEnv])
+	for _, want := range []string{
+		`"marvel.workspace": "acme"`,
+		`"marvel.team": "squad"`,
+		`"marvel.role": "worker"`,
+		`"marvel.session": "squad-worker-g1-0"`,
+		`"marvel.seat": "marvel://c1/acme/squad/worker-0"`,
+		`"marvel.cluster": "c1"`,
+		`"marvel.system_prompt.sha256": "` + r.SystemPromptSha256 + `"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("claude's telemetry lacks %s\n%s", want, got)
+		}
+	}
+}
+
+// The harness decodes the percent-encoded values marvel writes, so a value with
+// a space, a comma and an equals sign arrives as written. A workspace name like
+// this is not a valid seat URI part, so no seat is stamped; the other fields are.
+func TestClaudeTelemetryDecodesWhatMarvelEncodes(t *testing.T) {
+	t.Setenv(resourceAttributesEnv, "")
+	ctx := claudeCtx("claude")
+	ctx.Workspace.Name = "a b,c=d"
+	ctx.Session.Workspace = "a b,c=d"
+	r := prepareStamped(t, ctx)
+	got := claudeTelemetry(t, r.Env[resourceAttributesEnv])
+	if want := `"marvel.workspace": "a b,c=d"`; !strings.Contains(got, want) {
+		t.Errorf("claude's telemetry lacks %s\n%s", want, got)
+	}
+}
+
+// claudeTelemetry runs the installed claude with the console exporter into a
+// file and returns what it wrote.
+func claudeTelemetry(t *testing.T, attrs string) string {
+	t.Helper()
 	claude, err := exec.LookPath("claude")
 	if err != nil {
 		t.Fatalf("claude is not installed, and this test needs the harness binary: %v", err)
 	}
-	t.Setenv(resourceAttributesEnv, "")
-
-	ctx := claudeCtx("claude")
-	ctx.Cluster = "c1"
-	ctx.Workspace.Name = "a b"
-	ctx.Session.Workspace = "a b"
-	r := prepareStamped(t, ctx)
-
 	out := filepath.Join(t.TempDir(), "telemetry.out")
 	f, err := os.Create(out)
 	if err != nil {
@@ -54,7 +85,7 @@ func TestClaudeTelemetryCarriesTheStamp(t *testing.T) {
 		"OTEL_LOGS_EXPORTER=console",
 		"OTEL_METRIC_EXPORT_INTERVAL=1000",
 		"OTEL_LOGS_EXPORT_INTERVAL=1000",
-		resourceAttributesEnv + "=" + r.Env[resourceAttributesEnv],
+		resourceAttributesEnv + "=" + attrs,
 	}
 	cmd.Stdout, cmd.Stderr = f, f
 	_ = cmd.Run()
@@ -63,19 +94,5 @@ func TestClaudeTelemetryCarriesTheStamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The harness decodes the percent-encoded values, so a workspace named
-	// "a b" arrives as written.
-	for _, want := range []string{
-		`"marvel.workspace": "a b"`,
-		`"marvel.team": "squad"`,
-		`"marvel.role": "worker"`,
-		`"marvel.session": "squad-worker-g1-0"`,
-		`"marvel.seat": "marvel://c1/a b/squad/worker-0"`,
-		`"marvel.cluster": "c1"`,
-		`"marvel.system_prompt.sha256": "` + r.SystemPromptSha256 + `"`,
-	} {
-		if !strings.Contains(string(raw), want) {
-			t.Errorf("claude's telemetry lacks %s\n%s", want, string(raw))
-		}
-	}
+	return string(raw)
 }
