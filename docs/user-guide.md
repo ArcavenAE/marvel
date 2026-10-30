@@ -457,7 +457,7 @@ setting `runtime.context_window` for a codex role does not light CTX%.
 
 The rollout is reached through a codex hook, which hands over the file's
 absolute path, and marvel installs the hook for you. Each codex session
-runs in a private `CODEX_HOME` (`/tmp/marvel-h-<tag>/<12 hex>`, shown as
+runs in a private `CODEX_HOME` (`~/.marvel/h/<12 hex>`, shown as
 `harness_home` in `marvel describe session`), and
 marvel writes that home's `config.toml` at every launch. First-time setup
 is `codex login` and nothing else.
@@ -490,12 +490,16 @@ Only `auth.json` is linked in, as a symlink, so the login stays yours.
 The seeded file is rewritten at every launch; change the manifest or your
 own config instead of editing it.
 
+The homes live under the marvel home, so a temp cleanup never removes a running
+seat's login. A seat started before this change keeps the home its record names.
+
 The home path is kept short on purpose. An interactive codex (0.157 and
 later) opens a control socket inside its home, and a unix socket path has a
 104-byte limit on macOS; past it, codex exits at start with "path must be
 shorter than SUN_LEN". Marvel logs a warning at spawn if the socket would not
-fit (for example, a `/tmp/marvel-h-<tag>` that another account already owns
-sends homes back to the long temp directory). The workaround for such a host
+fit (for example, a `~/.marvel/h` that another account already owns, or a
+marvel home path long enough to leave no room, sends homes to the short temp
+base `/tmp/marvel-h-<tag>`, and past that to the long temp directory). The workaround for such a host
 is `args = ["--no-daemon", ...]` on the codex role.
 
 If marvel cannot find a `codex` binary to ask, it still writes the file,

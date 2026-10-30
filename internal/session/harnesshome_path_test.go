@@ -111,3 +111,57 @@ func TestCheckHomeSocketReportsAnOverlongPath(t *testing.T) {
 		t.Errorf("an overlong path was not reported: %q", buf.String())
 	}
 }
+
+// TestDurableHarnessHomeBaseLivesUnderTheMarvelHome: the preferred base is
+// <marvel home>/h, private to this user, so a temp cleanup never reaches a
+// running seat's login (marvel#1142).
+func TestDurableHarnessHomeBaseLivesUnderTheMarvelHome(t *testing.T) {
+	layout := paths.WithHome(filepath.Join(t.TempDir(), ".marvel"))
+	got, ok := durableHarnessHomeBase(layout, 1<<20)
+	if !ok {
+		t.Fatal("the durable base was refused with room to spare")
+	}
+	if want := filepath.Join(layout.Home, "h"); got != want {
+		t.Errorf("base = %s, want %s", got, want)
+	}
+	fi, err := os.Lstat(got)
+	if err != nil {
+		t.Fatalf("stat base: %v", err)
+	}
+	if !fi.IsDir() || fi.Mode().Perm() != 0o700 {
+		t.Errorf("base is %v, want a 0700 directory", fi.Mode())
+	}
+}
+
+// TestDurableHarnessHomeBaseRefusesWhenTheSocketCannotFit: a marvel home so
+// long that codex's control socket would pass the unix socket limit is not
+// used, because codex exits at start when the path is too long (aae-orc-pt8k).
+func TestDurableHarnessHomeBaseRefusesWhenTheSocketCannotFit(t *testing.T) {
+	layout := paths.WithHome(filepath.Join(t.TempDir(), ".marvel"))
+	if got, ok := durableHarnessHomeBase(layout, len(layout.HarnessHomesDir())+harnessHomeSocketReserve); ok {
+		t.Errorf("a base with no byte to spare was used: %s", got)
+	}
+	// One byte more headroom than the path needs is enough.
+	resolved, err := filepath.EvalSymlinks(layout.HarnessHomesDir())
+	if err != nil {
+		t.Fatalf("resolve base: %v", err)
+	}
+	if _, ok := durableHarnessHomeBase(layout, len(resolved)+harnessHomeSocketReserve+1); !ok {
+		t.Error("a base one byte under the limit was refused")
+	}
+}
+
+// TestDurableHarnessHomeBaseRefusesAnOpenDir: a <home>/h that exists and is
+// not a private directory of this user is not used.
+func TestDurableHarnessHomeBaseRefusesAnOpenDir(t *testing.T) {
+	layout := paths.WithHome(filepath.Join(t.TempDir(), ".marvel"))
+	if err := layout.EnsureHome(); err != nil {
+		t.Fatalf("ensure home: %v", err)
+	}
+	if err := os.Mkdir(layout.HarnessHomesDir(), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if got, ok := durableHarnessHomeBase(layout, 1<<20); ok {
+		t.Errorf("a group/world-readable base was used: %s", got)
+	}
+}
