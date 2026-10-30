@@ -155,8 +155,8 @@ func TestLastTurnFollowsTheStoreStamp(t *testing.T) {
 // the wide set carries it after LAST-ACTIVE.
 func TestLastTurnColumnIsOptIn(t *testing.T) {
 	t.Parallel()
-	if got := headersOf(columnsOrFatal(t, "", nil)); !reflect.DeepEqual(got, todaysHeaders) {
-		t.Errorf("default headers = %v, want %v", got, todaysHeaders)
+	if got := headersOf(columnsOrFatal(t, "", nil)); !reflect.DeepEqual(got, defaultHeaders) {
+		t.Errorf("default headers = %v, want %v", got, defaultHeaders)
 	}
 	cols := columnsOrFatal(t, "name,last-turn", nil)
 	if got, want := headersOf(cols), []string{"AGENT NAME", "LAST-TURN"}; !reflect.DeepEqual(got, want) {

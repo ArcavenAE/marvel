@@ -297,10 +297,14 @@ marvel get sessions
 
 Output:
 ```
-WORKSPACE  TEAM   ROLE    GEN  AGENT NAME         STATE    HEALTH   CTX%  CPU%  RSS   DESK  RUNTIME  LLM
-dev        squad  worker  1    squad-worker-g1-0  running  unknown  3%    99.9  412M  1     claude   claude-opus-5
-dev        squad  worker  1    squad-worker-g1-1  running  unknown  -     0.4   380M  2     codex    gpt-5.6-sol
+WORKSPACE  TEAM   ROLE    GEN  AGENT NAME         STATE    HEALTH   CTX%  LLM            CPU%  RSS   DESK  RUNTIME
+dev        squad  worker  1    squad-worker-g1-0  running  unknown  3%    claude-opus-5  99.9  412M  1     claude
+dev        squad  worker  1    squad-worker-g1-1  running  unknown  -     gpt-5.6-sol    0.4   380M  2     codex
 ```
+
+The table reads who the session is, whether it is doing work, then which model
+it talks to, then the process figures. A narrow terminal still drops columns by
+the same priority; what is kept prints in this order.
 
 Two of those columns are easy to read as one thing, and they are not:
 

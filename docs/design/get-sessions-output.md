@@ -427,6 +427,12 @@ yet, so the fit skips it until its ticket lands. Off a terminal nothing is
 fitted, and a pipe prints the pre-design table, because `workdir`, `tout`,
 `rate`, `prompt`, `last-active` and `active` are opt-in there.
 
+**Print order, changed 2026-10-30.** The priority list above decides only
+what a width drops. What stays prints in the default order: workspace, team,
+role, generation, name, state, health, context, llm, cpu, rss, desk, runtime,
+then any other kept column in registry order. The default set is unchanged;
+only the order is.
+
 ### 10.3 Spend on the wire
 
 P7's fields are `SpendOut` and `SpendPromptTokens`, with `OutRate` beside

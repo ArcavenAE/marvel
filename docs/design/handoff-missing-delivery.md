@@ -18,7 +18,7 @@ architect's answers of 2026-10-25 changed these premises:
   for the seats it wraps, which marvel cannot see, so a gate on the role spec
   would leave the feature dark. marvel publishes to `role://<team>/supervisor`
   whenever the team declares a role named `supervisor`, and a message nobody
-  reads waits in the stream for its 24 hours. The event says `published`,
+  reads waits in the stream for its 7 days. The event says `published`,
   never `delivered` or `read`.
 - **The connection.** marvel had no persistent admin connection. The
   publisher opens one long-lived connection with the admin principal on its
@@ -55,7 +55,7 @@ escalation to the supervisor seat itself, over the bus it already reads.
   for wrapped seats only, and `docs/design/seat-bootstrap.md` records that
   `role://` delivery breaks until SB-4 adds it to `baseEnv`.
 - A new shim durable starts with `DeliverAllPolicy`, so a holder that starts
-  later reads role mail already stored. AGENT_INBOX keeps messages 24h and
+  later reads role mail already stored. AGENT_INBOX keeps messages 7 days and
   dedupes on `Nats-Msg-Id` for 2 minutes (`internal/bus/declared.go`).
 - The shim refuses its own `role://` send when no live session holds the role
   (R-92). marvel publishes on the subject directly, so that check does not
@@ -91,9 +91,9 @@ seat holds the role now, so a supervisor that shifted still gets it.
 - A `supervisor` role with no running seat: publish ONCE, and hold. The
   message waits in the stream, and the next holder's new durable reads it
   (`DeliverAllPolicy`). While no holder is live, marvel does not repeat the
-  delivery: AGENT_INBOX keeps 24h, the shim does not honor `expires_at`
+  delivery: AGENT_INBOX keeps 7 days, the shim does not honor `expires_at`
   (director `envelope.go`), and a late holder would otherwise read up to one
-  envelope per window for a day. marvel knows a holder is live from its own
+  envelope per window for the whole retention. marvel knows a holder is live from its own
   session records; when one appears, the normal cadence resumes with an
   immediate send. The event says `delivered: queued once, no live holder`.
 - **The escalated seat is a supervisor** (ruled 2026-10-02: "Deliver to
