@@ -136,18 +136,48 @@ func TestDurableHarnessHomeBaseLivesUnderTheMarvelHome(t *testing.T) {
 // TestDurableHarnessHomeBaseRefusesWhenTheSocketCannotFit: a marvel home so
 // long that codex's control socket would pass the unix socket limit is not
 // used, because codex exits at start when the path is too long (aae-orc-pt8k).
+// The edge is measured on the resolved path, so a TMPDIR that is a symlink
+// (/var to /private/var on macOS) does not move it.
 func TestDurableHarnessHomeBaseRefusesWhenTheSocketCannotFit(t *testing.T) {
 	layout := paths.WithHome(filepath.Join(t.TempDir(), ".marvel"))
-	if got, ok := durableHarnessHomeBase(layout, len(layout.HarnessHomesDir())+harnessHomeSocketReserve); ok {
-		t.Errorf("a base with no byte to spare was used: %s", got)
+	if _, ok := durableHarnessHomeBase(layout, 1<<20); !ok {
+		t.Fatal("the durable base was refused with room to spare")
 	}
-	// One byte more headroom than the path needs is enough.
 	resolved, err := filepath.EvalSymlinks(layout.HarnessHomesDir())
 	if err != nil {
 		t.Fatalf("resolve base: %v", err)
 	}
-	if _, ok := durableHarnessHomeBase(layout, len(resolved)+harnessHomeSocketReserve+1); !ok {
+	edge := max(len(resolved), len(layout.HarnessHomesDir())) + harnessHomeSocketReserve
+	if got, ok := durableHarnessHomeBase(layout, edge); ok {
+		t.Errorf("a base with no byte to spare was used: %s", got)
+	}
+	if _, ok := durableHarnessHomeBase(layout, edge+1); !ok {
 		t.Error("a base one byte under the limit was refused")
+	}
+}
+
+// TestDurableHarnessHomeBaseMeasuresTheHandedPathToo: a marvel home reached
+// through a long symlink is short once resolved but long as handed to the
+// harness, which may not canonicalize it. Both lengths must fit.
+func TestDurableHarnessHomeBaseMeasuresTheHandedPathToo(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "r")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	link := filepath.Join(root, strings.Repeat("l", 40))
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	layout := paths.WithHome(link)
+	resolvedHome, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	// Room for the resolved path but not for the longer handed one.
+	limit := len(resolvedHome) + len("/h") + harnessHomeSocketReserve + 1
+	if got, ok := durableHarnessHomeBase(layout, limit); ok {
+		t.Errorf("a base long as handed to the harness was used: %s", got)
 	}
 }
 

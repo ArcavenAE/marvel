@@ -261,7 +261,8 @@ const harnessHomeSocketReserve = len("/") + 12 + len("/app-server-control/app-se
 // durableHarnessHomeBase returns the layout's harness-home base when it is
 // private to this user and a socket under its homes stays under limit bytes.
 // The length is checked on the resolved path, because a harness sees the real
-// one. Anything else reports false and the caller uses the temp tier.
+// one, and as handed over, because a symlinked marvel home makes them differ.
+// Anything else reports false and the caller uses the temp tier.
 func durableHarnessHomeBase(layout paths.Layout, limit int) (string, bool) {
 	if err := layout.EnsureHome(); err != nil {
 		log.Printf("harness homes: cannot prepare %s, using the temp tier: %v", layout.Home, err)
@@ -276,9 +277,13 @@ func durableHarnessHomeBase(layout paths.Layout, limit int) (string, bool) {
 		log.Printf("harness homes: cannot resolve %s, using the temp tier: %v", dir, err)
 		return "", false
 	}
-	if n := len(resolved) + harnessHomeSocketReserve; n >= limit {
-		log.Printf("harness homes: %s leaves %d bytes for a harness socket, limit %d, using the temp tier", resolved, n, limit)
-		return "", false
+	// A harness may use the path as handed to it or canonicalize it, and a
+	// symlinked marvel home makes the two differ, so both must fit.
+	for _, p := range []string{dir, resolved} {
+		if n := len(p) + harnessHomeSocketReserve; n >= limit {
+			log.Printf("harness homes: %s leaves %d bytes for a harness socket, limit %d, using the temp tier", p, n, limit)
+			return "", false
+		}
 	}
 	return dir, true
 }
@@ -977,7 +982,11 @@ type launchPlan struct {
 //
 // The directory is per session KEY, not per launch, so a restart lands back
 // in the same place: the point is to separate this agent's state from every
-// other agent's, not to discard it between respawns.
+// other agent's, not to discard it between respawns. A session whose record
+// already names a home that is still a private directory of this user keeps
+// it, so moving the default base never moves a seat that is already running
+// (marvel#1142); only a session with no usable recorded home gets the
+// current base.
 //
 // Linking and seeding are best-effort. A missing source entry is skipped
 // rather than fatal, and any failure downgrades to the shared home the
@@ -993,6 +1002,14 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 		return
 	}
 	dir := m.harnessHomeFor(lctx.Session.Key())
+	if rec := lctx.Session.HarnessHome; rec != "" {
+		if recordedHomeUsable(rec) {
+			dir = rec
+		} else {
+			log.Printf("session %s: recorded harness home %s is not a private directory of this user, using %s",
+				lctx.Session.Key(), rec, dir)
+		}
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		log.Printf("session %s: private %s unavailable, sharing the operator's home: %v",
 			lctx.Session.Key(), spec.EnvVar, err)
@@ -1035,6 +1052,18 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 	// The login the private home links from, for the account key. The private
 	// home itself differs for every session and would give each its own key.
 	lctx.Session.AccountHome = spec.Source
+}
+
+// recordedHomeUsable reports whether a harness home a session record names is
+// still a directory private to this user: a real directory (not a link), mode
+// 0700, owned by the caller. It is the same shape harnessHomeBase demands of a
+// base, so a record cannot point a launch at a directory another account made.
+func recordedHomeUsable(dir string) bool {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return false
+	}
+	return fi.IsDir() && fi.Mode().Perm() == 0o700 && ownedByMe(fi)
 }
 
 // checkHomeSocket logs when the socket a harness opens under its home would
