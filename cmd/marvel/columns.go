@@ -53,10 +53,9 @@ var sessionColumnRegistry = []sessionColumn{
 	{name: "acct", header: "ACCT", pick: func(r sessionRow) string { return r.acct }},
 }
 
-// optInColumns are registered and selectable but not in the full default
-// table, so a pipe prints what it always printed. The width fit's wide tier
-// is where they show by default.
-var optInColumns = map[string]bool{"composer": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-active": true, "last-turn": true, "age": true, "active": true, "spec": true, "acct": true}
+// optInColumns are registered and selectable but not in the default table.
+// The width fit's wide tier is where they show by default.
+var optInColumns = map[string]bool{"composer": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-turn": true, "spec": true, "acct": true, "cpu": true, "rss": true, "desk": true, "runtime": true}
 
 // wantsComposer reports whether the COMPOSER column is selected. Only then does
 // the listing ask the daemon to read each seat's pane; it is opt-in and in no
@@ -97,7 +96,8 @@ var defaultColumnNames = []string{
 	"context", "active", "last-active", "age", "llm",
 }
 
-// defaultSessionColumns is today's table, in today's order.
+// defaultSessionColumns is the default table: the registered columns that are
+// not opt-in, in defaultColumnNames order.
 func defaultSessionColumns() []sessionColumn {
 	out := make([]sessionColumn, 0, len(sessionColumnRegistry))
 	for _, c := range sessionColumnRegistry {
@@ -105,6 +105,27 @@ func defaultSessionColumns() []sessionColumn {
 			out = append(out, c)
 		}
 	}
+	return inPrintOrder(out)
+}
+
+// inPrintOrder sorts cols into the order the default table prints: the
+// defaultColumnNames first, in that order, then any other column in registry
+// order. The sort is stable, so a list with a repeated name keeps its copies
+// together.
+func inPrintOrder(cols []sessionColumn) []sessionColumn {
+	rank := func(name string) int {
+		if i := slices.Index(defaultColumnNames, name); i >= 0 {
+			return i
+		}
+		for i, c := range sessionColumnRegistry {
+			if c.name == name {
+				return len(defaultColumnNames) + i
+			}
+		}
+		return len(defaultColumnNames) + len(sessionColumnRegistry)
+	}
+	out := slices.Clone(cols)
+	slices.SortStableFunc(out, func(a, b sessionColumn) int { return rank(a.name) - rank(b.name) })
 	return out
 }
 
