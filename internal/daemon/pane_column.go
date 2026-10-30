@@ -17,7 +17,9 @@ import (
 //
 // Where each word comes from:
 //   - logged-out and prompt are the harness-state watchdog's stored verdict
-//     (Session.HarnessState, logged-out and parked). No capture is made.
+//     (Session.HarnessState, logged-out and parked). The seat is still
+//     captured, like any other, and the stored verdict is applied over that
+//     reading when the listing is stamped.
 //   - working and idle are the composer reader's verdict on the visible
 //     screen (mid_turn; empty or holds_text). A harness with no reader, or a
 //     screen the reader cannot place, reads unknown. Codex's reader grounds no
@@ -66,9 +68,10 @@ func hasRestartBanner(capture string) bool {
 }
 
 // storedPaneWord is the PANE word the watchdog's stored verdict gives, when it
-// gives one. It needs no capture and shows nothing new, so it is read from the
-// session itself every time, never from a cache (the cache holds screen
-// readings only; see readPane).
+// gives one. The verdict is read from the session itself every time and applied
+// at stamp time over whatever the screen reading says, never from a cache (the
+// cache holds screen readings only; see readPane). The seat is captured either
+// way, so a verdict that changes between ticks shows at once.
 func storedPaneWord(s api.Session) (string, bool) {
 	if hs := s.HarnessState; hs != nil {
 		switch hs.State {

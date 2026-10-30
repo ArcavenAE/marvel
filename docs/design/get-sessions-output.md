@@ -282,7 +282,8 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
 | `fresh` | the composer reader, `empty`, on a seat marvel has an activity channel for and has seen no context reading from (no tokens, requests or occupancy): a seat that has not taken a turn. marvel injects no startup text to change that; a role starts work with `runtime.prompt` |
 | `unknown` | everything else, with a GAP line where marvel knows why |
 
-- **Precedence.** The stored verdict first (it costs no capture), then
+- **Precedence.** The stored verdict first (applied at stamp time over the
+  screen reading), then
   `working`, then `restart`, then `fresh`, then `idle`. The banner sits on a
   seat that may still be in a turn, so an open turn is shown as `working`.
 - **Unknown, never a guess.** A runtime with no reader, a screen the reader
@@ -298,8 +299,10 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
   from the watchdog's patterns as they are.
 - **Cost.** The same read-only path as COMPOSER: one foreground query and
   one capture per running seat that is not in a client workspace, shared by
-  the two columns. A stored verdict needs no capture and is read from the
-  session at every query; the tick cache holds screen readings only.
+  the two columns. A seat with a stored verdict is still captured, like any
+  other; the verdict is read from the session at every query and applied at
+  stamp time over the cached screen reading, and the tick cache holds screen
+  readings only.
 - **The tick cache.** The daemon's tick (every `ReconcileInterval`, read at
   most every 10 s) reads the panes while a `get sessions` asked for PANE or
   COMPOSER in the last 5 minutes, and `get sessions` serves the last reading,
