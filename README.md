@@ -1,5 +1,13 @@
 # marvel
 
+[![OpenSSF Baseline](https://www.bestpractices.dev/projects/16020/baseline)](https://www.bestpractices.dev/projects/16020)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ArcavenAE/marvel/badge)](https://scorecard.dev/viewer/?uri=github.com/ArcavenAE/marvel)
+[![CI](https://github.com/ArcavenAE/marvel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ArcavenAE/marvel/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/ArcavenAE/marvel/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ArcavenAE/marvel/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/ArcavenAE/marvel?include_prereleases&sort=date)](https://github.com/ArcavenAE/marvel/releases)
+[![License: MIT](https://img.shields.io/github/license/ArcavenAE/marvel)](LICENSE)
+[![Go version](https://img.shields.io/github/go-mod/go-version/ArcavenAE/marvel)](go.mod)
+
 marvel keeps a declared team of AI agent sessions running: it starts them,
 watches them, repairs them and rotates them, for any harness.
 
