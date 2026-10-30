@@ -35,6 +35,7 @@ var sessionColumnRegistry = []sessionColumn{
 	{name: "state", header: "STATE", pick: func(r sessionRow) string { return r.state }},
 	{name: "health", header: "HEALTH", pick: func(r sessionRow) string { return r.health }},
 	{name: "composer", header: "COMPOSER", pick: func(r sessionRow) string { return r.composer }},
+	{name: "pane", header: "PANE", pick: func(r sessionRow) string { return r.pane }},
 	{name: "context", header: "CTX%", pick: func(r sessionRow) string { return r.context }},
 	{name: "cpu", header: "CPU%", pick: func(r sessionRow) string { return r.cpu }},
 	{name: "rss", header: "RSS", pick: func(r sessionRow) string { return r.rss }},
@@ -55,14 +56,14 @@ var sessionColumnRegistry = []sessionColumn{
 
 // optInColumns are registered and selectable but not in the default table.
 // The width fit's wide tier is where they show by default.
-var optInColumns = map[string]bool{"composer": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-turn": true, "spec": true, "acct": true, "cpu": true, "rss": true, "desk": true, "runtime": true}
+var optInColumns = map[string]bool{"composer": true, "pane": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-turn": true, "spec": true, "acct": true, "cpu": true, "rss": true, "desk": true, "runtime": true}
 
-// wantsComposer reports whether the COMPOSER column is selected. Only then does
-// the listing ask the daemon to read each seat's pane; it is opt-in and in no
-// named set, so no default view captures a pane.
+// wantsComposer reports whether the COMPOSER or PANE column is selected. Only
+// then does the listing ask the daemon to read each seat's pane; both are
+// opt-in and in no named set, so no default view captures a pane.
 func wantsComposer(cols []sessionColumn) bool {
 	for _, c := range cols {
-		if c.name == "composer" {
+		if c.name == "composer" || c.name == "pane" {
 			return true
 		}
 	}
@@ -86,8 +87,8 @@ const columnRest = "rest"
 
 // restReserved are the registered columns `rest` never holds, because
 // reading them costs something the operator should ask for by name:
-// composer captures every seat's pane.
-var restReserved = map[string]bool{"composer": true}
+// composer and pane capture every seat's pane.
+var restReserved = map[string]bool{"composer": true, "pane": true}
 
 // defaultColumnNames is the order the default table prints: who the seat is,
 // whether it is doing work, then which model.

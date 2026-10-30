@@ -3283,6 +3283,7 @@ type sessionRow struct {
 	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct string
 	lastTurn                                                                             string
 	composer                                                                             string
+	pane                                                                                 string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -3424,6 +3425,7 @@ func newSessionRow(s api.Session) sessionRow {
 		spec:       specCell(s),
 		acct:       acctCell(s),
 		composer:   composerCell(s),
+		pane:       paneCell(s),
 		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,
 		name: s.Name, state: state, health: health, context: ctx,
 		cpu: cpu, rss: rss, desk: desk, runtime: runtimeName, llm: llm,
@@ -3675,6 +3677,9 @@ func composerGapLines(sessions []api.Session, tally *undrawTally) string {
 		if s.ComposerGap != "" {
 			fmt.Fprintf(&b, "GAP pane %s/%s: %s\n", tally.key(s.Workspace), tally.key(s.Name), tally.draw(s.ComposerGap))
 		}
+		if s.PaneGap != "" && s.PaneGap != s.ComposerGap {
+			fmt.Fprintf(&b, "GAP pane-state %s/%s: %s\n", tally.key(s.Workspace), tally.key(s.Name), tally.draw(s.PaneGap))
+		}
 	}
 	return b.String()
 }
@@ -3913,4 +3918,13 @@ func composerCell(s api.Session) string {
 		return "-"
 	}
 	return s.Composer
+}
+
+// paneCell is the PANE cell: the daemon's pane-state word, or "-" where no
+// pane was read.
+func paneCell(s api.Session) string {
+	if s.Pane == "" {
+		return "-"
+	}
+	return s.Pane
 }

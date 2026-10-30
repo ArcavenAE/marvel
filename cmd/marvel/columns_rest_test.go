@@ -14,7 +14,7 @@ import (
 func registryHeadersWithout(named ...string) []string {
 	var out []string
 	for _, c := range sessionColumnRegistry {
-		if c.name == "composer" || slices.Contains(named, c.name) {
+		if restReserved[c.name] || slices.Contains(named, c.name) {
 			continue
 		}
 		out = append(out, c.header)
@@ -33,7 +33,7 @@ func headerCount(cols []sessionColumn, header string) int {
 }
 
 // `rest` expands in place to the registry in registry order, without any
-// column named elsewhere in the list and without composer.
+// column named elsewhere in the list and without the reserved ones.
 func TestColumnsRestExpandsInPlace(t *testing.T) {
 	got := headersOf(columnsOrFatal(t, "name,state,rest,llm", nil))
 	want := append(append([]string{"AGENT NAME", "STATE"}, registryHeadersWithout("name", "state", "llm")...), "LLM")
