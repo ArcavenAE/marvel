@@ -90,6 +90,13 @@ const columnRest = "rest"
 // composer captures every seat's pane.
 var restReserved = map[string]bool{"composer": true}
 
+// defaultColumnNames is the order the default table prints: who the seat is,
+// whether it is doing work, then which model.
+var defaultColumnNames = []string{
+	"workspace", "team", "role", "generation", "name", "state", "health",
+	"context", "active", "last-active", "age", "llm",
+}
+
 // defaultSessionColumns is today's table, in today's order.
 func defaultSessionColumns() []sessionColumn {
 	out := make([]sessionColumn, 0, len(sessionColumnRegistry))
