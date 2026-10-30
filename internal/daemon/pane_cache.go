@@ -174,7 +174,16 @@ func (c *paneCache) stamp(pane composerPane, sessions []api.Session, client func
 
 // refreshPaneReads is the daemon's tick hook.
 func (d *Daemon) refreshPaneReads(now time.Time) {
-	d.paneReads.refresh(d.driver, d.sessionsForPaneRead(now), d.composerClientWorkspace, now)
+	d.paneReads.refresh(d.paneSource(), d.sessionsForPaneRead(now), d.composerClientWorkspace, now)
+}
+
+// paneSource is what the pane columns read panes through: the tmux driver, unless
+// a test has set paneOverride to run the tick and the query without tmux.
+func (d *Daemon) paneSource() composerPane {
+	if d.paneOverride != nil {
+		return d.paneOverride
+	}
+	return d.driver
 }
 
 // sessionsForPaneRead is what the tick reads panes for: the stored sessions with
@@ -189,5 +198,5 @@ func (d *Daemon) sessionsForPaneRead(now time.Time) []api.Session {
 
 // stampPaneReads serves COMPOSER and PANE from the cache on a `get sessions`.
 func (d *Daemon) stampPaneReads(sessions []api.Session) {
-	d.paneReads.stamp(d.driver, sessions, d.composerClientWorkspace, time.Now())
+	d.paneReads.stamp(d.paneSource(), sessions, d.composerClientWorkspace, time.Now())
 }

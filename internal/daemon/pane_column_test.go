@@ -10,6 +10,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/composer"
+	"github.com/arcavenae/marvel/internal/team"
 )
 
 // The banner rows are synthetic: the row shapes were read on live panes for
@@ -269,20 +270,60 @@ func TestPaneWordStaysIdleForAWorkingSeatAfterAReopen(t *testing.T) {
 	}
 }
 
-// The tick reads panes for the tick cache, and an entry it fills must be able to
-// read fresh: the sessions it reads carry the activity reading, as a query's do.
-func TestTickSessionsCarryTheActivityReading(t *testing.T) {
-	d := newHandlerDaemon(t)
-	if err := d.store.CreateWorkspace(&api.Workspace{Name: "tickws"}); err != nil {
+// tickDaemon is a daemon with a store, a controller and a fake pane source and
+// no tmux, so the tick path runs in any environment. The one seat is a claude
+// seat with a statusline feed (an activity channel) and no recorded use.
+func tickDaemon(t *testing.T) (*Daemon, *api.Session) {
+	t.Helper()
+	store := api.NewStore()
+	d := &Daemon{
+		store:          store,
+		teamCtrl:       team.NewController(store, nil),
+		composerClient: func(string) (bool, error) { return false, nil },
+		paneOverride:   &fakePane{foreground: "2.1.290", escapes: composerFixture(t, "1-empty-idle.ansi.txt")},
+	}
+	if err := store.CreateWorkspace(&api.Workspace{Name: "tickws"}); err != nil {
 		t.Fatal(err)
 	}
 	sess := &api.Session{
 		Name: "s-0", Workspace: "tickws", Team: "t", Role: "r", PaneID: "%7", State: api.SessionRunning,
 		Runtime: api.Runtime{Name: "claude", ContextFeed: api.ContextFeedStatusline},
 	}
-	if err := d.store.CreateSession(sess); err != nil {
+	if err := store.CreateSession(sess); err != nil {
 		t.Fatal(err)
 	}
+	return d, sess
+}
+
+// The tick reads panes for the tick cache, and an entry it fills must be able to
+// read fresh. This goes through the call site, refreshPaneReads, so a tick that
+// reads the store's sessions without the activity reading (no activity channel
+// on record, so never fresh) fails it. It needs no tmux.
+func TestTickFillsAFreshEntryForAnObservableSeat(t *testing.T) {
+	d, sess := tickDaemon(t)
+	now := time.Now()
+	d.paneReads.want(now)
+
+	d.refreshPaneReads(now)
+
+	r, ok := d.paneReads.get(sess.Key(), now)
+	if !ok {
+		t.Fatal("the tick filled no entry for the seat")
+	}
+	if r.pane != paneFresh {
+		t.Errorf("the tick's entry reads %q, want %q", r.pane, paneFresh)
+	}
+	served := []api.Session{*sess}
+	d.stampPaneReads(served)
+	if served[0].Pane != paneFresh {
+		t.Errorf("a query served from the tick's entry reads %q, want %q", served[0].Pane, paneFresh)
+	}
+}
+
+// The copies the tick reads carry the activity reading and the stored session
+// does not: the reading is view-only and never persists.
+func TestTickSessionsCarryTheActivityReading(t *testing.T) {
+	d, sess := tickDaemon(t)
 	var got *api.Session
 	for _, s := range d.sessionsForPaneRead(time.Now()) {
 		if s.Key() == sess.Key() {
