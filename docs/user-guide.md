@@ -535,11 +535,14 @@ exports carries the seat's identity as resource attributes:
 | `marvel.cluster` | the daemon's cluster entry name | the daemon has none |
 | `marvel.system_prompt.sha256` | hash of the `--append-system-prompt` text, claude only | marvel did not pass it or cannot read it (a wrapper command, or the `-file` form) |
 | `marvel.first_prompt.sha256` | hash of the first message marvel passed | none was passed |
+| `marvel.prompt_artifact.sha256` | the role's `runtime.prompt_artifact_sha256`, 64 hex characters, carried as written | the manifest declares none |
 
 A key with no value is not sent. Values are percent-encoded, and the hashes
 are of the exact bytes passed, so no prompt text reaches the environment. The
 same two hashes are on the session, as `FirstPromptSha256` and
 `SystemPromptSha256` in `marvel get session -o json`.
+
+`runtime.prompt_artifact_sha256` is set by whatever projects the role from a prompt artifact; marvel validates it and passes it through. A change to it shows as drift in the `SPEC` column until the seats of that role are recast.
 
 marvel appends its pairs to the value the role declared in `runtime.env`, or
 to the daemon's own `OTEL_RESOURCE_ATTRIBUTES` when the role declares none. A

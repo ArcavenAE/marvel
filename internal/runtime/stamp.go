@@ -77,6 +77,7 @@ func stampSeat(ctx *LaunchContext, env map[string]string, systemPromptSha, first
 		{"cluster", ctx.Cluster},
 		{"system_prompt.sha256", systemPromptSha},
 		{"first_prompt.sha256", firstPromptSha},
+		{"prompt_artifact.sha256", ctx.Session.Runtime.PromptArtifactSha256},
 	} {
 		if kv[1] == "" {
 			continue

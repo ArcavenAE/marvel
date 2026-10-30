@@ -35,5 +35,6 @@ func RuntimeDrift(session, role Runtime) []string {
 	add(session.ContextFeed != role.ContextFeed, "context_feed")
 	add(!maps.Equal(session.Env, role.Env), "env")
 	add(session.Backend != role.Backend, "backend")
+	add(session.PromptArtifactSha256 != role.PromptArtifactSha256, "prompt_artifact_sha256")
 	return out
 }
