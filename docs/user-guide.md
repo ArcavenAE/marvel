@@ -297,12 +297,16 @@ marvel get sessions
 
 Output:
 ```
-WORKSPACE  TEAM   ROLE    GEN  AGENT NAME         STATE    HEALTH   CTX%  CPU%  RSS   DESK  RUNTIME  LLM
-dev        squad  worker  1    squad-worker-g1-0  running  unknown  3%    99.9  412M  1     claude   claude-opus-5
-dev        squad  worker  1    squad-worker-g1-1  running  unknown  -     0.4   380M  2     codex    gpt-5.6-sol
+WORKSPACE  TEAM   ROLE    GEN  AGENT NAME         STATE    HEALTH   CTX%  ACTIVE%  LAST-ACTIVE  AGE  LLM
+dev        squad  worker  1    squad-worker-g1-0  running  unknown  3%    64%      8s           2h   claude-opus-5
+dev        squad  worker  1    squad-worker-g1-1  running  unknown  -     2%       41m          2h   gpt-5.6-sol
 ```
 
-Two of those columns are easy to read as one thing, and they are not:
+The default reads who the session is, whether it is doing work, then which
+model it talks to. `CPU%`, `RSS`, `DESK`, `RUNTIME`, `WORKDIR`, `TOUT` and
+`RATE` are not in it; name them with `--columns`, or use `--columns wide`.
+
+Two columns you can add are easy to read as one thing, and they are not:
 
 - `RUNTIME` is the **harness** the session runs: `claude`, `codex`,
   `opencode`, `generic`. It is the manifest's `runtime` block, and it
@@ -318,7 +322,7 @@ models, and one runtime can be pointed at a different model per role, so
 reading `RUNTIME` as "which agent is this" gives the wrong answer as soon
 as a team is heterogeneous.
 
-`CPU%` and `RSS` come from a sampler that runs every 5 seconds and rolls
+`CPU%` and `RSS` (add them with `--columns cpu,rss`) come from a sampler that runs every 5 seconds and rolls
 up each agent's whole process subtree, not just the process tmux started
 (that one is a shell). CPU% is per core, so a session using two cores
 reads about 200.
