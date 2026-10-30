@@ -254,6 +254,11 @@ type ManifestRuntime struct {
 	// SuccessorPrompt = false turns off the fixed first message a successor
 	// gets. Unset leaves it on. See api.Runtime.SuccessorPrompt.
 	SuccessorPrompt *bool `toml:"successor_prompt,omitempty" yaml:"successor_prompt,omitempty"`
+	// PromptArtifactSha256 is the hash of the prompt artifact the role library
+	// projected this role from, 64 hex characters. marvel does not produce it;
+	// it carries the value into the seat stamp as marvel.prompt_artifact.sha256
+	// (aae-orc-mdr0n). See api.Runtime.PromptArtifactSha256.
+	PromptArtifactSha256 string `toml:"prompt_artifact_sha256,omitempty" yaml:"prompt_artifact_sha256,omitempty"`
 	// ContextWindow overrides the model-to-limit table, in tokens.
 	ContextWindow int `toml:"context_window,omitempty" yaml:"context_window,omitempty"`
 	// ContextFeed opts an interactive session into cooperative context

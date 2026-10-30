@@ -378,3 +378,30 @@ func TestStampIsNotAConstructedVariable(t *testing.T) {
 		t.Errorf("baseEnv carries %s, so every adapter would be stamped", resourceAttrs)
 	}
 }
+
+// Spec section 6: the role library's prompt-artifact hash rides as
+// marvel.prompt_artifact.sha256 when the manifest declares it, for claude and
+// codex, and is left out otherwise.
+func TestStampCarriesThePromptArtifactHashWhenDeclared(t *testing.T) {
+	t.Setenv(resourceAttrs, "")
+	want := strings.Repeat("c", 64)
+	for name, env := range map[string]map[string]string{
+		"claude": func() map[string]string {
+			ctx := claudeCtx("claude")
+			ctx.Session.Runtime.PromptArtifactSha256 = want
+			return prepareStamped(t, ctx).Env
+		}(),
+		"codex": func() map[string]string {
+			ctx := codexCtx(api.RuntimeModeInteractive, "")
+			ctx.Session.Runtime.PromptArtifactSha256 = want
+			return prepareStampedCodex(t, ctx).Env
+		}(),
+	} {
+		if got := stampOf(t, env)["marvel.prompt_artifact.sha256"]; got != want {
+			t.Errorf("%s: marvel.prompt_artifact.sha256 = %q, want %q", name, got, want)
+		}
+	}
+	if _, there := stampOf(t, prepareStamped(t, claudeCtx("claude")).Env)["marvel.prompt_artifact.sha256"]; there {
+		t.Errorf("a hash was stamped with none declared")
+	}
+}

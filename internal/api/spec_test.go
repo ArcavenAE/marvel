@@ -2,6 +2,7 @@ package api
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +14,7 @@ func fullRuntime() Runtime {
 		Script: "s.sh", Mode: RuntimeModeHeadless, Prompt: "do it",
 		ContextWindow: 200000, ContextFeed: ContextFeedStatusline,
 		Env: map[string]string{"K": "v"}, Backend: "bedrock",
+		PromptArtifactSha256: strings.Repeat("a", 64),
 	}
 }
 
@@ -34,6 +36,7 @@ func TestRuntimeDriftNamesEachDifferingField(t *testing.T) {
 		{"context_feed", func(r *Runtime) { r.ContextFeed = "" }},
 		{"env", func(r *Runtime) { r.Env = map[string]string{"K": "w"} }},
 		{"backend", func(r *Runtime) { r.Backend = "default" }},
+		{"prompt_artifact_sha256", func(r *Runtime) { r.PromptArtifactSha256 = strings.Repeat("b", 64) }},
 	} {
 		role := fullRuntime()
 		tc.mutate(&role)

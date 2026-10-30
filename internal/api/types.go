@@ -194,6 +194,11 @@ type Runtime struct {
 	// false. Nil, the default, leaves it on. See SuccessorPromptOn and
 	// docs/design/interactive-first-prompt.md D2 and D3.
 	SuccessorPrompt *bool `toml:"successor_prompt,omitempty"`
+	// PromptArtifactSha256 is the hash of the prompt artifact the role library
+	// projected this role from, 64 lowercase hex characters, or empty. marvel
+	// only carries it: it is stamped as marvel.prompt_artifact.sha256, and a
+	// change to it is spec drift until the seats are recast (aae-orc-mdr0n).
+	PromptArtifactSha256 string `toml:"prompt_artifact_sha256,omitempty"`
 	// ContextWindow overrides the model-to-limit table for this runtime,
 	// in tokens. The escape hatch for a model marvel does not know: a
 	// shipped table tracks the vendor's release cadence, not marvel's. A
