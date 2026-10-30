@@ -44,16 +44,20 @@ func TestAgeColumnIsRegisteredOptInAndWide(t *testing.T) {
 	if c.header != "AGE" {
 		t.Errorf("header = %q, want AGE", c.header)
 	}
-	if !optInColumns["age"] {
-		t.Error("age is not opt-in, so the default table would gain a column")
+	if optInColumns["age"] {
+		t.Error("age is opt-in, so the default table would lack it")
 	}
 	if !slices.Contains(wideSessionColumns, "age") {
 		t.Error("age is not in the wide set")
 	}
+	found := false
 	for _, d := range defaultSessionColumns() {
 		if d.name == "age" {
-			t.Error("age is in the default columns")
+			found = true
 		}
+	}
+	if !found {
+		t.Error("age is not in the default columns")
 	}
 }
 
