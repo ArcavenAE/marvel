@@ -124,7 +124,7 @@ func TestActivePctExpiresWhenTheCountsAreOld(t *testing.T) {
 	}
 }
 
-func TestActivePctColumnInWideNotInDefault(t *testing.T) {
+func TestActivePctColumnInWideAndInDefault(t *testing.T) {
 	has := func(cols []sessionColumn) bool {
 		for _, c := range cols {
 			if c.name == "active" {
@@ -136,8 +136,8 @@ func TestActivePctColumnInWideNotInDefault(t *testing.T) {
 	if !has(columnsOrFatal(t, "wide", nil)) {
 		t.Error("the wide set should include active")
 	}
-	if has(defaultSessionColumns()) {
-		t.Error("the default table should not include active")
+	if !has(defaultSessionColumns()) {
+		t.Error("the default table should include active")
 	}
 	if !has(columnsOrFatal(t, "active", nil)) {
 		t.Error("active should be selectable by name")
