@@ -92,6 +92,12 @@ var (
 	plumbingSubscribe = []string{"$KV." + StateBucket + ".>", "_INBOX.>"}
 )
 
+// InboxMaxAge is how long AGENT_INBOX keeps a message: 7 days (operator ruling
+// I-65, 2026-10-30). It was 24h, which let an idle seat's mail expire unread.
+// Provision leaves an existing stream as found, so a live broker keeps its
+// old value until the stream is edited in place.
+const InboxMaxAge = 168 * time.Hour
+
 // DeclaredObjects is the object set. The three carry the exact parameters
 // of director sim/twin/README.md precondition 6 (brief 10 section 5,
 // aae-orc-apeoc). EVENTS_GH and EVENTS_MARVEL join under aae-orc-aubd6.
@@ -99,13 +105,13 @@ func DeclaredObjects() []Object {
 	return []Object{
 		{
 			Name: InboxStream, Kind: ObjectStream, Scope: ScopeService,
-			Origin: "brief 10 section 5 (aae-orc-apeoc): the shim's inbox, two subject shapes",
+			Origin: "brief 10 section 5 (aae-orc-apeoc): the shim's inbox, two subject shapes; 7 days since operator ruling I-65 (2026-10-30), up from 24h, so an idle seat's mail does not expire unread",
 			Stream: &jetstream.StreamConfig{
 				Name:       InboxStream,
 				Subjects:   inboxSubjects,
 				Storage:    jetstream.FileStorage,
 				Retention:  jetstream.LimitsPolicy,
-				MaxAge:     24 * time.Hour,
+				MaxAge:     InboxMaxAge,
 				MaxMsgSize: 65536,
 				Duplicates: 2 * time.Minute,
 			},
