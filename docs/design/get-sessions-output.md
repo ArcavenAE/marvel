@@ -435,6 +435,12 @@ and `age` joined the default table, and `cpu`, `rss`, `desk` and `runtime`
 became opt-in, so a script that read CPU% from a pipe now names it with
 `--columns`.
 
+**Print order, changed 2026-10-30.** The priority list above decides only
+what a width drops. What stays prints in the default order: workspace, team,
+role, generation, name, state, health, context, llm, cpu, rss, desk, runtime,
+then any other kept column in registry order. The default set is unchanged;
+only the order is.
+
 ### 10.3 Spend on the wire
 
 P7's fields are `SpendOut` and `SpendPromptTokens`, with `OutRate` beside

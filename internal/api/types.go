@@ -194,6 +194,11 @@ type Runtime struct {
 	// false. Nil, the default, leaves it on. See SuccessorPromptOn and
 	// docs/design/interactive-first-prompt.md D2 and D3.
 	SuccessorPrompt *bool `toml:"successor_prompt,omitempty"`
+	// PromptArtifactSha256 is the hash of the prompt artifact the role library
+	// projected this role from, 64 lowercase hex characters, or empty. marvel
+	// only carries it: it is stamped as marvel.prompt_artifact.sha256, and a
+	// change to it is spec drift until the seats are recast (aae-orc-mdr0n).
+	PromptArtifactSha256 string `toml:"prompt_artifact_sha256,omitempty"`
 	// ContextWindow overrides the model-to-limit table for this runtime,
 	// in tokens. The escape hatch for a model marvel does not know: a
 	// shipped table tracks the vendor's release cadence, not marvel's. A
@@ -257,6 +262,14 @@ type Session struct {
 	// means a record written before this field existed, which is never
 	// guessed at.
 	SettingSourcesDelivery string `toml:"setting_sources_delivery,omitempty"`
+	// FirstPromptSha256 and SystemPromptSha256 are the hex sha256 of the first
+	// message and of the --append-system-prompt text this launch passed, the
+	// same values marvel stamps into the harness's telemetry as
+	// marvel.first_prompt.sha256 and marvel.system_prompt.sha256. Empty when
+	// no such text was passed or marvel could not read it. They never hold the
+	// text (aae-orc-mdr0n).
+	FirstPromptSha256  string `toml:"first_prompt_sha256,omitempty"`
+	SystemPromptSha256 string `toml:"system_prompt_sha256,omitempty"`
 	// SettingSourcesNote is filled on read by describe for a record that has
 	// SettingSources and no delivery, and never stored.
 	SettingSourcesNote string `json:"setting_sources_note,omitempty" toml:"-"`

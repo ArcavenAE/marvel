@@ -248,7 +248,8 @@ Declared {
 - The health check iterates `Objects` of scope `service`.
 
 The existing three objects keep their exact parameters (`AGENT_INBOX`: two
-inbox subjects, file, limits, 24h, 64 KiB, 2m dedupe; `AGENT_AUDIT`: 720h;
+inbox subjects, file, limits, 7 days (24h until operator ruling I-65,
+2026-10-30), 64 KiB, 2m dedupe; `AGENT_AUDIT`: 720h;
 `AGENT_STATE`: 90s TTL). `EVENTS_GH` and `EVENTS_MARVEL` join under
 `aae-orc-aubd6` with the event-plane parameters (limits, 24h, dedupe equal to
 retention, 200 per subject, `allow_msg_schedules` on marvel's), and the

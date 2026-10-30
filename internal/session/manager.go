@@ -825,6 +825,9 @@ func (m *Manager) Create(sess *api.Session) error {
 		// What the harness was told to load, and how it was passed, kept for describe.
 		live.SettingSources = sess.SettingSources
 		live.SettingSourcesDelivery = sess.SettingSourcesDelivery
+		// The hashes of the prompts this launch passed, kept for get session.
+		live.FirstPromptSha256 = sess.FirstPromptSha256
+		live.SystemPromptSha256 = sess.SystemPromptSha256
 		return nil
 	}); err != nil {
 		return fmt.Errorf("update session %s post-create: %w", sess.Key(), err)
@@ -1049,6 +1052,10 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// not carry the previous launch's value forward.
 	sess.SettingSources = ""
 	sess.SettingSourcesDelivery = ""
+	// The prompt hashes are the launch's too, so a re-plan or a fallback that
+	// passes no prompt does not carry the previous launch's forward.
+	sess.FirstPromptSha256 = ""
+	sess.SystemPromptSha256 = ""
 	// Likewise the login this launch's private home links from: only a launch
 	// that gets a private home names one, so a re-plan that does not must not
 	// carry the previous launch's value forward.
@@ -1165,6 +1172,8 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	}
 	sess.SettingSources = result.SettingSources
 	sess.SettingSourcesDelivery = result.SettingSourcesDelivery
+	sess.FirstPromptSha256 = result.FirstPrompt.Sha256
+	sess.SystemPromptSha256 = result.SystemPromptSha256
 	switch {
 	case result.Stream != nil && fifo != nil:
 		parser, perr := runtime.NewStreamParser(result.Stream.Format, runtime.StreamParserConfig{

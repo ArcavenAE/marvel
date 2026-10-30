@@ -113,9 +113,11 @@ func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 
 	if ctx.Session.Runtime.Mode != api.RuntimeModeHeadless {
 		// Interactive: launch codex as-is; the TUI owns the pane.
+		env := codexEnv(ctx)
+		stampSeat(ctx, env, "", "")
 		return &LaunchResult{
 			Command: buildCommand(binary, args),
-			Env:     codexEnv(ctx),
+			Env:     env,
 		}, nil
 	}
 
@@ -134,11 +136,14 @@ func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// stdin to its prompt and would otherwise hang on the pane tty.
 	cmd = redirectStdin(cmd, os.DevNull)
 
+	// The role prompt is on the command line, so the launch passed it.
+	first := newFirstPrompt(FirstPromptRole, ctx.Session.Runtime.Prompt)
+	env := codexEnv(ctx)
+	stampSeat(ctx, env, "", first.Sha256)
 	result := &LaunchResult{
-		Command: cmd,
-		Env:     codexEnv(ctx),
-		// The role prompt is on the command line, so the launch passed it.
-		FirstPrompt: FirstPrompt{Source: FirstPromptRole, Bytes: len(ctx.Session.Runtime.Prompt)},
+		Command:     cmd,
+		Env:         env,
+		FirstPrompt: first,
 	}
 	if ctx.StreamPath != "" {
 		result.Command = redirectStdout(result.Command, ctx.StreamPath)

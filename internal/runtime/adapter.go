@@ -279,6 +279,10 @@ type LaunchResult struct {
 	// readable and the flag is in its arguments, api.SettingSourcesShellText
 	// when marvel appended it to shell text, and empty when none was passed.
 	SettingSourcesDelivery string
+	// SystemPromptSha256 is the hex sha256 of the --append-system-prompt text
+	// the launch carried, when marvel passed it or could read it from the
+	// role's args. Empty otherwise. It never holds the text.
+	SystemPromptSha256 string
 	// Stream is set only when the adapter actually wired its harness's
 	// structured output into LaunchContext.StreamPath. Nil means the
 	// session produces no parseable stream and is observed by
@@ -294,6 +298,8 @@ type LaunchResult struct {
 type FirstPrompt struct {
 	Source string
 	Bytes  int
+	// Sha256 is the hex sha256 of the exact bytes passed, empty when none was.
+	Sha256 string
 }
 
 // The sources a launch's first message can have (design D7).

@@ -149,6 +149,8 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// so.
 	readable := api.CommandWordsReadable(binary)
 	declared := len(ctx.Role.SettingsSources) > 0
+	// The system prompt marvel passed or can read, for its hash (S3).
+	systemPrompt := ""
 	if isBareClaude(binary) {
 		switch {
 		case !readable && declared:
@@ -161,6 +163,12 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 			prompt := "You are " + ctx.Session.Name + " (role: " + ctx.Role.Name +
 				", team: " + ctx.Team.Name + ", workspace: " + ctx.Workspace.Name + ")."
 			args = append(args, "--append-system-prompt", prompt)
+			systemPrompt = prompt
+		default:
+			// The role carries its own, in its args or in its command's words.
+			// Only text marvel can read is hashed: a wrapper command, or the
+			// -file form, is not text marvel passed.
+			systemPrompt, _ = flagValue(append(commandArgs(binary), args...), "--append-system-prompt")
 		}
 	}
 
@@ -215,11 +223,11 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		args = append(args, ctx.Session.Runtime.Prompt)
 		record = FirstPrompt{Source: FirstPromptNone}
 		if p := ctx.Session.Runtime.Prompt; p != "" {
-			record = FirstPrompt{Source: FirstPromptRole, Bytes: len(p)}
+			record = newFirstPrompt(FirstPromptRole, p)
 		}
 	default:
 		text, successor, role := composeFirstPrompt(ctx)
-		record = FirstPrompt{Source: firstPromptSource(successor, role), Bytes: len(text)}
+		record = newFirstPrompt(firstPromptSource(successor, role), text)
 		switch {
 		case text == "":
 		case isBareClaude(binary) && readable:
@@ -238,6 +246,11 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		SettingSourcesDelivery: delivery,
 		FirstPrompt:            record,
 	}
+	// Only the bare harness's prompt is text marvel passed; a wrapper owns it.
+	if isBareClaude(binary) && readable && systemPrompt != "" {
+		result.SystemPromptSha256 = hashHex(systemPrompt)
+	}
+	stampSeat(ctx, result.Env, result.SystemPromptSha256, record.Sha256)
 	if firstPrompt != "" {
 		result.Env[firstPromptEnv] = firstPrompt
 	}

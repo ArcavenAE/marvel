@@ -280,6 +280,14 @@ drops out in the same render that drops its users, and a role the cluster
 does not admit is not listed. It is publish only: nothing is added to any
 subscribe list.
 
+The grant crosses workspaces: the ruling says "on its own cluster" with no
+workspace limit, and the fan-out it relieves already crossed them, so a
+supervisor in one workspace can address a supervisor role inbox in another.
+This is the one place the cross-workspace asymmetry of R-95 (the seat user as
+the only wide publisher) is relaxed, and only to exact role inboxes of other
+teams' global roles. Restricting it to one workspace would be a filter on the
+workspace token of each entry; the ruling does not ask for it.
+
 What it leaves out on purpose: the seat id inbox (a wildcard over seats would
 reach every seat in the team), any role that does not resolve to a global
 role (so a research supervisor stays out until the cluster admits it), and any
