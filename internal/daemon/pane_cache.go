@@ -174,7 +174,17 @@ func (c *paneCache) stamp(pane composerPane, sessions []api.Session, client func
 
 // refreshPaneReads is the daemon's tick hook.
 func (d *Daemon) refreshPaneReads(now time.Time) {
-	d.paneReads.refresh(d.driver, d.store.ListSessions(), d.composerClientWorkspace, now)
+	d.paneReads.refresh(d.driver, d.sessionsForPaneRead(now), d.composerClientWorkspace, now)
+}
+
+// sessionsForPaneRead is what the tick reads panes for: the stored sessions with
+// the view-only activity reading stamped on the copies, the way a query stamps it
+// before it reads PANE. Without it a tick-filled entry has no activity channel on
+// record and can never read fresh.
+func (d *Daemon) sessionsForPaneRead(now time.Time) []api.Session {
+	live := d.store.ListSessions()
+	d.stampActivity(live, now.UTC())
+	return live
 }
 
 // stampPaneReads serves COMPOSER and PANE from the cache on a `get sessions`.

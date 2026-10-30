@@ -279,7 +279,7 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
 | `working` | the composer reader, `mid_turn` |
 | `restart` | claude's "Update installed · Restart to update" row, only on the row directly above the composer's top rule, in the two shapes read live (the banner right-aligned, or after a "new task?" hint), with its check mark; a transcript row never matches |
 | `idle` | the composer reader, `empty` or `holds_text`, with no banner |
-| `fresh` | the composer reader, `empty`, on a seat marvel has an activity channel for and has seen no context reading from (no tokens, requests or occupancy): a seat that has not taken a turn. marvel injects no startup text to change that; a role starts work with `runtime.prompt` |
+| `fresh` | the composer reader, `empty`, on a seat marvel has an activity channel for, that marvel passed no first message (the session records none), and has seen no use from: no tokens, requests, occupancy or spend. Spend is in the test because it survives a daemon restart when the rest of the reading does not. A seat that was handed a first message (a successor, or a role with `runtime.prompt`) reads `idle`, not `fresh`. marvel injects no startup text; a role starts work with `runtime.prompt` |
 | `unknown` | everything else, with a GAP line where marvel knows why |
 
 - **Precedence.** The stored verdict first (applied at stamp time over the
@@ -310,7 +310,8 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
   that seat is read afresh and the entry refilled. A workspace turned client is
   gated on every query, so its cached reading is dropped, not served. A
   daemon nobody queries makes no pane read for these columns. A served word is
-  up to 30 s behind the screen, and `restart` is a screen reading, not proof.
+  up to 30 s behind the screen, and `restart` is a screen reading, not proof. So is
+  `fresh`: it can show for up to 30 s after the first reading lands.
 
 ## 5. Every number is diagnostic
 

@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/composer"
@@ -192,6 +194,10 @@ func TestPaneWordFreshNeedsAnObservableSeatWithNoUse(t *testing.T) {
 		"tokens read":                   {observed(func(s *api.Session) { s.ContextTokens = 1200 }), paneIdle},
 		"requests counted":              {observed(func(s *api.Session) { s.ContextRequests = 1 }), paneIdle},
 		"occupancy reported":            {observed(func(s *api.Session) { s.ContextPercent = 3 }), paneIdle},
+		"output spend recorded":         {observed(func(s *api.Session) { n := 40; s.SpendOut = &n }), paneIdle},
+		"prompt spend recorded":         {observed(func(s *api.Session) { n := 900; s.SpendPromptTokens = &n }), paneIdle},
+		"a zero spend is no use":        {observed(func(s *api.Session) { n := 0; s.SpendOut = &n; s.SpendPromptTokens = &n }), paneFresh},
+		"a first message was passed":    {observed(func(s *api.Session) { s.FirstPromptSha256 = "ab12" }), paneIdle},
 		"restart banner outranks fresh": {observed(nil), paneRestart},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -204,5 +210,97 @@ func TestPaneWordFreshNeedsAnObservableSeatWithNoUse(t *testing.T) {
 				t.Fatalf("pane = %q, %q; want %q", got, gap, tc.want)
 			}
 		})
+	}
+}
+
+// A daemon restart must not turn a working seat back into fresh. Rehydrate
+// clears a stream-fed reading's tokens, requests and occupancy and keeps the
+// spend, so the spend has to count: this reopens a bolt store and reads PANE
+// from the rehydrated record (it reads fresh when the spend is left out).
+func TestPaneWordStaysIdleForAWorkingSeatAfterAReopen(t *testing.T) {
+	idle := composerFixture(t, "1-empty-idle.ansi.txt")
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	s1 := api.NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt: %v", err)
+	}
+	if err := s1.CreateWorkspace(&api.Workspace{Name: "ws"}); err != nil {
+		t.Fatal(err)
+	}
+	sess := &api.Session{
+		Name: "s-0", Workspace: "ws", Team: "t", Role: "r",
+		Runtime: api.Runtime{Name: "claude"}, State: api.SessionRunning, PaneID: "%7",
+	}
+	if err := s1.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	key := sess.Key()
+	out, prompt := 5200, 46800
+	s1.UpdateSessionContext(key, api.SessionContext{
+		ContextSource: api.ContextSourceAccountant,
+		ContextTokens: 52000, ContextRequests: 7, ContextPercent: 26, ContextLimit: 200000,
+		SpendOut: &out, SpendPromptTokens: &prompt,
+	})
+	if err := s1.UpdateSession(key, func(live *api.Session) error { live.PaneID = "%7"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+	s2 := api.NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	got, err := s2.GetSession(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ContextTokens != 0 || got.ContextRequests != 0 || got.ContextPercent != 0 {
+		t.Fatalf("the reading survived the reopen, so this test no longer covers the clear: %+v", got.SessionContext)
+	}
+	if got.SpendOut == nil {
+		t.Fatal("the spend did not survive the reopen")
+	}
+	got.ActiveTicks.Observable = true
+	p := &fakePane{foreground: "2.1.290", escapes: idle}
+	if word, gap := paneWord(p, got, false, nil); word != paneIdle || gap != "" {
+		t.Fatalf("pane = %q, %q after a reopen; want idle", word, gap)
+	}
+}
+
+// The tick reads panes for the tick cache, and an entry it fills must be able to
+// read fresh: the sessions it reads carry the activity reading, as a query's do.
+func TestTickSessionsCarryTheActivityReading(t *testing.T) {
+	d := newHandlerDaemon(t)
+	if err := d.store.CreateWorkspace(&api.Workspace{Name: "tickws"}); err != nil {
+		t.Fatal(err)
+	}
+	sess := &api.Session{
+		Name: "s-0", Workspace: "tickws", Team: "t", Role: "r", PaneID: "%7", State: api.SessionRunning,
+		Runtime: api.Runtime{Name: "claude", ContextFeed: api.ContextFeedStatusline},
+	}
+	if err := d.store.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	var got *api.Session
+	for _, s := range d.sessionsForPaneRead(time.Now()) {
+		if s.Key() == sess.Key() {
+			c := s
+			got = &c
+		}
+	}
+	if got == nil {
+		t.Fatal("the session is not in what the tick reads")
+	}
+	if !got.ActiveTicks.Observable {
+		t.Errorf("the tick's copy has no activity reading: %+v", got.ActiveTicks)
+	}
+	stored, err := d.store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ActiveTicks != (api.ActiveTicks{}) {
+		t.Errorf("the stored session carries the reading: %+v", stored.ActiveTicks)
 	}
 }
