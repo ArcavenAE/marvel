@@ -57,7 +57,7 @@ func TestFitDropsByPriorityAt80(t *testing.T) {
 // At 120 the middle tier adds LLM, TOUT and RATE.
 func TestFitDropsByPriorityAt120(t *testing.T) {
 	got := fitSessionTable([]api.Session{fitSession("agent-0")}, defaultSessionColumns(), fitOptions{width: 120})
-	if want := []string{"AGENT NAME", "STATE", "HEALTH", "CTX%", "LAST-ACTIVE", "LLM", "TOUT", "RATE"}; !reflect.DeepEqual(fitHeaders(got.table), want) {
+	if want := []string{"AGENT NAME", "STATE", "HEALTH", "CTX%", "LLM", "TOUT", "RATE", "LAST-ACTIVE"}; !reflect.DeepEqual(fitHeaders(got.table), want) {
 		t.Errorf("columns at 120 = %v, want %v", fitHeaders(got.table), want)
 	}
 	if got.hidden != 11 {
@@ -71,8 +71,8 @@ func TestFitDropsByPriorityAt120(t *testing.T) {
 func TestFitDropsByPriorityAt200(t *testing.T) {
 	got := fitSessionTable([]api.Session{fitSession("agent-0")}, defaultSessionColumns(), fitOptions{width: 200})
 	want := []string{
-		"WORKSPACE", "TEAM", "ROLE", "GEN", "AGENT NAME", "STATE", "HEALTH", "CTX%", "ACTIVE%", "LAST-ACTIVE", "AGE", "LLM",
-		"CPU%", "RSS", "DESK", "RUNTIME", "WORKDIR", "TOUT", "RATE",
+		"WORKSPACE", "TEAM", "ROLE", "GEN", "AGENT NAME", "STATE", "HEALTH", "CTX%", "LLM",
+		"CPU%", "RSS", "DESK", "RUNTIME", "WORKDIR", "TOUT", "RATE", "LAST-ACTIVE", "AGE", "ACTIVE%",
 	}
 	if !reflect.DeepEqual(fitHeaders(got.table), want) {
 		t.Errorf("columns at 200 = %v, want %v", fitHeaders(got.table), want)

@@ -53,9 +53,10 @@ var sessionColumnRegistry = []sessionColumn{
 	{name: "acct", header: "ACCT", pick: func(r sessionRow) string { return r.acct }},
 }
 
-// optInColumns are registered and selectable but not in the default table.
-// The width fit's wide tier is where they show by default.
-var optInColumns = map[string]bool{"composer": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-turn": true, "spec": true, "acct": true, "cpu": true, "rss": true, "desk": true, "runtime": true}
+// optInColumns are registered and selectable but not in the full default
+// table, so a pipe prints what it always printed. The width fit's wide tier
+// is where they show by default.
+var optInColumns = map[string]bool{"composer": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-active": true, "last-turn": true, "age": true, "active": true, "spec": true, "acct": true}
 
 // wantsComposer reports whether the COMPOSER column is selected. Only then does
 // the listing ask the daemon to read each seat's pane; it is opt-in and in no
@@ -90,10 +91,11 @@ const columnRest = "rest"
 var restReserved = map[string]bool{"composer": true}
 
 // defaultColumnNames is the order the default table prints: who the seat is,
-// whether it is doing work, then which model.
+// whether it is doing work, then which model, then the process figures in
+// registry order. It reorders the same columns the table already had.
 var defaultColumnNames = []string{
 	"workspace", "team", "role", "generation", "name", "state", "health",
-	"context", "active", "last-active", "age", "llm",
+	"context", "llm", "cpu", "rss", "desk", "runtime",
 }
 
 // defaultSessionColumns is the default table: the registered columns that are

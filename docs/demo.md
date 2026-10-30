@@ -526,7 +526,7 @@ and tags every event with workspace, team, role, and session.
 ```sh
 ./bin/marvel work examples/mixed-adapters.toml
 sleep 4
-./bin/marvel get sessions --columns name,cpu,rss   # CPU% and RSS populated for all four sessions
+./bin/marvel get sessions        # CPU% and RSS populated for all four sessions
 ```
 
 `marvel get sessions` samples the process table, so CPU% and RSS are real for

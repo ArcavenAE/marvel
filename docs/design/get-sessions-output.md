@@ -424,16 +424,14 @@ terminal shows what it always showed plus the new columns, and a narrower
 one drops them first. All of them stay selectable by name and in `wide` at
 any width. `age` is in the priority list but is not a registered column
 yet, so the fit skips it until its ticket lands. Off a terminal nothing is
-fitted, and a pipe prints the default table, because `workdir`, `tout`,
-`rate` and `prompt` are opt-in there.
+fitted, and a pipe prints the pre-design table, because `workdir`, `tout`,
+`rate`, `prompt`, `last-active` and `active` are opt-in there.
 
 **Print order, changed 2026-10-30.** The priority list above decides only
 what a width drops. What stays prints in the default order: workspace, team,
-role, generation, name, state, health, context, active, last-active, age,
-llm, then any other kept column in registry order. `active`, `last-active`
-and `age` joined the default table, and `cpu`, `rss`, `desk` and `runtime`
-became opt-in, so a script that read CPU% from a pipe now names it with
-`--columns`.
+role, generation, name, state, health, context, llm, cpu, rss, desk, runtime,
+then any other kept column in registry order. The default set is unchanged;
+only the order is.
 
 ### 10.3 Spend on the wire
 

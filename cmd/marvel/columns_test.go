@@ -24,11 +24,11 @@ var todaysHeaders = []string{
 }
 
 // defaultHeaders is the default table: who the seat is, whether it is doing
-// work, then which model. CPU%, RSS, DESK and RUNTIME stay selectable and in
-// the wide set.
+// work, then which model, then CPU%, RSS, DESK and RUNTIME. The same columns
+// as todaysHeaders, in a new order.
 var defaultHeaders = []string{
 	"WORKSPACE", "TEAM", "ROLE", "GEN", "AGENT NAME", "STATE", "HEALTH",
-	"CTX%", "ACTIVE%", "LAST-ACTIVE", "AGE", "LLM",
+	"CTX%", "LLM", "CPU%", "RSS", "DESK", "RUNTIME",
 }
 
 func columnsOrFatal(t *testing.T, flag string, pref []string) []sessionColumn {
