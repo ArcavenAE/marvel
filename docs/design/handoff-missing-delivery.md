@@ -155,7 +155,7 @@ role-users design (`docs/design/bus-role-users.md`, marvel#461):
 | `correlation_id` | `handoff-missing/<ws>/<team>/<session>/<requested_at unix>`, the same on every repeat, so a reader can group them and the loop guard keys on it |
 | `message_id` | a fresh ULID per send, as the schema requires |
 | `reply_by` | the next repeat time |
-| `expires_at` | the next repeat time plus one window: a queued message lives 24h and a shift mints a new holder, so a stale escalation must not be read as current; every repeat supersedes it |
+| `expires_at` | the next repeat time plus one window: a queued message lives 7 days on a broker that declares it (24h on one not yet edited) and a shift mints a new holder, so a stale escalation must not be read as current; every repeat supersedes it |
 
 No new performative or content type is needed: `REQUEST` with a `signal`
 content fits the schema as it stands. The build validates one sent envelope
