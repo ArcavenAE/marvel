@@ -15,6 +15,23 @@ The orchestrator graph's harness survey (finding 2w6k, 2026-10-08) already ranks
 - `internal/runtime/opencode.go` and `internal/runtime/opencode/mapping.md` are the pattern for a non-Claude headless adapter: run mode, a JSON stream parser, a composer contract. The goose adapter is expected to follow that shape. This probe checks the expectation; it does not assume it.
 - finding-020 (crush context-pressure channel) and the interactive context-remainder probe set the bar for context and token reporting. The operator's I-47 rollup idea consumes the same signal.
 
+## What the v1.54.0 design already answers
+
+`docs/design/goose-adapter-v1.md` read goose v1.54.0 source; its fact rows are G1 to G14 and M1 to M6. This probe re-measures only what that doc leaves open, or what may have moved by v1.57.0.
+
+| here | the design's answer | left for this probe |
+|---|---|---|
+| Q1, H1 | G1 (four line types), G2 (`complete` only without a terminal error), G3 (no per-request usage); section 3 parser and the three run outcomes | whether `message` events are whole messages or chunks (arm 1 at v1.57.0: one event per chunk, same id) |
+| Q2, H2 | G11 (goose mints the id; `--session-id` needs `--resume`; names are not unique; a bare `--resume` takes the newest), G12, M4; `SessionIDAssigner` is no, `-n` is a label, never a pin | nothing. H2's resume-by-name idea is refuted by G11 |
+| Q3, H3 | G3, M5, M6; section 5: level only from `sessions.db` (ticket H), no OTLP receiver | nothing |
+| Q4 | `ComposerCapable` is no in v1 (headless only) | out of v1 scope; arm 1 recorded the composer anyway |
+| Q5, H4 | not covered; extensions are narrowed with `--no-profile --with-builtin` | all of it: director-mcp as an extension and the 120 s wait |
+| Q6, H5 | section 6 and the operator's ruling of 2026-10-10, "(a) with (c) as future option": v1 keeps the keyring and projects no `GOOSE_DISABLE_KEYRING` | H5 is restated against that ruling: the probe's env-only, keyring-off run (arm 1) is a scratch measurement, not the v1 posture |
+| Q7 | G4 to G7 and section 4: `approve` plus a seeded `permission.yaml` fails closed; `auto` only in a sandbox (ticket K); never `chat`, which reports a skipped tool call as success (G7) | whether G4 to G7 still hold at v1.57.0 |
+| H6 | not covered | all of it |
+
+The design's pin (v1.54.0, valid until 2026-10-24) has passed; this probe runs at v1.57.0 and moves the pin there if it lands.
+
 ## Questions
 
 1. **Headless run.** What does `goose run` emit in its json and stream-json modes? Which lines carry turn boundaries, tool calls, errors and usage, and how do they map onto marvel's event vocabulary (the opencode mapping table is the template)?
