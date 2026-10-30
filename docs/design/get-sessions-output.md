@@ -115,8 +115,8 @@ pinned the ones they care about:
 - it expands in place, in registry order, and appears at most once;
 - it leaves out every column named elsewhere in the list, directly or through
   `wide`, so `rest,wide` and `wide,rest` both work;
-- it leaves out `composer`, which reads every seat's pane and so comes only by
-  name;
+- it leaves out `composer` and `pane`, which read every seat's pane and so
+  come only by name;
 - on a narrow terminal only its columns are cut, the ones outside
   `fitPriority` first and then the others from the tail of `fitPriority`; named
   columns are never cut, nor are the lead columns a view adds (the fan-out KEY
@@ -264,6 +264,37 @@ It renders as a HEALTH suffix only when abnormal, the way `(stalled)` does
 (`main.go:2694`). The full cell is in `describe` and an optional column.
 Two watchdog items, `valid_until` and `uncovered`, are held for that design
 party's rulings and are not in this plan.
+
+### 4.6 PANE
+
+PANE is one word for what a seat's pane is doing, so a seat at a login or
+startup prompt no longer reads as alive (marvel#1142, part a). The set is the
+operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
+`unknown`.
+
+| Word | Read from |
+|---|---|
+| `logged-out` | the harness-state watchdog's stored verdict, logged-out |
+| `prompt` | the watchdog's stored verdict, parked; or the composer reader's `menu_unsafe` (codex's update menu) |
+| `working` | the composer reader, `mid_turn` |
+| `restart` | claude's "Update installed · Restart to update" row, in the last 8 non-blank rows of the screen, at the row's end, with its check mark |
+| `idle` | the composer reader, `empty` or `holds_text`, with no banner |
+| `unknown` | everything else, with a GAP line where marvel knows why |
+
+- **Precedence.** The stored verdict first (it costs no capture), then
+  `working`, then `restart`, then `idle`. The banner sits on a seat that may
+  still be in a turn, so an open turn is shown as `working`.
+- **Unknown, never a guess.** A runtime with no reader, a screen the reader
+  cannot place, a seat at a shell and a seat in a client workspace read
+  `unknown`. Codex's reader grounds no working or idle state yet, so a codex
+  seat reads `unknown` unless it is at a prompt.
+- **Coverage.** The banner row was read on claude 2.1.289 to 2.1.314. No new
+  login or trust screen was captured for this column; those two words come
+  from the watchdog's patterns as they are.
+- **Cost.** The same read-only path as COMPOSER: one foreground query and one
+  capture per running seat that is not in a client workspace, and only when
+  the PANE or COMPOSER column is selected. Selecting both shares one capture
+  per pane. A stored verdict needs no capture.
 
 ## 5. Every number is diagnostic
 

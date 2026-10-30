@@ -15,8 +15,11 @@ A rollup header at the top of `marvel get sessions`, and possibly of the other
 `get` views, with one line per cluster. Each line sums the numbers the rows
 below it already carry: resident memory, CPU, token rates and "tout".
 
-"tout" is taken here as tokens out. That is not confirmed, and the idea does
-not depend on it: the header would carry whichever totals the operator names.
+"tout" is the TOUT column of `get sessions`: cumulative output tokens
+(`docs/design/get-sessions-output.md`, line 154). A seat that has no token
+stream and a statusline feed can put its running cost total there instead, as
+a dollar figure (same file, line 158). The idea does not depend on either
+reading: the header would carry whichever totals the operator names.
 
 ## The problem it answers
 
@@ -35,6 +38,9 @@ before the reader scans the rows.
 - Rates over what window, and from which meter? The token rate column idea
   ([[token-rate-column-and-configurable-columns]]) settles what a rate is for a
   row; a sum of rates needs the same answer for sessions that report nothing.
+- Does a sum mix tokens and dollars? TOUT holds tokens for most seats and a
+  cost total for statusline seats, so one cluster-wide figure adds two units
+  unless the header splits them or leaves the dollar seats out with a count.
 - How does a session that reports no value count: as zero, or left out with a
   count of how many were left out? A total that hides missing rows reads as a
   smaller cluster than it is.

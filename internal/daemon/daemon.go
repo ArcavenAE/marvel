@@ -1707,7 +1707,10 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 		d.stampActivity(live, time.Now().UTC())
 		d.stampSpec(live)
 		if p.Composer {
-			stampComposer(d.driver, live, d.composerClientWorkspace)
+			// One capture per pane serves both columns.
+			pane := newMemoPane(d.driver)
+			stampComposer(pane, live, d.composerClientWorkspace)
+			stampPane(pane, live, d.composerClientWorkspace)
 		}
 		result = append(live, held...)
 	case "teams", "team":

@@ -442,6 +442,13 @@ type Session struct {
 	// ComposerGap is why Composer is unknown when marvel knows why: a fixed
 	// reason, never pane text or an error string. Filled and kept as Composer.
 	ComposerGap string `json:"composer_gap,omitempty" toml:"-"`
+	// Pane is the seat's pane state (working, idle, prompt, restart,
+	// logged-out or unknown), filled on read for a `get sessions` that asks
+	// for the PANE column and never stored. No captured text travels with it.
+	Pane string `json:"pane,omitempty" toml:"-"`
+	// PaneGap is why Pane is unknown when marvel knows why: a fixed reason,
+	// never pane text or an error string. Filled and kept as Pane.
+	PaneGap string `json:"pane_gap,omitempty" toml:"-"`
 	// HeartbeatToken is the secret marvel mints at spawn and injects into
 	// the session's process environment. It binds a heartbeat to the
 	// session that claims it: the RPC takes a session key off the wire,
