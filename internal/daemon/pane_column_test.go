@@ -169,3 +169,40 @@ func TestMemoPaneSharesOneCapture(t *testing.T) {
 		t.Fatalf("captures = %d (%q), want 1", n, p.calls)
 	}
 }
+
+// fresh is an empty composer on a seat marvel can observe and has seen no use
+// from. A seat marvel has no activity channel for stays idle, because a seat
+// that did work would read the same, and any context reading clears fresh.
+func TestPaneWordFreshNeedsAnObservableSeatWithNoUse(t *testing.T) {
+	idle := composerFixture(t, "1-empty-idle.ansi.txt")
+	observed := func(mut func(*api.Session)) api.Session {
+		s := runningSeat("claude")
+		s.ActiveTicks.Observable = true
+		if mut != nil {
+			mut(&s)
+		}
+		return s
+	}
+	for name, tc := range map[string]struct {
+		seat api.Session
+		want string
+	}{
+		"observable, no reading":        {observed(nil), paneFresh},
+		"no activity channel":           {runningSeat("claude"), paneIdle},
+		"tokens read":                   {observed(func(s *api.Session) { s.ContextTokens = 1200 }), paneIdle},
+		"requests counted":              {observed(func(s *api.Session) { s.ContextRequests = 1 }), paneIdle},
+		"occupancy reported":            {observed(func(s *api.Session) { s.ContextPercent = 3 }), paneIdle},
+		"restart banner outranks fresh": {observed(nil), paneRestart},
+	} {
+		t.Run(name, func(t *testing.T) {
+			screen := idle
+			if tc.want == paneRestart {
+				screen = withBanner(t, idle, bannerRow)
+			}
+			p := &fakePane{foreground: "2.1.290", escapes: screen}
+			if got, gap := paneWord(p, tc.seat, false, nil); got != tc.want || gap != "" {
+				t.Fatalf("pane = %q, %q; want %q", got, gap, tc.want)
+			}
+		})
+	}
+}

@@ -11,7 +11,9 @@ import (
 // The PANE column of `get sessions` (marvel#1142 part a): one word for what a
 // seat's pane is doing, so a seat sitting at a login or startup prompt no
 // longer reads as alive. The set is the operator's (ruling I-60): working,
-// idle, prompt, restart, logged-out, unknown.
+// idle, prompt, restart, logged-out, unknown, and fresh (part d, ruled by the
+// director: a seat that has never taken a turn, with no startup text injected
+// by marvel).
 //
 // Where each word comes from:
 //   - logged-out and prompt are the harness-state watchdog's stored verdict
@@ -34,6 +36,7 @@ import (
 const (
 	paneWorking   = "working"
 	paneIdle      = "idle"
+	paneFresh     = "fresh"
 	panePrompt    = "prompt"
 	paneRestart   = "restart"
 	paneLoggedOut = "logged-out"
@@ -114,10 +117,25 @@ func paneWord(pane composerPane, s api.Session, client bool, clientErr error) (w
 		return paneRestart, ""
 	}
 	switch st {
-	case composer.Empty, composer.HoldsText:
+	case composer.Empty:
+		if neverTookATurn(s) {
+			return paneFresh, ""
+		}
+		return paneIdle, ""
+	case composer.HoldsText:
 		return paneIdle, ""
 	}
 	return paneUnknown, gapReaderUnsure
+}
+
+// neverTookATurn reports whether marvel can see a seat's activity and has seen
+// none: no context reading with tokens, requests or occupancy. A seat marvel
+// has no activity channel for is never fresh, because a seat that did work
+// would read the same, so it stays idle. A seat whose first turn is still ahead
+// of it reads fresh until the first reading lands.
+func neverTookATurn(s api.Session) bool {
+	return s.ActiveTicks.Observable &&
+		s.ContextTokens == 0 && s.ContextRequests == 0 && s.ContextPercent == 0
 }
 
 // stampPane puts the PANE word, and the reason for an unknown, on each served

@@ -270,7 +270,7 @@ party's rulings and are not in this plan.
 PANE is one word for what a seat's pane is doing, so a seat at a login or
 startup prompt no longer reads as alive (marvel#1142, part a). The set is the
 operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
-`unknown`.
+`unknown`, and `fresh` (part d, added by the director's ruling).
 
 | Word | Read from |
 |---|---|
@@ -279,11 +279,12 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
 | `working` | the composer reader, `mid_turn` |
 | `restart` | claude's "Update installed · Restart to update" row, only on the row directly above the composer's top rule, in the two shapes read live (the banner right-aligned, or after a "new task?" hint), with its check mark; a transcript row never matches |
 | `idle` | the composer reader, `empty` or `holds_text`, with no banner |
+| `fresh` | the composer reader, `empty`, on a seat marvel has an activity channel for and has seen no context reading from (no tokens, requests or occupancy): a seat that has not taken a turn. marvel injects no startup text to change that; a role starts work with `runtime.prompt` |
 | `unknown` | everything else, with a GAP line where marvel knows why |
 
 - **Precedence.** The stored verdict first (it costs no capture), then
-  `working`, then `restart`, then `idle`. The banner sits on a seat that may
-  still be in a turn, so an open turn is shown as `working`.
+  `working`, then `restart`, then `fresh`, then `idle`. The banner sits on a
+  seat that may still be in a turn, so an open turn is shown as `working`.
 - **Unknown, never a guess.** A runtime with no reader, a screen the reader
   cannot place, a seat at a shell and a seat in a client workspace read
   `unknown`. Codex's reader grounds no working or idle state yet, so a codex
