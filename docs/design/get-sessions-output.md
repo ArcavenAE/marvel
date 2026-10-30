@@ -288,6 +288,10 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
   cannot place, a seat at a shell and a seat in a client workspace read
   `unknown`. Codex's reader grounds no working or idle state yet, so a codex
   seat reads `unknown` unless it is at a prompt.
+- **A screen reading, not proof.** `restart` is what the screen shows. A
+  reply that reproduces the banner's exact shape directly above the composer
+  also reads `restart`, and a banner can be stale. The word tells an operator
+  where to look; it does not establish that an update is installed.
 - **Coverage.** The banner row was read on claude 2.1.289 to 2.1.314. No new
   login or trust screen was captured for this column; those two words come
   from the watchdog's patterns as they are.
