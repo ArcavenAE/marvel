@@ -82,6 +82,7 @@ func TestPrivateHomeIsStableAcrossRelaunch(t *testing.T) {
 func TestRelaunchKeepsTheRecordedHomeAfterTheBaseMoves(t *testing.T) {
 	t.Parallel()
 	mgr := homeManager(t)
+	mgr.socketLimitOverride = 1 << 20 // the temp directory is long; the length rule has its own test
 	old := filepath.Join(t.TempDir(), "oldhome")
 	if err := os.Mkdir(old, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -101,6 +102,7 @@ func TestRelaunchKeepsTheRecordedHomeAfterTheBaseMoves(t *testing.T) {
 func TestRelaunchIgnoresARecordedHomeThatIsNotPrivate(t *testing.T) {
 	t.Parallel()
 	mgr := homeManager(t)
+	mgr.socketLimitOverride = 1 << 20 // isolate the privacy rule from the length rule
 	open := filepath.Join(t.TempDir(), "openhome")
 	if err := os.Mkdir(open, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -112,6 +114,71 @@ func TestRelaunchIgnoresARecordedHomeThatIsNotPrivate(t *testing.T) {
 
 	if sess.HarnessHome == open || sess.HarnessHome == "" {
 		t.Errorf("a group/world-readable recorded home was followed: %q", sess.HarnessHome)
+	}
+}
+
+// The socket-length rule that decides a new base also decides a recorded home:
+// one whose harness socket would pass the unix socket limit is not kept, so a
+// relaunch falls back to a home that fits instead of a codex that exits at
+// start (aae-orc-pt8k).
+func TestRelaunchIgnoresARecordedHomeWhoseSocketCannotFit(t *testing.T) {
+	t.Parallel()
+	mgr := homeManager(t)
+	long := filepath.Join(t.TempDir(), strings.Repeat("h", 80))
+	if err := os.Mkdir(long, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	sess := sessionFor("coder", "codex")
+	sess.HarnessHome = long
+
+	mgr.planLaunch(sess)
+
+	if sess.HarnessHome == long || sess.HarnessHome == "" {
+		t.Errorf("a recorded home with an over-long socket was kept: %q", sess.HarnessHome)
+	}
+}
+
+// The length rule is exclusive: a socket path of exactly the limit is refused,
+// one byte shorter is kept. The edge is measured on the home as handed and
+// resolved, the larger of the two, so a /var to /private/var temp directory does
+// not move it. A rule off by one would keep a home whose socket codex rejects.
+func TestRelaunchSocketLengthEdgeIsExclusive(t *testing.T) {
+	t.Parallel()
+	home := filepath.Join(t.TempDir(), "edgehome")
+	if err := os.Mkdir(home, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	const socket = "app-server-control/app-server-control.sock"
+	edge := 0
+	for _, p := range []string{home, resolved} {
+		if n := len(filepath.Join(p, socket)); n > edge {
+			edge = n
+		}
+	}
+	for name, tc := range map[string]struct {
+		limit int
+		kept  bool
+	}{
+		"limit equals the socket length":  {edge, false},
+		"limit one byte over the length":  {edge + 1, true},
+		"limit one byte under the length": {edge - 1, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mgr := homeManager(t)
+			mgr.socketLimitOverride = tc.limit
+			sess := sessionFor("coder", "codex")
+			sess.HarnessHome = home
+
+			mgr.planLaunch(sess)
+
+			if kept := sess.HarnessHome == home; kept != tc.kept {
+				t.Errorf("limit %d, socket %d bytes: kept = %v, want %v (home %q)", tc.limit, edge, kept, tc.kept, sess.HarnessHome)
+			}
+		})
 	}
 }
 
