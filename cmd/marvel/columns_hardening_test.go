@@ -40,8 +40,8 @@ func TestUnreadableConfigFallsBackToTheDefaultColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSessionColumns with an unreadable config: %v, want the default table", err)
 	}
-	if got := headersOf(cols); !reflect.DeepEqual(got, todaysHeaders) {
-		t.Errorf("headers = %v, want %v", got, todaysHeaders)
+	if got := headersOf(cols); !reflect.DeepEqual(got, defaultHeaders) {
+		t.Errorf("headers = %v, want %v", got, defaultHeaders)
 	}
 }
 
