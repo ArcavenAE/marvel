@@ -27,14 +27,20 @@ fixes the adapter's rules for all three before ticket C is built.
 | L2 | per-request usage appears only in the sessions table, never in the stream (G3 confirmed) | all runs |
 | L3 | each launch makes a new session row, and nothing resumes | all runs |
 | L4 | total stream time is not bounded: a run streamed for 27m49s. The chunks were steady, with a largest gap of 1 s; no gap over 30 s was seen, so idle and first-byte behavior are untested. No goose config key, env var or flag sets a stream timeout | R10, qwen3:8b, 15,976 output tokens |
-| L5 | headless `approve` fails with "Use GooseMode::Auto for headless sessions" | |
+| L5 | headless `approve` that meets a tool not in `permission.yaml` exits 1 with no `complete` line and no hang, with "Tool approval required in non-interactive mode with GooseMode::approve ... Use GooseMode::Auto for headless sessions" | R2 |
 | L5b | headless `approve` ran to `complete` when the only tool the model asked for was under `never_allow`: the call was declined without a prompt (L6) | R3 |
 | L6 | under `GOOSE_MODE=approve`, a `never_allow` shell call was refused as a tool result, the run exited 0, and the model then said "echo p3 has been executed successfully". The refusal has no type of its own (section 3, C4) | R3, qwen3:0.6b, `max_turns` 4 |
 | L7 | 4,096 tokens is the practical context ceiling for the small models | qwen3:0.6b |
+| L8 | a tool call into a stdio extension has its own timeout, 300 s by default; `--with-extension` fixes it at 300 s. That fits a seat's 120 s bus wait (director-mcp `wait_for_message`, timeout 120) blocking inside one tool call. By source, not measured: no arm 2 run made a long-blocking extension call | goose source, read by the research seat |
 
 Settled from the run's records (relayed 2026-10-31): R3 ran under `approve`, not `auto`, with
-`never_allow` holding `shell` and `extensionmanager__manage_extensions`. A 120 s stream timeout
-named in earlier notes was not observed, and goose has no setting by that name.
+`never_allow` holding `shell` and `extensionmanager__manage_extensions`, as the earlier brief
+expected. The 120 s in earlier notes is the seat's bus wait inside a tool call (L8), not a goose
+stream timeout; nothing in goose bounds a model stream (L4). The model stream (L4) and the
+extension tool-call timeout (L8) are separate timers.
+
+Pending, one measurement: a stub stdio extension whose tool blocks for 120 s, run headless, to
+show that a 120 s bus wait returns inside the 300 s extension timeout (L8).
 
 ## 3. Changes to v1
 
@@ -52,7 +58,9 @@ named in earlier notes was not observed, and goose has no setting by that name.
 session (L3). v1's ticket H already picks the launch's row by a bound set at launch, not by
 recency, and that stands.
 
-**C3. The adapter's own clock.** Nothing measured bounds a goose stream (L4), so the adapter does.
+**C3. The adapter's own clock.** Nothing measured bounds a goose model stream (L4), so the
+adapter does. This is a different timer from the extension tool-call timeout (L8), which C3
+leaves alone.
 - goose runs under a small marvel wrapper. This is the same shared runtime code as v1's refusal
   stub, and it is used by this adapter only.
 - The wrapper holds two limits:
@@ -142,14 +150,13 @@ These reach past the adapter, so this brief did not decide them. Director decide
    marvel's: the sandbox (decision 2), and C4's rule that only a non-error tool result counts
    as run.
 
-## 6a. A question this run raises
+## 6a. Headless `approve` stays a fault
 
-L5b shows headless `approve` can run to `complete` when every tool the model asks for is
-already decided by `permission.yaml`. That suggests v1's fail-closed allowlist posture may
-still be viable headless, where C1 and acceptance test 2 make it a fault. This revision keeps
-C1 as the ask set it, and puts the question to director: should a headless `approve` role
-whose allowlist covers every tool stay a fault, or become a second headless posture? One run
-with an unlisted tool under `approve` would show where it fails (L5).
+Settled by R2, director agreeing, 2026-10-31. Headless `approve` that meets any tool not in
+`permission.yaml` fails closed: exit 1, no `complete`, no hang (L5). R3 reached `complete` only
+because its one tool was already decided by `never_allow` (L5b). A role cannot know in advance
+that the model will ask only for listed tools, so C1's `approve-headless` fault stays in v1, and
+acceptance test 2 stands as written.
 
 ## 7. Tickets
 
