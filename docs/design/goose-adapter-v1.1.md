@@ -40,7 +40,8 @@ Both are asked of the run's host, and the answers go in this table before ticket
 - The headless posture is `GOOSE_MODE=auto`, and it is allowed only inside the sandbox profile.
 - `approve` and `smart_approve` on a headless role are posture faults (`approve-headless`,
   `smart-approve-headless`), because both fail there (L5).
-- `auto` outside the sandbox is a posture fault (`auto-unsandboxed`).
+- `auto` with no sandbox in force is a posture fault (`auto-unsandboxed`). Section 6,
+  decision 2, says what counts as a sandbox.
 - All three take v1's refusal stub (exit 78), never a launch.
 - v1's fail-closed allowlist posture stays for interactive roles only. The rule never to degrade
   to `chat` stands.
@@ -103,18 +104,23 @@ Each test runs against recorded fixtures from arm 2 and a fake goose, so no mode
 - The keyring read under a private root (v1 section 6, ruled 2026-10-10) on a host with a real
   provider key.
 
-## 6. Questions for the operator
+## 6. Decisions past the adapter
 
-These are outside the adapter, so this brief asks rather than decides.
+These reach past the adapter, so this brief did not decide them. Director decided them on
+2026-10-31, as defaults the operator may override.
 
-1. **Should the idle and wall-clock watchdog live in the shared stream reader, for every
-   `StreamCapable` adapter?** C3 keeps it in this adapter alone. Moving it would change claude,
-   codex and opencode seats.
-2. **Is the sandbox in v1's ticket K the container placement (`SandboxRecommender`) or a host
-   sandbox-exec profile like arm 2's?** C1 assumes a profile the adapter names. If K means the
-   container, C1's `auto-unsandboxed` fault reads the placement instead.
-3. **Does `never_allow` apply under `auto` at v1.57.0?** v1's source read said no (G6), which
-   is why v1 has an `auto-with-deny-list` fault. R3's mode (L6) decides whether that fault stays.
+1. **The watchdog stays in this adapter's wrapper for v1.** The shared stream reader does not
+   change. Moving the watchdog there for every `StreamCapable` adapter is its own PR, with tests
+   for the claude, codex and opencode seats.
+2. **"Sandbox" means either of two things.** It is the sandbox-exec profile the role runs under
+   on a macOS host, or a container placement where the role has one (`SandboxRecommender`).
+   Headless `auto` runs only when one of them is in force. C1's `auto-unsandboxed` fault reads
+   both, and v1's ticket K takes this definition.
+3. **`never_allow` under `auto` is settled by the evidence.** When the run's host reports R3's
+   `GOOSE_MODE` (L6), the answer goes into this brief. Until then, the adapter does not rely on
+   goose's `never_allow` in either reading. The controls are marvel's: the sandbox (decision 2),
+   and C4's rule that only a successful tool result counts as run. v1's `auto-with-deny-list`
+   fault stays as written until R3's mode is known.
 
 ## 7. Tickets
 
@@ -122,5 +128,5 @@ There are no new tickets. v1's tickets change as follows:
 - **A:** done for Ollama by arm 2, open for Bedrock (section 5).
 - **C:** takes C3, C4 and C5.
 - **D:** takes C1's three faults.
-- **K:** waits on question 2.
+- **K:** takes the sandbox definition in section 6, decision 2.
 - **H:** stands as written.
