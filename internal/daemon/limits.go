@@ -80,6 +80,7 @@ func (d *Daemon) RunLimits(ctx context.Context, interval time.Duration) {
 			now := time.Now().UTC()
 			d.evaluateLimits(now)
 			d.evaluatePaneMenus(now)
+			d.refreshPaneReads(now)
 		}
 	}
 }

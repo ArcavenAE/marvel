@@ -201,6 +201,8 @@ type Daemon struct {
 	limitMenu    panemenu.Samples
 	paneMenu     panemenu.Evaluator
 	paneMenuOnce sync.Once
+	// paneReads is the pane-read cache behind the COMPOSER and PANE columns.
+	paneReads    paneCache
 	hostLocation *time.Location
 
 	// metricsWarn keeps a sampler that cannot read the process table
@@ -1707,10 +1709,8 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 		d.stampActivity(live, time.Now().UTC())
 		d.stampSpec(live)
 		if p.Composer {
-			// One capture per pane serves both columns.
-			pane := newMemoPane(d.driver)
-			stampComposer(pane, live, d.composerClientWorkspace)
-			stampPane(pane, live, d.composerClientWorkspace)
+			// The tick's reading, when warm; one capture per pane serves both columns.
+			d.stampPaneReads(live)
 		}
 		result = append(live, held...)
 	case "teams", "team":
