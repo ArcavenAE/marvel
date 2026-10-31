@@ -3,17 +3,23 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/childproof"
+	"github.com/arcavenae/marvel/internal/paths"
 )
 
 const sweepHelperEnv = "SWEEP_STANDIN_HELPER"
@@ -398,6 +404,160 @@ func TestSweepLeavesAForeignOrReusedProcessAlone(t *testing.T) {
 			}
 		}
 	}
+	// A pid that now belongs to another process is accounted for, so its home goes;
+	// a pid file that cannot be read or names pid 1 is not, so its home stays.
+	for _, gone := range []string{stale, notDaemon} {
+		if exists(gone) {
+			t.Errorf("%s: kept although its pid belongs to another process", gone)
+		}
+	}
+	for _, kept := range []string{unrecorded, garbage} {
+		if !exists(kept) {
+			t.Errorf("%s: removed although its daemon is not accounted for", kept)
+		}
+	}
+}
+
+func TestSweepKeepsAnOrphanWhoseDaemonStateIsUnknown(t *testing.T) {
+	base := newBase(t)
+	badJSON := mkHome(t, base, "aaaaaaaaaaaa", false)
+	noStart := mkHome(t, base, "bbbbbbbbbbbb", false)
+	notRegular := mkHome(t, base, "cccccccccccc", false)
+	if err := os.MkdirAll(filepath.Join(badJSON, "app-server-daemon"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badJSON, "app-server-daemon", "daemon.pid"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A start time of zero cannot be compared on any platform, so the daemon cannot
+	// be proven or ruled out: the stand-in of every non-darwin host.
+	writePidFile(t, noStart, "daemon.pid", os.Getpid(), 0, 0)
+	if err := os.MkdirAll(filepath.Join(notRegular, "app-server-daemon", "daemon.pid"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sw := sweeperFor([]string{base}).sweep(true)
+	for _, home := range []string{badJSON, noStart, notRegular} {
+		got := entryFor(t, sw, home)
+		if !exists(home) || got.Removed {
+			t.Errorf("%s was removed while its daemon is unaccounted for: %+v", home, got)
+		}
+		if !strings.Contains(got.Why, "not accounted for") {
+			t.Errorf("%s: why = %q, want the reason it was kept", home, got.Why)
+		}
+	}
+}
+
+func TestSweepRemovesAnOrphanWhoseDaemonIsGone(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("a daemon is proven by a start time that is only comparable on darwin")
+	}
+	base := newBase(t)
+	orphan := mkHome(t, base, "aaaaaaaaaaaa", false)
+	d := startStandIn(t, "app-server")
+	sec, usec := d.startOf(t)
+	writePidFile(t, orphan, "daemon.pid", d.pid(), sec, usec)
+	if err := d.cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if !d.exited(5 * time.Second) {
+		t.Fatal("the stand-in did not exit")
+	}
+	sw := sweeperFor([]string{base}).sweep(true)
+	if got := entryFor(t, sw, orphan); !got.Removed || exists(orphan) {
+		t.Errorf("a home whose daemon is gone was kept: %+v", got)
+	}
+}
+
+func TestSweepReReadsRecordsAndHistoryJustBeforeRemoving(t *testing.T) {
+	for name, tc := range map[string]struct {
+		change func(home string) []string // runs at the second read of the records
+		want   string
+	}{
+		"a record names the home since the listing": {
+			change: func(home string) []string { return []string{home} },
+			want:   "changed during the sweep",
+		},
+		"history appeared since the listing": {
+			change: func(home string) []string {
+				_ = os.WriteFile(filepath.Join(home, "sessions", "rollout.jsonl"), []byte("{}\n"), 0o600)
+				return nil
+			},
+			want: "changed during the sweep",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := newBase(t)
+			home := mkHome(t, base, "aaaaaaaaaaaa", false)
+			reads := 0
+			s := sweeperFor([]string{base})
+			s.recordedNow = func() []string {
+				reads++
+				if reads == 1 {
+					return nil // the listing sees no record
+				}
+				return tc.change(home)
+			}
+			sw := s.sweep(true)
+			got := entryFor(t, sw, home)
+			if !exists(home) || got.Removed || !strings.Contains(got.Why, tc.want) {
+				t.Errorf("home removed or not explained after a change during the sweep: %+v", got)
+			}
+		})
+	}
+}
+
+func TestSweepAndSpawnShareOneTempBase(t *testing.T) {
+	// TMPDIR on macOS is a long per-user path; the spawn path uses the literal /tmp.
+	t.Setenv("TMPDIR", t.TempDir())
+	mgr := &Manager{store: api.NewStore(), HarnessHomeDir: newBase(t)}
+	s := mgr.homeSweeper()
+	if s.tmpDir != "/tmp" {
+		t.Errorf("the sweep counts other layouts under %q, want /tmp", s.tmpDir)
+	}
+	layout, err := paths.Default()
+	if err != nil {
+		t.Skipf("no layout: %v", err)
+	}
+	want := legacyHarnessHomeBase(layout.Tag())
+	if !strings.HasPrefix(want, "/tmp/marvel-h-") {
+		t.Errorf("legacy base = %q, want one under /tmp/marvel-h-", want)
+	}
+	if !slices.Contains(s.bases, want) {
+		t.Errorf("the sweep's bases %v lack the spawn path's temp base %s", s.bases, want)
+	}
+	for _, b := range s.bases {
+		if strings.HasPrefix(b, os.Getenv("TMPDIR")) && b != mgr.HarnessHomeDir && !strings.HasPrefix(b, mgr.HarnessHomeDir) {
+			t.Errorf("the sweep looks under TMPDIR: %s", b)
+		}
+	}
+}
+
+// TestDefaultHarnessHomeDirUsesTheSharedTempBase fails if the spawn path goes
+// back to spelling its own temp base, so it cannot drift from the sweep's.
+func TestDefaultHarnessHomeDirUsesTheSharedTempBase(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "manager.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "defaultHarnessHomeDir" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "legacyHarnessHomeBase" {
+					found = true
+				}
+			}
+			return true
+		})
+	}
+	if !found {
+		t.Error("defaultHarnessHomeDir does not call legacyHarnessHomeBase; the spawn path and the sweep could drift")
+	}
 }
 
 func TestSweepKeepsAnOrphanWhoseDaemonCannotBeSignalled(t *testing.T) {
@@ -421,7 +581,7 @@ func TestSweepKeepsAnOrphanWhoseDaemonCannotBeSignalled(t *testing.T) {
 	if !exists(orphan) {
 		t.Error("an orphan home was removed while its daemon was still running")
 	}
-	if got := entryFor(t, sw, orphan); got.Removed || !strings.Contains(got.Why, "could not be signalled") {
+	if got := entryFor(t, sw, orphan); got.Removed || !strings.Contains(got.Why, "not accounted for") || !strings.Contains(got.Why, "signal failed") {
 		t.Errorf("entry = %+v", got)
 	}
 }

@@ -255,7 +255,19 @@ func defaultHarnessHomeDir() string {
 	if dir, ok := durableHarnessHomeBase(layout, paths.MaxUnixSocketPath); ok {
 		return dir
 	}
-	return harnessHomeBase(filepath.Join("/tmp", "marvel-h-"+layout.Tag()), fallback)
+	return harnessHomeBase(legacyHarnessHomeBase(layout.Tag()), fallback)
+}
+
+// harnessTempRoot is where the per-layout temp bases live. It is the literal
+// /tmp and not os.TempDir(): TMPDIR is a long per-user path on macOS, and the
+// harness socket under a home has to fit the unix socket limit (see
+// harnessHomeBase). The spawn path and the sweep both read it from here.
+const harnessTempRoot = "/tmp"
+
+// legacyHarnessHomeBase is the short temp base for one layout tag: the old
+// default, and the fallback where the durable base is unusable.
+func legacyHarnessHomeBase(tag string) string {
+	return filepath.Join(harnessTempRoot, "marvel-h-"+tag)
 }
 
 // harnessHomeSocketReserve is what a harness may append under a home: the
