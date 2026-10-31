@@ -12,7 +12,7 @@
 
 v1 was written from goose source before anyone ran goose. The first live run shows three places
 where a seat built to v1 would be wrong:
-- A long stream outlives goose's own timeout.
+- Nothing measured bounds a stream: one run streamed for 27m49s.
 - The fail-closed `approve` posture cannot run headless.
 - A denied tool can end in exit 0, with the model saying the command ran.
 
@@ -26,13 +26,15 @@ fixes the adapter's rules for all three before ticket C is built.
 | L1 | `goose run --output-format stream-json` writes one line per chunk, and one `complete` event per run with totals | all runs |
 | L2 | per-request usage appears only in the sessions table, never in the stream (G3 confirmed) | all runs |
 | L3 | each launch makes a new session row, and nothing resumes | all runs |
-| L4 | a 27m49s stream ran past goose's 120 s timeout. The chunks were steady, with a largest gap of 1 s; no gap over 30 s was seen, so idle and first-byte behavior are untested | R10, qwen3:8b, 15,976 output tokens |
+| L4 | total stream time is not bounded: a run streamed for 27m49s. The chunks were steady, with a largest gap of 1 s; no gap over 30 s was seen, so idle and first-byte behavior are untested. No goose config key, env var or flag sets a stream timeout | R10, qwen3:8b, 15,976 output tokens |
 | L5 | headless `approve` fails with "Use GooseMode::Auto for headless sessions" | |
-| L6 | a `never_allow` shell call was refused as a tool result, the run exited 0, and the model then claimed the command ran | R3 |
+| L5b | headless `approve` ran to `complete` when the only tool the model asked for was under `never_allow`: the call was declined without a prompt (L6) | R3 |
+| L6 | under `GOOSE_MODE=approve`, a `never_allow` shell call was refused as a tool result, the run exited 0, and the model then said "echo p3 has been executed successfully". The refusal has no type of its own (section 3, C4) | R3, qwen3:0.6b, `max_turns` 4 |
 | L7 | 4,096 tokens is the practical context ceiling for the small models | qwen3:0.6b |
 
-Open from the report: which setting holds the 120 s (L4), and which `GOOSE_MODE` R3 ran under (L6).
-Both are asked of the run's host, and the answers go in this table before ticket C starts.
+Settled from the run's records (relayed 2026-10-31): R3 ran under `approve`, not `auto`, with
+`never_allow` holding `shell` and `extensionmanager__manage_extensions`. A 120 s stream timeout
+named in earlier notes was not observed, and goose has no setting by that name.
 
 ## 3. Changes to v1
 
@@ -50,7 +52,7 @@ Both are asked of the run's host, and the answers go in this table before ticket
 session (L3). v1's ticket H already picks the launch's row by a bound set at launch, not by
 recency, and that stands.
 
-**C3. The adapter's own clock.** goose's timeout does not bound a run (L4), so the adapter does.
+**C3. The adapter's own clock.** Nothing measured bounds a goose stream (L4), so the adapter does.
 - goose runs under a small marvel wrapper. This is the same shared runtime code as v1's refusal
   stub, and it is used by this adapter only.
 - The wrapper holds two limits:
@@ -67,9 +69,18 @@ recency, and that stands.
 
 **C4. What ran comes from tool results only (amends v1 section 3, the parser and the three
 outcomes).**
-- A tool counts as run only when a tool-result event for its call carries a success.
-- A refusal tool result (L6) maps to a tool-denied event that names the tool, and it is counted
-  on `session.ended`.
+- The adapter keys every tool call by its id, from the assistant's `toolRequest` to the user's
+  `toolResponse` with the same id.
+- A call counts as run only when its `toolResponse` has `toolResult.status` "success" AND
+  `toolResult.value.isError` false.
+- A response with `isError` true is not-ran. There is no distinct denial type: goose's refusal
+  is a `toolResponse` whose `toolResult.status` is "success" and whose `value.isError` is true,
+  with the decline text in `value.content` (R3). The adapter never trusts `toolResult.status`
+  alone. It maps such a response to a tool-denied event that names the tool, and counts it on
+  `session.ended`.
+- A `toolRequest` whose `toolCall.status` is "success" means the request was well formed, not
+  that the tool ran.
+- A request with no matching response by `complete` is not-ran.
 - The exit code and the model's text never decide what ran, because a refused shell call exited
   0 and the model said it succeeded.
 - `complete` still means the run finished. It does not mean every tool ran.
@@ -91,10 +102,18 @@ Each test runs against recorded fixtures from arm 2 and a fake goose, so no mode
    `smart_approve`, or `auto` without the sandbox gets the stub (exit 78), with its reason, and
    goose never starts. A headless role with `auto` inside the profile launches with
    `GOOSE_MODE=auto` in its env.
-3. **Only tool results say what ran.** The R3 fixture (a `never_allow` refusal as a tool result,
-   exit 0, and model text claiming success) yields one tool-denied event, zero runs counted for
-   that call, and `session.ended` with exit 0 and a denied count of 1. No event says the command
-   ran.
+3. **Only tool results say what ran.** The fixture is R3's shape:
+   - an assistant `toolRequest` with id `call_ngnvd7s5`, `toolCall.status` "success", name
+     `shell`, arguments `{command: "echo p3"}`;
+   - a user `toolResponse` with the same id, `toolResult.status` "success", and `value`
+     `{resultType: "complete", isError: true, content: [text "The user has declined to run
+     this tool. ..."]}`;
+   - a `complete` line with `total_tokens` 6749, exit 0, and assistant text "echo p3 has been
+     executed successfully".
+
+   It yields one tool-denied event for `call_ngnvd7s5`, zero runs counted for that call, and
+   `session.ended` with exit 0 and a denied count of 1. No event says the command ran. A second
+   fixture, with `isError` false on the same shape, counts one run.
 
 ## 5. Named, not designed (waiting on a Bedrock run)
 
@@ -116,11 +135,21 @@ These reach past the adapter, so this brief did not decide them. Director decide
    on a macOS host, or a container placement where the role has one (`SandboxRecommender`).
    Headless `auto` runs only when one of them is in force. C1's `auto-unsandboxed` fault reads
    both, and v1's ticket K takes this definition.
-3. **`never_allow` under `auto` is settled by the evidence.** When the run's host reports R3's
-   `GOOSE_MODE` (L6), the answer goes into this brief. Until then, the adapter does not rely on
-   goose's `never_allow` in either reading. The controls are marvel's: the sandbox (decision 2),
-   and C4's rule that only a successful tool result counts as run. v1's `auto-with-deny-list`
-   fault stays as written until R3's mode is known.
+3. **`never_allow` under `auto` is settled by the evidence, and the evidence is not in yet.**
+   R3 ran under `approve`, where `never_allow` held, as v1's G6 says. Behavior under `auto` is
+   UNTESTED, so this stays open, and v1's `auto-with-deny-list` fault stands. Until a run
+   tests it, the adapter does not rely on goose's `never_allow` under `auto`. The controls are
+   marvel's: the sandbox (decision 2), and C4's rule that only a non-error tool result counts
+   as run.
+
+## 6a. A question this run raises
+
+L5b shows headless `approve` can run to `complete` when every tool the model asks for is
+already decided by `permission.yaml`. That suggests v1's fail-closed allowlist posture may
+still be viable headless, where C1 and acceptance test 2 make it a fault. This revision keeps
+C1 as the ask set it, and puts the question to director: should a headless `approve` role
+whose allowlist covers every tool stay a fault, or become a second headless posture? One run
+with an unlisted tool under `approve` would show where it fails (L5).
 
 ## 7. Tickets
 
