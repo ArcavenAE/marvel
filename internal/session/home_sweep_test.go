@@ -1,11 +1,14 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -814,5 +817,84 @@ func TestSweepDoesNotCallAPidGoneUntilItIsGone(t *testing.T) {
 				t.Errorf("why = %q, want the reason the home was kept", got.Why)
 			}
 		})
+	}
+}
+
+// notMine answers "not owned by this user" for every path it is given a name
+// for, and "owned" for the rest: a directory owned by another user cannot be
+// made without privilege, so the check's answer is what the tests control.
+func notMine(names ...string) func(os.FileInfo) bool {
+	return func(fi os.FileInfo) bool { return !slices.Contains(names, fi.Name()) }
+}
+
+func TestSweepLeavesAHomeThatAnotherUserOwns(t *testing.T) {
+	base := newBase(t)
+	theirs := mkHome(t, base, "aaaaaaaaaaaa", false)
+	mine := mkHome(t, base, "bbbbbbbbbbbb", false)
+	s := sweeperFor([]string{base})
+	s.owned = notMine("aaaaaaaaaaaa")
+	sw := s.sweep(true)
+	if !exists(theirs) {
+		t.Error("a home the ownership check refused was removed")
+	}
+	for _, h := range sw.Homes {
+		if h.Path == theirs {
+			t.Errorf("a home the ownership check refused was listed: %+v", h)
+		}
+	}
+	if exists(mine) {
+		t.Error("the owned orphan was not removed")
+	}
+}
+
+func TestSweepSkipsABaseThatAnotherUserOwns(t *testing.T) {
+	base := newBase(t)
+	home := mkHome(t, base, "aaaaaaaaaaaa", false)
+	s := sweeperFor([]string{base})
+	s.owned = notMine("h") // newBase names the base "h"
+	sw := s.sweep(true)
+	if !exists(home) || len(sw.Homes) != 0 || len(sw.Bases) != 0 {
+		t.Errorf("swept a base the ownership check refused: %+v", sw)
+	}
+	if len(sw.Notes) != 1 || !strings.Contains(sw.Notes[0], "not owned by this user") {
+		t.Errorf("notes = %v, want the ownership refusal", sw.Notes)
+	}
+}
+
+func TestReapLeavesAHomeThatAnotherUserOwns(t *testing.T) {
+	mgr, key, home := reapFixture(t, false)
+	if err := mgr.Delete(key); err != nil {
+		t.Fatal(err)
+	}
+	mgr.ownerCheck = notMine("aaaaaaaaaaaa")
+	mgr.reapSeatHome(key, home)
+	if !exists(home) {
+		t.Error("a home the ownership check refused was reaped")
+	}
+}
+
+func TestDeleteAndReapReapsNothingWhenThePaneCannotBeKilled(t *testing.T) {
+	mgr, key, home := reapFixture(t, false)
+	mgr.killPane = func(string) error { return errors.New("kill-pane: server busy") }
+	if err := mgr.store.UpdateSession(key, func(s *api.Session) error {
+		s.PaneID = "%9"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	if err := mgr.DeleteAndReap(key); err == nil {
+		t.Fatal("a delete whose kill failed reported success")
+	}
+	if !exists(home) {
+		t.Error("the home of a seat that could not be stopped was removed")
+	}
+	// The kept row names the home, so the records alone would also keep it; the
+	// reap itself must not even run, which its log line shows.
+	if strings.Contains(logged.String(), "harness home") {
+		t.Errorf("the reap ran after a failed delete: %s", logged.String())
 	}
 }

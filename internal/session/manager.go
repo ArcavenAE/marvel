@@ -93,6 +93,9 @@ type Manager struct {
 	// The login lives in the home (linked from the operator's), and a login is
 	// not rebuilt without a human, which is why this is not a temp tier.
 	HarnessHomeDir string
+	// ownerCheck replaces ownedByMe in the home sweeps. It is unexported and
+	// unreachable from config, flags or the API; only tests set it.
+	ownerCheck func(os.FileInfo) bool
 	// socketLimitOverride replaces paths.MaxUnixSocketPath for the check on a
 	// recorded home. Zero means the platform's limit; only tests set it, so it
 	// is unexported and unreachable from config, flags or the API.
