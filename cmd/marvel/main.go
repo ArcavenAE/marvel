@@ -896,7 +896,7 @@ func openRotatingLog(path string, maxSizeMiB, maxFiles, maxTotalMiB int) (io.Clo
 // an operator takes with their eyes open, so a reap that killed on sight
 // would put the original failure back behind a new name.
 func reapCmd() *cobra.Command {
-	var confirm, homes bool
+	var confirm, homes, emptyBases bool
 	cmd := &cobra.Command{
 		Use:   "reap",
 		Short: "List (and with --confirm, destroy) marvel tmux state the daemon does not own",
@@ -905,10 +905,16 @@ func reapCmd() *cobra.Command {
 			"this daemon's two home bases. A home a session record names is never touched. A home no\n" +
 			"record names is removed with --confirm only when it holds no codex history; one that does\n" +
 			"is kept and listed. A daemon pid is signalled (SIGTERM, once) only when it is written in a\n" +
-			"pid file inside such a home and the live process has the recorded start time.",
+			"pid file inside such a home and the live process has the recorded start time.\n\n" +
+			"With --empty-bases, list instead the temp bases other layouts left under /tmp/marvel-h-<tag>.\n" +
+			"With --confirm, only a base that is a plain directory, mode 0700, owned by this user and empty\n" +
+			"is removed, with one rmdir and never a recursive delete; this layout's own base is never listed.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			params, _ := json.Marshal(map[string]bool{"confirm": confirm, "homes": homes})
+			if homes && emptyBases {
+				return fmt.Errorf("choose one of --homes and --empty-bases")
+			}
+			params, _ := json.Marshal(map[string]bool{"confirm": confirm, "homes": homes, "empty_bases": emptyBases})
 			resp, err := send(daemonrpc.Request{Method: "reap", Params: params})
 			if err != nil {
 				return err
@@ -919,6 +925,9 @@ func reapCmd() *cobra.Command {
 
 			if homes {
 				return printHomeSweep(resp.Result)
+			}
+			if emptyBases {
+				return printEmptyBaseSweep(resp.Result)
 			}
 
 			var result struct {
@@ -961,6 +970,8 @@ func reapCmd() *cobra.Command {
 		"actually destroy the listed state (without this, reap only lists)")
 	cmd.Flags().BoolVar(&homes, "homes", false,
 		"sweep harness homes and orphaned codex app-server daemons instead of tmux state")
+	cmd.Flags().BoolVar(&emptyBases, "empty-bases", false,
+		"remove other layouts' empty temp bases under /tmp (one rmdir each) instead of tmux state")
 	return cmd
 }
 
@@ -1002,6 +1013,33 @@ func printHomeSweep(raw json.RawMessage) error {
 		fmt.Printf("Removed %d home(s); signalled %d daemon(s).\n", removed, signalled)
 	} else {
 		fmt.Println("Dry run: nothing was changed. Re-run with --confirm to remove the orphan homes and signal the listed daemons.")
+	}
+	return nil
+}
+
+// printEmptyBaseSweep renders the result of `marvel reap --empty-bases`.
+func printEmptyBaseSweep(raw json.RawMessage) error {
+	var sw session.EmptyBaseSweep
+	if err := json.Unmarshal(raw, &sw); err != nil {
+		return fmt.Errorf("parse reap result: %w", err)
+	}
+	kept := 0
+	for _, b := range sw.Bases {
+		switch {
+		case b.Removed:
+			fmt.Printf("  removed  %s\n", b.Path)
+		case b.State == session.BaseEmpty:
+			fmt.Printf("  empty    %s\n", b.Path)
+		default:
+			kept++
+			fmt.Printf("  kept     %s: %s\n", b.Path, b.Why)
+		}
+	}
+	fmt.Printf("\n%d empty, %d kept, among %d other layout base(s) under %s.\n", sw.Empty, kept, len(sw.Bases), sw.Root)
+	if sw.Confirmed {
+		fmt.Printf("Removed %d empty base(s).\n", sw.Removed)
+	} else {
+		fmt.Println("Dry run: nothing was changed. Re-run with --confirm to remove the empty bases.")
 	}
 	return nil
 }

@@ -25,6 +25,9 @@ func homeManager(t *testing.T) *Manager {
 		ProjectionDir:  t.TempDir(),
 		HarnessHomeDir: t.TempDir(),
 		Events:         events.NewRing(16),
+		// A temp directory made by a test is not 0700; the spawn-time check has
+		// its own tests (spawn_base_recheck_test.go).
+		skipBaseCheck: true,
 	}
 	m, err := api.ParseManifestBytes([]byte(sessionIDManifest))
 	if err != nil {

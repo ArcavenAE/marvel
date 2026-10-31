@@ -2910,18 +2910,26 @@ func (d *Daemon) handleOrphans() daemonrpc.Response {
 
 func (d *Daemon) handleReap(params json.RawMessage) daemonrpc.Response {
 	var p struct {
-		Confirm bool `json:"confirm"`
-		Homes   bool `json:"homes"`
+		Confirm    bool `json:"confirm"`
+		Homes      bool `json:"homes"`
+		EmptyBases bool `json:"empty_bases"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 		}
 	}
+	if p.Homes && p.EmptyBases {
+		return daemonrpc.Response{Error: "reap: choose one of homes and empty_bases"}
+	}
 	if p.Homes {
 		// The home sweep is its own listing: harness homes and codex daemons,
 		// not tmux state. It lists unless confirmed.
 		return respond(d.sessMgr.SweepHomes(p.Confirm))
+	}
+	if p.EmptyBases {
+		// Other layouts' empty temp bases: one rmdir each, only on confirm.
+		return respond(d.sessMgr.SweepEmptyBases(p.Confirm))
 	}
 
 	found, err := d.sessMgr.UnrecordedTmuxState()

@@ -31,9 +31,10 @@ const (
 	// It never carries the text typed.
 	KindSessionInjected Kind = "session.injected"
 	// KindSessionPlacementRefused records a spawn marvel refused because the
-	// directory the session resolves to is missing or is not a directory.
-	// tmux would start the pane in $HOME without an error, so marvel refuses
-	// first. Emitted once per change, not once per reconcile tick.
+	// directory the session resolves to is missing or is not a directory, or
+	// because no base for the seat's private harness home passed the spawn-time
+	// check. tmux would start the pane in $HOME without an error, so marvel
+	// refuses first. Emitted once per change, not once per reconcile tick.
 	KindSessionPlacementRefused Kind = "session.placement-refused"
 	// KindSessionContainerRefused records a spawn marvel refused because the
 	// seat's placement resolved to container and it cannot run in one: the

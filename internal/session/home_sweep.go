@@ -101,6 +101,10 @@ type homeSweeper struct {
 	// record made since the listing keeps its home. It falls back to recorded.
 	recordedNow func() []string
 	prober      *childproof.Prober
+	// owned reports whether a file belongs to this user. Nil means ownedByMe;
+	// a test sets it to reach a directory owned by another user, which a test
+	// cannot create without privilege.
+	owned func(os.FileInfo) bool
 	// tmpDir is where other layouts' temp bases are counted; empty skips it.
 	tmpDir string
 	// ownTmpBase is this layout's own temp base, left out of that count.
@@ -118,7 +122,10 @@ func (m *Manager) SweepHomes(confirm bool) HomeSweep {
 // homeSweeper builds the sweeper for this manager: its bases, and a view of
 // the session records that is read again on every use.
 func (m *Manager) homeSweeper() homeSweeper {
-	s := homeSweeper{prober: childproof.New(), tmpDir: harnessTempRoot}
+	s := homeSweeper{prober: childproof.New(), tmpDir: harnessTempRoot, owned: m.ownerCheck}
+	if m.tempRoot != "" {
+		s.tmpDir = m.tempRoot
+	}
 	s.bases = append(s.bases, m.HarnessHomeDir)
 	if layout, err := paths.Default(); err == nil {
 		s.bases = append(s.bases, layout.HarnessHomesDir())
@@ -179,14 +186,14 @@ func (m *Manager) reapSeatHome(key, home string) {
 		if base == "." || filepath.Dir(home) != base {
 			continue
 		}
-		if why, absent := baseRefusal(base); why != "" {
+		if why, absent := baseRefusal(base, s.mine); why != "" {
 			if !absent {
 				log.Printf("session %s: harness home %s left in place: base %s: %s", key, home, base, why)
 			}
 			return
 		}
 		fi, err := os.Lstat(home)
-		if err != nil || !fi.IsDir() || !ownedByMe(fi) {
+		if err != nil || !fi.IsDir() || !s.mine(fi) {
 			return
 		}
 		e := s.sweepHome(home, fi, statAll(s.recordedPaths()), true)
@@ -212,6 +219,14 @@ func reapSummary(e HomeEntry) string {
 	}
 }
 
+// mine reports whether fi belongs to this user, through the sweeper's seam.
+func (s homeSweeper) mine(fi os.FileInfo) bool {
+	if s.owned != nil {
+		return s.owned(fi)
+	}
+	return ownedByMe(fi)
+}
+
 // recordedPaths is the set of homes session records name, read now when the
 // sweeper has a live source for it.
 func (s homeSweeper) recordedPaths() []string {
@@ -231,7 +246,7 @@ func (s homeSweeper) sweep(confirm bool) HomeSweep {
 			continue
 		}
 		seen[base] = true
-		if why, absent := baseRefusal(base); why != "" {
+		if why, absent := baseRefusal(base, s.mine); why != "" {
 			if !absent {
 				out.Notes = append(out.Notes, fmt.Sprintf("base %s skipped: %s", base, why))
 			}
@@ -249,7 +264,7 @@ func (s homeSweeper) sweep(confirm bool) HomeSweep {
 			}
 			home := filepath.Join(base, e.Name())
 			fi, err := os.Lstat(home)
-			if err != nil || !fi.IsDir() || !ownedByMe(fi) {
+			if err != nil || !fi.IsDir() || !s.mine(fi) {
 				continue
 			}
 			out.Homes = append(out.Homes, s.sweepHome(home, fi, recorded, confirm))
@@ -262,7 +277,7 @@ func (s homeSweeper) sweep(confirm bool) HomeSweep {
 // baseRefusal returns why a base is not one the sweep may look in: it must be
 // a plain directory (not a link) that is private to this user. absent is true
 // when the base is simply not there, which is not worth a note.
-func baseRefusal(base string) (why string, absent bool) {
+func baseRefusal(base string, mine func(os.FileInfo) bool) (why string, absent bool) {
 	fi, err := os.Lstat(base)
 	switch {
 	case os.IsNotExist(err):
@@ -273,7 +288,7 @@ func baseRefusal(base string) (why string, absent bool) {
 		return "not a plain directory", false
 	case fi.Mode().Perm() != 0o700:
 		return fmt.Sprintf("mode %v, want 0700", fi.Mode().Perm()), false
-	case !ownedByMe(fi):
+	case !mine(fi):
 		return "not owned by this user", false
 	}
 	return "", false
