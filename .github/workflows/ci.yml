@@ -226,6 +226,56 @@ jobs:
             github.com/arcavenae/marvel/internal/backoff \
             github.com/arcavenae/marvel/internal/childproof
 
+  goreleaser-check:
+    # The stable pipeline has never run, so its config is checked here on every
+    # pull request, by the same pinned goreleaser release.yml runs. It checks
+    # the config and builds a snapshot into dist/, and publishes nothing: the
+    # job has read-only permissions, no secret and no token, and a snapshot
+    # never pushes to the tap.
+    name: GoReleaser check
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: go.sum
+
+      - name: Check the goreleaser config
+        uses: step-security/goreleaser-action@e91207bb836a83eca7cb8b2e61024bcb6dc3c458 # v7.3.0
+        with:
+          version: v2.18.3
+          args: check
+
+      - name: Build a snapshot, publishing nothing
+        uses: step-security/goreleaser-action@e91207bb836a83eca7cb8b2e61024bcb6dc3c458 # v7.3.0
+        with:
+          version: v2.18.3
+          args: release --snapshot --clean
+
+      - name: List the formulas the snapshot wrote
+        # A formula pipe that fails does not fail goreleaser, so the job looks
+        # for the files itself. The alpha job owns Formula/marvel.rb, and no
+        # goreleaser entry may write it.
+        run: |
+          set -euo pipefail
+          find dist/homebrew -name '*.rb' | sort
+          if find dist/homebrew -name 'marvel.rb' | grep -q .; then
+            echo "goreleaser wrote Formula/marvel.rb, the file the alpha job owns"
+            exit 1
+          fi
+
   build-binaries:
     name: Build Binaries
     needs: quality-gate
