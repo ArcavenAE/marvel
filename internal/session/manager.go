@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -101,10 +102,16 @@ type Manager struct {
 	// tempRoot replaces harnessTempRoot for the sweeps, so a test never reads
 	// or removes anything under the real /tmp. Only tests set it.
 	tempRoot string
-	// verifyBases turns on the spawn-time check of the base a home goes in
-	// (verifiedHomeBase). NewManager sets it; a Manager built from a literal in
-	// a test leaves it off, because a temp directory made by a test is not 0700.
-	verifyBases bool
+	// skipBaseCheck turns the spawn-time check of the base a home goes in
+	// (verifiedHomeBase) off. The check is on by default, so a constructor that
+	// forgets this field fails safe. It is unexported and unreachable from
+	// config, flags or the API; only tests set it, for a Manager literal whose
+	// bases are temp directories that are not 0700.
+	skipBaseCheck bool
+	// baseChecked, when set, runs after a base passes the check and before the
+	// home is made in it, so a test can remove the base in that window. Only
+	// tests set it.
+	baseChecked func(base string)
 	// harnessChain is the ordered list of bases the daemon would choose from,
 	// as defaultHarnessHomeDir saw it at start: the durable base, the old
 	// per-layout temp base, then the per-user temp fallback.
@@ -239,7 +246,6 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 		drains:            make(map[string]*usageDrain),
 	}
 	m.HarnessHomeDir, m.harnessChain = harnessHomeDirs()
-	m.verifyBases = true
 	if driver != nil {
 		m.killPane = driver.KillPane
 		m.paneStatus = driver.PaneStatus
@@ -362,6 +368,12 @@ func privateDirRefusal(path string, mine func(os.FileInfo) bool) (why string, va
 	if err := os.Mkdir(path, 0o700); err != nil && !os.IsExist(err) {
 		return fmt.Sprintf("cannot create it: %v", err), false
 	}
+	return checkPrivateDir(path, mine)
+}
+
+// checkPrivateDir is the half of privateDirRefusal that reads: path must be a
+// plain directory (not a link), mode exactly 0700, owned by this user.
+func checkPrivateDir(path string, mine func(os.FileInfo) bool) (why string, validation bool) {
 	fi, err := os.Lstat(path)
 	switch {
 	case err != nil:
@@ -374,6 +386,64 @@ func privateDirRefusal(path string, mine func(os.FileInfo) bool) (why string, va
 		return "it is not owned by this user", true
 	}
 	return "", false
+}
+
+// privateLeafRefusal makes a seat's home directory with one Mkdir at 0700 and
+// accepts an existing one, then requires it to pass checkPrivateDir, so a link
+// or a directory of another user or mode is never followed or adopted. A base
+// that is gone when the leaf is made (ENOENT) means it vanished after it was
+// checked, which is the race the spawn-time check closes, so it is a
+// validation failure (vanished) and not an ordinary error.
+func privateLeafRefusal(path string, mine func(os.FileInfo) bool) (why string, validation, vanished bool) {
+	if err := os.Mkdir(path, 0o700); err != nil && !os.IsExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "its base is gone", true, true
+		}
+		return fmt.Sprintf("cannot create it: %v", err), false, false
+	}
+	why, validation = checkPrivateDir(path, mine)
+	return why, validation, false
+}
+
+// homeUnderVerifiedBase picks the base for this seat's home (verifiedHomeBase,
+// from the base the home would be in) and makes the home in it. A home that was
+// recorded under a base that failed is not kept: the same leaf is made under
+// the base that passed. If the base vanishes between the check and the home,
+// the selection runs once more; if it vanishes again the spawn is refused. A
+// refusal is returned for every validation failure; ok is false with no refusal
+// only for an ordinary error, where the caller takes the existing downgrade.
+func (m *Manager) homeUnderVerifiedBase(key, dir string) (home string, ok bool, refusal string) {
+	base := filepath.Dir(dir)
+	leaf := filepath.Base(m.harnessHomeFor(key))
+	for attempt := 0; attempt < 2; attempt++ {
+		use, good, why := m.verifiedHomeBase(key, base)
+		if why != "" {
+			return "", false, why
+		}
+		if !good {
+			return "", false, ""
+		}
+		if m.baseChecked != nil {
+			m.baseChecked(use)
+		}
+		home = dir
+		if use != base {
+			home = filepath.Join(use, leaf)
+		}
+		why, validation, vanished := privateLeafRefusal(home, m.mine)
+		switch {
+		case why == "":
+			return home, true, ""
+		case vanished:
+			log.Printf("session %s: harness home base %s vanished after it was checked, selecting again", key, use)
+		case validation:
+			return "", false, fmt.Sprintf("harness home %s is not usable: %s", home, why)
+		default:
+			log.Printf("session %s: harness home %s: %s", key, home, why)
+			return "", false, ""
+		}
+	}
+	return "", false, "harness home base vanished twice after it was checked"
 }
 
 // mine reports whether fi belongs to this user, through the test seam.
@@ -1149,12 +1219,8 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 				lctx.Session.Key(), rec, why, dir)
 		}
 	}
-	if m.verifyBases {
-		// The base was checked at start; check it again now, because the home
-		// is about to be made in whatever sits at that name. A home under a
-		// base that fails is not kept, and the leaf name stays the same so a
-		// later restart finds the same home under the same base.
-		use, ok, why := m.verifiedHomeBase(lctx.Session.Key(), filepath.Dir(dir))
+	if !m.skipBaseCheck {
+		home, ok, why := m.homeUnderVerifiedBase(lctx.Session.Key(), dir)
 		if why != "" {
 			return why
 		}
@@ -1163,11 +1229,8 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 				lctx.Session.Key(), spec.EnvVar)
 			return ""
 		}
-		if use != filepath.Dir(dir) {
-			dir = filepath.Join(use, filepath.Base(m.harnessHomeFor(lctx.Session.Key())))
-		}
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+		dir = home
+	} else if err := os.MkdirAll(dir, 0o700); err != nil {
 		log.Printf("session %s: private %s unavailable, sharing the operator's home: %v",
 			lctx.Session.Key(), spec.EnvVar, err)
 		return ""
