@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"syscall"
 	"time"
 
@@ -49,9 +50,10 @@ type Provisioned struct {
 
 // Provision connects to the broker as the admin user and ensures every
 // declared object exists. Idempotent: an object already present counts as
-// existing and is left exactly as found, so a hand-provisioned broker
-// (phase 0) and a marvel-provisioned one converge on the same state
-// without a rewrite.
+// existing and is left as found, so a hand-provisioned broker (phase 0) and
+// a marvel-provisioned one converge on the same state without a rewrite. The
+// one change made to an existing stream is raising a finite max_age that is
+// shorter than the declared one (raiseMaxAge).
 func Provision(ctx context.Context, url, user, password string) (Provisioned, error) {
 	var out Provisioned
 	nc, err := connectAdmin(ctx, url, user, password)
@@ -82,9 +84,12 @@ func Provision(ctx context.Context, url, user, password string) (Provisioned, er
 	for _, obj := range DeclaredObjects() {
 		switch obj.Kind {
 		case ObjectStream:
-			_, err := js.Stream(ctx, obj.Name)
+			st, err := js.Stream(ctx, obj.Name)
 			switch {
 			case err == nil:
+				if err := raiseMaxAge(ctx, js, st, *obj.Stream); err != nil {
+					return out, err
+				}
 				note(obj.Name, false)
 				continue
 			case !errors.Is(err, jetstream.ErrStreamNotFound):
@@ -112,6 +117,26 @@ func Provision(ctx context.Context, url, user, password string) (Provisioned, er
 		}
 	}
 	return out, nil
+}
+
+// raiseMaxAge brings a live stream's max_age up to the declared value when
+// the live one is finite and shorter, so a broker provisioned under an older
+// declaration (AGENT_INBOX was 24h before I-65) picks up the new retention at
+// the next daemon start. It only raises: a longer live value stays, and a
+// zero (unlimited) live value stays. Every other field is the live config,
+// copied unchanged.
+func raiseMaxAge(ctx context.Context, js jetstream.JetStream, st jetstream.Stream, declared jetstream.StreamConfig) error {
+	live := st.CachedInfo().Config
+	if live.MaxAge <= 0 || declared.MaxAge <= live.MaxAge {
+		return nil
+	}
+	cfg := live
+	cfg.MaxAge = declared.MaxAge
+	if _, err := js.UpdateStream(ctx, cfg); err != nil {
+		return fmt.Errorf("raise max_age of stream %s from %s to %s: %w", live.Name, live.MaxAge, declared.MaxAge, err)
+	}
+	log.Printf("bus: stream %s max_age raised from %s to %s", live.Name, live.MaxAge, declared.MaxAge)
+	return nil
 }
 
 // String renders the outcome for a log line: "created AGENT_INBOX,
