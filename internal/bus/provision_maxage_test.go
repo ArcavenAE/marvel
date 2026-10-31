@@ -1,8 +1,13 @@
 package bus
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,4 +101,60 @@ func seedStreamConfig(t *testing.T, name string, maxAge time.Duration) jetstream
 	}
 	t.Fatalf("stream %s is not declared", name)
 	return jetstream.StreamConfig{}
+}
+
+// refusingUpdates is a JetStream handle whose UpdateStream always fails, as a
+// broker that refuses the edit (or an admin that may not make it) would.
+type refusingUpdates struct {
+	jetstream.JetStream
+}
+
+func (refusingUpdates) UpdateStream(context.Context, jetstream.StreamConfig) (jetstream.Stream, error) {
+	return nil, errors.New("update refused for the test")
+}
+
+// TestProvisionKeepsOldMaxAgeWhenTheUpdateIsRefused provisions a broker whose
+// 24h inbox stream cannot be updated. The refusal is logged with the stream,
+// the old and the declared value and the error; provisioning still succeeds,
+// and the stream keeps its old retention.
+func TestProvisionKeepsOldMaxAgeWhenTheUpdateIsRefused(t *testing.T) {
+	s, m, _ := newTestSupervisor(t, "")
+	s.AfterReady = nil
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	admin := m.Admin()
+	nc, err := nats.Connect(m.URL(), nats.UserInfo(admin.Name, admin.Password))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(nc.Close)
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := js.CreateStream(ctx, seedStreamConfig(t, InboxStream, 24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	if _, err := provisionObjects(ctx, refusingUpdates{js}); err != nil {
+		t.Fatalf("provisioning returned %v for a refused max_age update, want success", err)
+	}
+	line := logged.String()
+	for _, want := range []string{InboxStream, "24h0m0s", "168h0m0s", "not raised", "update refused for the test"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("log %q lacks %q", line, want)
+		}
+	}
+	st, err := js.Stream(ctx, InboxStream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.CachedInfo().Config.MaxAge; got != 24*time.Hour {
+		t.Errorf("%s max_age = %s, want the old 24h", InboxStream, got)
+	}
 }

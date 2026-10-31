@@ -67,6 +67,14 @@ func Provision(ctx context.Context, url, user, password string) (Provisioned, er
 	}
 	ctx, cancel := context.WithTimeout(ctx, provisionRPC)
 	defer cancel()
+	return provisionObjects(ctx, js)
+}
+
+// provisionObjects ensures every declared object exists on the broker js
+// reaches. It is Provision after the connect, so a test can hand it a
+// JetStream handle that refuses an update.
+func provisionObjects(ctx context.Context, js jetstream.JetStream) (Provisioned, error) {
+	var out Provisioned
 
 	note := func(name string, created bool) {
 		if created {
@@ -87,9 +95,7 @@ func Provision(ctx context.Context, url, user, password string) (Provisioned, er
 			st, err := js.Stream(ctx, obj.Name)
 			switch {
 			case err == nil:
-				if err := raiseMaxAge(ctx, js, st, *obj.Stream); err != nil {
-					return out, err
-				}
+				raiseMaxAge(ctx, js, st, *obj.Stream)
 				note(obj.Name, false)
 				continue
 			case !errors.Is(err, jetstream.ErrStreamNotFound):
@@ -124,19 +130,21 @@ func Provision(ctx context.Context, url, user, password string) (Provisioned, er
 // declaration (AGENT_INBOX was 24h before I-65) picks up the new retention at
 // the next daemon start. It only raises: a longer live value stays, and a
 // zero (unlimited) live value stays. Every other field is the live config,
-// copied unchanged.
-func raiseMaxAge(ctx context.Context, js jetstream.JetStream, st jetstream.Stream, declared jetstream.StreamConfig) error {
+// copied unchanged. A refused update is logged and not returned: Provision
+// succeeds as it did when it left an existing stream alone, and the old
+// retention stands until a start where the update goes through.
+func raiseMaxAge(ctx context.Context, js jetstream.JetStream, st jetstream.Stream, declared jetstream.StreamConfig) {
 	live := st.CachedInfo().Config
 	if live.MaxAge <= 0 || declared.MaxAge <= live.MaxAge {
-		return nil
+		return
 	}
 	cfg := live
 	cfg.MaxAge = declared.MaxAge
 	if _, err := js.UpdateStream(ctx, cfg); err != nil {
-		return fmt.Errorf("raise max_age of stream %s from %s to %s: %w", live.Name, live.MaxAge, declared.MaxAge, err)
+		log.Printf("bus: stream %s max_age stays %s, not raised to %s: %v", live.Name, live.MaxAge, declared.MaxAge, err)
+		return
 	}
 	log.Printf("bus: stream %s max_age raised from %s to %s", live.Name, live.MaxAge, declared.MaxAge)
-	return nil
 }
 
 // String renders the outcome for a log line: "created AGENT_INBOX,
