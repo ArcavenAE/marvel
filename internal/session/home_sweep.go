@@ -63,6 +63,10 @@ type DaemonEntry struct {
 	Action    string `json:"action"`
 	Why       string `json:"why,omitempty"`
 	Signalled bool   `json:"signalled,omitempty"`
+	// Settled is true when the daemon is accounted for: it was signalled, is
+	// gone, or the pid now belongs to another process. A home is removed only
+	// when every pid file in it is settled.
+	Settled bool `json:"settled,omitempty"`
 }
 
 // HomeEntry is one home under a base and what a sweep does or did with it.
@@ -93,7 +97,10 @@ type HomeSweep struct {
 type homeSweeper struct {
 	bases    []string
 	recorded []string
-	prober   *childproof.Prober
+	// recordedNow, when set, is read again just before a home is removed, so a
+	// record made since the listing keeps its home. It falls back to recorded.
+	recordedNow func() []string
+	prober      *childproof.Prober
 	// tmpDir is where other layouts' temp bases are counted; empty skips it.
 	tmpDir string
 	// ownTmpBase is this layout's own temp base, left out of that count.
@@ -105,24 +112,45 @@ type homeSweeper struct {
 // marvel home and the old per-layout temp base. A home a session record names
 // is never touched. Without confirm it changes nothing.
 func (m *Manager) SweepHomes(confirm bool) HomeSweep {
-	s := homeSweeper{prober: childproof.New(), tmpDir: os.TempDir()}
+	return m.homeSweeper().sweep(confirm)
+}
+
+// homeSweeper builds the sweeper for this manager: its bases, and a view of
+// the session records that is read again on every use.
+func (m *Manager) homeSweeper() homeSweeper {
+	s := homeSweeper{prober: childproof.New(), tmpDir: harnessTempRoot}
 	s.bases = append(s.bases, m.HarnessHomeDir)
 	if layout, err := paths.Default(); err == nil {
 		s.bases = append(s.bases, layout.HarnessHomesDir())
-		s.ownTmpBase = "marvel-h-" + layout.Tag()
-		s.bases = append(s.bases, filepath.Join(s.tmpDir, s.ownTmpBase))
+		legacy := legacyHarnessHomeBase(layout.Tag())
+		s.ownTmpBase = filepath.Base(legacy)
+		s.bases = append(s.bases, legacy)
 	}
-	for _, sess := range m.store.ListSessions() {
-		if sess.HarnessHome != "" {
-			s.recorded = append(s.recorded, sess.HarnessHome)
+	s.recordedNow = func() []string {
+		var out []string
+		for _, sess := range m.store.ListSessions() {
+			if sess.HarnessHome != "" {
+				out = append(out, sess.HarnessHome)
+			}
 		}
+		return out
 	}
-	return s.sweep(confirm)
+	s.recorded = s.recordedNow()
+	return s
+}
+
+// recordedPaths is the set of homes session records name, read now when the
+// sweeper has a live source for it.
+func (s homeSweeper) recordedPaths() []string {
+	if s.recordedNow != nil {
+		return s.recordedNow()
+	}
+	return s.recorded
 }
 
 func (s homeSweeper) sweep(confirm bool) HomeSweep {
 	out := HomeSweep{Confirmed: confirm}
-	recorded := statAll(s.recorded)
+	recorded := statAll(s.recordedPaths())
 	seen := map[string]bool{}
 	for _, base := range s.bases {
 		base = filepath.Clean(base)
@@ -215,15 +243,18 @@ func (s homeSweeper) sweepHome(home string, fi os.FileInfo, recorded []os.FileIn
 		return e
 	}
 	for _, d := range e.Daemons {
-		if d.Action == DaemonSignal && !d.Signalled {
-			e.Why += "; kept because a daemon pid could not be signalled"
+		if !d.Settled {
+			e.Why += fmt.Sprintf("; kept because the daemon in %s is not accounted for", d.File)
+			if d.Why != "" {
+				e.Why += " (" + d.Why + ")"
+			}
 			return e
 		}
 	}
 	// Re-read just before removing: a record may have named the home, or
 	// history may have appeared, since the listing was built.
 	now, err := os.Lstat(home)
-	if err != nil || !now.IsDir() || isRecorded(now, statAll(s.recorded)) || historyReason(home) != "" {
+	if err != nil || !now.IsDir() || isRecorded(now, statAll(s.recordedPaths())) || historyReason(home) != "" {
 		e.Why += "; kept because it changed during the sweep"
 		return e
 	}
@@ -296,7 +327,8 @@ func (s homeSweeper) daemonsIn(home string, confirm bool) []DaemonEntry {
 		}
 		child, err := s.prober.ProveStart(d.Pid, start, daemonArg)
 		if err != nil {
-			d.Action, d.Why = DaemonLeft, proofWhy(err)
+			d.Action = DaemonLeft
+			d.Why, d.Settled = s.unprovenWhy(d.Pid, err)
 			out = append(out, d)
 			continue
 		}
@@ -304,14 +336,36 @@ func (s homeSweeper) daemonsIn(home string, confirm bool) []DaemonEntry {
 		if confirm {
 			if err := s.prober.Signal(child, syscall.SIGTERM, false); err != nil {
 				d.Why = fmt.Sprintf("signal failed: %v", err)
+				var m *childproof.MismatchError
+				if errors.As(err, &m) {
+					// The process changed or ended between the proof and the signal.
+					d.Why, d.Settled = proofWhy(err), true
+				}
 				log.Printf("session homes: pid %d from %s: %v", d.Pid, file, err)
 			} else {
-				d.Signalled = true
+				d.Signalled, d.Settled = true, true
 			}
 		}
 		out = append(out, d)
 	}
 	return out
+}
+
+// unprovenWhy says why a recorded pid is not the daemon, and whether that
+// accounts for it. A pid that no longer runs, or that now belongs to another
+// process, is settled. A process that exists but whose identity could not be
+// read is not: it may still be the daemon.
+func (s homeSweeper) unprovenWhy(pid int, err error) (why string, settled bool) {
+	var m *childproof.MismatchError
+	if !errors.As(err, &m) {
+		return err.Error(), false
+	}
+	if m.Reason == "dead" {
+		if exists, perr := s.prober.Exists(pid); perr != nil || exists {
+			return "the process exists but its identity could not be read", false
+		}
+	}
+	return proofWhy(err), true
 }
 
 func proofWhy(err error) string {
