@@ -108,11 +108,11 @@ outcomes).**
   0 and the model said it succeeded.
 - `complete` still means the run finished. It does not mean every tool ran.
 
-**C5. Context.** `GOOSE_CONTEXT_LIMIT` is projected from `runtime.context_window` as v1 says. For
-a small local model the adapter takes the lower of the role's value and the model's measured
-ceiling (L7, 4,096 for qwen3:0.6b). A role that declares more draws a NOTE at prepare time, not a
-refusal. Where the measured ceiling lives is open (section 6b); until it is ruled, ticket C
-builds the projection from `runtime.context_window` alone and leaves the lower-of step out.
+**C5. Context.** `GOOSE_CONTEXT_LIMIT` is projected from `runtime.context_window` as v1 says,
+with one rule added: when both the role's `runtime.context_window` and the model's entry in the
+adapter's ceiling table (section 6b) are set, the adapter projects the lower of the two. A model
+with no table entry is unchanged. A role that declares more than its model's entry draws a NOTE
+at prepare time, not a refusal.
 
 ## 4. Acceptance tests
 
@@ -197,29 +197,26 @@ because its one tool was already decided by `never_allow` (L5b). A role cannot k
 that the model will ask only for listed tools, so C1's `approve-headless` fault stays in v1, and
 acceptance test 2 stands as written.
 
-## 6b. Open: where a model's measured context ceiling lives
+## 6b. Where a model's measured context ceiling lives
 
-C5 needs a measured ceiling per model (L7, 4,096 for qwen3:0.6b), and nothing holds one yet.
-This needs a ruling; the brief does not choose it.
+Ruled by director, 2026-10-31: a table in the goose adapter, mapping a model name to its
+measured ceiling, with each entry citing the run that measured it. It stays inside this adapter
+and changes no other adapter. A new measurement is a code change.
 
-1. **A table in the goose adapter** [recommended]: model name to measured ceiling, each entry
-   citing the run that measured it. It stays inside this adapter, it changes no other adapter,
-   and a model with no entry takes the role's value unchanged. The cost is that a new
-   measurement is a code change.
-2. **A role field**, such as `runtime.model_context_ceiling`. The operator sets it per role. The
-   cost is a second number beside `runtime.context_window` that means almost the same thing, and
-   a role that forgets it gets no protection.
-3. **A cluster config key**, a model-to-ceiling map. One place for every adapter. The cost is
-   that it reaches past this adapter, which is outside this brief's scope.
+The table is seeded with one entry:
 
-There is also a fourth reading: no new home, and the operator sets `runtime.context_window` to
-the model's ceiling directly. That drops the lower-of step from C5 and leaves only the NOTE.
+| model | ceiling | measured by |
+|---|---|---|
+| qwen3:0.6b | 4,096 | goose arm 2 (L7) |
+
+C5 reads it as the lower-of rule. The alternatives considered were a role field beside
+`runtime.context_window`, a cluster config key, and no new home; none was taken.
 
 ## 7. Tickets
 
 There are no new tickets. v1's tickets change as follows:
 - **A:** done for Ollama by arm 2, open for Bedrock (section 5).
-- **C:** takes C3, C4 and C5.
+- **C:** takes C3, C4 and C5, with the ceiling table seeded as section 6b says.
 - **D:** takes C1's three faults.
 - **K:** takes the sandbox definition in section 6, decision 2, and adds the two `LaunchContext`
   fields it names (the resolved placement and the sandbox-exec profile path).
