@@ -139,6 +139,79 @@ func (m *Manager) homeSweeper() homeSweeper {
 	return s
 }
 
+// DeleteAndReap is Delete for a seat that is stopping for good, and then
+// reaps that seat's harness home and the codex daemon under it by the same
+// rules as the sweep: a home any session record names is untouched, a home
+// with codex history is kept, a daemon pid is signalled only when proven. A
+// key the reconciler has already given a new session reads as recorded, so its
+// home stays. The reap runs only when the delete succeeded: a seat whose pane
+// could not be killed keeps its row and its home.
+//
+// Restarts, shifts and respawns call Delete, not this: the same key reuses the
+// same home.
+func (m *Manager) DeleteAndReap(key string) error {
+	sess, err := m.store.GetSession(key)
+	if err != nil {
+		return err
+	}
+	if err := m.Delete(key); err != nil {
+		return err
+	}
+	m.reapSeatHome(key, sess.HarnessHome)
+	return nil
+}
+
+// reapSeatHome reaps one home after its seat stopped. It acts only on a direct
+// child of one of this daemon's bases whose name is twelve hex digits, the
+// shape harnessHomeFor gives; any other recorded path is left and logged.
+func (m *Manager) reapSeatHome(key, home string) {
+	if home == "" {
+		return
+	}
+	s := m.homeSweeper()
+	home = filepath.Clean(home)
+	if !homeNameRE.MatchString(filepath.Base(home)) {
+		log.Printf("session %s: harness home %s is not a marvel home name, left in place", key, home)
+		return
+	}
+	for _, base := range s.bases {
+		base = filepath.Clean(base)
+		if base == "." || filepath.Dir(home) != base {
+			continue
+		}
+		if why, absent := baseRefusal(base); why != "" {
+			if !absent {
+				log.Printf("session %s: harness home %s left in place: base %s: %s", key, home, base, why)
+			}
+			return
+		}
+		fi, err := os.Lstat(home)
+		if err != nil || !fi.IsDir() || !ownedByMe(fi) {
+			return
+		}
+		e := s.sweepHome(home, fi, statAll(s.recordedPaths()), true)
+		log.Printf("session %s: harness home %s: %s, %s", key, home, e.State, reapSummary(e))
+		return
+	}
+	log.Printf("session %s: harness home %s is outside this daemon's bases, left in place", key, home)
+}
+
+// reapSummary is one line of what a reap did to a home and its daemons.
+func reapSummary(e HomeEntry) string {
+	signalled := 0
+	for _, d := range e.Daemons {
+		if d.Signalled {
+			signalled++
+		}
+	}
+	switch {
+	case e.Removed:
+		return fmt.Sprintf("removed, %d daemon(s) signalled", signalled)
+	default:
+		return fmt.Sprintf("kept (%s), %d daemon(s) signalled", e.Why, signalled)
+	}
+}
+
 // recordedPaths is the set of homes session records name, read now when the
 // sweeper has a live source for it.
 func (s homeSweeper) recordedPaths() []string {

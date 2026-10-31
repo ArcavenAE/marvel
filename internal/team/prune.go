@@ -35,7 +35,7 @@ func (c *Controller) deleteTeamLocked(t api.Team) error {
 // deleteSessionsLocked deletes the sessions named by keys. Caller holds c.mu.
 func (c *Controller) deleteSessionsLocked(keys []string) {
 	for _, k := range keys {
-		_ = c.sessMgr.Delete(k)
+		_ = c.sessMgr.DeleteAndReap(k)
 	}
 }
 

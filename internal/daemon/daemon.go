@@ -1825,7 +1825,8 @@ func (d *Daemon) handleDelete(params json.RawMessage) daemonrpc.Response {
 	var err error
 	switch p.ResourceType {
 	case "session":
-		err = d.sessMgr.Delete(p.Name)
+		// An operator delete is a terminal stop: the seat's home and codex daemon go with it.
+		err = d.sessMgr.DeleteAndReap(p.Name)
 	case "team":
 		// Delete team and its sessions.
 		t, getErr := d.store.GetTeam(p.Name)
@@ -1847,7 +1848,7 @@ func (d *Daemon) handleDelete(params json.RawMessage) daemonrpc.Response {
 				continue
 			}
 			for _, s := range d.store.ListSessionsByTeam(t.Workspace, t.Name) {
-				_ = d.sessMgr.Delete(s.Key())
+				_ = d.sessMgr.DeleteAndReap(s.Key())
 			}
 			if delErr := d.store.DeleteTeam(t.Key()); delErr != nil {
 				log.Printf("delete workspace %s: delete team %s: %v", ws.Name, t.Key(), delErr)

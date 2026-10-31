@@ -664,3 +664,155 @@ func TestSweepHomesNamesEverySessionRecordAsLive(t *testing.T) {
 		t.Errorf("the unrecorded home reads %q, want orphan", got)
 	}
 }
+
+// reapFixture is a manager whose base holds one seat's home and that seat's
+// session record, so a delete can be followed by what happens to the home.
+func reapFixture(t *testing.T, history bool) (mgr *Manager, key, home string) {
+	t.Helper()
+	base := newBase(t)
+	home = mkHome(t, base, "aaaaaaaaaaaa", history)
+	mgr = homeManager(t)
+	mgr.HarnessHomeDir = base
+	sess := sessionFor("coder", "codex")
+	sess.HarnessHome = home
+	if err := mgr.store.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	return mgr, sess.Key(), home
+}
+
+func TestDeleteAndReapRemovesTheHomeAndSignalsItsDaemon(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("a daemon is proven by a start time that is only comparable on darwin")
+	}
+	mgr, key, home := reapFixture(t, false)
+	d := startStandIn(t, "app-server")
+	sec, usec := d.startOf(t)
+	writePidFile(t, home, "daemon.pid", d.pid(), sec, usec)
+	foreign := startStandIn(t, "app-server") // in no pid file
+
+	if err := mgr.DeleteAndReap(key); err != nil {
+		t.Fatal(err)
+	}
+	if exists(home) {
+		t.Error("the stopped seat's home was kept")
+	}
+	if !d.exited(5 * time.Second) {
+		t.Error("the stopped seat's daemon was not signalled")
+	}
+	if foreign.exited(500 * time.Millisecond) {
+		t.Error("a process in no pid file was signalled")
+	}
+	if _, err := mgr.store.GetSession(key); err == nil {
+		t.Error("the session record is still there")
+	}
+}
+
+func TestDeleteAndReapKeepsAHomeThatHoldsHistory(t *testing.T) {
+	mgr, key, home := reapFixture(t, true)
+	if err := mgr.DeleteAndReap(key); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(home, "sessions", "rollout.jsonl")) {
+		t.Error("codex history was removed with the seat")
+	}
+}
+
+func TestPlainDeleteLeavesTheHomeAlone(t *testing.T) {
+	// Delete is also the restart, shift and respawn path; the same key reuses the
+	// same home, so it must never reap.
+	mgr, key, home := reapFixture(t, false)
+	if err := mgr.Delete(key); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(home) {
+		t.Error("Delete removed the home; a restart would lose its login")
+	}
+}
+
+func TestReapKeepsAHomeTheKeyWasGivenAgain(t *testing.T) {
+	mgr, key, home := reapFixture(t, false)
+	if err := mgr.Delete(key); err != nil {
+		t.Fatal(err)
+	}
+	// The reconciler gives the same key a new session, which records the same home,
+	// before the reap reads the records.
+	again := sessionFor("coder", "codex")
+	again.HarnessHome = home
+	if err := mgr.store.CreateSession(again); err != nil {
+		t.Fatal(err)
+	}
+	mgr.reapSeatHome(key, home)
+	if !exists(home) {
+		t.Error("a home a new session record names was removed")
+	}
+}
+
+func TestReapLeavesWhatIsNotAMarvelHome(t *testing.T) {
+	mgr, _, _ := reapFixture(t, false)
+	elsewhere := mkHome(t, t.TempDir(), "bbbbbbbbbbbb", false) // right name, not under a base
+	badName := mkHome(t, mgr.HarnessHomeDir, "notahomedir", false)
+	for _, home := range []string{elsewhere, badName, "", filepath.Dir(mgr.HarnessHomeDir)} {
+		mgr.reapSeatHome("k", home)
+	}
+	for _, home := range []string{elsewhere, badName, filepath.Dir(mgr.HarnessHomeDir)} {
+		if !exists(home) {
+			t.Errorf("%s was removed", home)
+		}
+	}
+}
+
+func TestDeleteAndReapOfAMissingSessionTouchesNothing(t *testing.T) {
+	mgr, _, home := reapFixture(t, false)
+	if err := mgr.DeleteAndReap("no/such/session"); err == nil {
+		t.Error("deleting a session that does not exist reported success")
+	}
+	if !exists(home) {
+		t.Error("a home was removed for a session that was never deleted")
+	}
+}
+
+// TestSweepDoesNotCallAPidGoneUntilItIsGone covers the cross-check in
+// unprovenWhy: a read error without a start time reads as "dead" to the proof,
+// but a process that exists whose identity cannot be read (another user's, or
+// not yet settled) may still be the daemon, so its home stays. Only a pid the
+// kernel says does not exist lets the home go.
+func TestSweepDoesNotCallAPidGoneUntilItIsGone(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("a recorded start time is only comparable on darwin")
+	}
+	for name, tc := range map[string]struct {
+		probe       error // what kill(pid, 0) answers
+		wantRemoved bool
+	}{
+		"the pid still exists but cannot be read": {probe: nil, wantRemoved: false},
+		"the pid does not exist":                  {probe: syscall.ESRCH, wantRemoved: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := newBase(t)
+			orphan := mkHome(t, base, "aaaaaaaaaaaa", false)
+			writePidFile(t, orphan, "daemon.pid", 4242, 1000, 5)
+			read := func(int) (childproof.Identity, error) { return childproof.Identity{}, syscall.EPERM }
+			kill := func(_ int, sig syscall.Signal) error {
+				if sig != 0 {
+					t.Errorf("signal %d was sent", sig)
+					return nil
+				}
+				return tc.probe
+			}
+			p, err := childproof.NewForTest(read, kill)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := sweeperFor([]string{base})
+			s.prober = p
+			got := entryFor(t, s.sweep(true), orphan)
+			if got.Removed != tc.wantRemoved || exists(orphan) == tc.wantRemoved {
+				t.Errorf("removed=%v exists=%v, want removed=%v: %+v", got.Removed, exists(orphan), tc.wantRemoved, got)
+			}
+			if !tc.wantRemoved && !strings.Contains(got.Why, "identity could not be read") {
+				t.Errorf("why = %q, want the reason the home was kept", got.Why)
+			}
+		})
+	}
+}
