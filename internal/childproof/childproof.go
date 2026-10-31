@@ -198,6 +198,38 @@ func (p *Prober) Prove(pid int, want Identity) (Child, error) {
 	return Child{pid: pid, id: live, by: p}, nil
 }
 
+// ProveStart is Prove for a pid that another program recorded: the record
+// holds the pid and its start time, with no executable or arguments to match.
+// It reads pid's live identity and returns a Child when the start time equals
+// wantStart and one whole argument equals arg, so a reused pid, or a live
+// process that is not that program's, is refused. Signal then holds the child
+// to the identity this proof read. The same refusals as Prove apply.
+func (p *Prober) ProveStart(pid int, wantStart, arg string) (Child, error) {
+	if !p.wired() {
+		return Child{}, errNoSeams
+	}
+	if err := CheckPid(pid); err != nil {
+		return Child{}, err
+	}
+	if wantStart == "" || arg == "" {
+		return Child{}, errors.New("childproof: no recorded start time or argument to prove against")
+	}
+	live, err := p.read(pid)
+	if err != nil {
+		if live.Start != "" && live.Start != wantStart {
+			return Child{}, &MismatchError{Pid: pid, Reason: "start"}
+		}
+		return Child{}, &MismatchError{Pid: pid, Reason: "dead"}
+	}
+	switch {
+	case live.Start != wantStart:
+		return Child{}, &MismatchError{Pid: pid, Reason: "start"}
+	case !slices.Contains(live.Argv, arg):
+		return Child{}, &MismatchError{Pid: pid, Reason: "argv"}
+	}
+	return Child{pid: pid, id: live, by: p}, nil
+}
+
 // Same reports whether c's process is still the one that was proven: the same
 // start time, executable and arguments. It is the "is it still alive" check
 // that cannot be fooled by a reused pid.

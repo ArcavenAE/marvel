@@ -2910,11 +2910,17 @@ func (d *Daemon) handleOrphans() daemonrpc.Response {
 func (d *Daemon) handleReap(params json.RawMessage) daemonrpc.Response {
 	var p struct {
 		Confirm bool `json:"confirm"`
+		Homes   bool `json:"homes"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 		}
+	}
+	if p.Homes {
+		// The home sweep is its own listing: harness homes and codex daemons,
+		// not tmux state. It lists unless confirmed.
+		return respond(d.sessMgr.SweepHomes(p.Confirm))
 	}
 
 	found, err := d.sessMgr.UnrecordedTmuxState()

@@ -626,3 +626,59 @@ func TestExistsOnlyESRCHMeansGone(t *testing.T) {
 		t.Errorf("a refused pid sent %v", sent)
 	}
 }
+
+func TestProveStartNeedsTheRecordedStartAndOneWholeArgument(t *testing.T) {
+	const start = "darwin:100.5"
+	for name, tc := range map[string]struct {
+		live   Identity
+		absent bool
+		reason string
+	}{
+		"start and argument match": {live: Identity{Start: start, Exe: "/x/codex", Argv: []string{"/x/codex", "app-server", "--listen"}}},
+		"start differs":            {live: Identity{Start: "darwin:100.6", Exe: "/x/codex", Argv: []string{"/x/codex", "app-server"}}, reason: "start"},
+		"argument is missing":      {live: Identity{Start: start, Exe: "/x/codex", Argv: []string{"/x/codex", "exec"}}, reason: "argv"},
+		"argument only a part":     {live: Identity{Start: start, Exe: "/x/codex", Argv: []string{"/x/codex", "not-app-server-x"}}, reason: "argv"},
+		"the process is gone":      {absent: true, reason: "dead"},
+	} {
+		k := newKernel(map[int]Identity{})
+		if !tc.absent {
+			k.set41(tc.live)
+		}
+		c, err := prober(t, k).ProveStart(41, start, "app-server")
+		if tc.reason == "" {
+			if err != nil || c.Pid() != 41 {
+				t.Errorf("%s: ProveStart = %+v, %v; want a Child for pid 41", name, c, err)
+			}
+			continue
+		}
+		var m *MismatchError
+		if !errors.As(err, &m) || m.Reason != tc.reason {
+			t.Errorf("%s: ProveStart error = %v, want a MismatchError with reason %q", name, err, tc.reason)
+		}
+		if got := k.signals(); len(got) != 0 {
+			t.Errorf("%s: proving sent signals %v", name, got)
+		}
+	}
+}
+
+func TestProveStartRefusesAPidOrARecordThatNamesNothing(t *testing.T) {
+	k := newKernel(map[int]Identity{41: {Start: "darwin:1.1", Argv: []string{"app-server"}}})
+	p := prober(t, k)
+	for name, tc := range map[string]struct {
+		pid        int
+		start, arg string
+	}{
+		"pid 1":       {1, "darwin:1.1", "app-server"},
+		"pid 0":       {0, "darwin:1.1", "app-server"},
+		"pid past 32": {math.MaxInt32 + 1, "darwin:1.1", "app-server"},
+		"no start":    {41, "", "app-server"},
+		"no argument": {41, "darwin:1.1", ""},
+	} {
+		if _, err := p.ProveStart(tc.pid, tc.start, tc.arg); err == nil {
+			t.Errorf("%s: ProveStart accepted it", name)
+		}
+	}
+	if got := k.signals(); len(got) != 0 {
+		t.Errorf("refusals sent signals %v", got)
+	}
+}

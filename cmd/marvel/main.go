@@ -30,6 +30,7 @@ import (
 	"github.com/arcavenae/marvel/internal/keys"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/rlog"
+	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/team"
 	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/upgrade"
@@ -895,19 +896,29 @@ func openRotatingLog(path string, maxSizeMiB, maxFiles, maxTotalMiB int) (io.Clo
 // an operator takes with their eyes open, so a reap that killed on sight
 // would put the original failure back behind a new name.
 func reapCmd() *cobra.Command {
-	var confirm bool
+	var confirm, homes bool
 	cmd := &cobra.Command{
 		Use:   "reap",
 		Short: "List (and with --confirm, destroy) marvel tmux state the daemon does not own",
-		Args:  cobra.NoArgs,
+		Long: "List (and with --confirm, destroy) marvel tmux state the daemon does not own.\n\n" +
+			"With --homes, list instead the harness homes and orphaned codex app-server daemons under\n" +
+			"this daemon's two home bases. A home a session record names is never touched. A home no\n" +
+			"record names is removed with --confirm only when it holds no codex history; one that does\n" +
+			"is kept and listed. A daemon pid is signalled (SIGTERM, once) only when it is written in a\n" +
+			"pid file inside such a home and the live process has the recorded start time.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			params, _ := json.Marshal(map[string]bool{"confirm": confirm})
+			params, _ := json.Marshal(map[string]bool{"confirm": confirm, "homes": homes})
 			resp, err := send(daemonrpc.Request{Method: "reap", Params: params})
 			if err != nil {
 				return err
 			}
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
+			}
+
+			if homes {
+				return printHomeSweep(resp.Result)
 			}
 
 			var result struct {
@@ -948,7 +959,51 @@ func reapCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&confirm, "confirm", false,
 		"actually destroy the listed state (without this, reap only lists)")
+	cmd.Flags().BoolVar(&homes, "homes", false,
+		"sweep harness homes and orphaned codex app-server daemons instead of tmux state")
 	return cmd
+}
+
+// printHomeSweep renders the result of `marvel reap --homes`.
+func printHomeSweep(raw json.RawMessage) error {
+	var sw session.HomeSweep
+	if err := json.Unmarshal(raw, &sw); err != nil {
+		return fmt.Errorf("parse reap result: %w", err)
+	}
+	counts := map[string]int{}
+	removed, signalled := 0, 0
+	for _, h := range sw.Homes {
+		counts[h.State]++
+		fmt.Printf("  %-12s %s\n", h.State, h.Path)
+		if h.Why != "" {
+			fmt.Printf("               %s\n", h.Why)
+		}
+		for _, d := range h.Daemons {
+			fmt.Printf("               pid %d (%s): %s", d.Pid, d.File, d.Action)
+			if d.Why != "" {
+				fmt.Printf(", %s", d.Why)
+			}
+			fmt.Println()
+			if d.Signalled {
+				signalled++
+			}
+		}
+		if h.Removed {
+			removed++
+		}
+	}
+	for _, n := range sw.Notes {
+		fmt.Println("  note: " + n)
+	}
+	fmt.Printf("\n%d live, %d orphan, %d kept for history across %d base(s).\n",
+		counts[session.HomeLive], counts[session.HomeOrphan], counts[session.HomeKeptHistory], len(sw.Bases))
+	fmt.Printf("Other layouts, counted and left untouched: %d base(s), %d home(s).\n", sw.OtherBases, sw.OtherHomes)
+	if sw.Confirmed {
+		fmt.Printf("Removed %d home(s); signalled %d daemon(s).\n", removed, signalled)
+	} else {
+		fmt.Println("Dry run: nothing was changed. Re-run with --confirm to remove the orphan homes and signal the listed daemons.")
+	}
+	return nil
 }
 
 // orphansCmd reports the orphaned agents heartbeating against session keys
