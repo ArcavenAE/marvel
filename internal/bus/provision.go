@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"syscall"
 	"time"
 
@@ -49,9 +50,10 @@ type Provisioned struct {
 
 // Provision connects to the broker as the admin user and ensures every
 // declared object exists. Idempotent: an object already present counts as
-// existing and is left exactly as found, so a hand-provisioned broker
-// (phase 0) and a marvel-provisioned one converge on the same state
-// without a rewrite.
+// existing and is left as found, so a hand-provisioned broker (phase 0) and
+// a marvel-provisioned one converge on the same state without a rewrite. The
+// one change made to an existing stream is raising a finite max_age that is
+// shorter than the declared one (raiseMaxAge).
 func Provision(ctx context.Context, url, user, password string) (Provisioned, error) {
 	var out Provisioned
 	nc, err := connectAdmin(ctx, url, user, password)
@@ -65,6 +67,14 @@ func Provision(ctx context.Context, url, user, password string) (Provisioned, er
 	}
 	ctx, cancel := context.WithTimeout(ctx, provisionRPC)
 	defer cancel()
+	return provisionObjects(ctx, js)
+}
+
+// provisionObjects ensures every declared object exists on the broker js
+// reaches. It is Provision after the connect, so a test can hand it a
+// JetStream handle that refuses an update.
+func provisionObjects(ctx context.Context, js jetstream.JetStream) (Provisioned, error) {
+	var out Provisioned
 
 	note := func(name string, created bool) {
 		if created {
@@ -82,9 +92,10 @@ func Provision(ctx context.Context, url, user, password string) (Provisioned, er
 	for _, obj := range DeclaredObjects() {
 		switch obj.Kind {
 		case ObjectStream:
-			_, err := js.Stream(ctx, obj.Name)
+			st, err := js.Stream(ctx, obj.Name)
 			switch {
 			case err == nil:
+				raiseMaxAge(ctx, js, st, *obj.Stream)
 				note(obj.Name, false)
 				continue
 			case !errors.Is(err, jetstream.ErrStreamNotFound):
@@ -112,6 +123,28 @@ func Provision(ctx context.Context, url, user, password string) (Provisioned, er
 		}
 	}
 	return out, nil
+}
+
+// raiseMaxAge brings a live stream's max_age up to the declared value when
+// the live one is finite and shorter, so a broker provisioned under an older
+// declaration (AGENT_INBOX was 24h before I-65) picks up the new retention at
+// the next daemon start. It only raises: a longer live value stays, and a
+// zero (unlimited) live value stays. Every other field is the live config,
+// copied unchanged. A refused update is logged and not returned: Provision
+// succeeds as it did when it left an existing stream alone, and the old
+// retention stands until a start where the update goes through.
+func raiseMaxAge(ctx context.Context, js jetstream.JetStream, st jetstream.Stream, declared jetstream.StreamConfig) {
+	live := st.CachedInfo().Config
+	if live.MaxAge <= 0 || declared.MaxAge <= live.MaxAge {
+		return
+	}
+	cfg := live
+	cfg.MaxAge = declared.MaxAge
+	if _, err := js.UpdateStream(ctx, cfg); err != nil {
+		log.Printf("bus: stream %s max_age stays %s, not raised to %s: %v", live.Name, live.MaxAge, declared.MaxAge, err)
+		return
+	}
+	log.Printf("bus: stream %s max_age raised from %s to %s", live.Name, live.MaxAge, declared.MaxAge)
 }
 
 // String renders the outcome for a log line: "created AGENT_INBOX,

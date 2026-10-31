@@ -94,8 +94,8 @@ var (
 
 // InboxMaxAge is how long AGENT_INBOX keeps a message: 7 days (operator ruling
 // I-65, 2026-10-30). It was 24h, which let an idle seat's mail expire unread.
-// Provision leaves an existing stream as found, so a live broker keeps its
-// old value until the stream is edited in place.
+// Provision raises a live stream's shorter, finite max_age to this value at
+// the next daemon start (raiseMaxAge); it never lowers one.
 const InboxMaxAge = 168 * time.Hour
 
 // DeclaredObjects is the object set. The three carry the exact parameters
