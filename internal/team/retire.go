@@ -86,14 +86,14 @@ func (c *Controller) retireSession(t *api.Team, role *api.Role, sess api.Session
 			reason = "pending"
 		}
 		c.emitRetired(t, sess, retireNotAsked, reason, "")
-		if err := c.sessMgr.Delete(sess.Key()); err != nil {
+		if err := c.sessMgr.DeleteAndReap(sess.Key()); err != nil {
 			log.Printf("retire: delete session %s: %v", sess.Key(), err)
 		}
 		return
 	}
 	if role != nil && role.Runtime.Mode == api.RuntimeModeHeadless {
 		if err := c.retireHeadless(t, role, sess); errors.Is(err, errHeadlessNotBuilt) {
-			if err := c.sessMgr.Delete(sess.Key()); err != nil {
+			if err := c.sessMgr.DeleteAndReap(sess.Key()); err != nil {
 				log.Printf("retire: delete headless session %s: %v", sess.Key(), err)
 			}
 		}
@@ -203,7 +203,7 @@ func (c *Controller) advanceRetirement(t *api.Team, req api.RetireRequest, now t
 		default:
 			c.emitRetired(t, sess, retireHandoffMissing, "seat ended"+c.deliverRetireMissing(t, sess, req, "seat ended", now), "")
 		}
-		if err := c.sessMgr.Delete(sess.Key()); err != nil {
+		if err := c.sessMgr.DeleteAndReap(sess.Key()); err != nil {
 			log.Printf("retire: delete ended session %s: %v", sess.Key(), err)
 		}
 		c.dropRetirement(t, req)
@@ -275,7 +275,7 @@ func retireMissingReason(req api.RetireRequest) string {
 func (c *Controller) killRetired(t *api.Team, sess api.Session, req api.RetireRequest, outcome, reason string) {
 	saved := c.saveRetiredScreen(sess)
 	c.emitRetired(t, sess, outcome, reason, saved)
-	if err := c.sessMgr.Delete(sess.Key()); err != nil {
+	if err := c.sessMgr.DeleteAndReap(sess.Key()); err != nil {
 		log.Printf("retire: delete session %s: %v", sess.Key(), err)
 	}
 	c.dropRetirement(t, req)
