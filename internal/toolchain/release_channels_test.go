@@ -266,6 +266,12 @@ func TestGoreleaserCheckJobIsPinnedAndUnprivileged(t *testing.T) {
 	pinnedAction := regexp.MustCompile(`^step-security/goreleaser-action@[0-9a-f]{40}$`)
 	checks, snapshots := 0, 0
 	for _, s := range jobs["goreleaser-check"].Steps {
+		// The snapshot and the formula listing are the gate, and so is every
+		// other step: only the check step may continue on error.
+		isCheck := strings.Contains(s.Uses, "goreleaser-action@") && s.With["args"] == "check"
+		if s.ContinueOnError != nil && !isCheck {
+			t.Errorf("step %q sets continue-on-error = %v; only the check step may", s.Name, s.ContinueOnError)
+		}
 		if !strings.Contains(s.Uses, "goreleaser-action@") {
 			continue
 		}
@@ -281,6 +287,10 @@ func TestGoreleaserCheckJobIsPinnedAndUnprivileged(t *testing.T) {
 		switch args, _ := s.With["args"].(string); {
 		case args == "check":
 			checks++
+			// check exits 2 for a deprecated property, so it reports only.
+			if s.ContinueOnError != true {
+				t.Errorf("the check step has continue-on-error = %v, want true: it reports deprecations and does not gate", s.ContinueOnError)
+			}
 		case strings.HasPrefix(args, "release --snapshot"):
 			snapshots++
 		default:
