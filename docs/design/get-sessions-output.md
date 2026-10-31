@@ -270,7 +270,7 @@ party's rulings and are not in this plan.
 PANE is one word for what a seat's pane is doing, so a seat at a login or
 startup prompt no longer reads as alive (marvel#1142, part a). The set is the
 operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
-`unknown`.
+`unknown`, and `fresh` (part d, added by the director's ruling).
 
 | Word | Read from |
 |---|---|
@@ -279,11 +279,13 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
 | `working` | the composer reader, `mid_turn` |
 | `restart` | claude's "Update installed · Restart to update" row, only on the row directly above the composer's top rule, in the two shapes read live (the banner right-aligned, or after a "new task?" hint), with its check mark; a transcript row never matches |
 | `idle` | the composer reader, `empty` or `holds_text`, with no banner |
+| `fresh` | the composer reader, `empty`, on a seat marvel has an activity channel for, that marvel passed no first message (the session records none), and has seen no use from: no tokens, requests, occupancy or spend. Spend is in the test because it survives a daemon restart when the rest of the reading does not. A seat that was handed a first message (marvel's successor message after a shift, or a role's `runtime.prompt`) reads `idle`, not `fresh`. So `fresh` is a seat marvel gave no first message at all: marvel adds no startup text of its own for it, and a role that should start work declares `runtime.prompt` |
 | `unknown` | everything else, with a GAP line where marvel knows why |
 
-- **Precedence.** The stored verdict first (it costs no capture), then
-  `working`, then `restart`, then `idle`. The banner sits on a seat that may
-  still be in a turn, so an open turn is shown as `working`.
+- **Precedence.** The stored verdict first (applied at stamp time over the
+  screen reading), then
+  `working`, then `restart`, then `fresh`, then `idle`. The banner sits on a
+  seat that may still be in a turn, so an open turn is shown as `working`.
 - **Unknown, never a guess.** A runtime with no reader, a screen the reader
   cannot place, a seat at a shell and a seat in a client workspace read
   `unknown`. Codex's reader grounds no working or idle state yet, so a codex
@@ -297,8 +299,10 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
   from the watchdog's patterns as they are.
 - **Cost.** The same read-only path as COMPOSER: one foreground query and
   one capture per running seat that is not in a client workspace, shared by
-  the two columns. A stored verdict needs no capture and is read from the
-  session at every query; the tick cache holds screen readings only.
+  the two columns. A seat with a stored verdict is still captured, like any
+  other; the verdict is read from the session at every query and applied at
+  stamp time over the cached screen reading, and the tick cache holds screen
+  readings only.
 - **The tick cache.** The daemon's tick (every `ReconcileInterval`, read at
   most every 10 s) reads the panes while a `get sessions` asked for PANE or
   COMPOSER in the last 5 minutes, and `get sessions` serves the last reading,
@@ -306,7 +310,8 @@ operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
   that seat is read afresh and the entry refilled. A workspace turned client is
   gated on every query, so its cached reading is dropped, not served. A
   daemon nobody queries makes no pane read for these columns. A served word is
-  up to 30 s behind the screen, and `restart` is a screen reading, not proof.
+  up to 30 s behind the screen, and `restart` is a screen reading, not proof. So is
+  `fresh`: it can show for up to 30 s after the first reading lands.
 
 ## 5. Every number is diagnostic
 

@@ -202,7 +202,10 @@ type Daemon struct {
 	paneMenu     panemenu.Evaluator
 	paneMenuOnce sync.Once
 	// paneReads is the pane-read cache behind the COMPOSER and PANE columns.
-	paneReads    paneCache
+	paneReads paneCache
+	// paneOverride replaces the tmux driver as the pane source for the pane
+	// columns. Only tests set it, so the tick and a query can run without tmux.
+	paneOverride composerPane
 	hostLocation *time.Location
 
 	// metricsWarn keeps a sampler that cannot read the process table

@@ -11,11 +11,15 @@ import (
 // The PANE column of `get sessions` (marvel#1142 part a): one word for what a
 // seat's pane is doing, so a seat sitting at a login or startup prompt no
 // longer reads as alive. The set is the operator's (ruling I-60): working,
-// idle, prompt, restart, logged-out, unknown.
+// idle, prompt, restart, logged-out, unknown, and fresh (part d, ruled by the
+// director: a seat that has never taken a turn, with no startup text injected
+// by marvel).
 //
 // Where each word comes from:
 //   - logged-out and prompt are the harness-state watchdog's stored verdict
-//     (Session.HarnessState, logged-out and parked). No capture is made.
+//     (Session.HarnessState, logged-out and parked). The seat is still
+//     captured, like any other, and the stored verdict is applied over that
+//     reading when the listing is stamped.
 //   - working and idle are the composer reader's verdict on the visible
 //     screen (mid_turn; empty or holds_text). A harness with no reader, or a
 //     screen the reader cannot place, reads unknown. Codex's reader grounds no
@@ -34,6 +38,7 @@ import (
 const (
 	paneWorking   = "working"
 	paneIdle      = "idle"
+	paneFresh     = "fresh"
 	panePrompt    = "prompt"
 	paneRestart   = "restart"
 	paneLoggedOut = "logged-out"
@@ -63,9 +68,10 @@ func hasRestartBanner(capture string) bool {
 }
 
 // storedPaneWord is the PANE word the watchdog's stored verdict gives, when it
-// gives one. It needs no capture and shows nothing new, so it is read from the
-// session itself every time, never from a cache (the cache holds screen
-// readings only; see readPane).
+// gives one. The verdict is read from the session itself every time and applied
+// at stamp time over whatever the screen reading says, never from a cache (the
+// cache holds screen readings only; see readPane). The seat is captured either
+// way, so a verdict that changes between ticks shows at once.
 func storedPaneWord(s api.Session) (string, bool) {
 	if hs := s.HarnessState; hs != nil {
 		switch hs.State {
@@ -124,10 +130,34 @@ func paneWord(pane composerPane, s api.Session, client bool, clientErr error) (w
 		return paneRestart, ""
 	}
 	switch st {
-	case composer.Empty, composer.HoldsText:
+	case composer.Empty:
+		if neverTookATurn(s) {
+			return paneFresh, ""
+		}
+		return paneIdle, ""
+	case composer.HoldsText:
 		return paneIdle, ""
 	}
 	return paneUnknown, gapReaderUnsure
+}
+
+// neverTookATurn reports whether marvel can see a seat's activity, passed it no
+// first message, and has seen none: no context reading with tokens, requests or
+// occupancy, and no spend. The spend counts because it is the one part of the
+// reading that survives a daemon restart (rehydrate clears tokens, requests and
+// occupancy of a stream-fed reading), so without it a working seat would read
+// fresh again after a restart. A seat marvel has no activity channel for is
+// never fresh, because a seat that did work would read the same, so it stays
+// idle. A seat marvel did hand a first message (a successor, or a role with a
+// runtime.prompt) is not fresh either: the director's ruling is a seat with no
+// startup text injected. A seat whose first turn is still ahead of it reads
+// fresh until the first reading lands.
+func neverTookATurn(s api.Session) bool {
+	return s.ActiveTicks.Observable &&
+		s.FirstPromptSha256 == "" &&
+		s.ContextTokens == 0 && s.ContextRequests == 0 && s.ContextPercent == 0 &&
+		(s.SpendOut == nil || *s.SpendOut == 0) &&
+		(s.SpendPromptTokens == nil || *s.SpendPromptTokens == 0)
 }
 
 // stampPane puts the PANE word, and the reason for an unknown, on each served

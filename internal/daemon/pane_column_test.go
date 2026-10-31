@@ -2,12 +2,15 @@ package daemon
 
 import (
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/composer"
+	"github.com/arcavenae/marvel/internal/team"
 )
 
 // The banner rows are synthetic: the row shapes were read on live panes for
@@ -167,5 +170,178 @@ func TestMemoPaneSharesOneCapture(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("captures = %d (%q), want 1", n, p.calls)
+	}
+}
+
+// fresh is an empty composer on a seat marvel can observe and has seen no use
+// from. A seat marvel has no activity channel for stays idle, because a seat
+// that did work would read the same, and any context reading clears fresh.
+func TestPaneWordFreshNeedsAnObservableSeatWithNoUse(t *testing.T) {
+	idle := composerFixture(t, "1-empty-idle.ansi.txt")
+	observed := func(mut func(*api.Session)) api.Session {
+		s := runningSeat("claude")
+		s.ActiveTicks.Observable = true
+		if mut != nil {
+			mut(&s)
+		}
+		return s
+	}
+	for name, tc := range map[string]struct {
+		seat api.Session
+		want string
+	}{
+		"observable, no reading":        {observed(nil), paneFresh},
+		"no activity channel":           {runningSeat("claude"), paneIdle},
+		"tokens read":                   {observed(func(s *api.Session) { s.ContextTokens = 1200 }), paneIdle},
+		"requests counted":              {observed(func(s *api.Session) { s.ContextRequests = 1 }), paneIdle},
+		"occupancy reported":            {observed(func(s *api.Session) { s.ContextPercent = 3 }), paneIdle},
+		"output spend recorded":         {observed(func(s *api.Session) { n := 40; s.SpendOut = &n }), paneIdle},
+		"prompt spend recorded":         {observed(func(s *api.Session) { n := 900; s.SpendPromptTokens = &n }), paneIdle},
+		"a zero spend is no use":        {observed(func(s *api.Session) { n := 0; s.SpendOut = &n; s.SpendPromptTokens = &n }), paneFresh},
+		"a first message was passed":    {observed(func(s *api.Session) { s.FirstPromptSha256 = "ab12" }), paneIdle},
+		"restart banner outranks fresh": {observed(nil), paneRestart},
+	} {
+		t.Run(name, func(t *testing.T) {
+			screen := idle
+			if tc.want == paneRestart {
+				screen = withBanner(t, idle, bannerRow)
+			}
+			p := &fakePane{foreground: "2.1.290", escapes: screen}
+			if got, gap := paneWord(p, tc.seat, false, nil); got != tc.want || gap != "" {
+				t.Fatalf("pane = %q, %q; want %q", got, gap, tc.want)
+			}
+		})
+	}
+}
+
+// A daemon restart must not turn a working seat back into fresh. Rehydrate
+// clears a stream-fed reading's tokens, requests and occupancy and keeps the
+// spend, so the spend has to count: this reopens a bolt store and reads PANE
+// from the rehydrated record (it reads fresh when the spend is left out).
+func TestPaneWordStaysIdleForAWorkingSeatAfterAReopen(t *testing.T) {
+	idle := composerFixture(t, "1-empty-idle.ansi.txt")
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	s1 := api.NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt: %v", err)
+	}
+	if err := s1.CreateWorkspace(&api.Workspace{Name: "ws"}); err != nil {
+		t.Fatal(err)
+	}
+	sess := &api.Session{
+		Name: "s-0", Workspace: "ws", Team: "t", Role: "r",
+		Runtime: api.Runtime{Name: "claude"}, State: api.SessionRunning, PaneID: "%7",
+	}
+	if err := s1.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	key := sess.Key()
+	out, prompt := 5200, 46800
+	s1.UpdateSessionContext(key, api.SessionContext{
+		ContextSource: api.ContextSourceAccountant,
+		ContextTokens: 52000, ContextRequests: 7, ContextPercent: 26, ContextLimit: 200000,
+		SpendOut: &out, SpendPromptTokens: &prompt,
+	})
+	if err := s1.UpdateSession(key, func(live *api.Session) error { live.PaneID = "%7"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+	s2 := api.NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	got, err := s2.GetSession(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ContextTokens != 0 || got.ContextRequests != 0 || got.ContextPercent != 0 {
+		t.Fatalf("the reading survived the reopen, so this test no longer covers the clear: %+v", got.SessionContext)
+	}
+	if got.SpendOut == nil {
+		t.Fatal("the spend did not survive the reopen")
+	}
+	got.ActiveTicks.Observable = true
+	p := &fakePane{foreground: "2.1.290", escapes: idle}
+	if word, gap := paneWord(p, got, false, nil); word != paneIdle || gap != "" {
+		t.Fatalf("pane = %q, %q after a reopen; want idle", word, gap)
+	}
+}
+
+// tickDaemon is a daemon with a store, a controller and a fake pane source and
+// no tmux, so the tick path runs in any environment. The one seat is a claude
+// seat with a statusline feed (an activity channel) and no recorded use.
+func tickDaemon(t *testing.T) (*Daemon, *api.Session) {
+	t.Helper()
+	store := api.NewStore()
+	d := &Daemon{
+		store:          store,
+		teamCtrl:       team.NewController(store, nil),
+		composerClient: func(string) (bool, error) { return false, nil },
+		paneOverride:   &fakePane{foreground: "2.1.290", escapes: composerFixture(t, "1-empty-idle.ansi.txt")},
+	}
+	if err := store.CreateWorkspace(&api.Workspace{Name: "tickws"}); err != nil {
+		t.Fatal(err)
+	}
+	sess := &api.Session{
+		Name: "s-0", Workspace: "tickws", Team: "t", Role: "r", PaneID: "%7", State: api.SessionRunning,
+		Runtime: api.Runtime{Name: "claude", ContextFeed: api.ContextFeedStatusline},
+	}
+	if err := store.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	return d, sess
+}
+
+// The tick reads panes for the tick cache, and an entry it fills must be able to
+// read fresh. This goes through the call site, refreshPaneReads, so a tick that
+// reads the store's sessions without the activity reading (no activity channel
+// on record, so never fresh) fails it. It needs no tmux.
+func TestTickFillsAFreshEntryForAnObservableSeat(t *testing.T) {
+	d, sess := tickDaemon(t)
+	now := time.Now()
+	d.paneReads.want(now)
+
+	d.refreshPaneReads(now)
+
+	r, ok := d.paneReads.get(sess.Key(), now)
+	if !ok {
+		t.Fatal("the tick filled no entry for the seat")
+	}
+	if r.pane != paneFresh {
+		t.Errorf("the tick's entry reads %q, want %q", r.pane, paneFresh)
+	}
+	served := []api.Session{*sess}
+	d.stampPaneReads(served)
+	if served[0].Pane != paneFresh {
+		t.Errorf("a query served from the tick's entry reads %q, want %q", served[0].Pane, paneFresh)
+	}
+}
+
+// The copies the tick reads carry the activity reading and the stored session
+// does not: the reading is view-only and never persists.
+func TestTickSessionsCarryTheActivityReading(t *testing.T) {
+	d, sess := tickDaemon(t)
+	var got *api.Session
+	for _, s := range d.sessionsForPaneRead(time.Now()) {
+		if s.Key() == sess.Key() {
+			c := s
+			got = &c
+		}
+	}
+	if got == nil {
+		t.Fatal("the session is not in what the tick reads")
+	}
+	if !got.ActiveTicks.Observable {
+		t.Errorf("the tick's copy has no activity reading: %+v", got.ActiveTicks)
+	}
+	stored, err := d.store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ActiveTicks != (api.ActiveTicks{}) {
+		t.Errorf("the stored session carries the reading: %+v", stored.ActiveTicks)
 	}
 }
