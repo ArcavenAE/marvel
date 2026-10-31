@@ -771,3 +771,48 @@ func TestDeleteAndReapOfAMissingSessionTouchesNothing(t *testing.T) {
 		t.Error("a home was removed for a session that was never deleted")
 	}
 }
+
+// TestSweepDoesNotCallAPidGoneUntilItIsGone covers the cross-check in
+// unprovenWhy: a read error without a start time reads as "dead" to the proof,
+// but a process that exists whose identity cannot be read (another user's, or
+// not yet settled) may still be the daemon, so its home stays. Only a pid the
+// kernel says does not exist lets the home go.
+func TestSweepDoesNotCallAPidGoneUntilItIsGone(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("a recorded start time is only comparable on darwin")
+	}
+	for name, tc := range map[string]struct {
+		probe       error // what kill(pid, 0) answers
+		wantRemoved bool
+	}{
+		"the pid still exists but cannot be read": {probe: nil, wantRemoved: false},
+		"the pid does not exist":                  {probe: syscall.ESRCH, wantRemoved: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := newBase(t)
+			orphan := mkHome(t, base, "aaaaaaaaaaaa", false)
+			writePidFile(t, orphan, "daemon.pid", 4242, 1000, 5)
+			read := func(int) (childproof.Identity, error) { return childproof.Identity{}, syscall.EPERM }
+			kill := func(_ int, sig syscall.Signal) error {
+				if sig != 0 {
+					t.Errorf("signal %d was sent", sig)
+					return nil
+				}
+				return tc.probe
+			}
+			p, err := childproof.NewForTest(read, kill)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := sweeperFor([]string{base})
+			s.prober = p
+			got := entryFor(t, s.sweep(true), orphan)
+			if got.Removed != tc.wantRemoved || exists(orphan) == tc.wantRemoved {
+				t.Errorf("removed=%v exists=%v, want removed=%v: %+v", got.Removed, exists(orphan), tc.wantRemoved, got)
+			}
+			if !tc.wantRemoved && !strings.Contains(got.Why, "identity could not be read") {
+				t.Errorf("why = %q, want the reason the home was kept", got.Why)
+			}
+		})
+	}
+}
