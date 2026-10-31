@@ -546,7 +546,7 @@ func TestDefaultHarnessHomeDirUsesTheSharedTempBase(t *testing.T) {
 	found := false
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "defaultHarnessHomeDir" {
+		if !ok || fn.Name.Name != "harnessHomeDirs" {
 			continue
 		}
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -559,7 +559,7 @@ func TestDefaultHarnessHomeDirUsesTheSharedTempBase(t *testing.T) {
 		})
 	}
 	if !found {
-		t.Error("defaultHarnessHomeDir does not call legacyHarnessHomeBase; the spawn path and the sweep could drift")
+		t.Error("harnessHomeDirs (the body of defaultHarnessHomeDir) does not call legacyHarnessHomeBase; the spawn path and the sweep could drift")
 	}
 }
 

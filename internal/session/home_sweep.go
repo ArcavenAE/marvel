@@ -123,6 +123,9 @@ func (m *Manager) SweepHomes(confirm bool) HomeSweep {
 // the session records that is read again on every use.
 func (m *Manager) homeSweeper() homeSweeper {
 	s := homeSweeper{prober: childproof.New(), tmpDir: harnessTempRoot, owned: m.ownerCheck}
+	if m.tempRoot != "" {
+		s.tmpDir = m.tempRoot
+	}
 	s.bases = append(s.bases, m.HarnessHomeDir)
 	if layout, err := paths.Default(); err == nil {
 		s.bases = append(s.bases, layout.HarnessHomesDir())

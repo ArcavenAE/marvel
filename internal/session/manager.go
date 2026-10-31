@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,9 +94,21 @@ type Manager struct {
 	// The login lives in the home (linked from the operator's), and a login is
 	// not rebuilt without a human, which is why this is not a temp tier.
 	HarnessHomeDir string
-	// ownerCheck replaces ownedByMe in the home sweeps. It is unexported and
-	// unreachable from config, flags or the API; only tests set it.
+	// ownerCheck replaces ownedByMe in the home sweeps and the spawn-time base
+	// check. It is unexported and unreachable from config, flags or the API;
+	// only tests set it.
 	ownerCheck func(os.FileInfo) bool
+	// tempRoot replaces harnessTempRoot for the sweeps, so a test never reads
+	// or removes anything under the real /tmp. Only tests set it.
+	tempRoot string
+	// verifyBases turns on the spawn-time check of the base a home goes in
+	// (verifiedHomeBase). NewManager sets it; a Manager built from a literal in
+	// a test leaves it off, because a temp directory made by a test is not 0700.
+	verifyBases bool
+	// harnessChain is the ordered list of bases the daemon would choose from,
+	// as defaultHarnessHomeDir saw it at start: the durable base, the old
+	// per-layout temp base, then the per-user temp fallback.
+	harnessChain []string
 	// socketLimitOverride replaces paths.MaxUnixSocketPath for the check on a
 	// recorded home. Zero means the platform's limit; only tests set it, so it
 	// is unexported and unreachable from config, flags or the API.
@@ -221,11 +234,12 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 		StreamDir:         defaultStreamDir(),
 		TokenDir:          defaultTokenDir(),
 		ProjectionDir:     defaultProjectionDir(),
-		HarnessHomeDir:    defaultHarnessHomeDir(),
 		BackendOverlayDir: defaultBackendOverlayDir(),
 		instances:         make(map[string]*runtime.TmuxInstance),
 		drains:            make(map[string]*usageDrain),
 	}
+	m.HarnessHomeDir, m.harnessChain = harnessHomeDirs()
+	m.verifyBases = true
 	if driver != nil {
 		m.killPane = driver.KillPane
 		m.paneStatus = driver.PaneStatus
@@ -250,15 +264,25 @@ func defaultProjectionDir() string {
 // when that base is unusable (too long for a harness's unix socket, or not a
 // private directory of this user) does it fall back to the short temp base.
 func defaultHarnessHomeDir() string {
+	dir, _ := harnessHomeDirs()
+	return dir
+}
+
+// harnessHomeDirs is defaultHarnessHomeDir with the whole chain of bases it
+// chose from, in order, so a spawn that finds the chosen base no longer usable
+// can fall to the next as the start would have.
+func harnessHomeDirs() (dir string, chain []string) {
 	fallback := daemonTempDir("marvel-harness-homes")
 	layout, err := paths.Default()
 	if err != nil {
-		return fallback
+		return fallback, []string{fallback}
 	}
+	legacy := legacyHarnessHomeBase(layout.Tag())
+	chain = []string{layout.HarnessHomesDir(), legacy, fallback}
 	if dir, ok := durableHarnessHomeBase(layout, paths.MaxUnixSocketPath); ok {
-		return dir
+		return dir, chain
 	}
-	return harnessHomeBase(legacyHarnessHomeBase(layout.Tag()), fallback)
+	return harnessHomeBase(legacy, fallback), chain
 }
 
 // harnessTempRoot is where the per-layout temp bases live. It is the literal
@@ -322,21 +346,81 @@ func durableHarnessHomeBase(layout paths.Layout, limit int) (string, bool) {
 // wider than 0700) could be read or planted by another account, so the
 // fallback is used instead and the reason is logged.
 func harnessHomeBase(preferred, fallback string) string {
-	if err := os.Mkdir(preferred, 0o700); err != nil && !os.IsExist(err) {
-		log.Printf("harness homes: cannot create %s, using %s: %v", preferred, fallback, err)
-		return fallback
-	}
-	fi, err := os.Lstat(preferred)
-	if err != nil {
-		log.Printf("harness homes: cannot stat %s, using %s: %v", preferred, fallback, err)
-		return fallback
-	}
-	if !fi.IsDir() || fi.Mode().Perm() != 0o700 || !ownedByMe(fi) {
-		log.Printf("harness homes: %s is not a private directory of this user (mode %v), using %s",
-			preferred, fi.Mode(), fallback)
+	if why, _ := privateDirRefusal(preferred, ownedByMe); why != "" {
+		log.Printf("harness homes: %s: %s, using %s", preferred, why, fallback)
 		return fallback
 	}
 	return preferred
+}
+
+// privateDirRefusal makes path with os.Mkdir at 0700 when it is absent, never
+// MkdirAll, and then requires it to be a plain directory (not a link), mode
+// exactly 0700, and owned by this user (mine). It returns why not, and whether
+// that is a validation failure (something is there that is not ours) or an
+// ordinary error (it could not be made or read).
+func privateDirRefusal(path string, mine func(os.FileInfo) bool) (why string, validation bool) {
+	if err := os.Mkdir(path, 0o700); err != nil && !os.IsExist(err) {
+		return fmt.Sprintf("cannot create it: %v", err), false
+	}
+	fi, err := os.Lstat(path)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("cannot stat it: %v", err), false
+	case !fi.IsDir():
+		return "it is not a plain directory", true
+	case fi.Mode().Perm() != 0o700:
+		return fmt.Sprintf("its mode is %v, want 0700", fi.Mode().Perm()), true
+	case !mine(fi):
+		return "it is not owned by this user", true
+	}
+	return "", false
+}
+
+// mine reports whether fi belongs to this user, through the test seam.
+func (m *Manager) mine(fi os.FileInfo) bool {
+	if m.ownerCheck != nil {
+		return m.ownerCheck(fi)
+	}
+	return ownedByMe(fi)
+}
+
+// verifiedHomeBase re-checks, at spawn, the base a home is about to be made in.
+// The base was checked once at start, but a sweep, a temp cleaner or another
+// user can remove it afterwards, and in a sticky /tmp any local user can then
+// create a directory at that name. The candidates are the base itself, then the
+// later bases of the start-time chain, and the first that passes the private
+// directory check is used. If every candidate fails and at least one failed
+// validation (something not ours is in the way), the spawn is refused: a seat
+// is never given a home in a directory someone else may control, and never
+// quietly handed the operator's own home instead. If every candidate only hit
+// ordinary errors, ok is false and refusal is empty, and the caller takes the
+// existing downgrade.
+func (m *Manager) verifiedHomeBase(key, base string) (use string, ok bool, refusal string) {
+	candidates := []string{base}
+	start := slices.Index(m.harnessChain, m.HarnessHomeDir)
+	if start < 0 {
+		start = 0
+	}
+	for _, c := range m.harnessChain[start:] {
+		if !slices.Contains(candidates, c) {
+			candidates = append(candidates, c)
+		}
+	}
+	var rejected []string
+	for _, c := range candidates {
+		why, validation := privateDirRefusal(c, m.mine)
+		if why == "" {
+			return c, true, ""
+		}
+		log.Printf("session %s: harness home base %s rejected at spawn: %s", key, c, why)
+		if validation {
+			rejected = append(rejected, fmt.Sprintf("%s (%s)", c, why))
+		}
+	}
+	if len(rejected) > 0 {
+		return "", false, "no usable harness home base: " + strings.Join(rejected, "; ")
+	}
+	return "", false, ""
 }
 
 // harnessHomeFor is the private home for one session key: a fixed-length
@@ -767,6 +851,12 @@ func (m *Manager) Create(sess *api.Session) error {
 		m.teardownViews(sess.Key())
 		return m.holdSpawn(sess, plan.hold)
 	}
+	if plan.homeRefusal != "" {
+		_ = m.store.DeleteSession(sess.Key())
+		m.teardownViews(sess.Key())
+		return m.refuseHarnessHome(sess, plan.homeRefusal)
+	}
+	m.clearHarnessHomeRefusal(sess)
 
 	// Layer A: write the per-session backend overlay for a role that declared a
 	// non-default backend, and stamp its path so cast-launch.sh passes it as
@@ -942,6 +1032,33 @@ func (m *Manager) checkWorkDir(sess *api.Session) error {
 	return fmt.Errorf("refuse to start session %s: directory %s %s: %w", sess.Key(), sess.WorkDir, why, ErrPlacementRefused)
 }
 
+// harnessHomeRefusalSuffix keys the harness home refusal apart from the
+// directory and container ones, so each clears on its own.
+const harnessHomeRefusalSuffix = "#harness-home"
+
+// refuseHarnessHome records and returns the refusal of a spawn whose harness
+// home has no usable base: something that is not this user's private directory
+// sits where a base should be. The seat is not started, and not started in the
+// operator's own home either. The reconcile loop retries every tick, so the
+// refusal stands, is logged every refusalLogEvery and is listed by describe,
+// until the directory is cleaned up.
+func (m *Manager) refuseHarnessHome(sess *api.Session, why string) error {
+	key := sess.Workspace + "/" + sess.Team + "/" + sess.Role + harnessHomeRefusalSuffix
+	msg := fmt.Sprintf("not started: %s/%s has no usable harness home base: %s; the seat is not started and does not share the operator's home (remove or fix the directory, then it starts on the next pass)", sess.Team, sess.Role, why)
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	m.noteRefusal(sess, key, RefusalHarnessHome, events.KindSessionPlacementRefused, "", msg)
+	return fmt.Errorf("refuse to start session %s: %s: %w", sess.Key(), why, ErrPlacementRefused)
+}
+
+// clearHarnessHomeRefusal drops the standing harness home refusal once a spawn
+// gets past the check.
+func (m *Manager) clearHarnessHomeRefusal(sess *api.Session) {
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	delete(m.refused, sess.Workspace+"/"+sess.Team+"/"+sess.Role+harnessHomeRefusalSuffix)
+}
+
 // noteRefusal keeps the standing record of a refused role and reports it. The
 // reconcile loop retries every tick, so the refusal is reported when it starts
 // and then at a low cadence for as long as it lasts: the log at most every
@@ -990,6 +1107,9 @@ type launchPlan struct {
 	// hold is set when the role's settings file could not be read at launch; the
 	// spawn is not made.
 	hold *settingsFileError
+	// homeRefusal is set when no harness home base passed the spawn-time check
+	// and at least one failed validation; the spawn is not made.
+	homeRefusal string
 	// firstPrompt is which first message the launch carried, for the
 	// session.first-prompt event.
 	firstPrompt runtime.FirstPrompt
@@ -1011,14 +1131,14 @@ type launchPlan struct {
 // rather than fatal, and any failure downgrades to the shared home the
 // session would have used anyway, because a harness that cannot be
 // containerised should still run.
-func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtime.Adapter) {
+func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtime.Adapter) (refusal string) {
 	assigner, ok := adapter.(runtime.SessionHomeAssigner)
 	if !ok || m.HarnessHomeDir == "" {
-		return
+		return ""
 	}
 	spec, want := assigner.SessionHome(lctx)
 	if !want || spec.EnvVar == "" {
-		return
+		return ""
 	}
 	dir := m.harnessHomeFor(lctx.Session.Key())
 	if rec := lctx.Session.HarnessHome; rec != "" {
@@ -1029,10 +1149,28 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 				lctx.Session.Key(), rec, why, dir)
 		}
 	}
+	if m.verifyBases {
+		// The base was checked at start; check it again now, because the home
+		// is about to be made in whatever sits at that name. A home under a
+		// base that fails is not kept, and the leaf name stays the same so a
+		// later restart finds the same home under the same base.
+		use, ok, why := m.verifiedHomeBase(lctx.Session.Key(), filepath.Dir(dir))
+		if why != "" {
+			return why
+		}
+		if !ok {
+			log.Printf("session %s: private %s unavailable, sharing the operator's home",
+				lctx.Session.Key(), spec.EnvVar)
+			return ""
+		}
+		if use != filepath.Dir(dir) {
+			dir = filepath.Join(use, filepath.Base(m.harnessHomeFor(lctx.Session.Key())))
+		}
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		log.Printf("session %s: private %s unavailable, sharing the operator's home: %v",
 			lctx.Session.Key(), spec.EnvVar, err)
-		return
+		return ""
 	}
 	for _, name := range spec.LinkIn {
 		if spec.Source == "" {
@@ -1071,6 +1209,7 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 	// The login the private home links from, for the account key. The private
 	// home itself differs for every session and would give each its own key.
 	lctx.Session.AccountHome = spec.Source
+	return ""
 }
 
 // socketLimit is the unix socket path ceiling a recorded home is held to. It is
@@ -1257,7 +1396,9 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// The container half, for a harness that offers no id pin: give the
 	// session a private state home so its own artifacts are the only ones
 	// in it (aae-orc-ca7y).
-	m.prepareSessionHome(lctx, adapter)
+	if why := m.prepareSessionHome(lctx, adapter); why != "" {
+		return launchPlan{homeRefusal: why}
+	}
 
 	// Ask before building: an adapter that never streams (or one asked
 	// for an interactive launch) should cost no filesystem work.
@@ -2109,7 +2250,7 @@ var ErrSettingsFileRefused = errors.New("settings file refused")
 type PlacementRefusal struct {
 	Workspace, Team, Role string
 	// Reason is what the spawn is refused for: RefusalDirectory,
-	// RefusalContainerImage or RefusalContainerRuntime.
+	// RefusalContainerImage, RefusalContainerRuntime or RefusalHarnessHome.
 	Reason  string
 	WorkDir string
 	Message string
@@ -2121,6 +2262,7 @@ const (
 	RefusalDirectory        = "directory"
 	RefusalContainerImage   = "container image"
 	RefusalContainerRuntime = "container runtime"
+	RefusalHarnessHome      = "harness home"
 )
 
 // refusal is the standing record of one refused role, with when it was last
@@ -2163,6 +2305,7 @@ func (m *Manager) ClearPlacementRefusal(workspace, team, role string) {
 	key := workspace + "/" + team + "/" + role
 	delete(m.refused, key)
 	delete(m.refused, key+containerRefusalSuffix)
+	delete(m.refused, key+harnessHomeRefusalSuffix)
 }
 
 func (m *Manager) now() time.Time {

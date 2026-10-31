@@ -57,7 +57,7 @@ type baseSweeper struct {
 // changes nothing.
 func (m *Manager) SweepEmptyBases(confirm bool) EmptyBaseSweep {
 	s := m.homeSweeper()
-	return baseSweeper{root: s.tmpDir, ownBase: s.ownTmpBase, owned: ownedByMe}.sweep(confirm)
+	return baseSweeper{root: s.tmpDir, ownBase: s.ownTmpBase, owned: m.mine}.sweep(confirm)
 }
 
 func (b baseSweeper) sweep(confirm bool) EmptyBaseSweep {
