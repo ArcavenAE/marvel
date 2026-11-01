@@ -1,7 +1,6 @@
 package bus
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"log"
@@ -113,6 +112,37 @@ func (refusingUpdates) UpdateStream(context.Context, jetstream.StreamConfig) (je
 	return nil, errors.New("update refused for the test")
 }
 
+// logOnEveryCheck makes the supervisor log from a second goroutine for as long
+// as the test runs: it fails the write probe and runs the structural check in
+// a loop. A test that reads the package log while this runs races on any sink
+// that is not locked, on every run and not only when a tick happens to land in
+// the read window.
+func logOnEveryCheck(t *testing.T, s *Supervisor) {
+	t.Helper()
+	s.mu.Lock()
+	s.writeProbeFn = func(context.Context) (WriteReading, error) {
+		return WriteReading{}, errors.New("probe unreachable for the test")
+	}
+	s.mu.Unlock()
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				s.checkStructure(context.Background())
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		<-done
+	})
+}
+
 // TestProvisionKeepsOldMaxAgeWhenTheUpdateIsRefused provisions a broker whose
 // 24h inbox stream cannot be updated. The refusal is logged with the stream,
 // the old and the declared value and the error; provisioning still succeeds,
@@ -138,9 +168,12 @@ func TestProvisionKeepsOldMaxAgeWhenTheUpdateIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var logged bytes.Buffer
+	// The supervisor started above keeps ticking and may log into the sink
+	// while the test reads it, so the sink is locked.
+	var logged lockedBuffer
 	log.SetOutput(&logged)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	logOnEveryCheck(t, s)
 	if _, err := provisionObjects(ctx, refusingUpdates{js}); err != nil {
 		t.Fatalf("provisioning returned %v for a refused max_age update, want success", err)
 	}
