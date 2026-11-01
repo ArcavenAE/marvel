@@ -291,6 +291,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(attachCmd())
 	root.AddCommand(exposureCmd())
 	root.AddCommand(versionCmd())
+	root.AddCommand(exampleCmd())
 	root.AddCommand(upgradeCmd())
 	root.AddCommand(keysCmd())
 	root.AddCommand(configCmd())

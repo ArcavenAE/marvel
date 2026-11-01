@@ -1,0 +1,30 @@
+# marvel example demo: two shell loops in two tmux panes.
+#
+# It needs only tmux. No build tree, no other binary and no model are involved,
+# so it runs from an installed marvel.
+#
+#   marvel daemon &
+#   marvel example demo > demo.toml
+#   marvel work demo.toml
+#   marvel get sessions
+#   marvel stop --teardown
+
+[workspace]
+name = "demo"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "agent"
+  replicas = 2
+
+    [team.role.runtime]
+    image = "generic"
+    command = "sh"
+    args = ['-c', 'while true; do echo "$MARVEL_SESSION alive at $(date +%T)"; sleep 5; done']
+
+    [team.role.healthcheck]
+    type = "process-alive"
+    timeout = "30s"
+    failure_threshold = 3
