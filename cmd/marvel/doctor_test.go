@@ -21,6 +21,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/shorttmp"
 )
 
 // fakeHost is a host where every program a check looks for is present, so a
@@ -347,15 +348,12 @@ func TestDoctorManifestReadErrorQuotesNothing(t *testing.T) {
 	}
 }
 
-// shortHome is a marvel home path short enough for a socket under it.
+// shortHome is a marvel home path short enough for a socket under it. It lives
+// under TMPDIR when that is short, so a run that points TMPDIR at a scratch
+// directory stays inside it.
 func shortHome(t *testing.T) string {
 	t.Helper()
-	d, err := os.MkdirTemp("/tmp", "mdr")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(d) })
-	return d
+	return shorttmp.Dir(t)
 }
 
 // The login stage asks only the harness's own status command, and runs nothing
@@ -549,54 +547,74 @@ func TestDoctorSocketLineForARemoteAddress(t *testing.T) {
 }
 
 // The seat read from a real host input dials nothing for a remote cluster unless
-// asked: a listener on localhost sees no connection, the read is a SKIP, and no
-// identity key is loaded (the read returns before send).
+// asked: the read is a SKIP, no identity key is loaded (the read returns before
+// send), and nothing is written under the marvel home. This half needs no
+// listener, so it never skips; the half that proves no connection arrived is the
+// subtest below, and is the only one that skips when it cannot bind.
 func TestHostDoctorInputDoesNotDialARemoteClusterByDefault(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Skipf("no localhost listener: %v", err)
-	}
-	defer func() { _ = ln.Close() }()
-	var accepted atomic.Int32
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			accepted.Add(1)
-			_ = c.Close()
+	remoteDoctor := func(t *testing.T, addr string) (home string, in doctorInput) {
+		t.Helper()
+		home = shortHome(t)
+		t.Setenv(paths.HomeEnv, home)
+		t.Setenv("MARVEL_SOCKET", "")
+		oldSocket, oldCluster := socketPath, clusterName
+		socketPath = "mrvl://u@" + addr
+		t.Cleanup(func() { socketPath, clusterName = oldSocket, oldCluster })
+		in, err := hostDoctorInput(nil, false)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}()
-	home := shortHome(t)
-	t.Setenv(paths.HomeEnv, home)
-	t.Setenv("MARVEL_SOCKET", "")
-	oldSocket, oldCluster := socketPath, clusterName
-	socketPath = "mrvl://u@" + ln.Addr().String()
-	t.Cleanup(func() { socketPath, clusterName = oldSocket, oldCluster })
+		if in.Socket != socketPath {
+			t.Fatalf("Socket = %q, want the resolved remote address %q", in.Socket, socketPath)
+		}
+		return home, in
+	}
+	assertNotDialed := func(t *testing.T, home string, in doctorInput) {
+		t.Helper()
+		if _, err := in.Sessions(); !errors.Is(err, errRemoteNotDialed) {
+			t.Fatalf("Sessions err = %v, want errRemoteNotDialed", err)
+		}
+		out, failed := doctorRun(in)
+		if !strings.HasPrefix(lineWith(out, "seats"), "SKIP") || !strings.Contains(out, "remote cluster, not dialed") {
+			t.Fatalf("failed=%d seats line not a remote SKIP:\n%s", failed, out)
+		}
+		entries, _ := os.ReadDir(home)
+		if len(entries) != 0 {
+			t.Fatalf("doctor wrote under the marvel home: %v", entries)
+		}
+	}
 
-	in, err := hostDoctorInput(nil, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if in.Socket != socketPath {
-		t.Fatalf("Socket = %q, want the resolved remote address %q", in.Socket, socketPath)
-	}
-	if _, err := in.Sessions(); !errors.Is(err, errRemoteNotDialed) {
-		t.Fatalf("Sessions err = %v, want errRemoteNotDialed", err)
-	}
-	out, failed := doctorRun(in)
-	if !strings.HasPrefix(lineWith(out, "seats"), "SKIP") || !strings.Contains(out, "remote cluster, not dialed") {
-		t.Fatalf("failed=%d seats line not a remote SKIP:\n%s", failed, out)
-	}
-	time.Sleep(200 * time.Millisecond)
-	if n := accepted.Load(); n != 0 {
-		t.Fatalf("the listener accepted %d connection(s); doctor dialed a remote cluster", n)
-	}
-	entries, _ := os.ReadDir(home)
-	if len(entries) != 0 {
-		t.Fatalf("doctor wrote under the marvel home: %v", entries)
-	}
+	t.Run("reads as a skip with no listener", func(t *testing.T) {
+		// Port 1 on localhost: a dial would fail with a refusal, never with
+		// errRemoteNotDialed, so the assertion cannot pass by a dial failing.
+		home, in := remoteDoctor(t, "127.0.0.1:1")
+		assertNotDialed(t, home, in)
+	})
+
+	t.Run("no connection reaches a listener", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Skipf("no localhost listener: %v", err)
+		}
+		defer func() { _ = ln.Close() }()
+		var accepted atomic.Int32
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				accepted.Add(1)
+				_ = c.Close()
+			}
+		}()
+		home, in := remoteDoctor(t, ln.Addr().String())
+		assertNotDialed(t, home, in)
+		time.Sleep(200 * time.Millisecond)
+		if n := accepted.Load(); n != 0 {
+			t.Fatalf("the listener accepted %d connection(s); doctor dialed a remote cluster", n)
+		}
+	})
 }
 
 // A local unix socket is read, and a daemon that is down is a plain error, not a
@@ -615,5 +633,65 @@ func TestHostDoctorInputReadsALocalSocket(t *testing.T) {
 	}
 	if !isRemoteAddr("mrvl://u@h:1") || !isRemoteAddr("ssh://h") || !isRemoteAddr("h:7") || isRemoteAddr("/tmp/m.sock") {
 		t.Fatal("isRemoteAddr misreads an address")
+	}
+}
+
+// `env -u NAME claude` starts claude: NAME is the variable to unset and not the
+// program. Only -u and --unset take a name here; the other env options that take
+// an argument (-C, -S) are not read.
+func TestHarnessOfSkipsTheNameAnEnvUnsetTakes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		command  string
+		wantPath string
+		wantOK   bool
+	}{
+		{"claude", "claude", true},
+		{"env -u NAME claude", "claude", true},
+		{"env --unset NAME claude", "claude", true},
+		{"env -i -u NAME -u OTHER claude", "claude", true},
+		{"env -u NAME X=1 /usr/local/bin/claude", "/usr/local/bin/claude", true},
+		{"env --unset=NAME claude", "claude", true},
+		{"env -u", "", false},
+	} {
+		path, _, ok := harnessOf(tc.command)
+		if path != tc.wantPath || ok != tc.wantOK {
+			t.Errorf("harnessOf(%q) = %q, %v; want %q, %v", tc.command, path, ok, tc.wantPath, tc.wantOK)
+		}
+	}
+}
+
+// doctor is read-only. A --remote read with no known_hosts file would otherwise
+// reach knownhosts.Callback, which creates an empty one, so doctor stops first,
+// says why, and leaves the marvel home as it found it.
+func TestDoctorRemoteWithNoKnownHostsCreatesNothing(t *testing.T) {
+	home := shortHome(t)
+	t.Setenv(paths.HomeEnv, home)
+	t.Setenv("MARVEL_SOCKET", "")
+	oldSocket, oldCluster := socketPath, clusterName
+	socketPath = "mrvl://u@127.0.0.1:1"
+	t.Cleanup(func() { socketPath, clusterName = oldSocket, oldCluster })
+
+	in, err := hostDoctorInput(nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := in.Sessions(); !errors.Is(err, errKnownHostsAbsent) {
+		t.Fatalf("Sessions err = %v, want errKnownHostsAbsent", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "known_hosts")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("known_hosts exists after the seat read (stat err %v)", err)
+	}
+	out, failed := doctorRun(in)
+	seats := lineWith(out, "seats")
+	if !strings.HasPrefix(seats, "SKIP") || !strings.Contains(seats, "known_hosts absent; remote host key check skipped; run one interactive remote command to trust the host") {
+		t.Fatalf("failed=%d seats line not the known_hosts skip:\n%s", failed, out)
+	}
+	if _, err := os.Stat(filepath.Join(home, "known_hosts")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("known_hosts exists after doctor --remote (stat err %v)", err)
+	}
+	entries, _ := os.ReadDir(home)
+	if len(entries) != 0 {
+		t.Fatalf("doctor wrote under the marvel home: %v", entries)
 	}
 }
