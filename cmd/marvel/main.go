@@ -301,6 +301,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(orphansCmd())
 	root.AddCommand(newCtxForwardCmd())
 	root.AddCommand(newCodexCtxCmd())
+	root.AddCommand(newGooseRefuseCmd())
 	root.AddCommand(planCmd())
 	root.AddCommand(marryCmd())
 

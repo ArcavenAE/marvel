@@ -15,6 +15,7 @@ func fullRuntime() Runtime {
 		ContextWindow: 200000, ContextFeed: ContextFeedStatusline,
 		Env: map[string]string{"K": "v"}, Backend: "bedrock",
 		PromptArtifactSha256: strings.Repeat("a", 64),
+		Goose:                &GooseRuntime{Posture: GoosePostureApprove, ToolsDeny: []string{"fetch"}},
 	}
 }
 
@@ -27,6 +28,7 @@ func TestRuntimeDriftNamesEachDifferingField(t *testing.T) {
 	}{
 		{"name", func(r *Runtime) { r.Name = "other" }},
 		{"command", func(r *Runtime) { r.Command = "other" }},
+		{"goose", func(r *Runtime) { r.Goose = &GooseRuntime{Posture: GoosePostureAuto} }},
 		{"args", func(r *Runtime) { r.Args = []string{"--a"} }},
 		{"script", func(r *Runtime) { r.Script = "t.sh" }},
 		{"mode", func(r *Runtime) { r.Mode = RuntimeModeInteractive }},
@@ -108,5 +110,15 @@ func TestRuntimeDriftCoversEveryRuntimeField(t *testing.T) {
 		if len(RuntimeDrift(full, role)) == 0 {
 			t.Errorf("Runtime.%s is not compared by RuntimeDrift", rv.Type().Field(i).Name)
 		}
+	}
+}
+
+// A role that declares no goose table and one that declares an empty one are
+// the same role, so neither drifts from the other.
+func TestRuntimeDriftTreatsNoGooseTableAndAnEmptyOneAsEqual(t *testing.T) {
+	a, b := fullRuntime(), fullRuntime()
+	a.Goose, b.Goose = nil, &GooseRuntime{}
+	if got := RuntimeDrift(a, b); len(got) != 0 {
+		t.Fatalf("drift = %v, want none", got)
 	}
 }

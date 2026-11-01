@@ -29,7 +29,7 @@ const (
 
 // matrixAdapters is the column order of the document. A registered adapter that
 // is not listed here fails TestFeatureMatrixNamesEveryRegisteredAdapter.
-var matrixAdapters = []string{"claude", "codex", "opencode", "forestage", "simulator", "generic"}
+var matrixAdapters = []string{"claude", "codex", "opencode", "forestage", "simulator", "generic", "goose"}
 
 type matrixCapability struct {
 	name string

@@ -1433,6 +1433,13 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	} else if layout, err := paths.Default(); err == nil {
 		lctx.ViewsDir = layout.ViewsDir()
 	}
+	// The resolved placement, for an adapter whose rules depend on containment.
+	// A resolution error leaves it empty, which such an adapter reads as
+	// unsandboxed. No manager path yet starts a launch under a sandbox-exec
+	// profile, so SandboxProfile stays empty.
+	if placement, perr := api.ResolvePlacement(ws.Placement, m.adapters.RecommendedPlacement(sess.Runtime.Name)); perr == nil {
+		lctx.Placement = placement
+	}
 	lctx.CredentialHelper = m.CredentialHelper
 	if m.Bus != nil {
 		lctx.BusURL = m.Bus.URL()

@@ -14,30 +14,30 @@ Which marvel features work for which harness, and which of them need another ser
 This table is derived from the registry by a test, so it cannot drift. A new adapter, or a changed capability, fails `TestFeatureMatrixAdapterTableMatchesTheCode` until it is regenerated with `MARVEL_UPDATE_MATRIX=1 go test ./internal/runtime -run TestFeatureMatrix`.
 
 <!-- adapter-capabilities:begin -->
-| Capability | claude | codex | opencode | forestage | simulator | generic |
-|---|---|---|---|---|---|---|
-| StreamCapable | yes | yes | yes | no | no | no |
-| SessionIDAssigner | yes | no | no | no | no | no |
-| SessionHomeAssigner | no | yes | no | no | no | no |
-| StatuslineFeeder | yes | no | no | yes | no | no |
-| ComposerCapable | yes | yes | yes | no | no | no |
-| ForegroundRule | yes | no | no | no | no | no |
-| SandboxRecommender | no | no | no | no | no | no |
+| Capability | claude | codex | opencode | forestage | simulator | generic | goose |
+|---|---|---|---|---|---|---|---|
+| StreamCapable | yes | yes | yes | no | no | no | no |
+| SessionIDAssigner | yes | no | no | no | no | no | no |
+| SessionHomeAssigner | no | yes | no | no | no | no | yes |
+| StatuslineFeeder | yes | no | no | yes | no | no | no |
+| ComposerCapable | yes | yes | yes | no | no | no | no |
+| ForegroundRule | yes | no | no | no | no | no | no |
+| SandboxRecommender | no | no | no | no | no | no | no |
 <!-- adapter-capabilities:end -->
 
 What each interface means: `StreamCapable` reads a headless harness's structured output (`internal/runtime/stream.go:52`). `SessionIDAssigner` pins the harness session id (`internal/runtime/adapter.go:219`). `SessionHomeAssigner` gives the session a private state home (`internal/runtime/adapter.go:193`). `StatuslineFeeder` builds the statusline command that feeds context readings (`internal/runtime/adapter.go:237`). `ComposerCapable` declares how the prompt composer takes input (`internal/runtime/adapter.go:321`). `ForegroundRule` says which pane command is the harness (`internal/runtime/adapter.go:631`). `SandboxRecommender` says the harness recommends a container (`internal/runtime/sandbox.go:16`). A harness with no adapter of its own, pi and mini-swe-agent today, is declared in `sandboxRecommendedHarnesses` (`internal/runtime/sandbox.go:26`) and not in this table, so its row here reads `no` until it gets an adapter.
 
 ## Shift change
 
-| Feature | claude | codex | opencode | forestage | simulator | generic | Needs |
-|---|---|---|---|---|---|---|---|
-| shift (rolling replacement) | yes | yes | yes | yes | yes | yes | none |
-| max-age rotation (request, marker, shift) | yes | partial | partial | unknown | unknown | unknown | none |
-| auto-shift on context pressure | yes | partial | partial | yes | no | no | none |
-| handoff put (request typed into the pane) | yes | yes | yes | unknown | unknown | unknown | none |
-| handoff read (marker file) | yes | yes | yes | yes | yes | yes | none |
-| succession (`MARVEL_PREDECESSOR`, `MARVEL_HANDOFF_REQUESTED_AT`) | yes | yes | yes | yes | yes | yes | none |
-| per-seat replace | no | no | no | no | no | no | none |
+| Feature | claude | codex | opencode | forestage | simulator | generic | goose | Needs |
+|---|---|---|---|---|---|---|---|---|
+| shift (rolling replacement) | yes | yes | yes | yes | yes | yes | yes | none |
+| max-age rotation (request, marker, shift) | yes | partial | partial | unknown | unknown | unknown | unknown | none |
+| auto-shift on context pressure | yes | partial | partial | yes | no | no | no | none |
+| handoff put (request typed into the pane) | yes | yes | yes | unknown | unknown | unknown | unknown | none |
+| handoff read (marker file) | yes | yes | yes | yes | yes | yes | yes | none |
+| succession (`MARVEL_PREDECESSOR`, `MARVEL_HANDOFF_REQUESTED_AT`) | yes | yes | yes | yes | yes | yes | yes | none |
+| per-seat replace | no | no | no | no | no | no | no | none |
 
 Evidence:
 
@@ -51,15 +51,15 @@ Evidence:
 
 ## Observability
 
-| Feature | claude | codex | opencode | forestage | simulator | generic | Needs |
-|---|---|---|---|---|---|---|---|
-| context window read, interactive | partial | yes | no | yes | partial | no | none |
-| context window read, headless | yes | no | partial | no | n/a | no | none |
-| memory (RSS) | yes | yes | yes | yes | yes | yes | none |
-| CPU | yes | yes | yes | yes | yes | yes | none |
-| Tin, tokens in, cumulative | headless | headless | headless | no | no | no | none |
-| Tin, tokens in, current context level | partial | yes | no | yes | no | no | none |
-| Tout, tokens out, cumulative | headless | yes | headless | no | no | no | none |
+| Feature | claude | codex | opencode | forestage | simulator | generic | goose | Needs |
+|---|---|---|---|---|---|---|---|---|
+| context window read, interactive | partial | yes | no | yes | partial | no | no | none |
+| context window read, headless | yes | no | partial | no | n/a | no | no | none |
+| memory (RSS) | yes | yes | yes | yes | yes | yes | yes | none |
+| CPU | yes | yes | yes | yes | yes | yes | yes | none |
+| Tin, tokens in, cumulative | headless | headless | headless | no | no | no | no | none |
+| Tin, tokens in, current context level | partial | yes | no | yes | no | no | no | none |
+| Tout, tokens out, cumulative | headless | yes | headless | no | no | no | no | none |
 
 Tin is tokens in and Tout is tokens out, as the operator ruled. The counts do not compare across harnesses, which is why `get sessions` has no Tin column: raw input is not comparable, because codex counts cached input inside input while claude adds it on top (`docs/design/get-sessions-output.md:141-144`). marvel keeps `PromptTokens`, normalized for each harness's layout, as the one input figure that can be added up (`internal/usage/reader.go:28-47`). Compare Tin across harnesses only through that field, and read Tout as output tokens only, as each harness reports them.
 
@@ -72,6 +72,7 @@ How each harness reports tokens (headless only; a seat with no token stream show
 | opencode | headless: yes. Interactive: no | per request, summed | alongside (additive) | `internal/runtime/opencode/parser.go:209`, `internal/usage/profiles.go:87-93` |
 | forestage | no | none, it is not stream-capable | n/a | `internal/usage/doc.go:79` |
 | simulator | no | its heartbeat carries no tokens | n/a | `internal/simulator/engine.go:117-119` |
+| goose | no, until its stream parser lands | none | n/a | `docs/design/goose-adapter-v1.md:48` |
 | generic | no | none | n/a | `internal/runtime/generic.go:5-8` |
 
 Whether the codex total resets at a turn boundary or runs for the whole session is not settled, and the code treats both the same (`internal/usage/profiles.go:55-71`).
@@ -87,13 +88,13 @@ Evidence:
 
 ## Budgets and usage limits
 
-| Feature | claude | codex | opencode | forestage | simulator | generic | Needs |
-|---|---|---|---|---|---|---|---|
-| team `max_sessions`, enforced | yes | yes | yes | yes | yes | yes | none |
-| team `max_tokens`, enforced | headless | headless | headless | no | no | no | none |
-| other budget clauses (`max_cost_usd`, `max_team_rss_bytes`, `max_session_ctx_percent`) | no | no | no | no | no | no | none |
-| account usage windows read, `limited` condition | yes | yes | no | yes | no | no | none |
-| usage-limit pause with an end | no | no | no | no | no | no | none |
+| Feature | claude | codex | opencode | forestage | simulator | generic | goose | Needs |
+|---|---|---|---|---|---|---|---|---|
+| team `max_sessions`, enforced | yes | yes | yes | yes | yes | yes | yes | none |
+| team `max_tokens`, enforced | headless | headless | headless | no | no | no | no | none |
+| other budget clauses (`max_cost_usd`, `max_team_rss_bytes`, `max_session_ctx_percent`) | no | no | no | no | no | no | no | none |
+| account usage windows read, `limited` condition | yes | yes | no | yes | no | no | no | none |
+| usage-limit pause with an end | no | no | no | no | no | no | no | none |
 
 Evidence:
 
@@ -104,18 +105,18 @@ Evidence:
 
 ## Other features
 
-| Feature | claude | codex | opencode | forestage | simulator | generic | Needs |
-|---|---|---|---|---|---|---|---|
-| presence, marvel's own heartbeat | yes | yes | no | yes | yes | no | none |
-| presence on the bus | unknown | unknown | unknown | unknown | unknown | unknown | needs bus, needs director |
-| bus join (env stamped, credentials) | partial | yes | partial | partial | unknown | partial | needs bus; needs hub for a global role; needs director for the shim |
-| usage-limit key-sending | partial | no | no | no | no | no | none |
-| permission policy projected to a settings file | yes | no | no | yes | no | no | none |
-| role `permissions` injected as a launch flag | yes | no | no | yes | no | no | none |
-| folder trust seeded for the seat | no | yes | unknown | unknown | n/a | unknown | none |
-| session-id pin | yes | no | unknown | unknown | n/a | no | none |
-| prompt delivery at launch | yes | partial | partial | yes | n/a | no | none |
-| completion semantics, headless (ADR-010) | yes | yes | yes | partial | partial | partial | none (tmux 3.5 for an exact exit status) |
+| Feature | claude | codex | opencode | forestage | simulator | generic | goose | Needs |
+|---|---|---|---|---|---|---|---|---|
+| presence, marvel's own heartbeat | yes | yes | no | yes | yes | no | no | none |
+| presence on the bus | unknown | unknown | unknown | unknown | unknown | unknown | unknown | needs bus, needs director |
+| bus join (env stamped, credentials) | partial | yes | partial | partial | unknown | partial | partial | needs bus; needs hub for a global role; needs director for the shim |
+| usage-limit key-sending | partial | no | no | no | no | no | no | none |
+| permission policy projected to a settings file | yes | no | no | yes | no | no | no | none |
+| role `permissions` injected as a launch flag | yes | no | no | yes | no | no | no | none |
+| folder trust seeded for the seat | no | yes | unknown | unknown | n/a | unknown | no | none |
+| session-id pin | yes | no | unknown | unknown | n/a | no | no | none |
+| prompt delivery at launch | yes | partial | partial | yes | n/a | no | partial | none |
+| completion semantics, headless (ADR-010) | yes | yes | yes | partial | partial | partial | partial | none (tmux 3.5 for an exact exit status) |
 
 Evidence:
 
@@ -128,12 +129,14 @@ Evidence:
 - **prompt delivery.** claude: the identity line through `--append-system-prompt` on a bare claude, skipped when the role carries its own, read from args and from the command words (`internal/runtime/claude.go:152-164`, `internal/api/manifest.go:788`); the headless request is the positional argument (`internal/runtime/claude.go:204-207`). codex `partial`: headless request only, no system prompt (`internal/runtime/codex.go:19-23`, `internal/runtime/codex.go:122-130`). opencode `partial`: headless request only (`internal/runtime/opencode.go:57-64`). forestage: team context after `--` (`internal/runtime/forestage.go:104-112`). generic passes args only (`internal/runtime/generic.go:104-119`). There is no prompt-file feature: the code only recognises a role's own `--append-system-prompt-file`. An interactive first prompt is a proposal (`docs/design/interactive-first-prompt.md`), and prompt moderation is design only (`docs/design/prompt-moderation.md`). A manifest-supplied system prompt drops the identity line (finding-066).
 - **completion semantics.** The reap rule keys on `Runtime.Mode` and the pane exit status alone, with no harness branch: the window is kept on exit, the replica slot is held, and a non-zero or empty status becomes `crashed` (`internal/session/manager.go:1553-1648`, `internal/api/budget.go:252-257`). An exact status needs tmux 3.5; a lost status is retried (`internal/session/manager.go:1636-1640`, `docs/user-guide.md:374-380`). Headless launches exist for claude (`internal/runtime/claude.go:100-102`), codex (`internal/runtime/codex.go:114-148`) and opencode (`internal/runtime/opencode.go:50-80`). `partial` for forestage, simulator and generic: they have no headless branch in `Prepare`, so the reap rule applies only if the mode is set, and no test or finding exercises it. The ADR-010 text is not in this repository. Findings on headless completion: finding-015, finding-036, finding-038.
 
+**goose column.** This is the adapter core, with no stream parser: `StreamCapable` is `no` and every token and context cell waits on the parser and on the sessions-database reader (`docs/design/goose-adapter-v1.md:118-120`). Every headless goose seat is refused with the exit-78 stub until the parser and the watchdog land, because a headless run seen only through its exit status can report refused work as done (`docs/design/goose-adapter-v1.1.md:93-109`); interactive goose launches. `handoff put` and `max-age rotation` are `unknown` because no goose composer has been measured. `completion semantics` is `partial`: the pane exit status decides it, and an exit 0 with no `complete` line is not yet told apart.
+
 ## Not adapted
 
 These have no adapter in `internal/runtime`, so marvel runs them as `generic`, with no launch flags, no context reading and no projection. "Not adapted" is a statement about code, not about whether the harness works in a tmux pane. A new adapter walks the [adapter kit checklist](adapter-kit-checklist.md) before it gets a column here.
 
 - **crush.** No adapter exists. A comment lists what one would need, including `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1` (`internal/runtime/adapter.go:6-19`). Measured: finding-020 and finding-033.
-- **goose, gemini-cli.** Surveyed for a context channel, no adapter (`_kos/probes/probe-interactive-ctx-remainder-sweep.md:365`, `_kos/probes/probe-interactive-ctx-remainder-sweep.md:687`; gemini-cli telemetry in finding-008).
+- **gemini-cli.** Surveyed for a context channel, no adapter (`_kos/probes/probe-interactive-ctx-remainder-sweep.md:365`, `_kos/probes/probe-interactive-ctx-remainder-sweep.md:687`; gemini-cli telemetry in finding-008).
 - **pi, mini-swe-agent.** Named as harness-survey candidates. No code or finding in this repository mentions either, so nothing here is known about them.
 
 ## Keeping this current
