@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"text/template"
@@ -81,25 +82,142 @@ func formulaFile(cfg goreleaserConfig, name string) (string, error) {
 }
 
 // alphaFormula is the tap file the alpha channel's formula lands in. The tap's
-// own update-formulas workflow writes it; this repo's ci.yml does not.
+// own update-formulas workflow writes it (homebrew-tap's update-formulas.yml is
+// the one tap writer for this file); no workflow in this repo does.
 const alphaFormula = "marvel.rb"
 
-// noAlphaTapStep fails when ci.yml names the tap repository or its token. The
-// alpha formula reaches the tap only through the tap's own workflow, so its
-// commit is the signed record; a second writer here would add an unsigned one.
-// The check reads the raw file, so a step that clones into any directory name,
-// or passes the token through env or with, is caught as well as one that
-// writes into tap-repo/Formula.
+// tapNames are the strings that mean a workflow reaches the tap repository or
+// its token. GitHub resolves repository and secret names regardless of case, so
+// they are matched in lower case: arcavenae/Homebrew-Tap and
+// secrets.homebrew_tap_token reach the tap as well as the spellings below.
+var tapNames = []string{"homebrew-tap", "homebrew_tap_token"}
+
+// tapNamingWorkflows are the only workflow files allowed to name the tap, each
+// with the reason. Neither writes the alpha formula: release.yml hands the token
+// to goreleaser, whose rc and stable brews entries are held to their own file
+// names below, and release-verify.yml only reads the tap's CI status.
+var tapNamingWorkflows = map[string]string{
+	"release.yml":        "passes the tap token to goreleaser, whose rc and stable brews entries write the rc and stable formulas",
+	"release-verify.yml": "reads the tap's CI status with the token and writes nothing",
+}
+
+// tapNamingViolations returns, for each workflow file that names the tap or its
+// token and is not in the allowlist, a message. Names are matched in lower case.
+// workflows maps a file's base name to its text.
+func tapNamingViolations(workflows map[string]string) []string {
+	var out []string
+	for name, text := range workflows {
+		if _, ok := tapNamingWorkflows[name]; ok {
+			continue
+		}
+		lower := strings.ToLower(text)
+		for _, n := range tapNames {
+			if strings.Contains(lower, n) {
+				out = append(out, fmt.Sprintf("%s names %s; homebrew-tap's update-formulas.yml is the only alpha writer", name, n))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// noAlphaTapStep fails when any workflow outside the allowlist names the tap
+// repository or its token. The alpha formula reaches the tap only through the
+// tap's own update-formulas.yml, so its commit is the signed record; a second
+// writer here would add an unsigned one. The check reads every workflow file raw,
+// so a step in a new workflow, one that clones into any directory name, or one
+// that passes the token through env or with, is caught as well as one that
+// writes into tap-repo/Formula. An allowlisted file that no longer names the tap
+// is stale and fails too, so the list cannot outlive its reason.
 func noAlphaTapStep(t *testing.T) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"homebrew-tap", "HOMEBREW_TAP_TOKEN"} {
-		if strings.Contains(string(raw), name) {
-			t.Errorf("ci.yml names %s; the tap's own workflow is the only alpha writer", name)
+	dir := filepath.Join("..", "..", ".github", "workflows")
+	var files []string
+	for _, pat := range []string{"*.yml", "*.yaml"} {
+		m, err := filepath.Glob(filepath.Join(dir, pat))
+		if err != nil {
+			t.Fatal(err)
 		}
+		files = append(files, m...)
+	}
+	workflows := map[string]string{}
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		workflows[filepath.Base(f)] = string(raw)
+	}
+	if _, ok := workflows["ci.yml"]; !ok {
+		t.Fatalf("found %d workflow files and ci.yml is not among them; the guard would scan nothing", len(workflows))
+	}
+	for _, v := range tapNamingViolations(workflows) {
+		t.Error(v)
+	}
+	for _, v := range staleTapAllowlist(workflows) {
+		t.Error(v)
+	}
+}
+
+// staleTapAllowlist returns a message for each allowlisted workflow that is
+// missing from workflows or no longer names the tap.
+func staleTapAllowlist(workflows map[string]string) []string {
+	var out []string
+	for name := range tapNamingWorkflows {
+		text, ok := workflows[name]
+		if !ok {
+			out = append(out, fmt.Sprintf("allowlisted workflow %s does not exist; remove it from tapNamingWorkflows", name))
+			continue
+		}
+		named := false
+		for _, n := range tapNames {
+			named = named || strings.Contains(strings.ToLower(text), n)
+		}
+		if !named {
+			out = append(out, fmt.Sprintf("allowlisted workflow %s no longer names the tap; remove it from tapNamingWorkflows", name))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestStaleTapAllowlist(t *testing.T) {
+	t.Parallel()
+	live := map[string]string{"release.yml": "HOMEBREW_TAP_TOKEN", "release-verify.yml": "arcavenae/Homebrew-Tap"}
+	if got := staleTapAllowlist(live); len(got) != 0 {
+		t.Errorf("live allowlist reported stale: %q", got)
+	}
+	if got := staleTapAllowlist(map[string]string{"release.yml": "HOMEBREW_TAP_TOKEN"}); len(got) != 1 {
+		t.Errorf("a missing file: %q, want one message", got)
+	}
+	if got := staleTapAllowlist(map[string]string{"release.yml": "HOMEBREW_TAP_TOKEN", "release-verify.yml": "name: verify"}); len(got) != 1 {
+		t.Errorf("a file that no longer names the tap: %q, want one message", got)
+	}
+}
+
+func TestTapNamingViolations(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		workflows map[string]string
+		want      int
+	}{
+		{"nothing names the tap", map[string]string{"ci.yml": "name: ci\n"}, 0},
+		{"the repository name", map[string]string{"ci.yml": "repository: arcavenae/homebrew-tap\n"}, 1},
+		{"the repository name in another case", map[string]string{"ci.yml": "repository: arcavenae/Homebrew-Tap\n"}, 1},
+		{"the secret name", map[string]string{"ci.yml": "token: ${{ secrets.HOMEBREW_TAP_TOKEN }}\n"}, 1},
+		{"the secret name in lower case", map[string]string{"ci.yml": "token: ${{ secrets.homebrew_tap_token }}\n"}, 1},
+		{"a workflow other than ci.yml", map[string]string{"ci.yml": "name: ci\n", "extra.yml": "repository: arcavenae/homebrew-tap\n"}, 1},
+		{"an allowlisted workflow may name it", map[string]string{"release.yml": "token: ${{ secrets.HOMEBREW_TAP_TOKEN }}\n", "release-verify.yml": "--repo arcavenae/homebrew-tap\n"}, 0},
+		{"both names in one file are two findings", map[string]string{"ci.yml": "homebrew-tap HOMEBREW_TAP_TOKEN\n"}, 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tapNamingViolations(tc.workflows); len(got) != tc.want {
+				t.Errorf("violations = %q, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
