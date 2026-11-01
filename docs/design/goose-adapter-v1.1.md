@@ -30,7 +30,7 @@ fixes the adapter's rules for all three before ticket C is built.
 | L5 | headless `approve` that meets a tool not in `permission.yaml` exits 1 with no `complete` line and no hang, with "Tool approval required in non-interactive mode with GooseMode::approve ... Use GooseMode::Auto for headless sessions" | R2 |
 | L5b | headless `approve` ran to `complete` when the only tool the model asked for was under `never_allow`: the call was declined without a prompt (L6) | R3 |
 | L6 | under `GOOSE_MODE=approve`, a `never_allow` shell call was refused as a tool result, the run exited 0, and the model then said "echo p3 has been executed successfully". The refusal has no type of its own (section 3, C4) | R3, qwen3:0.6b, `max_turns` 4 |
-| L7 | 4,096 tokens is the practical context ceiling for the small models | qwen3:0.6b |
+| L7 | 4,096 tokens is the practical context ceiling for the small models, as served: arm 2 ran Ollama with a 4,096-token serving context (the evidence line), so the figure belongs to that serving setting, not to the model | qwen3:0.6b |
 | L8 | a tool call into a stdio extension has its own timeout, 300 s by default; `--with-extension` fixes it at 300 s. That fits a seat's 120 s bus wait (director-mcp `wait_for_message`, timeout 120) blocking inside one tool call. By source, not measured: no arm 2 run made a long-blocking extension call | goose source, read by the research seat |
 
 Settled from the run's records (relayed 2026-10-31): R3 ran under `approve`, not `auto`, with
@@ -113,6 +113,10 @@ with one rule added: when both the role's `runtime.context_window` and the model
 adapter's ceiling table (section 6b) are set, the adapter projects the lower of the two. A model
 with no table entry is unchanged. A role that declares more than its model's entry draws a NOTE
 at prepare time, not a refusal.
+- A role with no `runtime.context_window`, on a model that has a table entry, gets the table
+  entry projected. This is the case the table was seeded to protect. The ruling names only the
+  both-set case, so this line is the brief's reading of it, for director to confirm or override.
+- A role with neither set gets nothing projected, as v1 says.
 
 ## 4. Acceptance tests
 
@@ -135,7 +139,11 @@ Each test runs against recorded fixtures from arm 2 and a fake goose, so no mode
 2. **Headless runs Auto in the sandbox, or not at all.** A headless role with `approve`,
    `smart_approve`, or `auto` without the sandbox gets the stub (exit 78), with its reason, and
    goose never starts. A headless role with `auto` inside the profile launches with
-   `GOOSE_MODE=auto` in its env.
+   `GOOSE_MODE=auto` in its env. The section 6, decision 2 cases:
+   - `auto` with the resolved placement container and no profile launches with
+     `GOOSE_MODE=auto`;
+   - `auto` with both new `LaunchContext` fields unset (no placement, empty profile path) gets the
+     stub with `auto-unsandboxed`, and goose never starts.
 3. **Only tool results say what ran.** The fixture is R3's shape:
    - an assistant `toolRequest` with id `call_ngnvd7s5`, `toolCall.status` "success", name
      `shell`, arguments `{command: "echo p3"}`;
@@ -195,7 +203,7 @@ Settled by R2, director agreeing, 2026-10-31. Headless `approve` that meets any 
 `permission.yaml` fails closed: exit 1, no `complete`, no hang (L5). R3 reached `complete` only
 because its one tool was already decided by `never_allow` (L5b). A role cannot know in advance
 that the model will ask only for listed tools, so C1's `approve-headless` fault stays in v1, and
-acceptance test 2 stands as written.
+acceptance test 2 keeps its `approve` case.
 
 ## 6b. Where a model's measured context ceiling lives
 
@@ -207,17 +215,21 @@ The table is seeded with one entry:
 
 | model | ceiling | measured by |
 |---|---|---|
-| qwen3:0.6b | 4,096 | goose arm 2 (L7) |
+| qwen3:0.6b | 4,096 | goose arm 2 (L7), at an Ollama serving context of 4,096 |
 
-C5 reads it as the lower-of rule. The alternatives considered were a role field beside
+C5 reads it as the lower-of rule. Each entry names the serving setting it was measured under, since a
+served ceiling is a property of that setting: a seat served with a larger context needs its own
+run before its entry changes. The alternatives considered were a role field beside
 `runtime.context_window`, a cluster config key, and no new home; none was taken.
 
 ## 7. Tickets
 
 There are no new tickets. v1's tickets change as follows:
 - **A:** done for Ollama by arm 2, open for Bedrock (section 5).
-- **C:** takes C3, C4 and C5, with the ceiling table seeded as section 6b says.
-- **D:** takes C1's three faults.
+- **C:** takes C2 (no `--resume` on the launch line, v1 section 3), C3, C4 and C5, with the
+  ceiling table seeded as section 6b says.
+- **D:** takes C1's faults. `smart-approve-headless` is already one of v1's five refusal reasons,
+  so C1 adds two (`approve-headless`, `auto-unsandboxed`), and D carries seven in all.
 - **K:** takes the sandbox definition in section 6, decision 2, and adds the two `LaunchContext`
   fields it names (the resolved placement and the sandbox-exec profile path).
 - **H:** stands as written.
