@@ -270,13 +270,13 @@ jobs:
 
       - name: List the formulas the snapshot wrote
         # A formula pipe that fails does not fail goreleaser, so the job looks
-        # for the files itself. The alpha job owns Formula/marvel.rb, and no
-        # goreleaser entry may write it.
+        # for the files itself. The tap's own workflow owns Formula/marvel.rb,
+        # and no goreleaser entry may write it.
         run: |
           set -euo pipefail
           find dist/homebrew -name '*.rb' | sort
           if find dist/homebrew -name 'marvel.rb' | grep -q .; then
-            echo "goreleaser wrote Formula/marvel.rb, the file the alpha job owns"
+            echo "goreleaser wrote Formula/marvel.rb, the file the tap's own workflow owns"
             exit 1
           fi
 
