@@ -6,14 +6,16 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/upgrade"
 )
 
 // runInstalledVersion asks the installed marvel for its build line, so the note
 // below compares against the binary the upgrade wrote and not the one running.
-func runInstalledVersion(path string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), simulatorVersionTimeout)
+// The program gets timeout to answer.
+func runInstalledVersion(path string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, path, "version").Output()
 	return string(out), err

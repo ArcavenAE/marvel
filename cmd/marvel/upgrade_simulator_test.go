@@ -98,6 +98,7 @@ func TestUpgradeCmdNotesAStaleSimulator(t *testing.T) {
 	installed := write("marvel-new", "marvel 0.2.0 (stable)\nsimulator 0.1.0 (stable)\nnote: the simulator on PATH is 0.1.0 (stable) and marvel is 0.2.0 (stable)")
 	write("marvel-simulator", "marvel-simulator 0.1.0 (stable)")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+"/usr/bin:/bin")
+	setVersionProbeTimeout(t, generousProbeTimeout)
 
 	runUpgrade = func(string, string, string) (upgrade.Result, error) {
 		return upgrade.Result{Changed: true, Direct: true, Binary: installed}, nil
