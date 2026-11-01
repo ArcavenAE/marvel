@@ -272,6 +272,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(getCmd())
 	root.AddCommand(describeCmd())
 	root.AddCommand(statusCmd())
+	root.AddCommand(doctorCmd())
 	root.AddCommand(credentialCmd())
 	root.AddCommand(busCmd())
 	root.AddCommand(backendCmd())
