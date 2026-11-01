@@ -100,6 +100,15 @@ func TestGooseRefusals(t *testing.T) {
 			if tc.adjust != nil {
 				tc.adjust(ctx)
 			}
+			if ctx.Session.Runtime.Mode == api.RuntimeModeHeadless {
+				// Every headless launch is stopped earlier by the build-phase
+				// refusal (TestGooseBuildPhase*), so the posture rules are read
+				// directly; they are what governs once that refusal is deleted.
+				if got := gooseRefusal(ctx); got != tc.want {
+					t.Errorf("gooseRefusal = %q, want %q", got, tc.want)
+				}
+				return
+			}
 			res, err := (&Goose{}).Prepare(ctx)
 			if err != nil {
 				t.Fatalf("Prepare: %v (an error would launch the raw command)", err)
@@ -128,7 +137,7 @@ func TestGooseAutoLaunchesOnlyWhereASandboxIsInForce(t *testing.T) {
 			t.Parallel()
 			ctx := gooseContext(t, auto)
 			adjust(ctx)
-			res, err := (&Goose{}).Prepare(ctx)
+			res, err := (&Goose{headlessBuilt: true}).Prepare(ctx)
 			if err != nil {
 				t.Fatalf("Prepare: %v", err)
 			}
@@ -149,7 +158,7 @@ func TestGooseHeadlessLaunchLine(t *testing.T) {
 		rt.Goose = &api.GooseRuntime{Posture: api.GoosePostureAuto, Extensions: []string{"developer", "memory"}}
 	})
 	ctx.Placement = api.PlacementContainer
-	res, err := (&Goose{}).Prepare(ctx)
+	res, err := (&Goose{headlessBuilt: true}).Prepare(ctx)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -259,7 +268,7 @@ func TestGoosePrepareErrors(t *testing.T) {
 		t.Errorf("no command: err = %v, want ErrNoCommand", err)
 	}
 	ctx = gooseContext(t, func(rt *api.Runtime) { rt.Mode = api.RuntimeModeHeadless })
-	if _, err := (&Goose{}).Prepare(ctx); !errors.Is(err, ErrNoPrompt) {
+	if _, err := (&Goose{headlessBuilt: true}).Prepare(ctx); !errors.Is(err, ErrNoPrompt) {
 		t.Errorf("headless, no prompt: err = %v, want ErrNoPrompt", err)
 	}
 }
@@ -370,7 +379,10 @@ func TestGooseRefusalReasonLandsInThePerLaunchStderrFile(t *testing.T) {
 	gooseExecutable = func() (string, error) { return bin, nil }
 	t.Cleanup(func() { gooseExecutable = old })
 
-	ctx := gooseContext(t, headless) // approve on a headless role
+	// auto with a deny list on an interactive role: the host-placement stub.
+	ctx := gooseContext(t, func(rt *api.Runtime) {
+		rt.Goose = &api.GooseRuntime{Posture: api.GoosePostureAuto, ToolsDeny: []string{"fetch"}}
+	})
 	res, err := (&Goose{}).Prepare(ctx)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -385,7 +397,7 @@ func TestGooseRefusalReasonLandsInThePerLaunchStderrFile(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("stderr files = %v, want exactly one", files)
 	}
-	if got := string(readFile(t, files[0])); got != "marvel: goose launch refused: approve-headless\n" {
+	if got := string(readFile(t, files[0])); got != "marvel: goose launch refused: auto-with-deny-list\n" {
 		t.Errorf("stderr file = %q", got)
 	}
 }
@@ -397,4 +409,180 @@ func readFile(t *testing.T, path string) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return b
+}
+
+// Until the stream parser and the watchdog land, every headless goose launch
+// gets the stub with the build-phase slug, whatever its posture and placement,
+// and goose never starts. Interactive goose is unaffected.
+func TestGooseBuildPhaseRefusesEveryHeadlessLaunch(t *testing.T) {
+	t.Parallel()
+	for _, posture := range []string{api.GoosePostureApprove, api.GoosePostureSmartApprove, api.GoosePostureAuto, ""} {
+		for _, placement := range []api.Placement{api.PlacementLocalhost, api.PlacementContainer} {
+			t.Run(posture+"/"+string(placement), func(t *testing.T) {
+				t.Parallel()
+				ctx := gooseContext(t, func(rt *api.Runtime) {
+					headless(rt)
+					rt.Goose.Posture = posture
+				})
+				ctx.Placement = placement
+				res, err := (&Goose{}).Prepare(ctx)
+				if err != nil {
+					t.Fatalf("Prepare: %v", err)
+				}
+				if !strings.Contains(res.Command, "stream-not-built") {
+					t.Errorf("command %q does not name stream-not-built", res.Command)
+				}
+				if strings.Contains(res.Command, "goose 'run'") {
+					t.Errorf("command %q starts goose", res.Command)
+				}
+			})
+		}
+	}
+}
+
+func TestGooseBuildPhaseLeavesInteractiveAlone(t *testing.T) {
+	t.Parallel()
+	res, err := (&Goose{}).Prepare(gooseContext(t, nil))
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if strings.Contains(res.Command, "stream-not-built") || strings.Contains(res.Command, "goose-refuse") {
+		t.Errorf("an interactive launch was refused: %q", res.Command)
+	}
+}
+
+// On a container placement the whole command runs in the image, where the marvel
+// binary is not, so the stub there is a plain sh line that names no marvel path
+// and ends in exit 78. The seam points the host stub at a sentinel path so a leak
+// of it into the container command shows.
+func TestGooseBuildPhaseStubInAContainerNeedsNoMarvelBinary(t *testing.T) {
+	old := gooseExecutable
+	gooseExecutable = func() (string, error) { return "/MARVEL-BIN/marvel", nil }
+	t.Cleanup(func() { gooseExecutable = old })
+
+	ctx := gooseContext(t, headless)
+	ctx.Placement = api.PlacementContainer
+	res, err := (&Goose{}).Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	for _, bad := range []string{"MARVEL-BIN", "goose-refuse", ctx.HarnessHomePath} {
+		if strings.Contains(res.Command, bad) {
+			t.Errorf("container stub %q names %q", res.Command, bad)
+		}
+	}
+	if !strings.HasPrefix(res.Command, "/bin/sh -c ") || !strings.HasSuffix(res.Command, "exit 78'") {
+		t.Errorf("container stub %q is not a plain sh line ending exit 78", res.Command)
+	}
+	// And it does what it says: run it.
+	out, runErr := exec.Command("sh", "-c", res.Command).CombinedOutput()
+	var ee *exec.ExitError
+	if !errors.As(runErr, &ee) || ee.ExitCode() != 78 {
+		t.Fatalf("exit = %v, want 78", runErr)
+	}
+	if string(out) != "marvel: goose launch refused: stream-not-built\n" {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func writeFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadGooseStderrTailReadsOnlyTheEnd(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "stderr.log")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A file far larger than any read would be if it were read whole: sparse, so
+	// a read of the whole file would take a gigabyte of memory.
+	if err := f.Truncate(1 << 30); err != nil {
+		t.Skipf("no sparse files here: %v", err)
+	}
+	tail := "first partial line fragment\nsecond line\nlast line\n"
+	if _, err := f.WriteAt([]byte(tail), 1<<30-int64(len(tail))); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, n, err := readGooseStderrTail(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("redacted %d, want 0", n)
+	}
+	if len(got) > gooseStderrTailBytes {
+		t.Errorf("tail is %d bytes, over the %d cap", len(got), gooseStderrTailBytes)
+	}
+	if !strings.HasSuffix(got, "second line\nlast line") {
+		t.Errorf("tail = %q, does not end with the last lines", got)
+	}
+}
+
+func TestReadGooseStderrTailSmallFileIsKeptWhole(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "stderr.log")
+	writeFile(t, path, []byte("marvel: goose launch refused: no-posture\n"))
+	got, _, err := readGooseStderrTail(path)
+	if err != nil || got != "marvel: goose launch refused: no-posture" {
+		t.Errorf("got %q, %v", got, err)
+	}
+}
+
+// Every shape is built from parts at run time, from characters that are not a
+// credential, so no scanner reads this file as holding one.
+func TestReadGooseStderrTailRedactsCredentialShapes(t *testing.T) {
+	t.Parallel()
+	shapes := map[string]string{
+		"aws access key":    "AKIA" + strings.Repeat("Q", 16),
+		"sk key":            "sk-" + strings.Repeat("z", 30),
+		"github token":      "ghp_" + strings.Repeat("a", 30),
+		"github fine token": "github_pat_" + strings.Repeat("b", 30),
+		"slack token":       "xoxb-" + strings.Repeat("1", 12),
+		"bearer":            "Authorization: Bearer " + strings.Repeat("c", 24),
+		"key assignment":    "api_key=" + strings.Repeat("d", 12),
+		"private key":       "-----BEGIN " + "PRIVATE KEY-----\n" + strings.Repeat("e", 20) + "\n-----END " + "PRIVATE KEY-----",
+	}
+	for name, shape := range shapes {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "stderr.log")
+			writeFile(t, path, []byte("before\n"+shape+"\nafter\n"))
+			got, n, err := readGooseStderrTail(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n == 0 || !strings.Contains(got, "[redacted]") {
+				t.Errorf("nothing redacted in %q", got)
+			}
+			secret := strings.Repeat("c", 24)
+			if name != "bearer" {
+				fields := strings.FieldsFunc(shape, func(r rune) bool { return r == '=' || r == '\n' })
+				secret = fields[len(fields)-1]
+				if name == "private key" {
+					secret = strings.Repeat("e", 20)
+				}
+			}
+			if strings.Contains(got, secret) || !strings.Contains(got, "before") || !strings.Contains(got, "after") {
+				t.Errorf("tail = %q", got)
+			}
+		})
+	}
+}
+
+func TestReadGooseStderrTailRefusesANonRegularFile(t *testing.T) {
+	t.Parallel()
+	if _, _, err := readGooseStderrTail(t.TempDir()); err == nil {
+		t.Error("a directory was read")
+	}
+	if _, _, err := readGooseStderrTail(filepath.Join(t.TempDir(), "absent")); err == nil {
+		t.Error("an absent file was read")
+	}
 }

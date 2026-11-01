@@ -21,10 +21,16 @@ const gooseHomeEnv = "GOOSE_PATH_ROOT"
 // its wiring are a later change, and nothing here reads a stream.
 //
 // Interactive: goose launches plain, with the mode, the private home and the
-// seeded files. Headless: only `auto` inside a sandbox launches, as
-// `goose run -q -t <prompt>`; `approve` and `smart_approve` are refused because
-// both fail there (v1.1 L5), and `auto` with no sandbox is refused.
-type Goose struct{}
+// seeded files. Headless: every launch is refused for now (goose_buildphase.go),
+// because nothing yet reads the stream or bounds the run. The headless posture
+// rules and the headless launch line are written and tested behind that refusal:
+// `auto` inside a sandbox will launch `goose run -q -t <prompt>`, and `approve`
+// and `smart_approve` stay refused because both fail there (v1.1 L5).
+type Goose struct {
+	// headlessBuilt lifts the build-phase refusal of headless launches. Only
+	// tests set it; see goose_buildphase.go.
+	headlessBuilt bool
+}
 
 func (g *Goose) Name() string { return "goose" }
 
@@ -71,8 +77,12 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		stderrFile = filepath.Join(ctx.HarnessHomePath, gooseStderrName())
 	}
 
+	// Build phase, before the posture rules: see goose_buildphase.go.
+	if reason := gooseBuildPhaseRefusal(headless, g.headlessBuilt); reason != "" {
+		return gooseRefusalResult(ctx, env, stderrFile, reason)
+	}
 	if reason := gooseRefusal(ctx); reason != "" {
-		return gooseRefusalResult(env, stderrFile, reason)
+		return gooseRefusalResult(ctx, env, stderrFile, reason)
 	}
 
 	posture := goosePosture(ctx)
@@ -123,11 +133,20 @@ func withStderr(cmd, file string) string {
 // gooseRefusalResult is the launch of a refused goose seat: the exit-78 stub,
 // which never runs goose. A Prepare error would not do, because the manager
 // falls back to the raw command on one and that starts goose at whatever
-// GOOSE_MODE the host has (v1 section 4). The stub's stderr goes to the same
-// per-launch file a goose failure would, so the reap finds the reason in one
-// place. The stub is a hidden subcommand of this binary, found the way the
-// codex hook finds it.
-func gooseRefusalResult(env map[string]string, stderrFile, reason string) (*LaunchResult, error) {
+// GOOSE_MODE the host has (v1 section 4).
+//
+// On a host placement the stub is a hidden subcommand of this binary, found the
+// way the codex hook finds it, and its stderr goes to the same per-launch file a
+// goose failure would, so the reap finds the reason in one place. On a container
+// placement the manager wraps the whole command in the container, and the marvel
+// binary is not in the image, so the stub there is a plain /bin/sh line that
+// names no marvel path; its line goes to the container's stderr, and whether it
+// reaches the per-launch file from inside a container is untested.
+func gooseRefusalResult(ctx *LaunchContext, env map[string]string, stderrFile, reason string) (*LaunchResult, error) {
+	if ctx.Placement == api.PlacementContainer {
+		script := fmt.Sprintf("printf 'marvel: goose launch refused: %%s\\n' %s >&2; exit 78", shellQuote(reason))
+		return &LaunchResult{Command: "/bin/sh -c " + shellQuote(script), Env: env}, nil
+	}
 	exe, err := gooseExecutable()
 	if err != nil {
 		return nil, fmt.Errorf("resolve marvel binary for the goose refusal stub: %w", err)
