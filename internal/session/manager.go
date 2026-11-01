@@ -112,6 +112,9 @@ type Manager struct {
 	// home is made in it, so a test can remove the base in that window. Only
 	// tests set it.
 	baseChecked func(base string)
+	// freeMemory replaces the platform reading of the host's free memory in
+	// the spawn event, so a test sets a known value or none. Only tests set it.
+	freeMemory func() (int, bool)
 	// harnessChain is the ordered list of bases the daemon would choose from,
 	// as defaultHarnessHomeDir saw it at start: the durable base, the old
 	// per-layout temp base, then the per-user temp fallback.
@@ -1067,7 +1070,7 @@ func (m *Manager) announceSpawn(sess *api.Session, paneID string, fp runtime.Fir
 		Team:      sess.Team,
 		Role:      sess.Role,
 		Session:   sess.Key(),
-		Message:   fmt.Sprintf("pane %s", paneID),
+		Message:   fmt.Sprintf("pane %s", paneID) + m.hostMemoryNote(),
 	})
 	m.emitFirstPrompt(sess, fp)
 }

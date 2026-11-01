@@ -64,6 +64,12 @@ type Controller struct {
 	// was last emitted, so it repeats once per window (shift_handoff.go).
 	// In memory, deliberately: a restart repeats it at once. Guarded by mu.
 	missingEmitted map[string]time.Time
+	// stuckEmitted is the RequestedAt of the request whose stuck event was
+	// emitted, per session key, so each request is reported once. It is in
+	// memory like missingEmitted: a restart may report a still-stuck request
+	// once more, which is the point of a report that can be missed. Guarded
+	// by mu.
+	stuckEmitted map[string]time.Time
 	// publishRecords is what the controller remembers, in memory, about
 	// publishing each escalated session's request to the supervisor
 	// (shift_handoff_deliver.go). The count and time are durable on the request.
@@ -2091,6 +2097,7 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 			delete(live.ShiftRequests, r)
 			c.handoffProbes.forget(req.Session)
 			delete(c.missingEmitted, req.Session)
+			delete(c.stuckEmitted, req.Session)
 			delete(c.publishRecords, req.Session)
 		}
 		return nil
