@@ -13,7 +13,7 @@ import (
 )
 
 // The alpha channel and the stable channel are built by two different
-// pipelines, and both end by writing a formula into the same tap. A formula
+// pipelines, and both end with a formula in the same tap. A formula
 // file written by both is overwritten by whichever runs last, so a host that
 // installed one channel is moved to the other by `brew upgrade`. These tests
 // hold the files apart, and hold the stable build tool to one exact version.
@@ -80,51 +80,33 @@ func formulaFile(cfg goreleaserConfig, name string) (string, error) {
 	return name + ".rb", nil
 }
 
-var (
-	alphaCopy = regexp.MustCompile(`cp\s+\S+\s+tap-repo/Formula/(\S+)`)
-	alphaAdd  = regexp.MustCompile(`git add\s+Formula/(\S+)`)
-)
+// alphaFormula is the tap file the alpha channel's formula lands in. The tap's
+// own update-formulas workflow writes it; this repo's ci.yml does not.
+const alphaFormula = "marvel.rb"
 
-// alphaTapStep returns the ci.yml step that writes the alpha formula into the
-// tap, and the file it copies and the file it stages.
-func alphaTapStep(t *testing.T) (step ciJobStep, copied, staged string) {
+// noAlphaTapStep fails when a ci.yml step writes into the tap checkout. The
+// alpha formula reaches the tap only through the tap's own workflow, so its
+// commit is the signed record; a second writer here would add an unsigned one.
+func noAlphaTapStep(t *testing.T) {
 	t.Helper()
 	jobs, err := ciJobs(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var found []ciJobStep
-	for _, job := range jobs {
+	for name, job := range jobs {
 		for _, s := range job.Steps {
 			if strings.Contains(s.Run, "tap-repo/Formula/") {
-				found = append(found, s)
+				t.Errorf("ci.yml job %s step %q writes into tap-repo/Formula; the tap's own workflow is the only alpha writer", name, s.Name)
 			}
 		}
 	}
-	if len(found) != 1 {
-		t.Fatalf("ci.yml has %d steps that write into tap-repo/Formula, want exactly one", len(found))
-	}
-	step = found[0]
-	if m := alphaCopy.FindStringSubmatch(step.Run); m != nil {
-		copied = m[1]
-	}
-	if m := alphaAdd.FindStringSubmatch(step.Run); m != nil {
-		staged = m[1]
-	}
-	if copied == "" || staged == "" {
-		t.Fatalf("the alpha tap step does not both copy (%q) and stage (%q) a Formula file", copied, staged)
-	}
-	return step, copied, staged
 }
 
 func TestStableAndAlphaFormulasAreDifferentFiles(t *testing.T) {
 	t.Parallel()
 
 	cfg := readGoreleaser(t)
-	_, copied, staged := alphaTapStep(t)
-	if copied != staged {
-		t.Errorf("the alpha step copies %s but stages %s", copied, staged)
-	}
+	noAlphaTapStep(t)
 	if len(cfg.Brews) == 0 {
 		t.Fatal(".goreleaser.yml has no brews entry")
 	}
@@ -138,8 +120,8 @@ func TestStableAndAlphaFormulasAreDifferentFiles(t *testing.T) {
 		if b.Directory != "" && b.Directory != "Formula" {
 			t.Errorf("brews[%d] writes into directory %q, the tap keeps formulas in Formula", i, b.Directory)
 		}
-		if file == copied {
-			t.Errorf("brews[%d] writes Formula/%s, the file the alpha job writes (ci.yml)", i, file)
+		if file == alphaFormula {
+			t.Errorf("brews[%d] writes Formula/%s, the file the alpha channel writes", i, file)
 		}
 		if b.Name != "marvel-rc" {
 			continue
