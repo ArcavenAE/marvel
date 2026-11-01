@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -112,28 +113,38 @@ func (refusingUpdates) UpdateStream(context.Context, jetstream.StreamConfig) (je
 	return nil, errors.New("update refused for the test")
 }
 
+// checkLoop is a supervisor checked in a loop by logOnEveryCheck.
+type checkLoop struct {
+	done atomic.Int64
+}
+
 // logOnEveryCheck makes the supervisor log from a second goroutine for as long
 // as the test runs: it fails the write probe and runs the structural check in
-// a loop. A test that reads the package log while this runs races on any sink
-// that is not locked, on every run and not only when a tick happens to land in
-// the read window.
-func logOnEveryCheck(t *testing.T, s *Supervisor) {
+// a loop, and returns once the first check has finished. A test that reads the
+// package log then calls readDuringChecks around the read, which keeps the
+// loop writing while the read happens. The log's own mutex orders a write
+// before any later log call by the test, so a plain buffer is caught only by a
+// write the test has not synchronized with; the checks after the one the test
+// last observed are such writes.
+func logOnEveryCheck(t *testing.T, s *Supervisor) *checkLoop {
 	t.Helper()
 	s.mu.Lock()
 	s.writeProbeFn = func(context.Context) (WriteReading, error) {
 		return WriteReading{}, errors.New("probe unreachable for the test")
 	}
 	s.mu.Unlock()
+	c := &checkLoop{}
 	stop, done := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(done)
 		for {
+			s.checkStructure(context.Background())
+			c.done.Add(1)
 			select {
 			case <-stop:
 				return
 			default:
-				s.checkStructure(context.Background())
-				time.Sleep(time.Millisecond)
+				time.Sleep(100 * time.Microsecond)
 			}
 		}
 	}()
@@ -141,6 +152,39 @@ func logOnEveryCheck(t *testing.T, s *Supervisor) {
 		close(stop)
 		<-done
 	})
+	waitChecks(t, c, 1)
+	return c
+}
+
+// waitChecks waits until the loop has finished n checks in all.
+func waitChecks(t *testing.T, c *checkLoop, n int64) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for c.done.Load() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("the check loop finished %d checks, want %d", c.done.Load(), n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// readDuringChecks runs read again and again until the loop has finished two
+// more checks, so the loop writes the log while read runs. The last read is
+// the one the caller keeps.
+func readDuringChecks(t *testing.T, c *checkLoop, read func()) {
+	t.Helper()
+	want := c.done.Load() + 2
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		read()
+		if c.done.Load() >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the check loop finished %d checks, want %d", c.done.Load(), want)
+		}
+		time.Sleep(50 * time.Microsecond)
+	}
 }
 
 // TestProvisionKeepsOldMaxAgeWhenTheUpdateIsRefused provisions a broker whose
@@ -173,11 +217,12 @@ func TestProvisionKeepsOldMaxAgeWhenTheUpdateIsRefused(t *testing.T) {
 	var logged lockedBuffer
 	log.SetOutput(&logged)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
-	logOnEveryCheck(t, s)
+	checks := logOnEveryCheck(t, s)
 	if _, err := provisionObjects(ctx, refusingUpdates{js}); err != nil {
 		t.Fatalf("provisioning returned %v for a refused max_age update, want success", err)
 	}
-	line := logged.String()
+	var line string
+	readDuringChecks(t, checks, func() { line = logged.String() })
 	for _, want := range []string{InboxStream, "24h0m0s", "168h0m0s", "not raised", "update refused for the test"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("log %q lacks %q", line, want)

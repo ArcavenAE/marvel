@@ -428,9 +428,11 @@ func TestAdoptedBrokerThatCannotBeSignalledIsStillAdopted(t *testing.T) {
 	if st := s.Status(); !st.Adopted || !st.Ready || st.PID != pid {
 		t.Errorf("status = %+v, want adopted, ready, pid %d", st, pid)
 	}
-	logOnEveryCheck(t, s)
-	if !strings.Contains(logs.String(), "reload adopted nats-server pid") {
-		t.Errorf("log = %q, want the failed reload reported", logs.String())
+	checks := logOnEveryCheck(t, s)
+	var got string
+	readDuringChecks(t, checks, func() { got = logs.String() })
+	if !strings.Contains(got, "reload adopted nats-server pid") {
+		t.Errorf("log = %q, want the failed reload reported", got)
 	}
 	started := eventsOfKind(ring, events.KindBusStarted)
 	if len(started) != 1 || !strings.Contains(started[0].Message, "adopted") {
