@@ -1,6 +1,6 @@
 # Probe brief: what a first-class goose adapter needs, and whether a goose seat can work in a team
 
-**Status:** OPEN 2026-10-30. Opened by the operator, ruling I-51 ("goose: yes"), relayed by arcaven-supervisor (ask I-51:goose-probe, bus message 01M66V1S1GG63W5QH36J7DDCQ5). The operator's words: "how to we promote getting goose as an agent with a first class adaptor, and in the teams, working?"
+**Status:** OPEN 2026-10-30. Opened by the operator, ruling I-51 ("goose: yes"), relayed by arcaven-supervisor (ask I-51:goose-probe, bus message 01M66V1S1GG63W5QH36J7DDCQ5). The operator's words: "how to we promote getting goose as an agent with a first class adaptor, and in the teams, working?" CARRIED FORWARD 2026-11-01: arm 1 closes Q1's chunked-message question (at v1.57.0, one event per chunk, same id). Arm 2 and P6 stay open, and the finding is due after arm 2. The node for this brief is `question-goose-adapter`.
 
 Finding: to be minted with `kos id finding goose-adapter` when the finding is written, never hand-allocated.
 

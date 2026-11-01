@@ -1,0 +1,57 @@
+id: question-goose-adapter
+type: question
+confidence: frontier
+title: "What does a first-class goose adapter need, and can a goose seat work in a team?"
+tags:
+  - marvel
+  - goose
+  - adapter
+  - runtime
+content: |
+  The operator asked how to get goose in as an agent with a first-class adapter
+  and working in teams. The probe brief is `_kos/probes/brief-goose-adapter.md`;
+  the designs are `docs/design/goose-adapter-v1.md` and `-v1.1.md` (merged,
+  marvel#1158). Nothing of goose ran under marvel when this node was written.
+
+  SETTLED IN THE DESIGNS: goose is headless only in v1, stream-capable by design,
+  bound by a private `GOOSE_PATH_ROOT`, and posture-explicit. Headless `approve`
+  and `smart_approve` fail in goose, so they are posture faults. `auto` is allowed
+  headless only where a sandbox is in force, meaning a container placement or a
+  sandbox-exec profile. No launch resumes a session. What a tool run means comes
+  from tool results only, never from the exit code or the model's text. A seat's
+  stream needs a clock marvel holds, because goose bounds none.
+
+  RULED 2026-11-01: a typed `runtime.goose` table with `posture` (approve,
+  smart_approve or auto; absent means the seat refuses to launch), `tools_allow`,
+  `tools_deny` and `extensions`. An unknown key inside the table is refused; a
+  table on a runtime that is not goose draws a note at apply.
+
+  STATE: the adapter core is marvel#1172, a draft, not merged. Interactive goose
+  launches; every headless launch is refused with the exit-78 stub and the slug
+  `stream-not-built` until the stream parser and the watchdog wrapper land. The
+  parser waits on recorded stream fixtures, and the exact shape of the stream
+  lines has not been recorded. The stderr size cap is met at read and the reap's
+  call into a `stderr_tail` run-record field belongs to the stream change.
+
+  OPEN: the probe's second arm and its P6 (per-request usage against the
+  sessions-table level columns); Bedrock streaming, `cost_usd` and the proxy path
+  through a single allowed sandbox port; whether goose's `never_allow` holds under
+  `auto` (untested, so the adapter does not rely on it); the stdio extension
+  timeout against a 120 s bus wait (by source, not measured); and the keyring
+  under a private root, where v1 keeps the operator's keyring and a broker-minted
+  credential is the future option (operator ruling 2026-10-10).
+edges:
+  - target: elem-runtime-adapter-framework
+    type: derives
+    note: "a goose adapter is a new adapter on the framework"
+  - target: question-model-runtime-posture
+    type: supports
+    note: "the first live runs used a local model server; the ceiling table is seeded from one measurement"
+  - target: question-credential-custody-beyond-nkey
+    type: supports
+    note: "v1 keeps the operator keyring and projects no key; a broker-minted credential is the future option"
+provenance:
+  created_by: agent
+  session: harvest-2026-11-01
+  created_at: "2026-11-01"
+  extracted_from: "_kos/probes/brief-goose-adapter.md, docs/design/goose-adapter-v1.md and v1.1, marvel#1172"

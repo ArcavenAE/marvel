@@ -196,6 +196,23 @@ content: |
   reloads the shared broker, and deleting a team reloads it again. A probe
   brief scopes its blast radius by the daemon's team set, not by the team it
   names.
+
+  HARVEST 2026-11-01 (finding-marvel-7i6o). One HOME holds one marvel
+  cluster. Two daemons under two HOMEs still separate (measured at 3188a08:
+  both start, each answers on its own socket, a third start under a live
+  HOME exits nonzero). Two daemons under one HOME, which is the shape real
+  seats need because it keeps the harness login, do not: the four per-daemon
+  flags (`--socket`, `--state-bolt`, `--log-file`, `--pidfile`) and
+  `MARVEL_TMUX_SOCKET` place exactly what they name, and everything else
+  daemon-owned derives from the HOME layout, so both daemons share it. On
+  the bus that sharing is destructive: measured with two clusters in one
+  config, the second daemon found a pidfile naming the first's broker,
+  stopped it, and started its own on the same store directory, and the
+  first restarted from the second's rendered configuration. The pane steps
+  of the trial (adopt check and the later steps) did not run; they wait on an
+  operator ruling about the sandbox profile. The probe is
+  `_kos/probes/brief-multiple-clusters-per-host.md`.
+
 edges:
   - target: elem-data-directory-permissions
     type: derives

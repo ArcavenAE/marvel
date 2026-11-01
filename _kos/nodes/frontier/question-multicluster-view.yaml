@@ -43,6 +43,24 @@ content: |
      qualified-key grammar, or separately without gating it (panel 3-3).
   3. Whether seats may ever read other clusters; the panel's 4-1 view is
      not until a read-only daemon scope exists, and then by its own ruling.
+
+  BUILD PLAN 2026-10-21 (docs/design/multicluster-read-view-plan.md). A second
+  design panel turned the 2026-10-10 agreement into a link-by-link build
+  plan, and the operator ruled its open requests on 2026-10-21. R1: during a
+  fan-out each cluster's dial offers exactly one key, the identity in that
+  cluster's entry or marvel's own client key, and never the SSH agent or the
+  user's SSH directory keys; a cluster with neither loadable gets
+  `auth_refused` before any dial. R2: two entries merge only on the same
+  socket inode, or a strict-verified host fingerprint (plus the socket path
+  for `ssh://`) with a matching pid and start time. R3: the placeholder for an
+  unprintable cell is U+FFFD. R4: exit 10 for `starting` applies only under
+  `--cluster` with two or more clusters or `--all-clusters`; a single named
+  cluster keeps today's exit. On marvel#761: the timer is set only in the
+  fan-out (10 s per cluster, in #830), and one byte cap covers every reply as
+  a trial, with the per-fan-out and per-verb caps kept as the next options.
+  The cap's value is not named and its basis is open with the operator.
+  Whether the three OPEN items above are now answered is not read here.
+
 edges:
   - target: question-multi-host
     type: derives

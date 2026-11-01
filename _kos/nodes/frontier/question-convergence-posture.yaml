@@ -182,6 +182,16 @@ content: |
   hold-at-the-start-line fix (aae-orc-rwiw) this node's posture model
   describes: a daemon start rehydrates desired state and holds, and an
   explicit apply or go-line converges.
+
+  STATE 2026-11-01 (F3 and its neighbours). The dry-run surface F3 asked for
+  exists: `marvel plan [workspace/team]` previews the convergence delta
+  without spawning, and `marvel work --prune` previews the teams a manifest
+  no longer names before it removes them (marvel#1124, marvel#1126,
+  marvel#1130). A review reported two gaps, neither re-measured here: no
+  offline manifest validation, and no dry run for removing a role from a
+  manifest (the prune preview covers whole teams). The ticket is
+  aae-orc-qawkf.
+
 edges:
   - target: question-marvel-transaction-log
     type: derives

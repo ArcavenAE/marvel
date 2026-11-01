@@ -1,6 +1,6 @@
 # Operator steps as marvel runs: a one-off script on a full tty, followed by a supervisor
 
-**Status: idea. Pre-hypothesis. No design, no ticket and no frontier node.**
+**Status: idea. Pre-hypothesis. No design and no ticket. It became the frontier question `question-operator-steps-as-runs` on 2026-11-01.**
 
 Captured: 2026-10-27
 Source: operator, relayed by director.
@@ -103,3 +103,9 @@ and which improvements matter most.
 - Who may approve: a supervisor session, a person, or either according to the
   step?
 - What is the smallest first case that would show whether the shape works?
+
+## Became
+
+2026-11-01. The study of this idea is finding-marvel-g6l6. Its answer is held in
+the frontier question `question-operator-steps-as-runs`: reading a run works
+now, and answering a prompt needs an authority check marvel does not have yet.
