@@ -12,7 +12,12 @@ package runtime
 // interactive goose is unaffected.
 //
 // To remove it: delete this file, the headlessBuilt field of Goose and its check
-// in Prepare, and the tests named TestGooseBuildPhase*.
+// in Prepare, and the tests named TestGooseBuildPhase*. Before it goes, decide
+// what a headless role with an empty prompt gets: Prepare returns ErrNoPrompt
+// for it, and the manager answers any Prepare error with the raw command, so
+// without this refusal that role launches goose at the host's GOOSE_MODE. The
+// production-setting test of that case (TestGooseHeadlessEmptyPromptIsRefused)
+// fails the day the check is removed, on purpose.
 
 // gooseRefuseStreamNotBuilt is the slug of the build-phase refusal.
 const gooseRefuseStreamNotBuilt = "stream-not-built"

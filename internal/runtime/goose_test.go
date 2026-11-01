@@ -586,3 +586,59 @@ func TestReadGooseStderrTailRefusesANonRegularFile(t *testing.T) {
 		t.Error("an absent file was read")
 	}
 }
+
+// The production setting is `&Goose{}`. A Prepare error is answered by the
+// manager with the raw command, so a headless role with an empty prompt must get
+// the stub and not ErrNoPrompt (the manager's fallback would start goose at the
+// host's GOOSE_MODE, with none of the seeded files).
+func TestGooseHeadlessEmptyPromptIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, placement := range []api.Placement{api.PlacementLocalhost, api.PlacementContainer, ""} {
+		t.Run(string(placement), func(t *testing.T) {
+			t.Parallel()
+			ctx := gooseContext(t, func(rt *api.Runtime) { rt.Mode = api.RuntimeModeHeadless })
+			ctx.Placement = placement
+			res, err := (&Goose{}).Prepare(ctx)
+			if err != nil {
+				t.Fatalf("Prepare returned %v: the manager would launch the raw command", err)
+			}
+			if !strings.Contains(res.Command, "stream-not-built") {
+				t.Errorf("command %q does not name stream-not-built", res.Command)
+			}
+			if strings.Contains(res.Command, "goose 'run'") {
+				t.Errorf("command %q starts goose", res.Command)
+			}
+		})
+	}
+}
+
+// When the marvel binary cannot be found the stub is the plain sh line, with the
+// same reason and the same per-launch file, and Prepare still returns no error.
+func TestGooseRefusalWithoutAMarvelBinaryUsesTheShellStub(t *testing.T) {
+	old := gooseExecutable
+	gooseExecutable = func() (string, error) { return "", errors.New("no executable") }
+	t.Cleanup(func() { gooseExecutable = old })
+
+	ctx := gooseContext(t, func(rt *api.Runtime) {
+		rt.Goose = &api.GooseRuntime{Posture: api.GoosePostureAuto, ToolsDeny: []string{"fetch"}}
+	})
+	res, err := (&Goose{}).Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare returned %v: the manager would launch the raw command", err)
+	}
+	if !strings.HasPrefix(res.Command, "/bin/sh -c ") || strings.Contains(res.Command, "goose-refuse") {
+		t.Fatalf("command %q is not the plain sh stub", res.Command)
+	}
+	runErr := exec.Command("sh", "-c", res.Command).Run()
+	var ee *exec.ExitError
+	if !errors.As(runErr, &ee) || ee.ExitCode() != 78 {
+		t.Fatalf("exit = %v, want 78", runErr)
+	}
+	files, _ := filepath.Glob(filepath.Join(ctx.HarnessHomePath, "stderr-*.log"))
+	if len(files) != 1 {
+		t.Fatalf("stderr files = %v, want exactly one", files)
+	}
+	if got := string(readFile(t, files[0])); got != "marvel: goose launch refused: auto-with-deny-list\n" {
+		t.Errorf("stderr file = %q", got)
+	}
+}

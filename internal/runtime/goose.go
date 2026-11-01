@@ -67,9 +67,6 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		return nil, ErrNoCommand
 	}
 	headless := ctx.Session.Runtime.Mode == api.RuntimeModeHeadless
-	if headless && ctx.Session.Runtime.Prompt == "" {
-		return nil, ErrNoPrompt
-	}
 
 	env := baseEnv(ctx)
 	stderrFile := ""
@@ -77,12 +74,18 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		stderrFile = filepath.Join(ctx.HarnessHomePath, gooseStderrName())
 	}
 
-	// Build phase, before the posture rules: see goose_buildphase.go.
+	// Build phase, before everything else that can refuse: a Prepare error is
+	// answered by the manager with the raw command, so an error return here
+	// would launch goose at the host's GOOSE_MODE. That includes the empty
+	// prompt check below. See goose_buildphase.go.
 	if reason := gooseBuildPhaseRefusal(headless, g.headlessBuilt); reason != "" {
-		return gooseRefusalResult(ctx, env, stderrFile, reason)
+		return gooseRefusalResult(ctx, env, stderrFile, reason), nil
+	}
+	if headless && ctx.Session.Runtime.Prompt == "" {
+		return nil, ErrNoPrompt
 	}
 	if reason := gooseRefusal(ctx); reason != "" {
-		return gooseRefusalResult(ctx, env, stderrFile, reason)
+		return gooseRefusalResult(ctx, env, stderrFile, reason), nil
 	}
 
 	posture := goosePosture(ctx)
@@ -131,28 +134,39 @@ func withStderr(cmd, file string) string {
 }
 
 // gooseRefusalResult is the launch of a refused goose seat: the exit-78 stub,
-// which never runs goose. A Prepare error would not do, because the manager
-// falls back to the raw command on one and that starts goose at whatever
-// GOOSE_MODE the host has (v1 section 4).
+// which never runs goose. It returns no error, because a Prepare error would not
+// do: the manager falls back to the raw command on one, and that starts goose at
+// whatever GOOSE_MODE the host has (v1 section 4).
 //
 // On a host placement the stub is a hidden subcommand of this binary, found the
 // way the codex hook finds it, and its stderr goes to the same per-launch file a
-// goose failure would, so the reap finds the reason in one place. On a container
-// placement the manager wraps the whole command in the container, and the marvel
-// binary is not in the image, so the stub there is a plain /bin/sh line that
-// names no marvel path; its line goes to the container's stderr, and whether it
-// reaches the per-launch file from inside a container is untested.
-func gooseRefusalResult(ctx *LaunchContext, env map[string]string, stderrFile, reason string) (*LaunchResult, error) {
+// goose failure would, so the reap finds the reason in one place. When the binary
+// cannot be found, the stub is the plain /bin/sh line below, with the same
+// reason and the same file.
+//
+// On a container placement the manager wraps the whole command in the container,
+// and the marvel binary is not in the image, so the stub there is the plain
+// /bin/sh line and names no marvel path. Its line goes to the container's
+// stderr, and whether it reaches the per-launch file from inside a container is
+// untested.
+func gooseRefusalResult(ctx *LaunchContext, env map[string]string, stderrFile, reason string) *LaunchResult {
 	if ctx.Placement == api.PlacementContainer {
-		script := fmt.Sprintf("printf 'marvel: goose launch refused: %%s\\n' %s >&2; exit 78", shellQuote(reason))
-		return &LaunchResult{Command: "/bin/sh -c " + shellQuote(script), Env: env}, nil
+		return &LaunchResult{Command: gooseShellStub(reason), Env: env}
 	}
 	exe, err := gooseExecutable()
 	if err != nil {
-		return nil, fmt.Errorf("resolve marvel binary for the goose refusal stub: %w", err)
+		log.Printf("session %s: goose refusal stub: marvel binary not found, using sh: %v", ctx.Session.Key(), err)
+		return &LaunchResult{Command: withStderr(gooseShellStub(reason), stderrFile), Env: env}
 	}
 	cmd := buildCommand(shellQuote(exe), []string{"goose-refuse", reason})
-	return &LaunchResult{Command: withStderr(cmd, stderrFile), Env: env}, nil
+	return &LaunchResult{Command: withStderr(cmd, stderrFile), Env: env}
+}
+
+// gooseShellStub is the refusal stub that needs no marvel binary: it prints the
+// reason the way the subcommand does and exits 78.
+func gooseShellStub(reason string) string {
+	script := fmt.Sprintf("printf 'marvel: goose launch refused: %%s\\n' %s >&2; exit 78", shellQuote(reason))
+	return "/bin/sh -c " + shellQuote(script)
 }
 
 func init() {
