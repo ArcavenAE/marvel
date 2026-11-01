@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/daemon"
 )
@@ -116,6 +117,7 @@ func TestVersionReportReadsTheSimulatorOnPath(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", dir+string(os.PathListSeparator)+"/usr/bin:/bin")
+			setVersionProbeTimeout(t, generousProbeTimeout)
 
 			var out bytes.Buffer
 			versionReport(&out, daemon.Build{Version: "0.1.0", Channel: "stable"}, func() (*daemon.BuildInfo, error) {
@@ -137,4 +139,53 @@ func TestVersionReportReadsTheSimulatorOnPath(t *testing.T) {
 			}
 		})
 	}
+}
+
+// generousProbeTimeout is the bound the tests that run a real script give the
+// probe. The 2 second production bound failed under the full race suite (the
+// script took longer than that to answer), so a test's result must not depend on
+// it.
+const generousProbeTimeout = 30 * time.Second
+
+// setVersionProbeTimeout sets the bound the commands pass to the version probes
+// for one test. It is process state, so a test that calls it is not parallel.
+func setVersionProbeTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := versionProbeTimeout
+	versionProbeTimeout = d
+	t.Cleanup(func() { versionProbeTimeout = prev })
+}
+
+// The probe gives the program the timeout it is passed, and no other. Neither
+// case reads a clock: one needs a bound longer than the 2s default to succeed,
+// the other needs a program that only a kill can end.
+func TestRunSimulatorVersionHonorsItsTimeout(t *testing.T) {
+	script := func(t *testing.T, body string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "marvel-simulator")
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil { //nolint:gosec // a test script must be executable
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	t.Run("a bound longer than the default lets a slow program answer", func(t *testing.T) {
+		// It answers after 3s, past the 2s default, so a probe that ignored its
+		// parameter and used the default would have killed it.
+		p := script(t, "sleep 3\necho 'marvel-simulator 0.1.0 (stable)'")
+		got, err := runSimulatorVersion(p, 30*time.Second)
+		if err != nil || !strings.Contains(got, "0.1.0") {
+			t.Fatalf("with room to answer, got %q, %v", got, err)
+		}
+	})
+
+	t.Run("a program that outlives the bound is killed", func(t *testing.T) {
+		// exec, so the process the timeout kills is the one holding the pipe. It
+		// would run for 20s, so only the kill can end it with an error.
+		p := script(t, "exec sleep 20")
+		got, err := runSimulatorVersion(p, 100*time.Millisecond)
+		if err == nil || !strings.Contains(err.Error(), "killed") {
+			t.Fatalf("a program that outlives its bound returned %q, %v; want a kill error", got, err)
+		}
+	})
 }
