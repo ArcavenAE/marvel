@@ -1,0 +1,59 @@
+id: question-host-health-guard
+type: question
+confidence: frontier
+title: "What should marvel watch, report and guard when a long-running host runs short of memory, and what stays outside marvel?"
+tags:
+  - marvel
+  - host
+  - health
+  - memory
+content: |
+  On 2026-10-31 the busiest fleet host ran out of memory headroom. Most of the
+  load was not marvel's, but marvel had no way to tell, and its own share (test
+  trees it never cleans, helper processes it cannot see, seats it never recycles)
+  made it worse. `docs/design/host-health-guard.md` (proposal, 2026-10-31, for
+  review) answers with reporting and a few narrow guards, not a new controller.
+  The cause of the host's file-event growth is a hypothesis in the design, not a
+  finding.
+
+  WHAT MARVEL OWNS, by the design's subject test: its own footprint (seat RSS and
+  CPU, which it already samples; homes, bases and helpers it created), proving its
+  own processes before it acts on them, and recycling its own seats. It does not
+  own host memory, the file-event daemon, other tools' temp trees or how a harness
+  polls git.
+
+  PROPOSED: a host watch that only reports, run outside the daemon first; a
+  footprint summary for marvel's own state; cleanup by pid, parent, start time and
+  resolved path, never by pattern, signalling only what marvel created and
+  recorded; recycling by age through the existing max-age trigger, closing two
+  gaps (coverage: roles that declare no shift policy; completion: a request that
+  never reaches its seat).
+
+  SHIPPED since the proposal: the max-age advisory at apply (marvel#1167); the
+  stuck max-age request event and the pending requests in `describe team`
+  (marvel#1169); and the host's free-memory reading in each spawn event
+  (marvel#1168), carried as text in the existing message and not as a typed field,
+  with no cap, floor or gate.
+
+  OPEN, the operator's three decisions in the design's section 8, none ruled
+  here: whether a spawn floor on low memory exists (the design recommends none
+  now, a reading in spawn events, and a decision after a week of readings; a floor
+  would follow the admission rules, operator-declared and never refusing repair);
+  age recycling for every long-running interactive role, with the bound the
+  operator sets; and recovering the busiest host's file-event daemon, which is
+  outside marvel.
+edges:
+  - target: question-shift-triggers
+    type: supports
+    note: "age recycling is the max-age trigger; the design closes its coverage and completion gaps"
+  - target: question-host-resource-lease
+    type: supports
+    note: "sibling host-level question: that one asks about exclusive tenancy, this one about reporting and guarding headroom"
+  - target: elem-agentic-resource-matrix
+    type: derives
+    note: "memory headroom is a compute row of the matrix; the design keeps any gate to the admission rules"
+provenance:
+  created_by: agent
+  session: harvest-2026-11-01
+  created_at: "2026-11-01"
+  extracted_from: "docs/design/host-health-guard.md and marvel#1167, #1168, #1169"
