@@ -83,7 +83,7 @@ marvel daemon
 ```
 
 Listens on `~/.marvel/run/marvel.sock`. Only processes on the same machine can
-connect. No authentication required — anyone who can reach the socket
+connect. No authentication required: anyone who can reach the socket
 can issue commands.
 
 **When to use:** Personal development machine, single-user, no remote
@@ -96,7 +96,7 @@ marvel daemon --mrvl
 ```
 
 Starts both the Unix socket (local) and the mrvl:// listener (remote,
-port 6785). The mrvl:// listener is an embedded SSH server — no dependency
+port 6785). The mrvl:// listener is an embedded SSH server, with no dependency
 on the system's sshd.
 
 On first run, the daemon generates an ed25519 host key at
@@ -203,9 +203,9 @@ recorded intent to come back to, so the next start kills every
 The mrvl:// listener authenticates clients using SSH public keys stored
 in `~/.marvel/authorized_keys` (OpenSSH format, same as `~/.ssh/authorized_keys`).
 
-For the full client + daemon key workflow — including generating
+For the full client + daemon key workflow, including generating
 dedicated marvel keys, permission conventions, the `~/.marvel/` layout,
-and `marvel keys doctor` — see the [keys guide](keys.md).
+and `marvel keys doctor`, see the [keys guide](keys.md).
 
 ### Typical workflow
 
@@ -260,7 +260,7 @@ to the right daemon. Clients record trusted daemon keys in
 `~/.marvel/known_hosts`; first connection prompts interactively, and
 `marvel keys trust <cluster>` shows the fingerprint and asks before it records
 the key (`--yes` skips the question for scripted bootstraps). Host key changes are
-detected and refused — see the [keys guide](keys.md) for details.
+detected and refused; see the [keys guide](keys.md) for details.
 
 ## Cluster configuration
 
@@ -657,7 +657,7 @@ You develop on a laptop but run agents on a workstation with more resources.
 **On the workstation:**
 ```bash
 marvel daemon --mrvl
-# authorize yourself — copy laptop's ~/.marvel/keys/client_ed25519.pub here
+# authorize yourself: copy laptop's ~/.marvel/keys/client_ed25519.pub here
 marvel keys authorize /tmp/laptop.pub
 ```
 
