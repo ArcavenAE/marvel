@@ -470,8 +470,8 @@ jobs:
     name: Create Release
     needs: [build-binaries, sign-and-notarize]
     if: github.event_name == 'push' && !cancelled() && needs.build-binaries.result == 'success'
-    # Release jobs for successive pushes queue rather than interleave: two of
-    # them racing on the tap push left the tap behind head (finding-070).
+    # Release jobs for successive pushes queue rather than interleave. The
+    # group name dates from when this job also pushed the tap (finding-070).
     concurrency:
       group: release-tap-push
       cancel-in-progress: false
@@ -569,90 +569,6 @@ jobs:
           TAG: ${{ needs.build-binaries.outputs.tag }}
           COMMIT: ${{ github.sha }}
         run: scripts/check-release-tag.sh "$TAG" "$COMMIT"
-
-      - name: Update Homebrew formula
-        if: vars.ALPHA_TAP_ENABLED == 'true'
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          VERSION="${{ needs.build-binaries.outputs.version }}"
-          TAG="${{ needs.build-binaries.outputs.tag }}"
-          BASE_URL="https://github.com/ArcavenAE/marvel/releases/download/${TAG}"
-
-          SHA_MAC_ARM64=$(sha256sum marvel-darwin-arm64 | cut -d' ' -f1)
-          SHA_MAC_AMD64=$(sha256sum marvel-darwin-amd64 | cut -d' ' -f1)
-          SHA_LINUX_AMD64=$(sha256sum marvel-linux-amd64 | cut -d' ' -f1)
-          SHA_LINUX_ARM64=$(sha256sum marvel-linux-arm64 | cut -d' ' -f1)
-
-          cat > marvel.rb <<FORMULA
-          class Marvel < Formula
-            desc "Agent orchestration control plane"
-            homepage "https://github.com/ArcavenAE/marvel"
-            version "${VERSION}"
-            license "MIT"
-
-            if OS.mac? && Hardware::CPU.arm?
-              url "${BASE_URL}/marvel-darwin-arm64"
-              sha256 "${SHA_MAC_ARM64}"
-            elsif OS.mac?
-              url "${BASE_URL}/marvel-darwin-amd64"
-              sha256 "${SHA_MAC_AMD64}"
-            elsif OS.linux? && Hardware::CPU.arm?
-              url "${BASE_URL}/marvel-linux-arm64"
-              sha256 "${SHA_LINUX_ARM64}"
-            elsif OS.linux?
-              url "${BASE_URL}/marvel-linux-amd64"
-              sha256 "${SHA_LINUX_AMD64}"
-            end
-
-            def install
-              if OS.mac? && Hardware::CPU.arm?
-                bin.install "marvel-darwin-arm64" => "marvel"
-              elsif OS.mac?
-                bin.install "marvel-darwin-amd64" => "marvel"
-              elsif OS.linux? && Hardware::CPU.arm?
-                bin.install "marvel-linux-arm64" => "marvel"
-              elsif OS.linux?
-                bin.install "marvel-linux-amd64" => "marvel"
-              end
-            end
-
-            test do
-              assert_match "marvel", shell_output("#{bin}/marvel version 2>&1")
-            end
-          end
-          FORMULA
-
-          sed -i 's/^          //' marvel.rb
-          ruby -c marvel.rb
-
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/ArcavenAE/homebrew-tap.git" tap-repo
-          mkdir -p tap-repo/Formula
-          cp marvel.rb tap-repo/Formula/marvel.rb
-          cd tap-repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/marvel.rb
-          if git diff --cached --quiet; then
-            echo "Formula unchanged, skipping push"
-          else
-            git commit -m "chore(formula): update marvel to ${TAG}"
-            # Another release run, or another formula's bump, may have pushed
-            # the tap since the clone. This is the bot's own fresh checkout, so
-            # rebasing it rewrites nothing anyone holds; give up only after a
-            # bounded number of attempts (finding-070).
-            pushed=""
-            for attempt in 1 2 3 4 5; do
-              if git push origin main; then
-                pushed=yes
-                break
-              fi
-              echo "tap push attempt ${attempt} rejected; rebasing onto the tap's current main"
-              git fetch origin main
-              git rebase origin/main
-            done
-            [ -n "$pushed" ] || { echo "tap push failed after 5 attempts"; exit 1; }
-          fi
 
       - name: Clean up old alpha releases
         continue-on-error: true
