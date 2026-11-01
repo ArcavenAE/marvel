@@ -289,7 +289,7 @@ clusters:
   - name: local
     socket: ~/.marvel/run/marvel.sock
   - name: <host>
-    server: mrvl://michael@<host>
+    server: mrvl://<user>@<host>
   - name: staging
     server: mrvl://deploy@staging.example.com:7000
 

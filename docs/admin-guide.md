@@ -236,7 +236,7 @@ marvel keys authorized
 Output:
 ```
 FINGERPRINT                                         TYPE         COMMENT
-SHA256:abc...                                       ssh-ed25519  michael@laptop
+SHA256:abc...                                       ssh-ed25519  <user>@laptop
 SHA256:def...                                       ssh-ed25519  deploy@ci
 ```
 
@@ -265,7 +265,7 @@ detected and refused — see the [keys guide](keys.md) for details.
 ## Cluster configuration
 
 Clusters are stored in `~/.marvel/config.yaml`. This is the client-side
-config — it tells the CLI how to reach each daemon.
+config; it tells the CLI how to reach each daemon.
 
 ### Add a cluster
 
@@ -289,7 +289,7 @@ marvel config list
 Output:
 ```
 * local           ~/.marvel/run/marvel.sock
-  <host>          mrvl://michael@<host>
+  <host>          mrvl://<user>@<host>
   staging         mrvl://deploy@staging.example.com:7000
 ```
 
@@ -928,7 +928,7 @@ session dev/squad-worker-g1-0 using forestage adapter    # adapter selection
 session dev/squad-worker-g1-0 running in pane %5         # session created
 health: session ... failed (restart_policy=always)       # health failure
 shift: initiated for dev/squad gen 1→2                   # shift started
-ssh: client connected: michael@10.0.0.42 (SHA256:abc...) # remote connection
+ssh: client connected: <user>@10.0.0.42 (SHA256:abc...)  # remote connection
 inject: dev/squad-worker-g1-0 <- 42 bytes                # executive injection
 ```
 
