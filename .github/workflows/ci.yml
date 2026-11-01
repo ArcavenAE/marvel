@@ -539,7 +539,7 @@ jobs:
           TAG: ${{ needs.build-binaries.outputs.tag }}
           VERSION: ${{ needs.build-binaries.outputs.version }}
           COMMIT: ${{ github.sha }}
-          SIGNED: ${{ needs.sign-and-notarize.result == 'success' && 'Yes (Apple Developer ID)' || 'No (unsigned)' }}
+          SIGNED: ${{ needs.sign-and-notarize.result == 'success' && 'Yes (Apple Developer ID, marvel only; the simulators are not signed)' || 'No (unsigned)' }}
         run: |
           BODY="Automated alpha release from push to main.
 
@@ -552,7 +552,7 @@ jobs:
           - \`marvel-darwin-amd64\` — macOS Intel
           - \`marvel-linux-amd64\` — Linux x86_64
           - \`marvel-linux-arm64\` — Linux aarch64 (Raspberry Pi 3/4/5 64-bit, AWS Graviton, ...)
-          - \`marvel-simulator-<os>-<arch>\` — the simulator for each of the four, for the tour
+          - \`marvel-simulator-<os>-<arch>\`: the simulator for each of the four, for the tour
 
           **Install:** \`brew install ArcavenAE/tap/marvel\`
           **Upgrade:** \`marvel upgrade\`"
