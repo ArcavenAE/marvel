@@ -660,3 +660,38 @@ func TestHarnessOfSkipsTheNameAnEnvUnsetTakes(t *testing.T) {
 		}
 	}
 }
+
+// doctor is read-only. A --remote read with no known_hosts file would otherwise
+// reach knownhosts.Callback, which creates an empty one, so doctor stops first,
+// says why, and leaves the marvel home as it found it.
+func TestDoctorRemoteWithNoKnownHostsCreatesNothing(t *testing.T) {
+	home := shortHome(t)
+	t.Setenv(paths.HomeEnv, home)
+	t.Setenv("MARVEL_SOCKET", "")
+	oldSocket, oldCluster := socketPath, clusterName
+	socketPath = "mrvl://u@127.0.0.1:1"
+	t.Cleanup(func() { socketPath, clusterName = oldSocket, oldCluster })
+
+	in, err := hostDoctorInput(nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := in.Sessions(); !errors.Is(err, errKnownHostsAbsent) {
+		t.Fatalf("Sessions err = %v, want errKnownHostsAbsent", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "known_hosts")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("known_hosts exists after the seat read (stat err %v)", err)
+	}
+	out, failed := doctorRun(in)
+	seats := lineWith(out, "seats")
+	if !strings.HasPrefix(seats, "SKIP") || !strings.Contains(seats, "known_hosts absent; remote host key check skipped; run one interactive remote command to trust the host") {
+		t.Fatalf("failed=%d seats line not the known_hosts skip:\n%s", failed, out)
+	}
+	if _, err := os.Stat(filepath.Join(home, "known_hosts")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("known_hosts exists after doctor --remote (stat err %v)", err)
+	}
+	entries, _ := os.ReadDir(home)
+	if len(entries) != 0 {
+		t.Fatalf("doctor wrote under the marvel home: %v", entries)
+	}
+}

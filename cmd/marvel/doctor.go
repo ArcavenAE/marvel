@@ -32,6 +32,12 @@ const natsServerMinVersion = "2.14.0"
 // failure, and nothing was dialed.
 var errRemoteNotDialed = errors.New("remote cluster, not dialed")
 
+// errKnownHostsAbsent is what the seat read returns for a --remote read when the
+// host-key file does not exist. Dialing would create an empty file under the
+// marvel home (knownhosts.Callback), and doctor writes nothing, so it stops
+// before the dial. It is a skip, not a failure.
+var errKnownHostsAbsent = errors.New("known_hosts absent")
+
 // doctorInput is everything the checks read from the host. The command fills it
 // from the real host; a test fills it with fakes, so no check dials, execs or
 // reads the host beyond what the test hands it.
@@ -412,6 +418,10 @@ func checkSeats(r *doctorReport, in doctorInput) {
 		r.line(statSkip, "seats", "remote cluster, not dialed; pass --remote to read its seats", "")
 		return
 	}
+	if errors.Is(err, errKnownHostsAbsent) {
+		r.line(statSkip, "seats", "known_hosts absent; remote host key check skipped; run one interactive remote command to trust the host", "")
+		return
+	}
 	if err != nil {
 		r.line(statSkip, "seats", "the daemon did not answer; no live seat was read", "")
 		return
@@ -460,7 +470,9 @@ The live seats are read only from a daemon on a local unix socket. For a remote
 cluster (an mrvl:// or ssh:// address) the seats read SKIP and nothing is
 dialed. --remote asks for that read: it loads the cluster's identity key, dials
 the host, and may offer an unknown host key for trust, as any marvel command
-that talks to a remote cluster does.
+that talks to a remote cluster does. With no known_hosts file yet, doctor skips
+the read and creates nothing: run one interactive remote command to trust the
+host first.
 
 doctor exits nonzero when a check failed, for your own scripts. No marvel
 command reads that code.`,
@@ -530,6 +542,12 @@ func hostDoctorInput(args []string, remote bool) (doctorInput, error) {
 	in.Sessions = func() ([]api.Session, error) {
 		if isRemoteAddr(addr) && !remote {
 			return nil, errRemoteNotDialed
+		}
+		// The dial would create an empty known_hosts; doctor creates nothing.
+		if isRemoteAddr(addr) {
+			if _, err := os.Stat(layout.KnownHosts()); errors.Is(err, os.ErrNotExist) {
+				return nil, errKnownHostsAbsent
+			}
 		}
 		params, _ := json.Marshal(map[string]any{"resource_type": "sessions", "composer": true})
 		resp, err := send(daemonrpc.Request{Method: "get", Params: params})
