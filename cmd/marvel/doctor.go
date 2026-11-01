@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +27,11 @@ import (
 // evidence supports, not a statement that 2.13 fails.
 const natsServerMinVersion = "2.14.0"
 
+// errRemoteNotDialed is what the seat read returns for a daemon that is not a
+// local unix socket and was not asked for with --remote. It is a skip, not a
+// failure, and nothing was dialed.
+var errRemoteNotDialed = errors.New("remote cluster, not dialed")
+
 // doctorInput is everything the checks read from the host. The command fills it
 // from the real host; a test fills it with fakes, so no check dials, execs or
 // reads the host beyond what the test hands it.
@@ -42,8 +49,9 @@ type doctorInput struct {
 	Manifest *api.Manifest
 	// Clusters are the clusters in the client config.
 	Clusters []config.Cluster
-	// Sessions reads the live seats with their PANE word, or fails when the
-	// daemon does not answer. Nil means no daemon read is attempted.
+	// Sessions reads the live seats with their PANE word. It returns
+	// errRemoteNotDialed for a remote daemon that was not asked for, and any
+	// other error when the daemon does not answer. Nil means no read.
 	Sessions func() ([]api.Session, error)
 }
 
@@ -60,7 +68,9 @@ type doctorReport struct {
 	failed int
 }
 
-// line writes one check line, and a fix line under a failure.
+// line writes one check line, and a fix line under a failure. Callers pass fixed
+// text and values doctor itself parsed; no line carries manifest command text or
+// an env value.
 func (r *doctorReport) line(status, name, detail, fix string) {
 	_, _ = fmt.Fprintf(r.w, "%-4s  %-14s %s\n", status, name, detail)
 	if status == statFail {
@@ -97,6 +107,26 @@ func doctorExit(failed int) error {
 	return &exitError{Code: 1, Msg: fmt.Sprintf("%d check(s) failed", failed)}
 }
 
+// firstLine is the first line of a program's output, cut to a short printable
+// run, so a program that prints something unexpected cannot flood the report.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if r < ' ' || r == 0x7f {
+			continue
+		}
+		b.WriteRune(r)
+		if b.Len() >= 60 {
+			break
+		}
+	}
+	return b.String()
+}
+
 func checkTmux(r *doctorReport, in doctorInput) {
 	if _, err := in.LookPath("tmux"); err != nil {
 		r.line(statFail, "tmux", "not found on PATH", "brew install tmux")
@@ -107,9 +137,12 @@ func checkTmux(r *doctorReport, in doctorInput) {
 		r.line(statFail, "tmux", "found, but `tmux -V` did not answer", "reinstall it: brew reinstall tmux")
 		return
 	}
-	r.line(statPass, "tmux", strings.TrimSpace(out), "")
+	r.line(statPass, "tmux", firstLine(out), "")
 }
 
+// checkRuntimes reuses ValidateRuntimes and prints the role it names, never the
+// command: a command can carry a token as its first word, as an assignment or
+// as a flag value, and no way of cutting it down is safe for every shape.
 func checkRuntimes(r *doctorReport, in doctorInput) {
 	if in.Manifest == nil {
 		r.line(statSkip, "harness", "no manifest named; pass one to check its harness commands", "")
@@ -117,9 +150,10 @@ func checkRuntimes(r *doctorReport, in doctorInput) {
 	}
 	advisories, err := in.Manifest.ValidateRuntimes()
 	if err != nil {
-		r.line(statFail, "harness", "a role's command does not resolve", "install the missing program, or correct the role's runtime.command")
-		for _, l := range strings.Split(redactCommands(in.Manifest, err.Error()), "\n")[1:] {
-			_, _ = fmt.Fprintf(r.w, "      %s\n", strings.TrimSpace(l))
+		r.line(statFail, "harness", "a role's program does not resolve", "install the program the role's runtime.command starts, or correct that command")
+		lines := strings.Split(err.Error(), "\n")
+		for _, l := range lines[1:] {
+			_, _ = fmt.Fprintf(r.w, "      %s\n", roleOnly(strings.TrimSpace(l)))
 		}
 		return
 	}
@@ -129,21 +163,15 @@ func checkRuntimes(r *doctorReport, in doctorInput) {
 	}
 }
 
-// redactCommands cuts every role's quoted command in text down to its first word.
-// A command can carry a flag value or a token, and ValidateRuntimes quotes the
-// whole command in its error; the first word is what it resolved.
-func redactCommands(m *api.Manifest, text string) string {
-	for _, t := range m.Teams {
-		for _, role := range t.Roles {
-			cmd := role.Runtime.Command
-			f := strings.Fields(cmd)
-			if len(f) < 2 {
-				continue
-			}
-			text = strings.ReplaceAll(text, strconv.Quote(cmd), strconv.Quote(f[0]+" ..."))
+// roleOnly keeps the "team[i=name].role[j=name]" prefix of a ValidateRuntimes
+// error line and says only whether the command or the script did not resolve.
+func roleOnly(line string) string {
+	for _, kind := range []string{"command", "script"} {
+		if i := strings.Index(line, ": "+kind+" "); i >= 0 {
+			return line[:i] + ": " + kind + " does not resolve"
 		}
 	}
-	return text
+	return "a role's program does not resolve"
 }
 
 // harnessStatusCommands maps a harness program to its own login status command.
@@ -153,13 +181,28 @@ var harnessStatusCommands = map[string][]string{
 	"claude": {"auth", "status"},
 }
 
-// roleProgram is the first word of a role's runtime command, by base name.
-func roleProgram(command string) string {
-	f := strings.Fields(command)
-	if len(f) == 0 {
-		return ""
+// harnessOf reads the program a role's command starts, past `env`, its flags and
+// leading NAME=value assignments, and returns its path as written and its base
+// name. It reports ok=false when no program can be read. It returns the path so
+// the caller can ask that program, not a different one on PATH, and it never
+// returns an assignment, which can hold a token.
+func harnessOf(command string) (path, base string, ok bool) {
+	fields := strings.Fields(command)
+	for len(fields) > 0 {
+		f := fields[0]
+		switch {
+		case strings.Contains(f, "="):
+			fields = fields[1:]
+		case filepath.Base(f) == "env":
+			fields = fields[1:]
+			for len(fields) > 0 && strings.HasPrefix(fields[0], "-") {
+				fields = fields[1:]
+			}
+		default:
+			return f, filepath.Base(f), true
+		}
 	}
-	return filepath.Base(f[0])
+	return "", "", false
 }
 
 func checkLogins(r *doctorReport, in doctorInput) {
@@ -167,34 +210,49 @@ func checkLogins(r *doctorReport, in doctorInput) {
 		r.line(statSkip, "login", "no manifest named; no harness to ask", "")
 		return
 	}
-	seen := map[string]bool{}
+	asked := map[string]bool{}
+	other := 0
 	for _, t := range in.Manifest.Teams {
 		for _, role := range t.Roles {
-			prog := roleProgram(role.Runtime.Command)
-			if prog == "" || seen[prog] {
+			path, base, ok := harnessOf(role.Runtime.Command)
+			args, known := harnessStatusCommands[base]
+			if !ok || !known {
+				other++
 				continue
 			}
-			seen[prog] = true
-			args, ok := harnessStatusCommands[prog]
-			if !ok {
-				r.line(statSkip, "login "+prog, "no status command known for this harness", "")
+			if asked[path] {
 				continue
 			}
-			if _, err := in.LookPath(prog); err != nil {
-				continue // the harness stage already failed on it
+			asked[path] = true
+			name := "login " + base
+			prog := path
+			if !filepath.IsAbs(path) {
+				found, err := in.LookPath(path)
+				if err != nil {
+					r.line(statSkip, name, "not found on PATH, so its login was not asked", "")
+					continue
+				}
+				prog = found
 			}
 			if _, err := in.Run(prog, args...); err != nil {
-				r.line(statFail, "login "+prog, "not logged in, or its status command failed", "log in with `"+prog+" auth login`")
+				r.line(statFail, name, "not logged in, or its status command failed", "log in with `"+base+" auth login`")
 				continue
 			}
-			r.line(statPass, "login "+prog, "logged in", "")
+			r.line(statPass, name, "logged in", "")
 		}
+	}
+	if other > 0 {
+		r.line(statSkip, "login", fmt.Sprintf("%d role(s) start a harness with no known status command", other), "")
 	}
 }
 
 func checkSocket(r *doctorReport, in doctorInput) {
 	if in.Socket == "" {
 		r.line(statSkip, "socket", "no socket path to check", "")
+		return
+	}
+	if paths.IsTCPAddr(in.Socket) {
+		r.line(statSkip, "socket", "the daemon address is not a unix socket; no length limit applies", "")
 		return
 	}
 	if err := paths.CheckSocketPath(in.Socket); err != nil {
@@ -238,8 +296,12 @@ func checkNats(r *doctorReport, in doctorInput) {
 	if len(fields) > 0 {
 		got = strings.TrimPrefix(fields[len(fields)-1], "v")
 	}
+	if _, ok := versionParts(got); !ok {
+		r.line(statFail, "bus", "nats-server answered, but its version could not be read", fix)
+		return
+	}
 	if !versionAtLeast(got, natsServerMinVersion) {
-		r.line(statFail, "bus", fmt.Sprintf("nats-server %q is older than the %s minimum", got, natsServerMinVersion), fix)
+		r.line(statFail, "bus", fmt.Sprintf("nats-server %s is older than the %s minimum", got, natsServerMinVersion), fix)
 		return
 	}
 	r.line(statPass, "bus", "nats-server "+got, "")
@@ -261,15 +323,20 @@ func versionAtLeast(got, min string) bool {
 	return true
 }
 
+// versionParts reads major.minor[.patch], past a prerelease or build suffix
+// ("2.15.0-RC.1" is read as 2.15.0, the release it leads up to).
 func versionParts(v string) ([3]int, bool) {
 	var out [3]int
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
 	parts := strings.Split(v, ".")
 	if len(parts) < 2 || len(parts) > 3 {
 		return out, false
 	}
 	for i, p := range parts {
 		n, err := strconv.Atoi(p)
-		if err != nil {
+		if err != nil || n < 0 {
 			return out, false
 		}
 		out[i] = n
@@ -319,7 +386,7 @@ func checkKeys(r *doctorReport, in doctorInput) {
 	}
 	issues, err := in.Home.Audit()
 	if err != nil {
-		r.line(statFail, "keys", "could not audit "+in.Home.Home+": "+err.Error(), "")
+		r.line(statFail, "keys", "could not audit the marvel home", "check that the home is readable by you")
 		return
 	}
 	if len(issues) == 0 {
@@ -335,6 +402,10 @@ func checkSeats(r *doctorReport, in doctorInput) {
 		return
 	}
 	sessions, err := in.Sessions()
+	if errors.Is(err, errRemoteNotDialed) {
+		r.line(statSkip, "seats", "remote cluster, not dialed; pass --remote to read its seats", "")
+		return
+	}
 	if err != nil {
 		r.line(statSkip, "seats", "the daemon did not answer; no live seat was read", "")
 		return
@@ -352,10 +423,12 @@ func checkSeats(r *doctorReport, in doctorInput) {
 			r.line(statFail, name, "its harness is logged out", "attach to the seat and log in (marvel attach "+s.Name+")")
 		case "fresh":
 			r.line(statPass, name, "fresh; it has not taken a turn yet", "")
-		case "":
-			r.line(statSkip, name, "pane state not read", "")
-		default:
+		case "working", "idle":
 			r.line(statPass, name, s.Pane, "")
+		case "restart":
+			r.line(statWait, name, "restarting", "")
+		default:
+			r.line(statSkip, name, "pane state not read", "")
 		}
 	}
 }
@@ -363,7 +436,8 @@ func checkSeats(r *doctorReport, in doctorInput) {
 // doctorCmd is marvel doctor: a read-only first-run check. It writes nothing and
 // changes no setting; its exit code is for the user's own scripts.
 func doctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var remote bool
+	cmd := &cobra.Command{
 		Use:   "doctor [manifest]",
 		Short: "Check this host for what a first run needs",
 		Long: `Check this host for what a first run needs, and say what is missing.
@@ -374,13 +448,21 @@ harness commands, their logins and the director shim.
 
 doctor is read-only: it writes nothing and changes no setting. It never reads
 a credential file; a harness login is asked of the harness's own status
-command. It exits nonzero when a check failed, for your own scripts; no marvel
+command. It prints no command text and no env value from a manifest.
+
+The live seats are read only from a daemon on a local unix socket. For a remote
+cluster (an mrvl:// or ssh:// address) the seats read SKIP and nothing is
+dialed. --remote asks for that read: it loads the cluster's identity key, dials
+the host, and may offer an unknown host key for trust, as any marvel command
+that talks to a remote cluster does.
+
+doctor exits nonzero when a check failed, for your own scripts. No marvel
 command reads that code.`,
 		Args:          cobra.MaximumNArgs(1),
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			in, err := hostDoctorInput(args)
+			in, err := hostDoctorInput(args, remote)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				return &exitError{Code: 1, Msg: err.Error()}
@@ -388,10 +470,29 @@ command reads that code.`,
 			return doctorExit(runDoctor(cmd.OutOrStdout(), in))
 		},
 	}
+	cmd.Flags().BoolVar(&remote, "remote", false, "also read the live seats of a remote cluster (dials it and loads the identity key)")
+	return cmd
 }
 
-// hostDoctorInput fills the input from the real host.
-func hostDoctorInput(args []string) (doctorInput, error) {
+// isRemoteAddr reports whether a daemon address is anything but a local unix
+// socket: a host:port or an mrvl:// or ssh:// address.
+func isRemoteAddr(addr string) bool {
+	return paths.IsTCPAddr(addr) || strings.Contains(addr, "://")
+}
+
+// manifestReadError says why a manifest could not be read without quoting what
+// the parser quoted back, which can be a line of the file and so a value.
+func manifestReadError(path string, err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return fmt.Errorf("read manifest %s: %w", path, pe.Err)
+	}
+	return fmt.Errorf("manifest %s is not a valid manifest", path)
+}
+
+// hostDoctorInput fills the input from the real host. The seat read dials only a
+// local unix socket unless remote is set.
+func hostDoctorInput(args []string, remote bool) (doctorInput, error) {
 	layout, err := paths.Default()
 	if err != nil {
 		return doctorInput{}, err
@@ -405,13 +506,15 @@ func hostDoctorInput(args []string) (doctorInput, error) {
 		Home:   layout,
 		Socket: layout.RuntimeSocket(),
 	}
-	if addr, _, derr := resolveDaemonAddr(); derr == nil && addr != "" {
-		in.Socket = addr
+	addr := ""
+	if a, _, derr := resolveDaemonAddr(); derr == nil && a != "" {
+		addr = a
+		in.Socket = a
 	}
 	if len(args) == 1 {
 		m, err := api.ParseManifest(args[0])
 		if err != nil {
-			return doctorInput{}, fmt.Errorf("read manifest %s: %w", args[0], err)
+			return doctorInput{}, manifestReadError(args[0], err)
 		}
 		in.Manifest = m
 	}
@@ -419,13 +522,16 @@ func hostDoctorInput(args []string) (doctorInput, error) {
 		in.Clusters = cfg.Clusters
 	}
 	in.Sessions = func() ([]api.Session, error) {
+		if isRemoteAddr(addr) && !remote {
+			return nil, errRemoteNotDialed
+		}
 		params, _ := json.Marshal(map[string]any{"resource_type": "sessions", "composer": true})
 		resp, err := send(daemonrpc.Request{Method: "get", Params: params})
 		if err != nil {
 			return nil, err
 		}
 		if resp.Error != "" {
-			return nil, fmt.Errorf("%s", resp.Error)
+			return nil, fmt.Errorf("daemon refused the read")
 		}
 		var out []api.Session
 		if err := json.Unmarshal(resp.Result, &out); err != nil {

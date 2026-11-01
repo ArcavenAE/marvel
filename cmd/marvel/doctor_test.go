@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -283,23 +286,76 @@ func TestDoctorDaemonDownSkipsSeats(t *testing.T) {
 	}
 }
 
-// Given a role env holding a fixture token, no output line contains it.
+// Given a role env holding a fixture token, no output line contains it, for every
+// shape a token can take in a command: an assignment prefix, the whole command, the
+// first word with a flag, an env prefix, a flag value, and the env map. PATH is
+// pinned both ways, so the test does not depend on whether claude is installed.
 func TestDoctorNeverPrintsARoleEnvValue(t *testing.T) {
 	const token = "FIXTURE-TOKEN-do-not-print-0123456789"
-	in := fakeHost(t)
-	in.Manifest = &api.Manifest{
-		Teams: []api.ManifestTeam{{Name: "t", Roles: []api.ManifestRole{{
-			Name: "r",
-			Runtime: api.ManifestRuntime{
-				Command: "claude --token " + token,
-				Env:     map[string]string{"DIRECTOR_AGENT_ID": token, "SECRET": token},
-			},
-		}}}},
+	commands := []string{
+		"NAME=" + token + " claude",
+		token,
+		token + " --flag",
+		"env NAME=" + token + " claude",
+		"claude --token=" + token,
+		"claude --token " + token,
+		"/opt/" + token + "/bin/claude",
 	}
-	out, _ := doctorRun(in)
-	if strings.Contains(out, token) {
-		t.Fatalf("output carries a role env value:\n%s", out)
+	for _, withClaude := range []bool{false, true} {
+		if withClaude {
+			stubOnPath(t, "claude")
+		} else {
+			t.Setenv("PATH", t.TempDir())
+		}
+		for _, cmd := range commands {
+			in := fakeHost(t)
+			in.Manifest = &api.Manifest{
+				Teams: []api.ManifestTeam{{Name: "t", Roles: []api.ManifestRole{{
+					Name: "r",
+					Runtime: api.ManifestRuntime{
+						Command: cmd,
+						Env:     map[string]string{"DIRECTOR_AGENT_ID": token, "SECRET": token},
+					},
+				}}}},
+			}
+			out, _ := doctorRun(in)
+			if strings.Contains(out, token) {
+				t.Errorf("claude on PATH=%v, command %q: output carries the token:\n%s", withClaude, cmd, out)
+			}
+		}
 	}
+}
+
+// A manifest that does not parse is refused without quoting what the parser quoted
+// back, which can be a line of the file.
+func TestDoctorManifestReadErrorQuotesNothing(t *testing.T) {
+	const token = "FIXTURE-TOKEN-in-a-bad-manifest-9876"
+	f := filepath.Join(t.TempDir(), "m.toml")
+	if err := os.WriteFile(f, []byte("this is = [not toml "+token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(paths.HomeEnv, shortHome(t))
+	_, err := hostDoctorInput([]string{f}, false)
+	if err == nil {
+		t.Fatal("a bad manifest was accepted")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("error quotes the manifest: %v", err)
+	}
+	if _, err := hostDoctorInput([]string{filepath.Join(t.TempDir(), "absent.toml")}, false); err == nil || !strings.Contains(err.Error(), "absent.toml") {
+		t.Fatalf("a missing manifest should name its path, got %v", err)
+	}
+}
+
+// shortHome is a marvel home path short enough for a socket under it.
+func shortHome(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("/tmp", "mdr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(d) })
+	return d
 }
 
 // The login stage asks only the harness's own status command, and runs nothing
@@ -316,7 +372,7 @@ func TestDoctorHarnessLoginUsesOnlyTheStatusCommand(t *testing.T) {
 	var ran []string
 	in.Run = func(name string, args ...string) (string, error) {
 		ran = append(ran, name+" "+strings.Join(args, " "))
-		if name == "claude" {
+		if filepath.Base(name) == "claude" {
 			return `{"loggedIn": false}`, errors.New("exit status 1")
 		}
 		return "tmux 3.5a", nil
@@ -326,15 +382,15 @@ func TestDoctorHarnessLoginUsesOnlyTheStatusCommand(t *testing.T) {
 		t.Fatalf("failed = %d, want 1 (claude not logged in)\n%s", failed, out)
 	}
 	for _, r := range ran {
-		if strings.HasPrefix(r, "claude") && r != "claude auth status" {
+		if strings.Contains(r, "claude") && !strings.HasSuffix(r, "/claude auth status") {
 			t.Errorf("ran %q; only `claude auth status` is allowed", r)
 		}
 		if strings.HasPrefix(r, "forestage") {
 			t.Errorf("ran %q; no status command is known for it", r)
 		}
 	}
-	if l := lineWith(out, "forestage"); !strings.Contains(l, "SKIP") {
-		t.Errorf("forestage login line = %q, want SKIP", l)
+	if l := lineWith(out, "no known status command"); !strings.HasPrefix(l, "SKIP") || strings.Contains(l, "forestage") {
+		t.Errorf("unknown-harness login line = %q, want a SKIP that names no program", l)
 	}
 }
 
@@ -403,5 +459,161 @@ func TestDoctorExitsNonzeroOnFailureAndNothingReadsIt(t *testing.T) {
 	})
 	if len(readers) != 0 {
 		t.Fatalf("code outside doctor.go reads the doctor: %v", readers)
+	}
+}
+
+// A role that names claude by absolute path, or behind env and assignments, has
+// its own program asked, not nothing and not another claude on PATH.
+func TestDoctorLoginFollowsTheRolesOwnProgram(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	in := fakeHost(t)
+	in.LookPath = func(name string) (string, error) { return "", exec.ErrNotFound }
+	in.Manifest = &api.Manifest{
+		Teams: []api.ManifestTeam{{Name: "t", Roles: []api.ManifestRole{
+			{Name: "abs", Runtime: api.ManifestRuntime{Command: "/opt/h/claude --model x"}},
+			{Name: "env", Runtime: api.ManifestRuntime{Command: "env X=1 claude"}},
+		}}},
+	}
+	var ran []string
+	in.Run = func(name string, args ...string) (string, error) {
+		ran = append(ran, name)
+		return "", nil
+	}
+	out, _ := doctorRun(in)
+	joined := strings.Join(ran, ",")
+	if !strings.Contains(joined, "/opt/h/claude") {
+		t.Errorf("the absolute-path claude was not asked; ran %v\n%s", ran, out)
+	}
+	if l := lineWith(out, "login claude"); l == "" {
+		t.Errorf("no login line for claude behind env:\n%s", out)
+	}
+	if strings.Contains(out, "login env") {
+		t.Errorf("env was read as the harness:\n%s", out)
+	}
+}
+
+// A pane word doctor does not know is not a pass, and a restart is waiting.
+func TestDoctorUnknownPaneWordIsNotAPass(t *testing.T) {
+	in := fakeHost(t)
+	in.Sessions = func() ([]api.Session, error) {
+		return []api.Session{{Name: "u", Pane: "unknown"}, {Name: "x", Pane: "surprise"}, {Name: "r", Pane: "restart"}}, nil
+	}
+	out, failed := doctorRun(in)
+	if failed != 0 {
+		t.Fatalf("failed = %d, want 0\n%s", failed, out)
+	}
+	for _, n := range []string{"seat u", "seat x"} {
+		if !strings.HasPrefix(lineWith(out, n), "SKIP") {
+			t.Errorf("%s is not a SKIP line:\n%s", n, out)
+		}
+	}
+	if strings.Contains(out, "surprise") {
+		t.Errorf("an unknown pane word was printed:\n%s", out)
+	}
+	if !strings.HasPrefix(lineWith(out, "seat r"), "WAIT") {
+		t.Errorf("a restarting seat is not WAIT:\n%s", out)
+	}
+}
+
+// A prerelease reads as the release it leads to; an unreadable version names that
+// cause and not "older".
+func TestDoctorNatsPrereleaseAndUnreadable(t *testing.T) {
+	run := func(reported string) (string, int) {
+		in := fakeHost(t)
+		in.Clusters = []config.Cluster{managedBusCluster(t)}
+		in.Run = func(name string, args ...string) (string, error) {
+			if name == "nats-server" {
+				return reported, nil
+			}
+			return "tmux 3.5a", nil
+		}
+		return doctorRun(in)
+	}
+	if out, failed := run("nats-server: v2.15.0-RC.1"); failed != 0 {
+		t.Errorf("a prerelease of an accepted release failed:\n%s", out)
+	}
+	out, failed := run("nats-server: vgarbage")
+	if failed != 1 || !strings.Contains(out, "could not be read") || strings.Contains(out, "older") {
+		t.Errorf("unreadable version: failed=%d\n%s", failed, out)
+	}
+}
+
+// An address that is not a unix socket has no length limit to report.
+func TestDoctorSocketLineForARemoteAddress(t *testing.T) {
+	in := fakeHost(t)
+	in.Socket = "mrvl://u@example.invalid:7000"
+	out, failed := doctorRun(in)
+	if failed != 0 || !strings.HasPrefix(lineWith(out, "socket"), "SKIP") || strings.Contains(out, "under the 104") {
+		t.Fatalf("failed=%d\n%s", failed, out)
+	}
+}
+
+// The seat read from a real host input dials nothing for a remote cluster unless
+// asked: a listener on localhost sees no connection, the read is a SKIP, and no
+// identity key is loaded (the read returns before send).
+func TestHostDoctorInputDoesNotDialARemoteClusterByDefault(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no localhost listener: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	var accepted atomic.Int32
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			_ = c.Close()
+		}
+	}()
+	home := shortHome(t)
+	t.Setenv(paths.HomeEnv, home)
+	t.Setenv("MARVEL_SOCKET", "")
+	oldSocket, oldCluster := socketPath, clusterName
+	socketPath = "mrvl://u@" + ln.Addr().String()
+	t.Cleanup(func() { socketPath, clusterName = oldSocket, oldCluster })
+
+	in, err := hostDoctorInput(nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.Socket != socketPath {
+		t.Fatalf("Socket = %q, want the resolved remote address %q", in.Socket, socketPath)
+	}
+	if _, err := in.Sessions(); !errors.Is(err, errRemoteNotDialed) {
+		t.Fatalf("Sessions err = %v, want errRemoteNotDialed", err)
+	}
+	out, failed := doctorRun(in)
+	if !strings.HasPrefix(lineWith(out, "seats"), "SKIP") || !strings.Contains(out, "remote cluster, not dialed") {
+		t.Fatalf("failed=%d seats line not a remote SKIP:\n%s", failed, out)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := accepted.Load(); n != 0 {
+		t.Fatalf("the listener accepted %d connection(s); doctor dialed a remote cluster", n)
+	}
+	entries, _ := os.ReadDir(home)
+	if len(entries) != 0 {
+		t.Fatalf("doctor wrote under the marvel home: %v", entries)
+	}
+}
+
+// A local unix socket is read, and a daemon that is down is a plain error, not a
+// remote skip.
+func TestHostDoctorInputReadsALocalSocket(t *testing.T) {
+	t.Setenv(paths.HomeEnv, shortHome(t))
+	oldSocket := socketPath
+	socketPath = filepath.Join(shortHome(t), "none.sock")
+	t.Cleanup(func() { socketPath = oldSocket })
+	in, err := hostDoctorInput(nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := in.Sessions(); err == nil || errors.Is(err, errRemoteNotDialed) {
+		t.Fatalf("Sessions err = %v, want a dial error for a socket nothing listens on", err)
+	}
+	if !isRemoteAddr("mrvl://u@h:1") || !isRemoteAddr("ssh://h") || !isRemoteAddr("h:7") || isRemoteAddr("/tmp/m.sock") {
+		t.Fatal("isRemoteAddr misreads an address")
 	}
 }
