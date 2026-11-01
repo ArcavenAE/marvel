@@ -196,7 +196,13 @@ func harnessOf(command string) (path, base string, ok bool) {
 		case filepath.Base(f) == "env":
 			fields = fields[1:]
 			for len(fields) > 0 && strings.HasPrefix(fields[0], "-") {
+				// -u and --unset take the variable's name as the next field,
+				// which is not the program.
+				takesName := fields[0] == "-u" || fields[0] == "--unset"
 				fields = fields[1:]
+				if takesName && len(fields) > 0 {
+					fields = fields[1:]
+				}
 			}
 		default:
 			return f, filepath.Base(f), true
