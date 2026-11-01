@@ -2,6 +2,15 @@ version: 2
 
 project_name: marvel
 
+env:
+  # The tap file the stable channel writes, without .rb. The alpha job writes
+  # Formula/marvel.rb, and a prerelease tag writes Formula/marvel-rc.rb, so
+  # neither moves a host that installed the other.
+  # TODO(aae-orc-pd1oc): the stable file name is waiting on a decision. Until
+  # it is made, the stable entry writes the rc file (marvel-rc.rb), the same
+  # file as the rc entry. It must get its own name before the first stable tag.
+  - STABLE_FORMULA_NAME=marvel-rc
+
 before:
   hooks:
     - go mod tidy
@@ -77,8 +86,31 @@ release:
     brew install ArcavenAE/tap/marvel
     ```
 
+# Two formulas, so a release candidate never writes the stable file. The rc
+# entry uploads only for a prerelease tag (skip_upload is false there and true
+# otherwise); the stable entry's "auto" skips a prerelease tag.
 brews:
-  - repository:
+  - name: marvel-rc
+    skip_upload: "{{ if .Prerelease }}false{{ else }}true{{ end }}"
+    repository:
+      owner: ArcavenAE
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "chore(formula): update marvel to {{ .Tag }}"
+    directory: Formula
+    homepage: "https://github.com/arcavenae/marvel"
+    description: "Agent orchestration control plane"
+    license: "MIT"
+    install: |
+      bin.install "marvel"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/marvel version 2>&1")
+  - name: "{{ .Env.STABLE_FORMULA_NAME }}"
+    skip_upload: auto
+    repository:
       owner: ArcavenAE
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
