@@ -30,6 +30,8 @@ No host watch goes into the daemon in this release (5-0). A spawn cap on low mem
 | C12b | a footprint summary in `marvel reap --homes`, no thresholds, no new verb | should |
 | C13 | silent defaults and false health named as known gaps in the notes; #1131 per harness | should (C13-notes blocks the rc) |
 | C15 | a tmux 3.5 floor in README, a NOTE at daemon start that never refuses (its raiser dropped it from blocker) | should |
+| C7b | #951: a user-guide line that a role inbox survives a restart and a seat address lasts one generation; the sender-side change belongs to director. Not put to the round 5 vote: Seat lifecycle and First adopter held should, Release engineer after release, Skeptic drop (the address is the sender's choice). Carried as a docs-only should behind C14 (T16) | should |
+| C8 | test homes leak on normal runs (module cache, discarded removal error). Should 4-1 in round 2; its raiser accepted should in round 4; recorded per V6 (T18) | should |
 
 ## The vote (round 5)
 
@@ -39,7 +41,7 @@ No host watch goes into the daemon in this release (5-0). A spawn cap on low mem
 | V2 | C2 fix scope | A refuse a mise install only | 4-1 | Release engineer: also refuse any path marvel did not install unless `--replace-pinned` |
 | V3 | #523 | A close it in C4a; the help already names mise | 5-0 | |
 | V4 | C6, #337 | B should | 5-0 | |
-| V5 | C7a, #541 | B should, if card 1 rules option 1 | 5-0 | Seat lifecycle: crash repair and shift record succession differently, whatever the fence says |
+| V5 | C7a, #541 | B should, if card 1 rules (a) | 5-0 | |
 | V6 | how a "land before the rc if ready" item is recorded | A a should with a sequencing note and no edge | 5-0 | |
 | V7 | quick start test before a tag | C both a PR-time `goreleaser --snapshot` job and the post-tag check | 5-0 | |
 | V8 | C14-scope | a single-host core | 5-0 | (card 1) |
@@ -52,7 +54,7 @@ No host watch goes into the daemon in this release (5-0). A spawn cap on low mem
 
 Both cards are written in the Desk format and passed the card-ingest parse; the supervisor carries them. Neither ruling can be predicted from a recorded ruling (5-0 on both).
 
-1. **Which parts of marvel does the first stable release promise?** Recommended: the single-host core only (session, team, work, get, describe, capture, inject, upgrade, daemon, reap, with no bus), every bus and fleet feature marked experimental. 5-0.
+1. **Which parts of marvel does the first stable release promise?** Recommended: (a), the single-host core with no bus, every bus and fleet feature marked experimental. 5-0. **The chair's departure:** V8's option (a) named eight entries (session, team, work, get, describe, capture, inject, upgrade). In round 4 the Seat lifecycle seat noted that this list leaves out `delete`, `scale`, `stop`, `daemon`, `reap`, `version`, `config` and `keys`, and that a stable install cannot run without `daemon` or clean up without `reap`. The card therefore carries First adopter's round-3 stable list (work, get, describe, delete, scale, run, kill, capture, inject, attach, events, stop, daemon, reap, version, upgrade, config, keys) as what (a) covers, and says so. The seats voted the scope, (a); the verb list is the chair's reading of it, for director to confirm.
 2. **Which channel owns the plain `marvel` formula?** Recommended: stable gets its own formula from the start, alpha keeps the plain name, so no host moves without asking. 3-2.
 
 ## TDD ticket list
@@ -82,7 +84,7 @@ Flat tickets with dependency edges, as text for the supervisor to route. Each te
 |---|---|---|---|
 | T13 | `marvel upgrade` refuses a mise install and names the mise command to use instead (C2, #756, V2 A) | `TestUpgradeRefusesMiseInstall`: `internal/upgrade/store.go:258-261` swaps it | rc-window |
 | T14 | pane verbs accept the bare name `get sessions` prints when it matches one session, refuse two matches listing both keys, and print a hint on a miss (C6, #337) | `TestSessionArgAcceptsPrintedName` | rc-window |
-| T15 | crash repair records the crashed seat's key as the replacement's predecessor (C7a, #541) | `TestCrashRepairReplacementNamesItsPredecessor`: the only assignment is the shift path, `internal/team/controller.go:2472` | rc-window; a blocker if card 1 rules option 2 or 3 |
+| T15 | crash repair records the crashed seat's key as the replacement's predecessor (C7a, #541) | `TestCrashRepairReplacementNamesItsPredecessor`: the only assignment is the shift path, `internal/team/controller.go:2472` | rc-window; a blocker if card 1 rules (b) or (c) |
 | T16 | user guide: a role inbox survives a restart; a seat's own address lasts one generation (C7b, #951; the sender-side change belongs to director) | a docs check for the sentence | should; T1 |
 | T17 | an advisory at apply for a role whose manifest names no model, per harness (C13-code, #1131) | `TestUnnamedModelAdvisoriesNamesARoleWithNoModel`, beside `FirstPromptAdvisories` (`internal/daemon/daemon.go:1575-1580`) | rc-window |
 | T18 | homeguard points Go's module cache outside the scratch HOME and fails the test binary when the HOME cannot be removed (C8) | a test that `go env GOMODCACHE` under homeguard is outside the scratch HOME (Skeptic's replacement; a removal test stays red after the fix because the child writes the read-only tree itself). Today `homeguard.go:51` discards the error | rc-window |
