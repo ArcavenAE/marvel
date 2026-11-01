@@ -187,16 +187,24 @@ func simulatorReport(w io.Writer, version, channel string, look func(string) (st
 		return
 	}
 	out, err := run(path)
-	fields := strings.Fields(out)
-	// "marvel-simulator <version> (<channel>)"
-	if err != nil || len(fields) != 3 || fields[0] != "marvel-simulator" || !strings.HasPrefix(fields[2], "(") || !strings.HasSuffix(fields[2], ")") {
+	simVersion, simChannel, ok := parseBuildLine(out, "marvel-simulator")
+	if err != nil || !ok {
 		_, _ = fmt.Fprintf(w, "simulator %s does not report its version\n", path)
 		return
 	}
-	simVersion, simChannel := fields[1], strings.Trim(fields[2], "()")
 	_, _ = fmt.Fprintf(w, "simulator %s (%s)\n", simVersion, simChannel)
 	if simVersion != version || simChannel != channel {
 		_, _ = fmt.Fprintf(w, "note: the simulator on PATH is %s (%s) and marvel is %s (%s); they ship together, so install both from one release\n",
 			simVersion, simChannel, version, channel)
 	}
+}
+
+// parseBuildLine reads "<program> <version> (<channel>)", the line marvel and
+// marvel-simulator print for -version, and reports whether out is that line.
+func parseBuildLine(out, program string) (version, channel string, ok bool) {
+	fields := strings.Fields(out)
+	if len(fields) != 3 || fields[0] != program || !strings.HasPrefix(fields[2], "(") || !strings.HasSuffix(fields[2], ")") {
+		return "", "", false
+	}
+	return fields[1], strings.Trim(fields[2], "()"), true
 }

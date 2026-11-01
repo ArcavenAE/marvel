@@ -3,6 +3,7 @@ package upgrade
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -701,5 +702,31 @@ func TestFallbackToTheRunningBinaryIsSaid(t *testing.T) {
 	installedBinary(methodDirect, "/usr/local/bin/marvel")
 	if buf.Len() != 0 {
 		t.Errorf("a direct install reported a fallback: %q", buf.String())
+	}
+}
+
+// Only a direct install that succeeded is marked: the caller prints a note about
+// a stale marvel-simulator on that evidence, and a package-manager install
+// replaces every program it ships.
+func TestMarkDirect(t *testing.T) {
+	t.Parallel()
+	failed := errors.New("download failed")
+	for _, tc := range []struct {
+		name   string
+		method installMethod
+		err    error
+		want   Result
+	}{
+		{"direct success is marked", methodDirect, nil, Result{Changed: true, Direct: true, Binary: "/bin/marvel"}},
+		{"direct failure is not", methodDirect, failed, Result{Changed: true}},
+		{"homebrew is not", methodHomebrew, nil, Result{Changed: true}},
+		{"a package install is not", methodPackage, nil, Result{Changed: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := markDirect(Result{Changed: true}, tc.method, "/bin/marvel", tc.err); got != tc.want {
+				t.Errorf("markDirect = %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }
