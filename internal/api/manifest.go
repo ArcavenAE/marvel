@@ -271,6 +271,9 @@ type ManifestRuntime struct {
 	// Backend is the per-role INTENDED backend label, compared against the
 	// resolved backend at spawn for loud failure. See api.Runtime.Backend.
 	Backend string `toml:"backend,omitempty" yaml:"backend,omitempty"`
+	// Goose is the runtime.goose table for a role on the goose adapter. See
+	// api.GooseRuntime.
+	Goose *GooseRuntime `toml:"goose,omitempty" yaml:"goose,omitempty"`
 }
 
 // ManifestEndpoint is an endpoint section of a manifest.
@@ -368,8 +371,16 @@ func unmarshalManifestYAML(data []byte) (*Manifest, error) {
 
 func unmarshalManifestTOML(data []byte) (*Manifest, error) {
 	var m Manifest
-	if err := toml.Unmarshal(data, &m); err != nil {
+	md, err := toml.Decode(string(data), &m)
+	if err != nil {
 		return nil, fmt.Errorf("parse toml manifest: %w", err)
+	}
+	// The manifest as a whole is lenient about keys it does not know; the goose
+	// table is the one place an unknown key is refused.
+	for _, k := range md.Undecoded() {
+		if len(k) > 4 && k[0] == "team" && k[1] == "role" && k[2] == "runtime" && k[3] == "goose" {
+			return nil, fmt.Errorf("parse toml manifest: %w", unknownGooseKeyError(k[4]))
+		}
 	}
 	var probe replicasProbe
 	if err := toml.Unmarshal(data, &probe); err == nil {
@@ -471,6 +482,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			// would silently project nothing, so reject it here.
 			if r.Runtime.ContextFeed != "" && r.Runtime.ContextFeed != ContextFeedStatusline {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.context_feed %q is not valid (valid: %q)", i, j, r.Runtime.ContextFeed, ContextFeedStatusline)
+			}
+			if err := r.Runtime.Goose.Validate(); err != nil {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].%w", i, j, err)
 			}
 			// The role library's hash is carried, never read, so a malformed one
 			// is refused here rather than stamped. The value is not echoed.
@@ -1107,6 +1121,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				PromptArtifactSha256: mr.Runtime.PromptArtifactSha256,
 				Env:                  mr.Runtime.Env,
 				Backend:              mr.Runtime.Backend,
+				Goose:                mr.Runtime.Goose.clone(),
 			}
 			rt.Name = mr.Runtime.AdapterName()
 			role := Role{

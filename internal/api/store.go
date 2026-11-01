@@ -135,6 +135,7 @@ func cloneRuntime(r Runtime) Runtime {
 	if len(r.Args) > 0 {
 		out.Args = slices.Clone(r.Args)
 	}
+	out.Goose = r.Goose.clone()
 	return out
 }
 
