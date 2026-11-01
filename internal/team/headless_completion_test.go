@@ -35,7 +35,10 @@ func TestHeadlessCompletionHoldsSlotAndIsNotRefilled(t *testing.T) {
 		},
 		{
 			Name: "broken", Replicas: 1,
-			Runtime: api.Runtime{Name: "sh", Command: "sh", Args: []string{"-c", "exit 3"}, Mode: api.RuntimeModeHeadless},
+			// It takes a moment to die, as a real failing job does. The ticks
+			// below must wait for each respawned pane to die before the next
+			// tick can reap it; with an instant exit they only usually do.
+			Runtime: api.Runtime{Name: "sh", Command: "sh", Args: []string{"-c", "sleep 0.2; exit 3"}, Mode: api.RuntimeModeHeadless},
 		},
 	})
 
@@ -68,6 +71,9 @@ func TestHeadlessCompletionHoldsSlotAndIsNotRefilled(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		clock.Advance(10 * time.Minute)
 		ctrl.ReconcileOnce()
+		// The respawned broken pane must be dead before the next tick, or that
+		// tick has nothing to reap and the restart count does not move.
+		waitAllPanesDead(t, store, "test-headless-done", "jobs")
 	}
 	done = store.ListSessionsByTeamRole("test-headless-done", "jobs", "job")
 	if len(done) != 1 || done[0].Name != firstRun || done[0].State != api.SessionSucceeded {
@@ -141,6 +147,11 @@ func waitAllPanesDead(t *testing.T, store *api.Store, ws, team string) {
 	for time.Now().Before(deadline) {
 		alive := 0
 		for _, s := range store.ListSessionsByTeam(ws, team) {
+			// A finished row has lost its pane id. An empty -t would name the
+			// scratch server's own live pane and never read as dead.
+			if s.PaneID == "" {
+				continue
+			}
 			out, err := tmuxTestCmd("list-panes", "-t", s.PaneID, "-F", "#{pane_dead}").CombinedOutput()
 			if err == nil && strings.TrimSpace(string(out)) == "0" {
 				alive++
