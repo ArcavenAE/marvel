@@ -107,7 +107,7 @@ Output:
 ```
 marvel daemon listening on ~/.marvel/run/marvel.sock (unix)
 mrvl:// listener on :6785
-remote access: --cluster <name>  (config: mrvl://kinu:6785)
+remote access: --cluster <name>  (config: mrvl://<host>:6785)
 ```
 
 **When to use:** You want to manage agents from another machine, or
@@ -270,7 +270,7 @@ config — it tells the CLI how to reach each daemon.
 ### Add a cluster
 
 ```bash
-marvel config add-cluster kinu mrvl://kinu
+marvel config add-cluster <host> mrvl://<host>
 marvel config add-cluster staging mrvl://deploy@staging.example.com:7000
 marvel config add-cluster dev /tmp/marvel-dev.sock
 ```
@@ -289,7 +289,7 @@ marvel config list
 Output:
 ```
 * local           ~/.marvel/run/marvel.sock
-  kinu            mrvl://michael@kinu
+  <host>          mrvl://michael@<host>
   staging         mrvl://deploy@staging.example.com:7000
 ```
 
@@ -298,10 +298,10 @@ The `*` marks the current cluster.
 ### Switch clusters
 
 ```bash
-marvel config use-cluster kinu
+marvel config use-cluster <host>
 ```
 
-All subsequent commands go to the `kinu` daemon until you switch again.
+All subsequent commands go to the `<host>` daemon until you switch again.
 
 ### Remove a cluster
 
