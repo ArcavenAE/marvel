@@ -26,7 +26,7 @@ content: |
   `tools_deny` and `extensions`. An unknown key inside the table is refused; a
   table on a runtime that is not goose draws a note at apply.
 
-  STATE: the adapter core is marvel#1172, a draft, not merged. Interactive goose
+  STATE: the adapter core merged as marvel#1172 (8c8f8f7c, 2026-11-01). Interactive goose
   launches; every headless launch is refused with the exit-78 stub and the slug
   `stream-not-built` until the stream parser and the watchdog wrapper land. The
   parser waits on recorded stream fixtures, and the exact shape of the stream
