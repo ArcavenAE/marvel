@@ -74,7 +74,9 @@ func queryDaemonBuild() (*daemon.BuildInfo, error) {
 func versionReport(w io.Writer, client daemon.Build, q buildQuery) {
 	say := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
 	say("marvel %s (%s)", client.Version, client.Channel)
-	simulatorReport(w, client.Version, client.Channel, exec.LookPath, runSimulatorVersion)
+	simulatorReport(w, client.Version, client.Channel, exec.LookPath, func(path string) (string, error) {
+		return runSimulatorVersion(path, versionProbeTimeout)
+	})
 
 	info, err := q()
 	switch {
@@ -168,9 +170,16 @@ func compareBuilds(client, d daemon.Build) (warning, note string) {
 // program that hangs cannot hold marvel version.
 const simulatorVersionTimeout = 2 * time.Second
 
-// runSimulatorVersion runs `<path> -version` and returns what it printed.
-func runSimulatorVersion(path string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), simulatorVersionTimeout)
+// versionProbeTimeout is the bound the commands pass to the two program probes
+// below. It is simulatorVersionTimeout in every build; a test that runs a real
+// script sets a generous value, so its result does not depend on how long the
+// machine takes to start a process.
+var versionProbeTimeout = simulatorVersionTimeout
+
+// runSimulatorVersion runs `<path> -version` and returns what it printed, giving
+// the program timeout to answer.
+func runSimulatorVersion(path string, timeout time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, path, "-version").Output()
 	return string(out), err

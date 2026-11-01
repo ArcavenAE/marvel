@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/daemon"
 )
@@ -116,6 +117,7 @@ func TestVersionReportReadsTheSimulatorOnPath(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", dir+string(os.PathListSeparator)+"/usr/bin:/bin")
+			setVersionProbeTimeout(t, generousProbeTimeout)
 
 			var out bytes.Buffer
 			versionReport(&out, daemon.Build{Version: "0.1.0", Channel: "stable"}, func() (*daemon.BuildInfo, error) {
@@ -136,5 +138,46 @@ func TestVersionReportReadsTheSimulatorOnPath(t *testing.T) {
 				t.Errorf("a failed daemon query printed a daemon line:\n%s", got)
 			}
 		})
+	}
+}
+
+// generousProbeTimeout is the bound the tests that run a real script give the
+// probe. The 2 second production bound failed under the full race suite (the
+// script took longer than that to answer), so a test's result must not depend on
+// it.
+const generousProbeTimeout = 30 * time.Second
+
+// setVersionProbeTimeout sets the bound the commands pass to the version probes
+// for one test. It is process state, so a test that calls it is not parallel.
+func setVersionProbeTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := versionProbeTimeout
+	versionProbeTimeout = d
+	t.Cleanup(func() { versionProbeTimeout = prev })
+}
+
+// The probe gives the program the timeout it is passed, and no other: a program
+// that outlives it is cut off and reported as an error, long before it would
+// have answered.
+func TestRunSimulatorVersionHonorsItsTimeout(t *testing.T) {
+	dir := t.TempDir()
+	// exec, so the program the timeout kills is the one that holds the pipe.
+	script := "#!/bin/sh\nif [ \"$1\" = -version ] && [ -f \"$0.fast\" ]; then echo 'marvel-simulator 0.1.0 (stable)'; exit 0; fi\nexec sleep 5\n"
+	p := filepath.Join(dir, "marvel-simulator")
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil { //nolint:gosec // a test script must be executable
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := runSimulatorVersion(p, 100*time.Millisecond); err == nil {
+		t.Fatal("a program that outlives the timeout answered")
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("the probe took %v with a 100ms timeout", took)
+	}
+	if err := os.WriteFile(p+".fast", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := runSimulatorVersion(p, 30*time.Second); err != nil || !strings.Contains(got, "0.1.0") {
+		t.Fatalf("with room to answer, got %q, %v", got, err)
 	}
 }

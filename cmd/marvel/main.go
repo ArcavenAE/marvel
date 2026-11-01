@@ -2380,7 +2380,9 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 			if err != nil {
 				return err
 			}
-			noteStaleSimulator(cmd.OutOrStdout(), res, exec.LookPath, runSimulatorVersion, runInstalledVersion)
+			noteStaleSimulator(cmd.OutOrStdout(), res, exec.LookPath,
+				func(path string) (string, error) { return runSimulatorVersion(path, versionProbeTimeout) },
+				func(path string) (string, error) { return runInstalledVersion(path, versionProbeTimeout) })
 			return afterUpgrade(res, reexecDaemon, func() error {
 				if err := preflightReexec(cmd.ErrOrStderr()); err != nil {
 					return err
