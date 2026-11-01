@@ -212,6 +212,7 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		c.dropShiftRequest(t, role.Name)
 		return false
 	}
+	c.noteStuckRequest(t, role, req, sess, now)
 	if req.Escalated {
 		// The supervisor decides now (D5 step 3), and marvel keeps saying so:
 		// the event ring is in memory, so one emission can be lost to a
@@ -265,6 +266,68 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 	c.deliverHandoffMissing(t, role, sess, now)
 	c.emitHandoffMissing(t, role, sess, t.ShiftRequests[role.Name], now, false, false)
 	return false
+}
+
+// maxDeferFor is the max_defer of the role's condition that made a request of
+// this cause, and whether there is one. Only a max-age request has a max_defer
+// to pass; a zero value means api.DefaultShiftMaxDefer.
+func maxDeferFor(role *api.Role, cause string) (time.Duration, bool) {
+	if cause != api.ShiftTriggerMaxAge {
+		return 0, false
+	}
+	for _, cond := range role.Shift.Conditions() {
+		if cond.On != api.ShiftTriggerMaxAge {
+			continue
+		}
+		if cond.MaxDefer > 0 {
+			return cond.MaxDefer, true
+		}
+		return api.DefaultShiftMaxDefer, true
+	}
+	return 0, false
+}
+
+// noteStuckRequest emits team.shift-request-stuck, once per request, when a
+// max-age request has no escalation delivered to the supervisor after its
+// delivery has had its chance. An escalated request has had it: the escalation
+// calls the delivery in the same step, so it counts from max_defer. An
+// unescalated one has not, because the escalation comes after the handoff
+// window and after a probe read that began at or after the deadline, one or
+// more ticks later; it counts from the window plus max_defer, which also covers
+// a request that never escalates, as when its probe read never finishes. Both
+// open requests on the host-health incident sat in the delivered-nothing state
+// for days with nothing said (docs/design/host-health-guard.md section 4.4
+// item 2). It changes nothing about delivery or the shift.
+func (c *Controller) noteStuckRequest(t *api.Team, role *api.Role, req api.ShiftRequest, sess api.Session, now time.Time) {
+	maxDefer, ok := maxDeferFor(role, req.Cause)
+	if !ok || req.DeliveredCount > 0 || c.stuckEmitted[sess.Key()].Equal(req.RequestedAt) {
+		return
+	}
+	bound, boundName := maxDefer, "its max_defer"
+	state := "escalated with 0 escalations delivered to the " + supervisorRoleName + " role"
+	if !req.Escalated {
+		bound, boundName = role.Shift.HandoffWindowOrDefault()+maxDefer, "its handoff window plus its max_defer"
+		state = "has not escalated yet, with 0 escalations delivered to the " + supervisorRoleName + " role"
+	}
+	age := now.Sub(req.RequestedAt)
+	if age < bound {
+		return
+	}
+	if c.stuckEmitted == nil {
+		c.stuckEmitted = make(map[string]time.Time)
+	}
+	c.stuckEmitted[sess.Key()] = req.RequestedAt
+	events.Emit(c.Events, events.Event{
+		Kind:       events.KindShiftRequestStuck,
+		Severity:   events.SeverityWarning,
+		Workspace:  t.Workspace,
+		Team:       t.Name,
+		Role:       role.Name,
+		Session:    sess.Key(),
+		Generation: t.Generation,
+		Message: fmt.Sprintf("cause=%s: the handoff request for %s, made %s, is %s old, past %s of %s, and %s; nothing has told the supervisor, so the seat may never have been asked (marvel#608, marvel#955)",
+			req.Cause, sess.Key(), req.RequestedAt.Format(time.RFC3339), age.Truncate(time.Second), boundName, bound, state),
+	})
 }
 
 // handoffMissingReason says why no marker was observed, or, when present, that
@@ -347,6 +410,7 @@ func (c *Controller) dropShiftRequest(t *api.Team, role string) {
 	if req, ok := t.ShiftRequests[role]; ok {
 		c.handoffProbes.forget(req.Session)
 		delete(c.missingEmitted, req.Session)
+		delete(c.stuckEmitted, req.Session)
 		delete(c.publishRecords, req.Session)
 	}
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {

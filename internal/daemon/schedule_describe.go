@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -16,6 +18,26 @@ type teamDescription struct {
 	// Conditions are standing conditions of the team's roles, such as a spawn
 	// refused for its directory. Omitted when there are none.
 	Conditions []roleCondition `json:"Conditions,omitempty"`
+	// PendingShiftRequests are the roles' pending handoff requests with their
+	// age and delivery count, so a request that never reached its seat or its
+	// supervisor is seen here (docs/design/host-health-guard.md section 4.4).
+	// Omitted when no role has one.
+	PendingShiftRequests []shiftRequestDescription `json:"PendingShiftRequests,omitempty"`
+}
+
+// shiftRequestDescription is one pending handoff request as describe shows it.
+// DeliveredCount is the escalation envelopes marvel has published to the
+// team's supervisor for it; 0 on an escalated request is the stuck state.
+type shiftRequestDescription struct {
+	Role              string    `json:"role"`
+	Session           string    `json:"session"`
+	Cause             string    `json:"cause"`
+	RequestedAt       time.Time `json:"requested_at"`
+	Age               string    `json:"age"`
+	Escalated         bool      `json:"escalated"`
+	DeliveredCount    int       `json:"delivered_count"`
+	LastDeliveredAt   time.Time `json:"last_delivered_at,omitzero"`
+	NoticeUndelivered string    `json:"notice_undelivered,omitempty"`
 }
 
 // roleCondition is one standing condition on a role, in the shape of a
@@ -70,6 +92,16 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 		}
 	}
 	out.Conditions = append(out.Conditions, d.exposureConditions(t)...)
+	now := time.Now()
+	for _, role := range slices.Sorted(maps.Keys(t.ShiftRequests)) {
+		req := t.ShiftRequests[role]
+		out.PendingShiftRequests = append(out.PendingShiftRequests, shiftRequestDescription{
+			Role: role, Session: req.Session, Cause: req.Cause, RequestedAt: req.RequestedAt,
+			Age: now.Sub(req.RequestedAt).Truncate(time.Second).String(), Escalated: req.Escalated,
+			DeliveredCount: req.DeliveredCount, LastDeliveredAt: req.LastDeliveredAt,
+			NoticeUndelivered: req.NoticeUndelivered,
+		})
+	}
 	for _, role := range t.Roles {
 		if role.Schedule == nil {
 			continue
