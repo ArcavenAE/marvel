@@ -1,7 +1,7 @@
 # Architecture Overview
 
 Marvel is a control plane for AI agent workloads. It manages the lifecycle
-of agent sessions running in tmux panes — starting, stopping, health-checking,
+of agent sessions running in tmux panes: starting, stopping, health-checking,
 shifting, and scaling them according to declarative manifests.
 
 ## Design principles

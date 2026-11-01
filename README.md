@@ -49,9 +49,9 @@ The tap's `marvel` formula currently tracks the latest alpha release. A dedicate
 
 ### Option 2: Install with mise
 
-[mise](https://mise.jdx.dev/) is a polyglot version manager. It reads a per-project `mise.toml`, pulls the binary directly from GitHub Releases, and verifies GitHub Artifact Attestations natively — no Homebrew tap required.
+[mise](https://mise.jdx.dev/) is a polyglot version manager. It reads a per-project `mise.toml`, pulls the binary directly from GitHub Releases, and verifies GitHub Artifact Attestations natively, with no Homebrew tap required.
 
-**Alpha channel** (prereleases from `main`) — the first stable release is pending, so opt into prereleases per-tool:
+**Alpha channel** (prereleases from `main`): the first stable release is pending, so opt into prereleases per-tool:
 
 ```toml
 # mise.toml
@@ -64,15 +64,15 @@ mise install
 marvel version
 ```
 
-**Stable** (when a `v*` release ships) — drop the `prerelease = true` flag:
+**Stable** (when a `v*` release ships): drop the `prerelease = true` flag:
 
 ```bash
 mise use github:ArcavenAE/marvel@latest
 ```
 
-Marvel's alpha assets are not `-a`-suffixed, so stable and alpha share the same `marvel` shim — mise pins one version at a time per `mise.toml`, and switching channels swaps the underlying binary.
+Marvel's alpha assets are not `-a`-suffixed, so stable and alpha share the same `marvel` shim; mise pins one version at a time per `mise.toml`, and switching channels swaps the underlying binary.
 
-**macOS troubleshooting** — if a quarantine-aware host copies the mise install and Gatekeeper blocks launch, clear the xattr once:
+**macOS troubleshooting**: if a quarantine-aware host copies the mise install and Gatekeeper blocks launch, clear the xattr once:
 
 ```bash
 xattr -d com.apple.quarantine "$(mise which marvel)"
@@ -80,7 +80,7 @@ xattr -d com.apple.quarantine "$(mise which marvel)"
 
 ### Option 3: Download a pre-built binary
 
-Download the latest release from [GitHub Releases](https://github.com/ArcavenAE/marvel/releases). Binaries are available for macOS (arm64, amd64) and Linux (amd64, arm64 — Raspberry Pi 3/4/5 64-bit, AWS Graviton, etc.). macOS binaries are code-signed and Apple-notarized.
+Download the latest release from [GitHub Releases](https://github.com/ArcavenAE/marvel/releases). Binaries are available for macOS (arm64, amd64) and Linux (amd64, arm64: Raspberry Pi 3/4/5 64-bit, AWS Graviton, etc.). macOS binaries are code-signed and Apple-notarized.
 
 ## Quick Start
 
@@ -117,7 +117,7 @@ Workspace     isolation boundary (k8s namespace)
 ```
 
 A team contains heterogeneous roles. A review team might have 1 supervisor,
-3 reviewers, and 1 architect — each with its own runtime, replica count,
+3 reviewers, and 1 architect, each with its own runtime, replica count,
 restart policy, and healthcheck config.
 
 ## Manifests
@@ -230,7 +230,7 @@ today a headless `stream-json` launch (see `examples/claude-headless.toml`).
 
 Shifts are rolling replacements of agent sessions. Agent sessions accumulate
 context, drift, and stale mental models. A shift starts fresh sessions,
-verifies they're running, then drains the old ones — preserving team identity.
+verifies they're running, then drains the old ones, preserving team identity.
 
 ```sh
 # Shift all roles (workers first, supervisor last)
