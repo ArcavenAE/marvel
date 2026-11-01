@@ -61,7 +61,7 @@ func TestStuckRequestFiresOncePastMaxDeferWithNothingDelivered(t *testing.T) {
 	if ev.Severity != events.SeverityWarning || ev.Team != "squad" || ev.Role != testShiftRole || ev.Session == "" {
 		t.Errorf("event = %+v, want a warning on squad/%s naming the session", ev, testShiftRole)
 	}
-	for _, want := range []string{"max-age", "0 escalations delivered", stuckDefer.String(), "#608"} {
+	for _, want := range []string{"max-age", "0 escalations delivered", "escalated with 0 escalations delivered", stuckDefer.String(), "#608"} {
 		if !strings.Contains(ev.Message, want) {
 			t.Errorf("message %q lacks %q", ev.Message, want)
 		}
@@ -103,5 +103,67 @@ func TestStuckRequestStaysQuietOnceAnEscalationIsDelivered(t *testing.T) {
 	f.ctrl.handoffProbes.wait()
 	if n := f.count(events.KindShiftRequestStuck); n != 0 {
 		t.Errorf("stuck events with a delivered escalation = %d, want 0", n)
+	}
+}
+
+// setHandoffWindow gives the fixture's max-age role a handoff window.
+func setHandoffWindow(t *testing.T, f *deliverFixture, window time.Duration) {
+	t.Helper()
+	if err := f.store.UpdateTeam(f.teamKey, func(live *api.Team) error {
+		for i := range live.Roles {
+			if live.Roles[i].Name == testShiftRole {
+				live.Roles[i].Shift.HandoffWindow = window
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A request is not stuck while its seat is still inside its handoff window,
+// whatever max_defer says: the escalation, which is what delivery counts, comes
+// after the window. So the event fires at the later of max_defer and the
+// window (case (a) of the review of this change).
+func TestStuckRequestWaitsForALongerHandoffWindow(t *testing.T) {
+	const window = time.Hour
+	f := newDeliverFixture(t, "test-stuck-window", false, false,
+		api.ShiftCondition{On: api.ShiftTriggerMaxAge, MaxAge: testMaxAge, MaxDefer: stuckDefer})
+	setHandoffWindow(t, f, window)
+	f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	f.evaluate() // makes the request
+	got, err := f.store.GetTeam(f.teamKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.ShiftRequests[testShiftRole]; !ok {
+		t.Fatal("setup: no request was made")
+	}
+
+	// Past max_defer, inside the window: quiet.
+	f.clock.Advance(stuckDefer + 5*time.Minute)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	if n := f.count(events.KindShiftRequestStuck); n != 0 {
+		t.Fatalf("stuck events inside the handoff window = %d, want 0", n)
+	}
+
+	// Past the window with nothing delivered: one event, before the
+	// escalation has been recorded, and it says so.
+	f.clock.Advance(window)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	evs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftRequestStuck}, 0)
+	if len(evs) != 1 {
+		t.Fatalf("stuck events past the handoff window = %d, want 1", len(evs))
+	}
+	if !strings.Contains(evs[0].Message, "has not escalated yet") {
+		t.Errorf("message %q does not say the request has not escalated yet", evs[0].Message)
+	}
+	f.clock.Advance(time.Second)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	if n := f.count(events.KindShiftRequestStuck); n != 1 {
+		t.Errorf("stuck events after the escalation = %d, want still 1", n)
 	}
 }

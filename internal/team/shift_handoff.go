@@ -288,20 +288,34 @@ func maxDeferFor(role *api.Role, cause string) (time.Duration, bool) {
 }
 
 // noteStuckRequest emits team.shift-request-stuck, once per request, when a
-// max-age request is older than its max_defer and no escalation has been
-// delivered to the supervisor. Both open requests on the host-health incident
-// sat in that state for days with nothing said (docs/design/host-health-guard.md
-// section 4.4 item 2). It changes nothing about delivery or the shift.
+// max-age request is older than the later of its max_defer and its handoff
+// window and no escalation has been delivered to the supervisor. Delivery
+// counts escalations, which come after the window, so a request still inside
+// its window is not stuck whatever max_defer says. Both open requests on the
+// host-health incident sat in that state for days with nothing said
+// (docs/design/host-health-guard.md section 4.4 item 2). It changes nothing
+// about delivery or the shift.
 func (c *Controller) noteStuckRequest(t *api.Team, role *api.Role, req api.ShiftRequest, sess api.Session, now time.Time) {
 	maxDefer, ok := maxDeferFor(role, req.Cause)
+	if !ok || req.DeliveredCount > 0 || c.stuckEmitted[sess.Key()].Equal(req.RequestedAt) {
+		return
+	}
+	bound, boundName := maxDefer, "its max_defer"
+	if window := role.Shift.HandoffWindowOrDefault(); window > bound {
+		bound, boundName = window, "its handoff window"
+	}
 	age := now.Sub(req.RequestedAt)
-	if !ok || req.DeliveredCount > 0 || age < maxDefer || c.stuckEmitted[sess.Key()].Equal(req.RequestedAt) {
+	if age < bound {
 		return
 	}
 	if c.stuckEmitted == nil {
 		c.stuckEmitted = make(map[string]time.Time)
 	}
 	c.stuckEmitted[sess.Key()] = req.RequestedAt
+	state := "has not escalated yet, with 0 escalations delivered to the " + supervisorRoleName + " role"
+	if req.Escalated {
+		state = "escalated with 0 escalations delivered to the " + supervisorRoleName + " role"
+	}
 	events.Emit(c.Events, events.Event{
 		Kind:       events.KindShiftRequestStuck,
 		Severity:   events.SeverityWarning,
@@ -310,8 +324,8 @@ func (c *Controller) noteStuckRequest(t *api.Team, role *api.Role, req api.Shift
 		Role:       role.Name,
 		Session:    sess.Key(),
 		Generation: t.Generation,
-		Message: fmt.Sprintf("cause=%s: the handoff request for %s, made %s, is %s old, past its max_defer of %s, with 0 escalations delivered to the %s role (escalated: %t); nothing has told the supervisor, so the seat may never have been asked (marvel#608, marvel#955)",
-			req.Cause, sess.Key(), req.RequestedAt.Format(time.RFC3339), age.Truncate(time.Second), maxDefer, supervisorRoleName, req.Escalated),
+		Message: fmt.Sprintf("cause=%s: the handoff request for %s, made %s, is %s old, past %s of %s, and %s; nothing has told the supervisor, so the seat may never have been asked (marvel#608, marvel#955)",
+			req.Cause, sess.Key(), req.RequestedAt.Format(time.RFC3339), age.Truncate(time.Second), boundName, bound, state),
 	})
 }
 

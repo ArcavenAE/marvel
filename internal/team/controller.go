@@ -67,7 +67,8 @@ type Controller struct {
 	// stuckEmitted is the RequestedAt of the request whose stuck event was
 	// emitted, per session key, so each request is reported once. It is in
 	// memory like missingEmitted: a restart may report a still-stuck request
-	// once more, which is the point of a report that can be missed.
+	// once more, which is the point of a report that can be missed. Guarded
+	// by mu.
 	stuckEmitted map[string]time.Time
 	// publishRecords is what the controller remembers, in memory, about
 	// publishing each escalated session's request to the supervisor
