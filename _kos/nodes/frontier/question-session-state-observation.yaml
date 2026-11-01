@@ -225,6 +225,23 @@ content: |
   routes). The same window showed #801's symptom live: LAST-ACTIVE 6 to 8 s
   and ACTIVE% 100 on the idle seat.
 
+  HARVEST 2026-11-01 (finding-marvel-0x6i). The composer contract after one
+  turn: most of what three tickets call unbuilt is built, and the gaps are
+  narrower. `ComposerContract` carries measured submit, clear and interrupt
+  for claude, codex and opencode; the daemon reads only `ClearKey`, and
+  `InterruptKeys` has no caller. Readers are uneven: claude is read with a
+  done-line-only idle rule, codex for its update menu only, opencode not at
+  all. Verify-by-effect confirms that nothing is staged, not that a turn
+  started, and a lost paste beside an earlier done line also reads as empty.
+  No stale-draft check exists in marvel, so a literal inject to a claude
+  seat holding a draft appends to it. The claude contract and its fixtures
+  cite 2.1.288, and live panes ran 2.1.289 to 2.1.314. This is a code read
+  at 04c258f: no harness was run, and crush, goose, pi and mini-swe-agent
+  are unmeasured. The composer-check and queued-message fixes director#401,
+  marvel#1044 and marvel#1053 carry the lost-ring-Enter case, which has no
+  finding of its own. See also question-harness-state-watchdog for the
+  classified-state read of the pane.
+
 edges:
   - target: elem-agentic-resource-matrix
     type: supports
