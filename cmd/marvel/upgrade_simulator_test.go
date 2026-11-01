@@ -22,7 +22,11 @@ func TestNoteStaleSimulator(t *testing.T) {
 	}
 	fails := func(string) (string, error) { return "", errors.New("exit status 2") }
 	direct := upgrade.Result{Changed: true, Direct: true, Binary: "/usr/local/bin/marvel"}
-	newMarvel := says("marvel 0.2.0 (stable)\n")
+	// The installed marvel prints more than its build line: marvel version adds
+	// the simulator line, a note and a daemon line when those apply.
+	newMarvel := says("marvel 0.2.0 (stable)\nsimulator 0.1.0 (stable)\n" +
+		"note: the simulator on PATH is 0.1.0 (stable) and marvel is 0.2.0 (stable); they ship together, so install both from one release\n" +
+		"daemon  0.1.0 (stable) pid 41 started 2026-11-01T12:00:00Z\n")
 
 	for _, tc := range []struct {
 		name      string
@@ -91,7 +95,7 @@ func TestUpgradeCmdNotesAStaleSimulator(t *testing.T) {
 		}
 		return p
 	}
-	installed := write("marvel-new", "marvel 0.2.0 (stable)")
+	installed := write("marvel-new", "marvel 0.2.0 (stable)\nsimulator 0.1.0 (stable)\nnote: the simulator on PATH is 0.1.0 (stable) and marvel is 0.2.0 (stable)")
 	write("marvel-simulator", "marvel-simulator 0.1.0 (stable)")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+"/usr/bin:/bin")
 

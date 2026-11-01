@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 
 	"github.com/arcavenae/marvel/internal/upgrade"
 )
@@ -37,7 +38,11 @@ func noteStaleSimulator(w io.Writer, res upgrade.Result, look func(string) (stri
 	if err != nil {
 		return
 	}
-	version, channel, ok := parseBuildLine(out, "marvel")
+	// marvel version prints the build line first and unchanged, then a simulator
+	// line, a note and a daemon line when those apply, so only the first line
+	// is the build.
+	first, _, _ := strings.Cut(out, "\n")
+	version, channel, ok := parseBuildLine(first, "marvel")
 	if !ok {
 		return
 	}
