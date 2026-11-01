@@ -161,6 +161,13 @@ const (
 	// to undelivered, that the escalation could not be published to the team's
 	// supervisor. Message carries the error (handoff-missing-delivery.md, H5).
 	KindShiftHandoffUndelivered Kind = "team.shift-handoff-undelivered"
+	// KindShiftRequestStuck records, once per request, that a max-age handoff
+	// request passed its max_defer with no escalation delivered to the team's
+	// supervisor, so the seat may never have been asked and nobody was told
+	// (docs/design/host-health-guard.md section 4.4). It reports only: marvel
+	// neither retries nor shifts on it. Message carries the request's age and
+	// delivery count.
+	KindShiftRequestStuck Kind = "team.shift-request-stuck"
 	// KindHandoffPut records that the daemon wrote a seat's handoff on its
 	// handoff.put call (docs/design/read-only-seat-handoff.md). The receipt is
 	// the daemon's own, so a seat's account of having written never counts.
@@ -513,6 +520,7 @@ var allKinds = []Kind{
 	KindShiftHandoffRequested,
 	KindShiftHandoffMissing,
 	KindShiftHandoffUndelivered,
+	KindShiftRequestStuck,
 	KindHandoffPut,
 	KindHandoffPutRefused,
 	KindShiftRoleReady,
