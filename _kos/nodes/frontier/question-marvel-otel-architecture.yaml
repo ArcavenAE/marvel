@@ -249,6 +249,19 @@ content: |
   OTEL environment variables entirely, and does not need them: its config is
   per process, so a per-session home (CODEX_HOME) is the channel for any
   codex telemetry setting.
+
+  BACK-REFERENCE (2026-11-01 harvest): marvel#1138 stamps seat identity into
+  OTEL_RESOURCE_ATTRIBUTES at launch for claude and codex seats
+  (marvel.workspace, .team, .role and .session always; .seat and .cluster when
+  they exist; the sha256 of the system prompt and of the first prompt when
+  marvel passed them), so a run record can attribute a session to a seat
+  without scraping (aae-orc-mdr0n, operator ruling I-35). Its measurement
+  corrects finding-037 for one version: on codex-cli 0.160.1 the variable is
+  honored and marvel.role and marvel.session appear on every exported record,
+  where finding-037 found it ignored on 0.153.4. So "codex ignores OTEL
+  environment variables" holds for 0.153.4 only. The PR also records that
+  claude decodes percent-encoding and codex does not. Taken from the PR text,
+  not re-measured here. opencode and crush are not stamped.
 edges:
   - target: question-stream-attachment
     type: derives
