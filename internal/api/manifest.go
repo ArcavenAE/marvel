@@ -759,6 +759,43 @@ func (m *Manifest) FirstPromptAdvisories() []string {
 	return out
 }
 
+// MaxAgeAdvisories lists the interactive single-replica roles that declare no
+// max-age shift trigger, so a seat of the role has no age bound
+// (docs/design/host-health-guard.md section 4.4 item 1). It is advisory and
+// never a refusal: a role with no shift policy has always been valid. A role
+// with more than one replica is left out because max-age is refused on it
+// until marvel#452 lands, and so is a parked role and a headless one.
+func (m *Manifest) MaxAgeAdvisories() []string {
+	var out []string
+	for _, t := range m.Teams {
+		for _, r := range t.Roles {
+			if r.Runtime.Mode != RuntimeModeInteractive || r.Replicas != 1 || r.Shift.declaresMaxAge() {
+				continue
+			}
+			out = append(out, fmt.Sprintf("team %s role %s: interactive single-replica role declares no max-age shift trigger, so a seat of it runs until something else ends it; advisory only (marvel#452 covers roles with more than one replica)",
+				t.Name, r.Name))
+		}
+	}
+	return out
+}
+
+// declaresMaxAge reports whether the shift block names a max-age trigger, in
+// the single form or in the list form. A nil block declares none.
+func (s *ManifestShift) declaresMaxAge() bool {
+	if s == nil {
+		return false
+	}
+	if s.On == ShiftTriggerMaxAge {
+		return true
+	}
+	for _, c := range s.Any {
+		if c.On == ShiftTriggerMaxAge {
+			return true
+		}
+	}
+	return false
+}
+
 // AdapterName is the name the adapter registry is asked for: the image, else
 // the whole command string. Registry.Resolve is an exact lookup that falls back
 // to the generic adapter, so a command path or a command with arguments is not

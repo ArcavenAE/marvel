@@ -1578,6 +1578,7 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	scheduleAdvisories := m.ScheduleAdvisories(now)
 	headroomAdvisories := m.ShiftHeadroomAdvisories()
 	firstPromptAdvisories := m.FirstPromptAdvisories()
+	maxAgeAdvisories := m.MaxAgeAdvisories()
 
 	if err := m.ApplyFrom(d.store, p.ManifestSource); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("apply manifest: %v", err)}
@@ -1599,6 +1600,9 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		log.Printf("apply: %s", a)
 	}
 	for _, a := range firstPromptAdvisories {
+		log.Printf("apply: %s", a)
+	}
+	for _, a := range maxAgeAdvisories {
 		log.Printf("apply: %s", a)
 	}
 	for _, a := range acks {
