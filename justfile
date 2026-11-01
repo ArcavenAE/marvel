@@ -7,10 +7,12 @@ default:
 build:
     go build -o bin/marvel ./cmd/marvel/
     go build -o bin/simulator ./cmd/simulator/
+    go build -o bin/marvel-simulator ./cmd/simulator/
 
 # Build simulator only
 build-sim:
     go build -o bin/simulator ./cmd/simulator/
+    go build -o bin/marvel-simulator ./cmd/simulator/
 
 # Run all tests
 test:

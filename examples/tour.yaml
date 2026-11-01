@@ -1,7 +1,9 @@
 # Marvel example: the tour. A team of three workers and one supervisor on the
 # simulator, so it needs no model login and costs nothing. See docs/tour.md.
-# Run:  ./bin/marvel daemon &   then   ./bin/marvel work examples/tour.yaml
-# Stop: ./bin/marvel stop --teardown
+# Needs marvel and marvel-simulator on PATH: an install gives both, and from a
+# source build run  export PATH="$PWD/bin:$PATH"  first.
+# Run:  marvel daemon &   then   marvel work examples/tour.yaml
+# Stop: marvel stop --teardown
 
 workspace:
   name: demo
@@ -13,7 +15,7 @@ teams:
         replicas: 3
         runtime:
           image: simulator
-          command: ../bin/simulator
+          command: marvel-simulator
           args: ["--tick", "1000"]
         healthcheck:
           type: heartbeat
@@ -24,7 +26,7 @@ teams:
         replicas: 1
         runtime:
           image: simulator
-          command: ../bin/simulator
+          command: marvel-simulator
           args: ["--tick", "2000"]
         healthcheck:
           type: heartbeat
