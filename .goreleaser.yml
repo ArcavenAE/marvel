@@ -33,6 +33,24 @@ builds:
       - -X main.version={{.Version}}
       - -X main.channel=stable
 
+  # The simulator ships beside marvel, so the tour needs one install. A
+  # separate program, not a subcommand (marvel#1175).
+  - id: marvel-simulator
+    main: ./cmd/simulator
+    binary: marvel-simulator
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.channel=stable
+
 archives:
   - id: default
     format: tar.gz
@@ -106,6 +124,7 @@ brews:
     license: "MIT"
     install: |
       bin.install "marvel"
+      bin.install "marvel-simulator"
     test: |
       assert_match version.to_s, shell_output("#{bin}/marvel version 2>&1")
   - name: "{{ .Env.STABLE_FORMULA_NAME }}"
@@ -124,5 +143,6 @@ brews:
     license: "MIT"
     install: |
       bin.install "marvel"
+      bin.install "marvel-simulator"
     test: |
       assert_match version.to_s, shell_output("#{bin}/marvel version 2>&1")

@@ -22,7 +22,20 @@ import (
 	"github.com/arcavenae/marvel/internal/simulator"
 )
 
+// Set by -ldflags at build time, as in marvel itself.
+var (
+	version = "dev"
+	channel = "dev"
+)
+
+// versionLine is what -version prints. marvel version reads it to compare this
+// build with its own, so the shape is fixed: program, version, (channel).
+func versionLine(version, channel string) string {
+	return fmt.Sprintf("marvel-simulator %s (%s)", version, channel)
+}
+
 func main() {
+	showVersion := flag.Bool("version", false, "print the simulator version and channel, and exit")
 	name := flag.String("name", "simulator", "agent name")
 	socket := flag.String("socket", "", "marvel daemon socket path")
 	scriptPath := flag.String("script", "", "Lua script path")
@@ -32,6 +45,10 @@ func main() {
 	team := flag.String("team", "default", "team name")
 	role := flag.String("role", "", "role name")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(versionLine(version, channel))
+		return
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

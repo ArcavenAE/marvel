@@ -4,7 +4,7 @@ This tour walks the core loop in about three minutes: declare a team, let marvel
 
 ## Before you start
 
-Build the binaries and have `tmux` on your PATH:
+With an install, `marvel` and `marvel-simulator` are already on your PATH, and `marvel version` prints the simulator's version beside marvel's. From a source checkout, build the binaries and have `tmux` on your PATH:
 
 ```sh
 just build
@@ -30,7 +30,7 @@ name = "crew"
 
     [team.role.runtime]
     image = "simulator"
-    command = "../bin/simulator"
+    command = "marvel-simulator"
     args = ["--tick", "1000"]
 
     [team.role.healthcheck]
@@ -39,7 +39,7 @@ name = "crew"
     failure_threshold = 3
 ```
 
-The supervisor role has the same shape with `replicas = 1` and a slower tick. A role names the command each session runs and how many sessions there are. The `healthcheck` says how marvel knows a session is alive: here, a heartbeat the simulator sends, which marvel declares missed after 10 seconds. A relative `command` is resolved from the manifest's directory, which is why the path starts with `../`.
+The supervisor role has the same shape with `replicas = 1` and a slower tick. A role names the command each session runs and how many sessions there are. The `healthcheck` says how marvel knows a session is alive: here, a heartbeat the simulator sends, which marvel declares missed after 10 seconds. A bare `command` is found on PATH, so the same manifest runs from an install, which ships `marvel-simulator` beside `marvel`, and from a source build once `bin` is on PATH.
 
 ## Make it true
 
