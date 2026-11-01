@@ -3,8 +3,12 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/daemon"
 )
 
 // A seat on the simulator needs marvel-simulator on PATH, and a simulator from
@@ -76,6 +80,60 @@ func TestSimulatorReport(t *testing.T) {
 				if strings.Contains(got, w) {
 					t.Errorf("output has %q:\n%s", w, got)
 				}
+			}
+		})
+	}
+}
+
+// marvel version runs the real lookup and the real exec: a marvel-simulator
+// script on PATH that answers -version reaches the report, with no daemon
+// answering. This covers the wiring in versionReport, which the injected cases
+// above do not.
+func TestVersionReportReadsTheSimulatorOnPath(t *testing.T) {
+	// t.Setenv changes PATH, so this test cannot run in parallel.
+	for _, tc := range []struct {
+		name    string
+		answer  string
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "same build",
+			answer:  "marvel-simulator 0.1.0 (stable)",
+			want:    []string{"marvel 0.1.0 (stable)", "simulator 0.1.0 (stable)"},
+			notWant: []string{"note:"},
+		},
+		{
+			name:   "different build",
+			answer: "marvel-simulator 0.0.9 (stable)",
+			want:   []string{"simulator 0.0.9 (stable)", "note: the simulator on PATH is 0.0.9 (stable) and marvel is 0.1.0 (stable)"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			script := "#!/bin/sh\nif [ \"$1\" = -version ]; then echo '" + tc.answer + "'; fi\n"
+			if err := os.WriteFile(filepath.Join(dir, "marvel-simulator"), []byte(script), 0o755); err != nil { //nolint:gosec // a test script must be executable
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+"/usr/bin:/bin")
+
+			var out bytes.Buffer
+			versionReport(&out, daemon.Build{Version: "0.1.0", Channel: "stable"}, func() (*daemon.BuildInfo, error) {
+				return nil, errors.New("no daemon")
+			})
+			got := out.String()
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("output lacks %q:\n%s", w, got)
+				}
+			}
+			for _, w := range tc.notWant {
+				if strings.Contains(got, w) {
+					t.Errorf("output has %q:\n%s", w, got)
+				}
+			}
+			if strings.Contains(got, "daemon") {
+				t.Errorf("a failed daemon query printed a daemon line:\n%s", got)
 			}
 		})
 	}
