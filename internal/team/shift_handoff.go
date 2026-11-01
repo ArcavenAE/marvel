@@ -288,21 +288,26 @@ func maxDeferFor(role *api.Role, cause string) (time.Duration, bool) {
 }
 
 // noteStuckRequest emits team.shift-request-stuck, once per request, when a
-// max-age request is older than the later of its max_defer and its handoff
-// window and no escalation has been delivered to the supervisor. Delivery
-// counts escalations, which come after the window, so a request still inside
-// its window is not stuck whatever max_defer says. Both open requests on the
-// host-health incident sat in that state for days with nothing said
-// (docs/design/host-health-guard.md section 4.4 item 2). It changes nothing
-// about delivery or the shift.
+// max-age request has no escalation delivered to the supervisor after its
+// delivery has had its chance. An escalated request has had it: the escalation
+// calls the delivery in the same step, so it counts from max_defer. An
+// unescalated one has not, because the escalation comes after the handoff
+// window and after a probe read that began at or after the deadline, one or
+// more ticks later; it counts from the window plus max_defer, which also covers
+// a request that never escalates, as when its probe read never finishes. Both
+// open requests on the host-health incident sat in the delivered-nothing state
+// for days with nothing said (docs/design/host-health-guard.md section 4.4
+// item 2). It changes nothing about delivery or the shift.
 func (c *Controller) noteStuckRequest(t *api.Team, role *api.Role, req api.ShiftRequest, sess api.Session, now time.Time) {
 	maxDefer, ok := maxDeferFor(role, req.Cause)
 	if !ok || req.DeliveredCount > 0 || c.stuckEmitted[sess.Key()].Equal(req.RequestedAt) {
 		return
 	}
 	bound, boundName := maxDefer, "its max_defer"
-	if window := role.Shift.HandoffWindowOrDefault(); window > bound {
-		bound, boundName = window, "its handoff window"
+	state := "escalated with 0 escalations delivered to the " + supervisorRoleName + " role"
+	if !req.Escalated {
+		bound, boundName = role.Shift.HandoffWindowOrDefault()+maxDefer, "its handoff window plus its max_defer"
+		state = "has not escalated yet, with 0 escalations delivered to the " + supervisorRoleName + " role"
 	}
 	age := now.Sub(req.RequestedAt)
 	if age < bound {
@@ -312,10 +317,6 @@ func (c *Controller) noteStuckRequest(t *api.Team, role *api.Role, req api.Shift
 		c.stuckEmitted = make(map[string]time.Time)
 	}
 	c.stuckEmitted[sess.Key()] = req.RequestedAt
-	state := "has not escalated yet, with 0 escalations delivered to the " + supervisorRoleName + " role"
-	if req.Escalated {
-		state = "escalated with 0 escalations delivered to the " + supervisorRoleName + " role"
-	}
 	events.Emit(c.Events, events.Event{
 		Kind:       events.KindShiftRequestStuck,
 		Severity:   events.SeverityWarning,
