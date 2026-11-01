@@ -288,8 +288,8 @@ Named clusters are stored in `~/.marvel/config.yaml`:
 clusters:
   - name: local
     socket: ~/.marvel/run/marvel.sock
-  - name: kinu
-    server: mrvl://michael@kinu
+  - name: <host>
+    server: mrvl://michael@<host>
   - name: staging
     server: mrvl://deploy@staging.example.com:7000
 
