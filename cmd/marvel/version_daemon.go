@@ -2,10 +2,12 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -72,6 +74,7 @@ func queryDaemonBuild() (*daemon.BuildInfo, error) {
 func versionReport(w io.Writer, client daemon.Build, q buildQuery) {
 	say := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format+"\n", args...) }
 	say("marvel %s (%s)", client.Version, client.Channel)
+	simulatorReport(w, client.Version, client.Channel, exec.LookPath, runSimulatorVersion)
 
 	info, err := q()
 	switch {
@@ -159,4 +162,41 @@ func compareBuilds(client, d daemon.Build) (warning, note string) {
 		return "", "dev builds with no commit recorded cannot be told apart; build from a git checkout, or stamp a version"
 	}
 	return "", ""
+}
+
+// simulatorVersionTimeout bounds the simulator's answer to -version, so a
+// program that hangs cannot hold marvel version.
+const simulatorVersionTimeout = 2 * time.Second
+
+// runSimulatorVersion runs `<path> -version` and returns what it printed.
+func runSimulatorVersion(path string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), simulatorVersionTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "-version").Output()
+	return string(out), err
+}
+
+// simulatorReport prints the build of the marvel-simulator on PATH, and a note
+// when it is not the build of this marvel. A tour seat runs that program, and
+// the two ship together, so a difference is worth a line. Nothing is printed
+// when no simulator is on PATH, because marvel does not need one. look and run
+// are injected so a test needs no program on PATH.
+func simulatorReport(w io.Writer, version, channel string, look func(string) (string, error), run func(string) (string, error)) {
+	path, err := look("marvel-simulator")
+	if err != nil {
+		return
+	}
+	out, err := run(path)
+	fields := strings.Fields(out)
+	// "marvel-simulator <version> (<channel>)"
+	if err != nil || len(fields) != 3 || fields[0] != "marvel-simulator" || !strings.HasPrefix(fields[2], "(") || !strings.HasSuffix(fields[2], ")") {
+		_, _ = fmt.Fprintf(w, "simulator %s does not report its version\n", path)
+		return
+	}
+	simVersion, simChannel := fields[1], strings.Trim(fields[2], "()")
+	_, _ = fmt.Fprintf(w, "simulator %s (%s)\n", simVersion, simChannel)
+	if simVersion != version || simChannel != channel {
+		_, _ = fmt.Fprintf(w, "note: the simulator on PATH is %s (%s) and marvel is %s (%s); they ship together, so install both from one release\n",
+			simVersion, simChannel, version, channel)
+	}
 }
