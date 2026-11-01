@@ -724,14 +724,14 @@ the team structure.
 
 ```bash
 # Add a remote cluster
-marvel config add-cluster kinu mrvl://kinu
+marvel config add-cluster <host> mrvl://<host>
 marvel config add-cluster staging mrvl://deploy@staging:7000
 
 # List clusters
 marvel config list
 
 # Switch to a remote cluster
-marvel config use-cluster kinu
+marvel config use-cluster <host>
 
 # All commands now go to the remote daemon
 marvel get sessions
@@ -741,14 +741,14 @@ marvel capture prod/squad-worker-g1-0
 ### Explicit cluster per command
 
 ```bash
-marvel get sessions --cluster kinu
+marvel get sessions --cluster <host>
 marvel capture prod/squad-worker-g1-0 --cluster staging
 ```
 
 ### Explicit address (advanced)
 
 ```bash
-marvel get sessions --socket mrvl://kinu
+marvel get sessions --socket mrvl://<host>
 marvel get sessions --socket /tmp/marvel-dev.sock
 ```
 
