@@ -328,6 +328,21 @@ content: |
   seats; whether apply should check that a max-age role declares a handoff
   path, or the manifest reference should state the precondition, is open.
 
+  STATE 2026-11-01 (marvel#1167, marvel#1169). Max age now says more before
+  it can go wrong. Apply logs an advisory for each interactive single-replica
+  role that declares no max-age trigger (advisory only; a role with more than
+  one replica is left out because max-age is refused on it until marvel#452).
+  A pending shift request that no escalation has reached now raises one
+  `team.shift-request-stuck` event, once per request, and `describe team`
+  lists the pending requests with their age and delivered count. The event
+  fires from `max_defer` for a request that has escalated and from the
+  handoff window plus `max_defer` for one that has not yet, so a seat still
+  inside a longer window is not reported early (two review rounds on #1169
+  corrected the earlier rule). Both rest on finding-067's assumption that a
+  seat can write its handoff; neither decides a max-age value, which stays
+  the operator's. The design is `docs/design/host-health-guard.md` section
+  4.4; see question-host-health-guard.
+
 edges:
   - target: question-shifts
     type: derives
