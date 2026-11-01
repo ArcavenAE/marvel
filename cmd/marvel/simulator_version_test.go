@@ -156,28 +156,36 @@ func setVersionProbeTimeout(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { versionProbeTimeout = prev })
 }
 
-// The probe gives the program the timeout it is passed, and no other: a program
-// that outlives it is cut off and reported as an error, long before it would
-// have answered.
+// The probe gives the program the timeout it is passed, and no other. Neither
+// case reads a clock: one needs a bound longer than the 2s default to succeed,
+// the other needs a program that only a kill can end.
 func TestRunSimulatorVersionHonorsItsTimeout(t *testing.T) {
-	dir := t.TempDir()
-	// exec, so the program the timeout kills is the one that holds the pipe.
-	script := "#!/bin/sh\nif [ \"$1\" = -version ] && [ -f \"$0.fast\" ]; then echo 'marvel-simulator 0.1.0 (stable)'; exit 0; fi\nexec sleep 5\n"
-	p := filepath.Join(dir, "marvel-simulator")
-	if err := os.WriteFile(p, []byte(script), 0o755); err != nil { //nolint:gosec // a test script must be executable
-		t.Fatal(err)
+	script := func(t *testing.T, body string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "marvel-simulator")
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil { //nolint:gosec // a test script must be executable
+			t.Fatal(err)
+		}
+		return p
 	}
-	start := time.Now()
-	if _, err := runSimulatorVersion(p, 100*time.Millisecond); err == nil {
-		t.Fatal("a program that outlives the timeout answered")
-	}
-	if took := time.Since(start); took > time.Second {
-		t.Fatalf("the probe took %v with a 100ms timeout", took)
-	}
-	if err := os.WriteFile(p+".fast", nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := runSimulatorVersion(p, 30*time.Second); err != nil || !strings.Contains(got, "0.1.0") {
-		t.Fatalf("with room to answer, got %q, %v", got, err)
-	}
+
+	t.Run("a bound longer than the default lets a slow program answer", func(t *testing.T) {
+		// It answers after 3s, past the 2s default, so a probe that ignored its
+		// parameter and used the default would have killed it.
+		p := script(t, "sleep 3\necho 'marvel-simulator 0.1.0 (stable)'")
+		got, err := runSimulatorVersion(p, 30*time.Second)
+		if err != nil || !strings.Contains(got, "0.1.0") {
+			t.Fatalf("with room to answer, got %q, %v", got, err)
+		}
+	})
+
+	t.Run("a program that outlives the bound is killed", func(t *testing.T) {
+		// exec, so the process the timeout kills is the one holding the pipe. It
+		// would run for 20s, so only the kill can end it with an error.
+		p := script(t, "exec sleep 20")
+		got, err := runSimulatorVersion(p, 100*time.Millisecond)
+		if err == nil || !strings.Contains(err.Error(), "killed") {
+			t.Fatalf("a program that outlives its bound returned %q, %v; want a kill error", got, err)
+		}
+	})
 }
