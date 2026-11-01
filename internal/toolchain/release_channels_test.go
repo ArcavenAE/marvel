@@ -84,20 +84,21 @@ func formulaFile(cfg goreleaserConfig, name string) (string, error) {
 // own update-formulas workflow writes it; this repo's ci.yml does not.
 const alphaFormula = "marvel.rb"
 
-// noAlphaTapStep fails when a ci.yml step writes into the tap checkout. The
+// noAlphaTapStep fails when ci.yml names the tap repository or its token. The
 // alpha formula reaches the tap only through the tap's own workflow, so its
 // commit is the signed record; a second writer here would add an unsigned one.
+// The check reads the raw file, so a step that clones into any directory name,
+// or passes the token through env or with, is caught as well as one that
+// writes into tap-repo/Formula.
 func noAlphaTapStep(t *testing.T) {
 	t.Helper()
-	jobs, err := ciJobs(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, job := range jobs {
-		for _, s := range job.Steps {
-			if strings.Contains(s.Run, "tap-repo/Formula/") {
-				t.Errorf("ci.yml job %s step %q writes into tap-repo/Formula; the tap's own workflow is the only alpha writer", name, s.Name)
-			}
+	for _, name := range []string{"homebrew-tap", "HOMEBREW_TAP_TOKEN"} {
+		if strings.Contains(string(raw), name) {
+			t.Errorf("ci.yml names %s; the tap's own workflow is the only alpha writer", name)
 		}
 	}
 }

@@ -3,8 +3,8 @@ version: 2
 project_name: marvel
 
 env:
-  # The tap file the stable channel writes, without .rb. The alpha job writes
-  # Formula/marvel.rb, and a prerelease tag writes Formula/marvel-rc.rb, so
+  # The tap file the stable channel writes, without .rb. The tap's own
+  # workflow writes Formula/marvel.rb, and a prerelease tag writes Formula/marvel-rc.rb, so
   # neither moves a host that installed the other.
   # TODO(aae-orc-pd1oc): the stable file name is waiting on a decision. Until
   # it is made, the stable entry writes the rc file (marvel-rc.rb), the same
