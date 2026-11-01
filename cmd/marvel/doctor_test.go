@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/keys"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/shorttmp"
 )
@@ -664,10 +666,24 @@ func TestHarnessOfSkipsTheNameAnEnvUnsetTakes(t *testing.T) {
 // doctor is read-only. A --remote read with no known_hosts file would otherwise
 // reach knownhosts.Callback, which creates an empty one, so doctor stops first,
 // says why, and leaves the marvel home as it found it.
+//
+// The scratch home holds a client key made here, and no agent is offered. Without
+// a key, a dial fails with "no SSH auth available" before the host-key callback
+// is built, so a doctor that dialed first would still leave known_hosts absent
+// and the file assertions below would pass for the wrong reason.
 func TestDoctorRemoteWithNoKnownHostsCreatesNothing(t *testing.T) {
 	home := shortHome(t)
 	t.Setenv(paths.HomeEnv, home)
 	t.Setenv("MARVEL_SOCKET", "")
+	t.Setenv("SSH_AUTH_SOCK", "")
+	layout, err := paths.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keys.GenerateClient(layout, keys.GenerateOptions{Comment: "doctor-test"}); err != nil {
+		t.Fatal(err)
+	}
+	before := homeEntries(t, home)
 	oldSocket, oldCluster := socketPath, clusterName
 	socketPath = "mrvl://u@127.0.0.1:1"
 	t.Cleanup(func() { socketPath, clusterName = oldSocket, oldCluster })
@@ -690,8 +706,32 @@ func TestDoctorRemoteWithNoKnownHostsCreatesNothing(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, "known_hosts")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("known_hosts exists after doctor --remote (stat err %v)", err)
 	}
-	entries, _ := os.ReadDir(home)
-	if len(entries) != 0 {
-		t.Fatalf("doctor wrote under the marvel home: %v", entries)
+	if after := homeEntries(t, home); !slices.Equal(after, before) {
+		t.Fatalf("doctor wrote under the marvel home: before %v, after %v", before, after)
 	}
+}
+
+// homeEntries lists every path under home, relative and sorted, so a test can
+// compare the tree before and after a command.
+func homeEntries(t *testing.T, home string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(home, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(home, p)
+		if err != nil {
+			return err
+		}
+		if rel != "." {
+			out = append(out, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(out)
+	return out
 }
