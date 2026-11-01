@@ -185,3 +185,10 @@ Already crystallizing: a real fleet-wide incident this would have caught.
 When Phase 1 is committed, extract a probe brief (the logged-out pipeline on
 the claude adapter behind the cheap gate, with a pattern-currency test) and
 a frontier question for the taxonomy and confidence model.
+
+## Became
+
+2026-11-01. The frontier question `question-harness-state-watchdog` holds what
+was measured once Phase 1 shipped: the pattern set sees the first-start login
+screen and not a login that expires mid-session, and a seat on a claude version
+no pattern covers reads bare `alive` (finding-marvel-1ust).

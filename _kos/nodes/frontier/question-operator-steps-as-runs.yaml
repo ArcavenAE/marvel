@@ -1,0 +1,56 @@
+id: question-operator-steps-as-runs
+type: question
+confidence: frontier
+title: "Can an operator's one-off maintenance step run as a marvel run that a supervisor follows, and what must exist before a follower may answer its prompts?"
+tags:
+  - marvel
+  - runs
+  - authority
+  - operator
+content: |
+  Operators carry one-off maintenance scripts from cluster to cluster by hand.
+  The idea (`_kos/ideas/operator-steps-as-marvel-runs.md`, #1101) is to run each
+  as a marvel session with a full tty, followed by a supervisor. This node holds
+  what the study found (finding-marvel-g6l6, 2026-10-27, design read from code at
+  c7ca936c; nothing was run against a daemon).
+
+  Reading a run works now. A step can run in a marvel pane, and a follower can
+  watch it, collect its output, and report errors and verdicts.
+
+  Answering one does not, in two places:
+
+  1. Authority is not in marvel and marvel cannot enforce it yet. Every caller
+     on the local socket is admin and every seat holds the socket, so marvel
+     cannot tell an operator's "yes" from a seat's. Until a principal check
+     exists (seat RPC authorization, aae-orc-bs3x, a prerequisite and not a
+     part), an approval must come from the operator by a path no seat can type
+     into.
+  2. A tty run leaves almost nothing behind. An interactive `marvel run` gets no
+     exit code, keeps no output once its pane closes, and is marked crashed
+     even when it exits 0. There is no run-once key and no enforced timeout.
+     Run records exist only for scheduled roles.
+
+  Following a pane by capture and inject is also unguarded for a plain script:
+  composer readers exist for codex and claude only, nothing detects a y/N prompt
+  in an arbitrary program, and inject sends Enter whether or not the program is
+  waiting.
+
+  RECOMMENDED in the finding, not ruled: a first case that is a check-only step
+  run by marvel and followed by a supervisor that only reads, with the transcript
+  and exit code kept; the apply stays with the operator at their own terminal.
+
+  OPEN, for the operator (the finding's five questions, none ruled here): who
+  may answer an informational prompt; whether `marvel attach` by the operator is
+  an acceptable approval path for a reserved prompt; whether a run may start on a
+  remote cluster over a remote admin key; where a durable run record lives; and
+  whether the classifier ruling already covers a follower's inject into a running
+  step.
+edges:
+  - target: question-permission-model
+    type: derives
+    note: "who may answer a prompt is an authority question: the finding finds marvel cannot yet tell an operator from a seat"
+provenance:
+  created_by: agent
+  session: harvest-2026-11-01
+  created_at: "2026-11-01"
+  extracted_from: "finding-marvel-g6l6 and _kos/ideas/operator-steps-as-marvel-runs.md"
