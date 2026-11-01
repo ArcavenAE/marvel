@@ -121,6 +121,18 @@ type LaunchContext struct {
 	// --settings; forestage: --settings in the claude passthrough). Empty
 	// means no projection for this launch and Prepare injects nothing.
 	PolicyProjectionPath string
+	// Placement is the placement the manager resolved for this launch
+	// (api.ResolvePlacement over the workspace's word and the harness's
+	// recommendation), set before Prepare. Empty means the manager could not
+	// resolve one, which an adapter that cares about containment reads as
+	// unsandboxed.
+	Placement api.Placement
+	// SandboxProfile is the path of the sandbox-exec profile this launch runs
+	// under, empty for none. The manager sets it before Prepare. An adapter that
+	// finds both Placement not container and SandboxProfile empty treats the
+	// launch as unsandboxed, so a field nothing set refuses rather than
+	// launches (goose-adapter-v1.1.md section 6, decision 2).
+	SandboxProfile string
 }
 
 // ProjectionTarget is an adapter's answer to "where does this session's
