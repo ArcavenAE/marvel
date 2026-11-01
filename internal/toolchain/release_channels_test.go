@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"text/template"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,22 +16,16 @@ import (
 // pipelines, and both end by writing a formula into the same tap. A formula
 // file written by both is overwritten by whichever runs last, so a host that
 // installed one channel is moved to the other by `brew upgrade`. These tests
-// hold the files apart, hold the stable build tool to one exact version, and
-// hold every tap commit to a signed one.
+// hold the files apart, and hold the stable build tool to one exact version.
 
 // goreleaserConfig is the part of .goreleaser.yml the tests read.
 type goreleaserConfig struct {
 	ProjectName string   `yaml:"project_name"`
 	Env         []string `yaml:"env"`
 	Brews       []struct {
-		Name         string `yaml:"name"`
-		Directory    string `yaml:"directory"`
-		SkipUpload   any    `yaml:"skip_upload"`
-		CommitAuthor struct {
-			Signing struct {
-				Enabled bool `yaml:"enabled"`
-			} `yaml:"signing"`
-		} `yaml:"commit_author"`
+		Name       string `yaml:"name"`
+		Directory  string `yaml:"directory"`
+		SkipUpload any    `yaml:"skip_upload"`
 	} `yaml:"brews"`
 }
 
@@ -45,6 +40,20 @@ func readGoreleaser(t *testing.T) goreleaserConfig {
 		t.Fatalf("parse .goreleaser.yml: %v", err)
 	}
 	return cfg
+}
+
+// renderSkipUpload renders a skip_upload value the way goreleaser does for the
+// one field these entries use, .Prerelease, without running goreleaser.
+func renderSkipUpload(skip, prerelease string) (string, error) {
+	tmpl, err := template.New("skip_upload").Option("missingkey=error").Parse(skip)
+	if err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	if err := tmpl.Execute(&out, struct{ Prerelease string }{prerelease}); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out.String()), nil
 }
 
 var envTemplate = regexp.MustCompile(`^\{\{\s*\.Env\.([A-Za-z0-9_]+)\s*\}\}$`)
@@ -136,8 +145,21 @@ func TestStableAndAlphaFormulasAreDifferentFiles(t *testing.T) {
 			continue
 		}
 		rcEntries++
-		if skip := fmt.Sprint(b.SkipUpload); !strings.Contains(skip, "Prerelease") || strings.Contains(skip, "auto") {
-			t.Errorf("the marvel-rc entry's skip_upload = %q; it must upload for a prerelease tag, which \"auto\" skips", skip)
+		// Render the template for an rc tag and for a tag with no prerelease:
+		// goreleaser skips the upload when the result is "true".
+		for _, tc := range []struct{ prerelease, want string }{
+			{"rc.1", "false"},
+			{"", "true"},
+		} {
+			got, err := renderSkipUpload(fmt.Sprint(b.SkipUpload), tc.prerelease)
+			if err != nil {
+				t.Errorf("the marvel-rc entry's skip_upload %q does not render: %v", b.SkipUpload, err)
+				break
+			}
+			if got != tc.want {
+				t.Errorf("the marvel-rc entry's skip_upload renders %q for prerelease %q, want %q (it must upload for an rc tag and skip otherwise)",
+					got, tc.prerelease, tc.want)
+			}
 		}
 	}
 	if rcEntries != 1 {
