@@ -1,6 +1,7 @@
 # Marvel example: the first cluster. One supervisor and one worker, each with a
 # plain prompt, so a first user applies one file and gets two seats on any host
-# with no edits. This file holds no path of any kind.
+# with no edits. The live lines hold no path; the commented launcher line names
+# one under $HOME, for you to keep or change.
 #
 # It runs on the simulator, so it needs no model login and costs nothing. Needs
 # marvel and marvel-simulator on PATH: an install gives both, and from a source
@@ -29,8 +30,9 @@
 # Stop: marvel stop --teardown
 #
 # To use a real harness later, follow the commented lines in each role: the
-# supervisor takes mail (--receiver), the worker does not. Apart from that swap,
-# the file stays as it is, and the prompts stay too.
+# supervisor takes mail (--receiver), the worker does not. The swap replaces
+# image, command and args and deletes the role's healthcheck block; nothing else
+# changes, and the prompts stay.
 
 workspace:
   name: first-cluster
