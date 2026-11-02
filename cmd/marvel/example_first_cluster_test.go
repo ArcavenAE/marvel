@@ -33,6 +33,24 @@ func TestExampleFirstClusterPrintsTheExamplesFilesByteForByte(t *testing.T) {
 	}
 }
 
+// An installed user has no examples/ directory, so the Run line in the printed
+// file must not tell them to apply a path under it.
+func TestExampleFirstClusterRunLineNeedsNoSourceTree(t *testing.T) {
+	t.Parallel()
+	for _, arg := range []string{"first-cluster", "first-cluster.yaml"} {
+		got, err := runExample(t, arg)
+		if err != nil {
+			t.Fatalf("marvel example %s: %v", arg, err)
+		}
+		if strings.Contains(got, "marvel work examples/") {
+			t.Errorf("marvel example %s tells the user to run a file under examples/, which an install does not have", arg)
+		}
+		if !strings.Contains(got, "marvel work first-cluster.") {
+			t.Errorf("marvel example %s has no Run line for the file the user just saved", arg)
+		}
+	}
+}
+
 // The list shows one name per example, however many formats it ships in, and
 // never a name with a suffix.
 func TestExampleListShowsOneNamePerExample(t *testing.T) {

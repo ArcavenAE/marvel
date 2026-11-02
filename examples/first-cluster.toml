@@ -25,7 +25,8 @@
 # A managed broker needs an explicit listen address; pick any free port. See
 # docs/admin-guide.md for what the entry does and its other modes.
 #
-# Run:  marvel daemon &   then   marvel work examples/first-cluster.toml
+# Get:  marvel example first-cluster > first-cluster.toml   (in a source tree the file is examples/first-cluster.toml)
+# Run:  marvel daemon &   then   marvel work first-cluster.toml
 # See:  marvel get sessions
 # Stop: marvel stop --teardown
 #
