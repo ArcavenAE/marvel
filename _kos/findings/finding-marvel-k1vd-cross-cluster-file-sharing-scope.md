@@ -33,7 +33,7 @@ The operator asked for a study of file sharing between marvel clusters that is w
 | Data loss: a delete or an empty source spreads | No delete propagates. A new snapshot never removes an old one before the owner's retention count. No mirror. |
 | Clobbering live work | Unpack only into a fresh directory, then swap a symlink. Never write a working tree, company root or seat workdir (cp C12). |
 | Receive-side escape | One regular file per transfer, named by the receiver, with links refused through `os.Root` (cp C1 to C11). The snapshot is unpacked by marvel's view code with its own refusals, never by a general `tar` on the receiver. |
-| Performance | The owner builds snapshots on the owner's schedule, and receivers never scan the source. The existing transport bounds apply (24 MiB request, 32 MiB reply), plus cp's daily byte budget (I4). |
+| Performance | The owner builds snapshots on the owner's schedule, and receivers never scan the source. The transport bounds set the ceiling, plus cp's daily byte budget (I4). The 32 MiB reply bound exists today. The 24 MiB request bound does not: the daemon decodes requests with no bound, and the bound is cp's precondition (cp I5, I6; marvel#1197, open). The operator's R4 ruling reads "the existing transport limits (the 24 MiB request bound and the 32 MiB reply bound) set the ceiling"; the request half of it is not yet built. |
 | Exposure of state such as handoffs or keys | The owner names an allowlist of paths, never a whole home. cp's credential-name refusal (K1). Key stores are never in a snapshot (ADR-009 in the orchestrator). |
 | Need to stop it now | The owner-held policy file (cp A1, A6) also gates publishing. |
 
@@ -41,7 +41,7 @@ The operator asked for a study of file sharing between marvel clusters that is w
 
 1. **Publish, owner side.** An owner-run step outside the daemon packs an allowlisted subtree into one archive. It writes a manifest (relative path, size, sha256, source cluster, time) and places both under a versioned name in that cluster's cp jail. marvel gains no read reach beyond the jail.
 2. **Pull.** `marvel cp <cluster>:<snapshot> <dst>`, the file.get already designed, at an interval the reader owns, checked end to end (cp I1, I2).
-3. **View.** The readonly-view code gains a second source type, "pulled snapshot", beside the git branch. It unpacks into a fresh read-only directory, refuses links, `..` and anything not a regular file, swaps the symlink, and writes `VIEW_SHA`. Seats read the view and never write it.
+3. **View.** The readonly-view code gains a second source type, "pulled snapshot", beside the git branch. It unpacks into a fresh read-only directory, applies the built extractor's refusals (`internal/view/view.go`: no `..`, no link whose target leaves the tree, no entry type it does not know), swaps the symlink, and writes `VIEW_SHA`. Seats read the view and never write it.
 4. **Retention.** N snapshots per source, set by the owner.
 
 Not covered: a file over the transport limits, and any reader that needs a view fresher than its pull interval.
