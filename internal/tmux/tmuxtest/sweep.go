@@ -1,6 +1,7 @@
 package tmuxtest
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // testServerRE matches the socket names the test binaries give their tmux
@@ -85,6 +87,24 @@ func pidAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
+// killServerDeadline bounds each kill-server the sweep runs. A server that a
+// killed test binary left stopped (SIGSTOP) never answers, and a client that
+// waits on it spins at full CPU without end (marvel#805), so the call is cut off
+// and the server is skipped like any other the sweep cannot stop. A variable so
+// a test can shorten it.
+var killServerDeadline = 5 * time.Second
+
+// killServer runs `tmux -L name kill-server` under killServerDeadline. The
+// context's default cancel is SIGKILL, so a client waiting on a stopped server
+// ends with the deadline; WaitDelay bounds the wait for its pipes.
+func killServer(name string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), killServerDeadline)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "-L", name, "kill-server")
+	cmd.WaitDelay = time.Second
+	return cmd.Run()
+}
+
 func sweepNames(names []string) []string {
 	dir := tmuxTmpDir()
 	var swept []string
@@ -93,7 +113,7 @@ func sweepNames(names []string) []string {
 		// TMUX_TMPDIR, so a server this process cannot reach fails here. It is
 		// then neither reported nor unlinked: only a server actually stopped
 		// counts as swept.
-		if err := exec.Command("tmux", "-L", n, "kill-server").Run(); err != nil {
+		if err := killServer(n); err != nil {
 			continue
 		}
 		_ = os.Remove(filepath.Join(dir, "tmux-"+strconv.Itoa(os.Getuid()), n))
