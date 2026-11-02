@@ -36,7 +36,7 @@ marvel get sessions
 marvel stop --teardown
 ```
 
-Then take the [tour](docs/tour.md), which needs a source checkout, Go and `just`, or go deep with the
+Then take the [tour](docs/tour.md), which needs a source checkout, or go deep with the
 [four-act demo](docs/demo.md).
 
 ## Install
