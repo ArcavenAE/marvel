@@ -498,10 +498,10 @@ func (s *Store) DeleteSession(key string) error {
 // When bolt is open, persistence happens after fn returns successfully, and
 // only if the record's stored form differs from the bytes last written for it:
 // an update that leaves the file's copy as it is starts no transaction and does
-// not advance the resource version (marvel#1214). If persist fails the in-memory state is already updated — the post-fn
-// pre-persist window is a known spike limitation (see orc question-
-// marvel-transaction-log). The reconciler's next successful update
-// will re-converge state.
+// not advance the resource version (marvel#1214). If persist fails the
+// in-memory state is already updated; the post-fn pre-persist window is a known
+// spike limitation (see orc question-marvel-transaction-log). The reconciler's
+// next successful update will re-converge state.
 func (s *Store) UpdateSession(key string, fn func(*Session) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
