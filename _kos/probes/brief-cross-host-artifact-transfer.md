@@ -1,6 +1,6 @@
 # Probe brief: does the transfer gap behind `marvel cp` survive remote `marvel work` and `get -o`, or is there a second use case?
 
-**Status:** DRAFT 2026-10-24, not filed, not run. Written for the architect
+**Status:** CARRIED FORWARD 2026-11-02 into `docs/design/marvel-cp.md` (marvel#1193), see `question-cross-host-file-copy`. It was DRAFT 2026-10-24, not filed, not run. Written for the architect
 from the idea `_kos/ideas/marvel-scp-verified-transfer.md` (2026-09-21).
 Premises read at marvel `origin/main` 9672ca5 (the local checkout was behind
 origin and was not used for reads).
