@@ -25,17 +25,18 @@ Claude Code, Codex, opencode, or any command you name.
 
 New here? The [first-run page](docs/first-run.md) walks four stages, each optional and each with one proof command, so you can stop at the first one that does what you need.
 
-Try it on the simulator, which needs no model login and costs nothing:
+Try it with an installed marvel. It needs no model login and costs nothing, and tmux is the one prerequisite. `marvel example` lists the manifests the binary carries:
 
 ```sh
-just build
-./bin/marvel daemon &
-./bin/marvel work examples/tour.toml
-./bin/marvel get sessions -w 1
-./bin/marvel stop --teardown
+marvel example
+marvel daemon &
+marvel example demo > demo.toml
+marvel work demo.toml
+marvel get sessions
+marvel stop --teardown
 ```
 
-Then take the [tour](docs/tour.md), or go deep with the
+Then take the [tour](docs/tour.md), which needs a source checkout, or go deep with the
 [four-act demo](docs/demo.md).
 
 ## Install
@@ -87,14 +88,15 @@ Download the latest release from [GitHub Releases](https://github.com/ArcavenAE/
 ## Quick Start
 
 ```sh
-# Build
-just build
+# See the manifests the binary carries
+marvel example
 
 # Start the daemon
 marvel daemon &
 
-# Load a manifest
-marvel work examples/demo.toml
+# Load the demo manifest
+marvel example demo > demo.toml
+marvel work demo.toml
 
 # Watch sessions
 marvel get sessions -w
@@ -105,6 +107,8 @@ marvel shift demo/squad
 # Clean up
 marvel stop --teardown
 ```
+
+To run from a source checkout instead, build first with `just build`; it puts `marvel` in `bin/`.
 
 ## Resource Model
 

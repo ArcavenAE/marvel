@@ -9,8 +9,9 @@ and interacting with running agents.
 # Start the daemon (local only)
 marvel daemon &
 
-# Apply a manifest
-marvel work examples/claude.yaml
+# Apply a manifest. `marvel example` lists the ones the binary carries.
+marvel example demo > demo.toml
+marvel work demo.toml
 
 # See what's running
 marvel get sessions
