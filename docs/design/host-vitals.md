@@ -5,7 +5,7 @@ Proposal, 2026-11-02. Code read at marvel `8587651a`. Nothing here is built.
 - **Author:** the architect seat, team arcaven.
 - **Asked by:** the operator, relayed by director, 2026-11-02.
 - **Builds on:** `docs/design/host-health-guard.md` (#1166), whose section 4.1 placed a host ticker beside `RunMetrics` after v0.1. The reasoning and the code reads are in `_kos/findings/finding-marvel-vdni-host-vitals-sampler.md`.
-- **Status:** for review. One decision is the operator's (section 9).
+- **Status:** for review. Section 9's decision was ruled by director on 2026-11-02; the operator may overrule.
 
 ## 0. Why
 
@@ -111,7 +111,9 @@ The initial-release party ruled 5-0 against any new always-on loop in the daemon
 - **Recommended:** build it before the rc, off unless the cluster config turns it on, and turn it on for the three fleet hosts. It adds no exec and no bolt write, so the risk the party guarded against (a new loop's cost and failure modes in a daemon about to promise stability) is small. Being off by default keeps every other installation unchanged.
 - **The alternative:** build it after v0.1, as `host-health-guard.md` 4.1 planned, and keep the interim host script until then.
 
-This recommendation is valid until 2026-11-09; the arcaven architect re-checks it then.
+**Ruled by director, 2026-11-02, on the operator's ask; the operator may overrule.** Director, word for word, with host names edited to roles: "build before the rc, OFF unless the cluster config enables it, and enabled on [the three fleet hosts]. This is the note's recommendation and it fits the release party's vote: it adds no new always-on loop. It rides the existing RunMetrics ps every 12th pass with zero new execs, and it is off by default for everyone else."
+
+The recommendation above was valid until 2026-11-09; with the ruling recorded, it stands as ruled.
 
 ## 10. Candidate requirements (provisional)
 
