@@ -79,3 +79,8 @@ references marvel#1214 yet (checked 2026-11-02).
 Open: the write rate has not been re-measured after any change, and the file
 event growth cause in question-host-health-guard stays a hypothesis until it
 is. The attribution of the git rate is open.
+
+See also `finding-marvel-2uv2-bolt-and-tmux-write-rate`, written after the fix in
+marvel#1228 merged: the counts measured before and after it (bolt transactions
+1800 to 12 a minute and tmux execs 900 to 30 a minute at 30 seats), the lines
+the cause runs through at main 8587651, and what is left.
