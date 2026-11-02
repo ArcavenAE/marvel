@@ -1559,6 +1559,17 @@ func (c *Controller) evaluateHealth() {
 	// regardless of the order its replicas are visited.
 	obs := make(map[string]roleObs)
 
+	// One write set per tick: each session's update changes memory at once and
+	// the file is written once, at the end, for the records that changed
+	// (marvel#1214). A persist error then comes back once, from Flush, not per
+	// session; memory is updated either way.
+	ws := c.store.NewWriteSet()
+	defer func() {
+		if err := ws.Flush(); err != nil {
+			log.Printf("warning: health tick: %v", err)
+		}
+	}()
+
 	// Every running session's tick goes into its activity ring, before any
 	// early return below, so the ring counts every evaluation.
 	ringed := make(map[string]bool, len(sessions))
@@ -1597,7 +1608,7 @@ func (c *Controller) evaluateHealth() {
 		)
 		var updated api.Session
 
-		err := c.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		err := ws.UpdateSession(sess.Key(), func(live *api.Session) error {
 			// Activity is an orthogonal, restart-neutral axis computed from
 			// the same snapshot. It is set first and read by no branch
 			// below, so it rides out on every early return with whatever
