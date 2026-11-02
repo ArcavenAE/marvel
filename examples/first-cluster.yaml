@@ -1,0 +1,77 @@
+# Marvel example: the first cluster. One supervisor and one worker, each with a
+# plain prompt, so a first user applies one file and gets two seats on any host
+# with no edits. This file holds no path of any kind.
+#
+# It runs on the simulator, so it needs no model login and costs nothing. Needs
+# marvel and marvel-simulator on PATH: an install gives both, and from a source
+# build run  export PATH="$PWD/bin:$PATH"  first.
+#
+# The message bus is not part of a manifest. It is a cluster Services entry in
+# your client config (config.yaml under your marvel home). To have marvel start
+# and supervise a local broker, put this in config.yaml (nats-server must be on
+# PATH):
+#
+#   clusters:
+#     - name: local
+#       services:
+#         - name: bus
+#           class: message-bus
+#           provider: nats-server
+#           mode: managed
+#           listen: 127.0.0.1:4222
+#   current_cluster: local
+#
+# A managed broker needs an explicit listen address; pick any free port. See
+# docs/admin-guide.md for what the entry does and its other modes.
+#
+# Run:  marvel daemon &   then   marvel work examples/first-cluster.yaml
+# See:  marvel get sessions
+# Stop: marvel stop --teardown
+#
+# To use a real harness later, follow the commented lines in each role: the
+# supervisor takes mail (--receiver), the worker does not. Apart from that swap,
+# the file stays as it is, and the prompts stay too.
+
+workspace:
+  name: first-cluster
+
+teams:
+  - name: crew
+    roles:
+      - name: supervisor
+        replicas: 1
+        runtime:
+          image: simulator
+          command: marvel-simulator
+          args: ["--tick", "2000"]
+          prompt: You supervise the crew. Check in with the worker and report what it says.
+          # To run a real harness, replace the image, command and args lines above
+          # with these (director-session is the director launcher, installed with
+          # director-mcp), and delete this role's healthcheck block, which is the
+          # simulator's heartbeat check:
+          #   image: claude
+          #   command: "${DIRECTOR_HOME:-$HOME/.director}/bin/director-session"
+          #   args: ["--marvel-role", "--receiver"]
+        healthcheck:
+          type: heartbeat
+          timeout: "10s"
+          failure_threshold: 3
+
+      - name: worker
+        replicas: 1
+        runtime:
+          image: simulator
+          command: marvel-simulator
+          args: ["--tick", "1000"]
+          prompt: You are the worker. Answer the supervisor when it checks in.
+          # To run a real harness, replace the image, command and args lines above
+          # with these (director-session is the director launcher, installed with
+          # director-mcp), and delete this role's healthcheck block, which is the
+          # simulator's heartbeat check:
+          #   image: claude
+          #   command: "${DIRECTOR_HOME:-$HOME/.director}/bin/director-session"
+          #   args: ["--marvel-role"]
+        healthcheck:
+          type: heartbeat
+          timeout: "10s"
+          failure_threshold: 3
