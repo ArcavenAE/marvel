@@ -22,6 +22,8 @@ The operator asked for a study of file sharing between marvel clusters that is w
 | D. Two-way sync among several writers | Ruled out. It is the one class where every failure in section 3 is possible, and a pool that agents write is the case it handles worst. |
 | E. Live remote mount (9P or NFS style) | Not now. It would add a file server to marvel and put read load on the source host; B serves reads from static files. |
 
+**Limits of the evidence.** The record behind these classes comes from a period when marvel and director were being built, so most of what had to move between clusters served that development work. Steady-state operation of agent teams at scale may need other classes, or different weights on these. This is a first cut, and the use cases are slanted toward development by the way they were collected.
+
 ## 3. Failure modes and the control for each
 
 | failure | control |
