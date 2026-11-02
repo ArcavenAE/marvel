@@ -323,8 +323,9 @@ models, and one runtime can be pointed at a different model per role, so
 reading `RUNTIME` as "which agent is this" gives the wrong answer as soon
 as a team is heterogeneous.
 
-Four more columns are opt-in and easy to miss. Name them with `--columns`,
-for example `--columns name,state,pane,rest`:
+Three more columns are opt-in and easy to miss, and one token, `rest`, helps
+you name the others. Name them with `--columns`, for example
+`--columns name,state,pane,rest`:
 
 - `PANE` is one word for what the seat's pane is doing, so a seat sitting at
   a login or startup prompt does not read as alive. The words are `working`
