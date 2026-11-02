@@ -17,6 +17,7 @@ func TestSweepNamesGivesUpOnAStoppedServer(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
+	// Under /tmp and not TMPDIR: a tmux socket path must fit in 104 bytes. The dir is private and removed below.
 	dir, err := os.MkdirTemp("/tmp", "mxsw")
 	if err != nil {
 		t.Fatal(err)
