@@ -14,6 +14,9 @@ just build
 Each file opens with a comment explaining what it demonstrates and how to
 watch it work. This index says which one to open.
 
+An installed marvel also carries `first-cluster`: `marvel example first-cluster`
+prints the TOML and `marvel example first-cluster.yaml` prints the YAML.
+
 ## Start with these
 
 | Manifest | What it shows | Needs |
