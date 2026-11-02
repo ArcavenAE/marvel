@@ -73,6 +73,15 @@ content: |
   GRAVEYARD CANDIDATES, judged by the supervisor, not moved here: pause by
   kill signal to a pane process; a tmux-frozen pause as a per-seat method;
   one-shot task_suspend (it ends when the helper exits).
+
+  HARVEST 2026-11-02 (marvel#1216, 5c177375). `_kos/ideas/fleet-hibernate.md`
+  gains the addendum "hibernate across a reboot, resuming the same sessions":
+  one verb with two modes, and a resume journal written all the time, not only
+  at hibernate. The idea contrasts hibernate with suspend: suspend keeps every
+  process alive and keeps context; hibernate ends the processes and a fresh
+  shift reads the handoffs. Idea only; nothing is measured or built, and it
+  changes none of the measurements or rulings above.
+
 edges:
   - target: elem-tmux-session-substrate
     type: derives
