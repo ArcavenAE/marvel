@@ -15,7 +15,7 @@ The marry pilot has 10 eligible items and pairs none of them. Four inputs block 
 - the file that would give seats their classes does not exist;
 - no seat has a duty cell, and marry pairs no seat without a proven one (section 4).
 
-A fifth cause can also give zero pairs: with `IDLE_SHADOW_SENDER_CLUSTER` unset, idle-shadow names no sender cluster, so marry places no candidate and reports each as "unplaced: no sender ruled" (`readiness_marry.go`, `UnplacedNoSender`). That is a setting, not a design gap, so this note only names it.
+A fifth cause can also give zero pairs: with `IDLE_SHADOW_SENDER_CLUSTER` unset, idle-shadow names no sender cluster, so marry places no candidate and reports each as "unplaced: no sender ruled" (`readiness_marry.go`, `UnplacedNoSender`). That is a setting, not a design gap. The pilot should set it to the cluster its shadow run speaks for, so that a pair can be placed at all.
 
 Each fix is small. Settling them in one note lets director's shadow run (idle-shadow) and `marvel marry` change once, together, instead of trading errors.
 
