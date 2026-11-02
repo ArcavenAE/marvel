@@ -12,11 +12,12 @@ and polls tmux; the host, the disk and the harnesses are objects.
 
 ## Why this matters
 
-One busy fleet host wrote about 300 GB a day to disk and started about a
-thousand tmux clients a minute from the daemon. The state file is about 1 MB.
-An exec trace on a fleet host, 60 s, counted 1,078 tmux execs, 1,050 of them
-with the marvel daemon as parent, and about 620 GB a day written for the whole
-host. The daemon's share is a polling pattern, not the state it holds, and it
+On one busy fleet host the daemon was reported writing about 300 GB a day to
+disk (marvel#1214 cites 303.7, 301.1 and 298.4 GB on three days, and says which
+file carried it was not measured). The state file is about 1 MB. An exec trace
+on a fleet host, 60 s, counted 1,078 tmux execs, 1,050 of them with the marvel
+daemon as parent, and an SSD reading put about 620 GB a day written for the
+whole host. The daemon's share is a polling pattern, not the state it holds, and it
 grows with the number of seats.
 
 ## The mechanism, with the lines it runs through (main 8587651)
