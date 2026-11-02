@@ -1,18 +1,21 @@
-# marry inputs: the seat key, the class names, and seat-eligibility.json
+# marry inputs: the seat key, the class names, seat-eligibility.json, and duty cells
 
 Proposal, 2026-11-02. Code read at marvel `940cc335` and director `b9bbd56`. Nothing here is built.
 
 - **Author:** the architect seat, team arcaven.
 - **Asked by:** the operator, relayed by director, 2026-11-02.
-- **Status:** for review. Each of the three choices is the operator's. Each has a recommended default (section 4).
+- **Status:** for review. Each of the four choices is the operator's. Each has a recommended default (section 5).
 
 ## 0. Why
 
-The marry pilot has 10 eligible items and pairs none of them. Three inputs block it, and none is a fault in the matcher:
+The marry pilot has 10 eligible items and pairs none of them. Four inputs block it, and none is a fault in the matcher:
 
 - a seat name that exists on two clusters makes `marvel marry` refuse the whole run;
 - no seat lists a class an item carries;
-- the file that would give seats their classes does not exist.
+- the file that would give seats their classes does not exist;
+- no seat has a duty cell, and marry pairs no seat without a proven one (section 4).
+
+A fifth cause can also give zero pairs: with `IDLE_SHADOW_SENDER_CLUSTER` unset, idle-shadow names no sender cluster, so marry places no candidate and reports each as "unplaced: no sender ruled" (`readiness_marry.go`, `UnplacedNoSender`). That is a setting, not a design gap, so this note only names it.
 
 Each fix is small. Settling them in one note lets director's shadow run (idle-shadow) and `marvel marry` change once, together, instead of trading errors.
 
@@ -24,7 +27,13 @@ Each fix is small. Settling them in one note lets director's shadow run (idle-sh
 
 **Options.**
 
-1. **marry keys a seat by cluster and address.** The duplicate check, `Lease`, `MarryPair` and `RecheckBeforeSend` use the pair (cluster, address), and a pair names its cluster. `MarryAddress` is unchanged, so the no-fan-out rule (`agent://{team}/{id}` only) holds. The change is in marvel, plus one vector in `contracts/readiness/marry-vectors.json` for "one name, two clusters". idle-shadow already sends the cluster and does not change.
+1. **marry keys a seat by cluster and address.** Everything that keys on a seat today uses the pair (cluster, address) instead:
+   - the duplicate check;
+   - `heldSeat`, the seats a lease in the ledger holds;
+   - `used`, the seats already paired this run;
+   - `Lease`, `MarryPair` and `RecheckBeforeSend`, with a pair naming its cluster.
+
+   `Stop.NotMatchable` stays a list of addresses, and an address on it stops that seat name on every cluster. A stop entry should fail safe, never miss a cluster. `MarryAddress` is unchanged, so the no-fan-out rule (`agent://{team}/{id}` only) holds. The change is in marvel, plus one vector in `contracts/readiness/marry-vectors.json` for "one name, two clusters". idle-shadow already sends the cluster and does not change.
 2. **idle-shadow drops a duplicated address.** Every address listed on more than one cluster is left out of the run, with a GAP line naming it, and marry stays as it is. idle-shadow never picks one of the rows, since a guess could pair work to the wrong cluster's seat. This unblocks the run at once, and costs the pilot those seats until option 1 lands.
 3. **Qualify the address string itself** (`agent://<cluster>.<team>/<name>` or similar). Not recommended: it changes the envelope address grammar that the bus and `MarryAddress` share, for a problem the existing `Cluster` field already solves.
 
@@ -75,22 +84,43 @@ It joins the file to freebusy's rows by address. An absent or malformed file is 
 - `written_at` and `valid_until` let idle-shadow treat a stale file as a GAP rather than as truth.
 - `writer` names the role that wrote it.
 - `classes` use the six ids, bare. `scopes` are component names from the bd label convention.
+- idle-shadow checks each seat class against the six and reports any other as a GAP line naming the seat and the value. Today an unknown class (a typo, for one) silently reads "no eligible seat".
 
 **Who writes it.**
 
 - **Classes and scopes** describe what a role does. They change rarely and belong to whoever assigns work. Proposed: each team's supervisor keeps a small role table (role to classes and scopes), and director writes the file from those tables and freebusy's live seats.
-- **Duty cells** are marvel's readiness records (`DutyRecord`, `internal/api/readiness.go`). I found no daemon method or CLI that reads them today. Until one exists, `cells` stays empty. `duties_by_class` lists no duties for the shadow pilot, so a seat's eligibility rests on class and scope only.
-  - This is safe while idle-shadow only shadows and sends nothing.
-  - A read path for duty cells is needed before any live send.
+- **Duty cells** are section 4's question.
 
-**Recommended default:** the shape above; director writes it from the supervisors' role tables; empty duties and cells while the pilot is shadow only.
+**Recommended default:** the shape above, with director writing it from the supervisors' role tables.
 
-## 4. Decisions
+## 4. Duty cells for a shadow pilot
+
+**What the code shows.** An item with no duties never pairs:
+
+- `RouteSeat` returns ask-first when it is given no duties (`internal/api/readiness_route.go`, `ReasonNoDuties`).
+- `eligibleSeats` keeps only a seat whose verdict is eligible (`readiness_marry.go`).
+- idle-shadow sends `duties_by_class[class]`, or `[]` when the class has none.
+
+A review measured it in a sandboxed scratch test: no duties gave 0 pairs, and one duty with a current proven cell gave 1.
+
+No source of proven cells exists. A duty is eligible only when its cell is proven, current, and observed from the seat, pane or peer vantage; `routeDuty` sends a host-vantage proof to ask-first. At `940cc335`, nothing outside tests calls `Store.RecordDuty`, and nothing outside tests calls `Store.SeatReadiness`. So there are no cells to read, and no read path for any. Director observes seats from the host, so it cannot write a seat-vantage proof honestly.
+
+**Options.**
+
+1. **marry reports would-pair-if-proven.** For an item whose class and scope match a free seat that `RouteSeat` sends to ask-first, the output counts the seat as `ask_first` with its route reasons, beside today's `no-eligible-seat`. It is read-only, it writes no lease, and the shadow pilot learns how many pairs proven duties would give, without any cell being invented. idle-shadow sets `duties_by_class` to one duty per class, so the reasons name what is missing.
+2. **Build the producer and the read path now.** The daemon records `duty.first-turn` from `pane:turn` when it sees a seat take a turn, and a read (an RPC, or a `marvel` command) returns `SeatReadiness` for a seat, which idle-shadow puts into `cells`. This is the real path, and every live send needs it. It is more work than the shadow pilot needs to learn.
+3. **Director writes the cells itself.** Not recommended. Its observations are host vantage, so they would either route ask-first anyway or claim a vantage they do not have.
+4. **A shadow switch in marry that skips duties.** Not recommended. It makes the shadow run measure a matcher that the live run will not be.
+
+**Recommended default:** 1 for the shadow pilot, and 2 before any live send. The pilot then shows real pairs where proofs exist and an honest ask-first count where they do not.
+
+## 5. Decisions
 
 | choice | recommended default | changes |
 |---|---|---|
 | seat key | cluster and address in marry; idle-shadow drops duplicates as a GAP until then | marvel (key, lease, pair, re-check, one vector); idle-shadow (the stopgap only) |
 | class names | marvel vocabulary-free; the six stay in director; one vector with `pr-review` | the shared vectors |
-| seat-eligibility.json | the shape in 3; director writes it from supervisor role tables; no duties while shadow | idle-shadow (reads the new fields); director (writes the file) |
+| seat-eligibility.json | the shape in 3; director writes it from supervisor role tables; unknown classes are a GAP | idle-shadow (reads the new fields, checks classes); director (writes the file) |
+| duty cells | marry reports would-pair-if-proven for the shadow pilot; the duty producer and read path before any live send | marvel (one output field now; the producer and read later); idle-shadow (one duty per class) |
 
 These recommendations are valid until 2026-11-09; the arcaven architect re-checks them then.
