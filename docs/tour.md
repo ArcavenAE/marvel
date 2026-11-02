@@ -2,7 +2,7 @@
 
 This tour walks the core loop in about three minutes: declare a team, let marvel make it true, lose a session, scale a role, and shift the team to a new generation. It runs on the simulator, so it needs no model login and costs nothing. A [recording](media/tour.mp4) of the same steps, made from [`media/tour.tape`](media/tour.tape), shows each one.
 
-The tour needs a source checkout of marvel, Go and `just`: it loads `examples/tour.toml` and builds the simulator. For a first run that needs only an installed marvel and tmux, use [first run](first-run.md) or `marvel example demo`.
+The tour needs a source checkout for `examples/tour.toml`; from a checkout it also needs Go and `just`. For a first run that needs only an installed marvel and tmux, use [first run](first-run.md) or `marvel example demo`.
 
 ## Before you start
 
