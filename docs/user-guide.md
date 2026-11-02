@@ -323,6 +323,34 @@ models, and one runtime can be pointed at a different model per role, so
 reading `RUNTIME` as "which agent is this" gives the wrong answer as soon
 as a team is heterogeneous.
 
+Three more columns are opt-in and easy to miss, and one token, `rest`, helps
+you name the others. Name them with `--columns`, for example
+`--columns name,state,pane,rest`:
+
+- `PANE` is one word for what the seat's pane is doing, so a seat sitting at
+  a login or startup prompt does not read as alive. The words are `working`
+  (a turn is open), `idle`, `fresh` (the seat has not taken a turn yet and
+  marvel passed it no first message), `prompt` (the seat is at a menu or
+  prompt; a seat at a menu does not read injected text until someone answers
+  it, so attach to it), `restart` (claude shows its "Restart to update"
+  banner), `logged-out` (the harness is logged out), and `unknown` (marvel
+  could not tell, and never guesses). `-` means no pane was read.
+- `COMPOSER` is the state of the harness's input box: `empty`, `holds_text`
+  (a staged draft), `mid_turn`, `menu_unsafe` (a menu where one Enter would
+  do something other than edit a draft), `shell` (no harness in front of the
+  pane), or `unknown`. `-` means no pane was read.
+- `LAST-TURN` is the age since the seat's statusline cost or API-time total
+  last moved. It is `-` for a seat whose statusline feed carries no totals,
+  and `?` when the record cannot be read. It is display only and gates
+  nothing.
+- `rest` is not a column. It expands, once, to every registered column the
+  list does not name elsewhere. It leaves out `PANE` and `COMPOSER`, so name
+  those yourself.
+
+`PANE` and `COMPOSER` read each running seat's pane, once per seat for both,
+so they are in no default or named set. Only a listing that asks for one of
+them makes the daemon read panes.
+
 `CPU%` and `RSS` (add them with `--columns cpu,rss`) come from a sampler that runs every 5 seconds and rolls
 up each agent's whole process subtree, not just the process tmux started
 (that one is a shell). CPU% is per core, so a session using two cores
