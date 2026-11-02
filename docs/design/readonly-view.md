@@ -270,3 +270,41 @@ Per the ruling, Linux is tested and does not hold the build up.
 - **The probe rig** (`scripts/probes/per-seat-readonly-view.sh`) is
   macOS-shaped (its socket default and `mv -h`). A Linux run of it is a
   follow-up, not a gate.
+
+## 10. A one-way live mirror of a published snapshot (Desk card fileshare-1, option 3)
+
+**Why this is here.** The snapshot source for views (a reader pulls a published snapshot with `marvel cp` and unpacks it read-only) shows a reader the owner's files as of the last pull. The operator ruled a one-way live mirror as the third part of that answer, next to cp and the snapshots. A mirror is the first place marvel would delete files on a reader's host on the strength of what an owner's host publishes, so the rules that keep a bad publish from reaching anything else are written down before any code.
+
+**What is decided.** Three rules, each of which holds whatever the open points below turn out to be.
+
+- M1. Deletes reach only the reader's mirror directory, never the source. The flow is one way: the owner's paths are read by the publish verb and are never written by a mirror, and a delete applied on the reader's side removes a file from the mirror directory and from nothing else.
+- M2. The mirror directory is marvel-owned and holds no reader files. A reader's own files live elsewhere, so a clobber (a replace, a delete, a refresh from a bad publish) overwrites mirror content only.
+- M3. A bad publish cannot remove the 24 retained snapshots (Desk card fileshare-4), whatever the publish contains, including an empty one.
+
+Everything under a published path is published, including anything written there later, and a mirror carries it to the reader as it is. Readers treat mirror content as untrusted data, since a publish set can hold third-party text.
+
+**Open points.** None of these is decided here. Each is a choice for the operator, and each is listed with its options so it can be put to them as a ruling.
+
+- O1. Whether the 15-minute pull (Desk card fileshare-4) still runs once a mirror exists.
+  - (a) It still runs, so the snapshots stay the history and the mirror is the current copy.
+  - (b) It stops, and a snapshot is taken only when the owner publishes one.
+  - (c) It runs at a different interval that the owner sets.
+- O2. What triggers a mirror update, and so what live means. Each option states the lag it gives.
+  - (a) The reader's daemon pulls on a timer shorter than the snapshot pull. The lag is bounded by that interval.
+  - (b) The owner's daemon pushes to the reader's cp jail when it sees a change. A change reaches the mirror as it is seen, with no stated bound.
+  - (c) The owner's daemon sends a notice, and the reader's daemon pulls on receipt. A change reaches the mirror as it is seen, with no stated bound.
+- O3. Where the mirror directory sits.
+  - (a) Under marvel's own state directory, one per view.
+  - (b) At a path the reader's owner names in the policy file, which cp's jail refusals (C12 in `marvel-cp.md`) would then have to check against the mirror's rules as well.
+- O4. How the mirror treats a publish that looks wrong, such as one that is empty or far smaller than the one before. M3 protects the snapshots; it does not say what happens to the mirror.
+  - (a) Apply it as published.
+  - (b) Hold the last mirror and emit an event, until the owner publishes again.
+  - (c) Apply it only below a threshold the owner sets in the policy file.
+- O5. How a seat reads the mirror.
+  - (a) Through the same `MARVEL_VIEW_<NAME>` path, the notice and the sealing of section 6, treating a mirror update as a refresh.
+  - (b) Through a separate path that changes in place and carries no notice, since section 8 notes that content changing under a held directory may make the notice unnecessary.
+- O6. How many mirrors a host holds.
+  - (a) One mirror per host, shared by every seat's view.
+  - (b) One per seat, as a view is today (section 2).
+
+**Not in this section.** The publish set (the owner's, in the policy file), any real path, the wire format of a publish, and any code. The build waits on the open points above and on the cp build.
