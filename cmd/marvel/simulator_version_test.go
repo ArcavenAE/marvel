@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -181,11 +182,24 @@ func TestRunSimulatorVersionHonorsItsTimeout(t *testing.T) {
 
 	t.Run("a program that outlives the bound is killed", func(t *testing.T) {
 		// exec, so the process the timeout kills is the one holding the pipe. It
-		// would run for 20s, so only the kill can end it with an error.
+		// would run for 20s, so only the bound can end it with an error. A
+		// process that started in time is killed ("signal: killed"); one that a
+		// loaded machine was too slow to start before the bound gets the
+		// context's deadline error from Start. Both mean the bound ended the probe.
 		p := script(t, "exec sleep 20")
 		got, err := runSimulatorVersion(p, 100*time.Millisecond)
-		if err == nil || !strings.Contains(err.Error(), "killed") {
-			t.Fatalf("a program that outlives its bound returned %q, %v; want a kill error", got, err)
+		if err == nil || (!strings.Contains(err.Error(), "killed") && !errors.Is(err, context.DeadlineExceeded)) {
+			t.Fatalf("a program that outlives its bound returned %q, %v; want a kill error or the deadline error", got, err)
+		}
+	})
+
+	t.Run("a bound that ends before the program starts reports the deadline", func(t *testing.T) {
+		// A 1ns bound is over before Start runs, so this is the slow-start path
+		// of the subtest above, taken every time.
+		p := script(t, "exec sleep 20")
+		got, err := runSimulatorVersion(p, time.Nanosecond)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("a bound that ended before the start returned %q, %v; want the deadline error", got, err)
 		}
 	})
 }
