@@ -9,8 +9,9 @@ import (
 
 // The first-cluster example is the file a first user applies unedited, so both
 // formats must say the same thing: one team of one supervisor and one worker
-// on the simulator, each with a plain prompt, and no path of any kind that is
-// tied to a home directory or to marvel's own manifest directory.
+// on the simulator, each with a plain prompt and the same healthcheck, and no
+// live line that holds a path tied to a home directory or to marvel's own
+// manifest directory.
 func TestExampleFirstClusterManifestsAgree(t *testing.T) {
 	t.Parallel()
 	paths := []string{"../../examples/first-cluster.toml", "../../examples/first-cluster.yaml"}
@@ -21,6 +22,7 @@ func TestExampleFirstClusterManifestsAgree(t *testing.T) {
 		Command  string
 		Args     []string
 		Prompt   string
+		Health   ManifestHealthCheck
 	}
 	var first []seat
 	for i, p := range paths {
@@ -33,7 +35,11 @@ func TestExampleFirstClusterManifestsAgree(t *testing.T) {
 		}
 		var seats []seat
 		for _, r := range m.Teams[0].Roles {
-			seats = append(seats, seat{r.Name, r.Replicas, r.Runtime.Image, r.Runtime.Command, r.Runtime.Args, r.Runtime.Prompt})
+			var h ManifestHealthCheck
+			if r.HealthCheck != nil {
+				h = *r.HealthCheck
+			}
+			seats = append(seats, seat{r.Name, r.Replicas, r.Runtime.Image, r.Runtime.Command, r.Runtime.Args, r.Runtime.Prompt, h})
 		}
 		if len(seats) != 2 || seats[0].Name != "supervisor" || seats[1].Name != "worker" {
 			t.Fatalf("%s: want the roles supervisor and worker, got %+v", p, seats)
