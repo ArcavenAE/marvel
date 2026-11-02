@@ -10,6 +10,7 @@ is for, so you can tell from here whether to open it.
 | Run a team and operate it day to day | [User Guide](user-guide.md) |
 | Run the daemon, reach it remotely, upgrade it | [Admin Guide](admin-guide.md) |
 | Understand the model before trusting it | [Architecture Overview](architecture.md) |
+| Get a first seat running, one optional stage at a time | [First run](first-run.md) |
 | See it work without reading anything first | [the tour](tour.md), then [the four-act demo](demo.md) and [examples/](../examples/) |
 
 New to marvel: the tour first, then the User Guide. The tour and the demo run
