@@ -85,6 +85,8 @@ xattr -d com.apple.quarantine "$(mise which marvel)"
 
 Download the latest release from [GitHub Releases](https://github.com/ArcavenAE/marvel/releases). Binaries are available for macOS (arm64, amd64) and Linux (amd64, arm64: Raspberry Pi 3/4/5 64-bit, AWS Graviton, etc.). macOS binaries are code-signed and Apple-notarized.
 
+Host requirements (tmux 3.5 or later, and nats-server only for a managed bus) are in the [admin guide](docs/admin-guide.md#host-prerequisites).
+
 ## Quick Start
 
 ```sh

@@ -5,6 +5,14 @@ management, and operational concerns.
 
 ## Host prerequisites
 
+### Software the host needs
+
+- **tmux 3.5 or later.** Every session runs in a tmux pane, so tmux is required. Version 3.5 gives a reliable exit status for a finished headless run; an older server loses the exit code for a share of exits, and marvel then treats the result as unknown and retries it, never as completion.
+- **nats-server, only for a managed bus.** A cluster that declares a managed message bus needs `nats-server` on the daemon's PATH. A cluster with no bus does not. The version the fleet was verified against is pinned in `mise.toml`, which is in a source checkout; from a source checkout `mise install` fetches it. An install user pins nats-server another way, or reads the version in that file.
+- **A logged-in harness, only for a real seat.** A seat that runs Claude Code, Codex or opencode needs that harness installed and logged in. The demo from `marvel example demo` and the simulator need no harness and no login.
+
+`marvel doctor` reads the host and prints one line per check, with a fix line under each failure. It writes nothing.
+
 ### The host must stay awake
 
 A cluster host must not idle-sleep while it carries seats. A sleeping host
