@@ -2,8 +2,8 @@
 
 **Date:** 2026-11-02
 **Confidence:** bedrock for the counts below, which were measured on this
-code with a counter and a tmux shim. The disk volume (GB a day) is the
-operator's measurement on one fleet host and was not reproduced here.
+code with a counter and a tmux shim. The disk volumes (GB a day) and the host
+traces are measurements on one fleet host and were not reproduced here.
 **Placement:** marvel. The subject is how marvel's own daemon writes its state
 and polls tmux; the host, the disk and the harnesses are objects.
 **Source:** marvel#1214, read at main 8587651. Measured with
@@ -12,12 +12,16 @@ and polls tmux; the host, the disk and the harnesses are objects.
 
 ## Why this matters
 
-On one busy fleet host the daemon was reported writing about 300 GB a day to
-disk (marvel#1214 cites 303.7, 301.1 and 298.4 GB on three days, and says which
-file carried it was not measured). The state file is about 1 MB. An exec trace
-on a fleet host, 60 s, counted 1,078 tmux execs, 1,050 of them with the marvel
-daemon as parent, and an SSD reading put about 620 GB a day written for the
-whole host. The daemon's share is a polling pattern, not the state it holds, and it
+On one busy fleet host the marvel daemon wrote about 300 GB a day (macOS daily
+disk-write reports: 303.7, 301.1 and 298.4 GB on three days), about 208 GB of it
+to its state database (an `fs_usage` trace, 60 s: 8,634 pwrites, 144.7 MB a
+minute), though that file is about 1 MB (marvel#1214). An exec trace on the same
+host, 60 s, counted 1,078 tmux execs, 1,050 of them with the marvel daemon as
+parent. An SSD reading put about 620 GB a day written for the whole host. The
+three figures measure different things: the daemon process, its bolt file, and
+the disk.
+
+The daemon's share is a polling pattern, not the state it holds, and it
 grows with the number of seats.
 
 ## The mechanism, with the lines it runs through (main 8587651)
