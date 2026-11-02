@@ -23,6 +23,8 @@ shift swaps every session for a fresh one while the old ones drain, so a
 long-running team sheds stale context without going dark. It works with
 Claude Code, Codex, opencode, or any command you name.
 
+New here? The [first-run page](docs/first-run.md) walks four stages, each optional and each with one proof command, so you can stop at the first one that does what you need.
+
 Try it on the simulator, which needs no model login and costs nothing:
 
 ```sh
