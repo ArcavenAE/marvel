@@ -18,6 +18,7 @@ watch it work. This index says which one to open.
 
 | Manifest | What it shows | Needs |
 |---|---|---|
+| `first-cluster` | One supervisor and one worker with plain prompts on the simulator, plus the bus entry to add to your config. Apply one file and get two seats, with no edits. | nothing |
 | `tour` | Three workers and a supervisor on the simulator, the team the [tour](../docs/tour.md) walks through: kill a session, scale, shift. | nothing |
 | `generic-agent` | The smallest thing that works: marvel managing arbitrary commands through the generic adapter. | nothing |
 | `claude` | Real Claude Code agents beside a simulator supervisor, with adapter selection, permission injection and identity injection. | claude on PATH, model auth |
