@@ -2013,6 +2013,36 @@ type ReapedSession struct {
 	Role      string
 }
 
+// paneListing answers PaneStatus for one ReapDead pass from a single
+// list-panes of the whole server, read on the first question.
+//
+// A pane the listing does not hold is not taken as gone: it is confirmed with
+// the one-pane read before ReapDead acts on it, so a pane created after the
+// listing, or one named in a form the listing does not use, is never reaped on
+// an absence the single read would not report. Only a pane that really is gone
+// costs the second tmux client, and a healthy pass makes none. A listing error
+// is every question's error, as the one-pane read's was.
+type paneListing struct {
+	m     *Manager
+	read  bool
+	panes map[string]tmux.PaneStatus
+	err   error
+}
+
+func (l *paneListing) status(paneID string) (tmux.PaneStatus, error) {
+	if !l.read {
+		l.read = true
+		l.panes, l.err = l.m.driver.PaneStatuses()
+	}
+	if l.err != nil {
+		return tmux.PaneStatus{}, l.err
+	}
+	if st, ok := l.panes[paneID]; ok {
+		return st, nil
+	}
+	return l.m.driver.PaneStatus(paneID)
+}
+
 // ReapDead marks sessions whose tmux pane no longer exists as Crashed
 // (keeping them in the store with PaneID cleared so operators see the
 // transient via `marvel get sessions`) and returns enough identity
@@ -2037,12 +2067,16 @@ func (m *Manager) ReapDead() []ReapedSession {
 	// one-marker-per-role cap honest across a pass that reaps several
 	// replicas of the same role. See aae-orc-8vlz.
 	marked := make(map[string]bool)
+	// One list-panes answers the whole pass (marvel#1214: it was one tmux
+	// client per paned session per pass), read after the snapshot above so any
+	// pane a snapshotted session holds is in it unless it has died.
+	panes := &paneListing{m: m}
 	for _, sess := range sessions {
 		if sess.PaneID == "" {
 			// Already reaped (Crashed or Succeeded) or never had a pane. Skip.
 			continue
 		}
-		st, err := m.driver.PaneStatus(sess.PaneID)
+		st, err := panes.status(sess.PaneID)
 		if err != nil {
 			// A tmux outage is not a fleet of vanished panes. Leave the
 			// session as it stands and let the next pass read it again.

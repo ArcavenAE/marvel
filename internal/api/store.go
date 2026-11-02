@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -61,6 +62,14 @@ type Store struct {
 	// OpenBolt; cleared by CloseBolt. See bolt.go for the WAL discipline.
 	bolt     *bolt.DB
 	boltPath string
+	// boltUpdates counts the runtime bolt.Update transactions this Store has
+	// started (see boltUpdate). It exists so a test or a scratch daemon can
+	// measure the write rate without root; nothing in the daemon reads it.
+	boltUpdates atomic.Int64
+	// persisted holds the bytes last written to bolt for each record, by
+	// bucket/key, so an update that changes nothing the file lacks can skip its
+	// transaction (persistPutIfChanged). Guarded by mu.
+	persisted map[string][]byte
 
 	// contextResolver walks the context-window ladder for the heartbeat
 	// path. Nil means no resolution: a heartbeat carrying a window is
@@ -486,11 +495,13 @@ func (s *Store) DeleteSession(key string) error {
 // rolled back; the caller is responsible for not making partial writes
 // that don't make sense together).
 //
-// When bolt is open, persistence happens after fn returns successfully.
-// If persist fails the in-memory state is already updated — the post-fn
-// pre-persist window is a known spike limitation (see orc question-
-// marvel-transaction-log). The reconciler's next successful update
-// will re-converge state.
+// When bolt is open, persistence happens after fn returns successfully, and
+// only if the record's stored form differs from the bytes last written for it:
+// an update that leaves the file's copy as it is starts no transaction and does
+// not advance the resource version (marvel#1214). If persist fails the
+// in-memory state is already updated; the post-fn pre-persist window is a known
+// spike limitation (see orc question-marvel-transaction-log). The reconciler's
+// next successful update will re-converge state.
 func (s *Store) UpdateSession(key string, fn func(*Session) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -501,7 +512,7 @@ func (s *Store) UpdateSession(key string, fn func(*Session) error) error {
 	if err := fn(sess); err != nil {
 		return err
 	}
-	return s.persistPut(bucketSessions, sess.Key(), sess)
+	return s.persistPutIfChanged(bucketSessions, sess.Key(), sess)
 }
 
 // Team operations
@@ -570,7 +581,7 @@ func (s *Store) UpdateTeam(key string, fn func(*Team) error) error {
 	if err := fn(t); err != nil {
 		return err
 	}
-	return s.persistPut(bucketTeams, t.Key(), t)
+	return s.persistPutIfChanged(bucketTeams, t.Key(), t)
 }
 
 // ReleaseClaims removes source's claim from every team, in any workspace, whose

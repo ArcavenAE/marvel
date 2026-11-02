@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -203,6 +204,9 @@ func (s *Store) CloseBolt() error {
 	db := s.bolt
 	s.bolt = nil
 	s.boltPath = ""
+	// The last-written bytes describe the file just closed, not whichever file
+	// is opened next.
+	s.persisted = nil
 	return db.Close()
 }
 
@@ -369,12 +373,80 @@ func (s *Store) persistPut(bucket []byte, key string, value any) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s/%s: %w", bucket, key, err)
 	}
-	return s.bolt.Update(func(tx *bolt.Tx) error {
+	return s.putBytes(bucket, key, data, compareImage(value, data))
+}
+
+// putBytes writes one already-marshalled record and bumps the version, in one
+// transaction, and remembers image as what the file now holds for the key.
+func (s *Store) putBytes(bucket []byte, key string, data, image []byte) error {
+	err := s.boltUpdate(func(tx *bolt.Tx) error {
 		if err := tx.Bucket(bucket).Put([]byte(key), data); err != nil {
 			return fmt.Errorf("put %s/%s: %w", bucket, key, err)
 		}
 		return bumpVersion(tx)
 	})
+	if err != nil {
+		return err
+	}
+	s.rememberPersisted(bucket, key, image)
+	return nil
+}
+
+// persistedKey names a record in the last-written map.
+func persistedKey(bucket []byte, key string) string { return string(bucket) + "/" + key }
+
+// rememberPersisted records the bytes last written to the file for a record.
+// Callers hold the Store's write lock.
+func (s *Store) rememberPersisted(bucket []byte, key string, data []byte) {
+	if s.persisted == nil {
+		s.persisted = map[string][]byte{}
+	}
+	s.persisted[persistedKey(bucket, key)] = data
+}
+
+// persistPutIfChanged is persistPut that skips the transaction, and with it the
+// sync and the version bump, when the record's bytes equal the bytes last
+// written for that key. It compares with what the FILE holds, not with the
+// record before the update: UpdateSessionContext, UpdateSessionSpend and the
+// like change memory only and rely on the next persist to carry them, so a
+// no-op UpdateSession after one of them still has bytes to write. A key not
+// yet written in this process always writes. marvel#1214 measured one
+// unchanged rewrite per running session per reconcile pass and per limits tick.
+func (s *Store) persistPutIfChanged(bucket []byte, key string, value any) error {
+	if s.bolt == nil {
+		return nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("marshal %s/%s: %w", bucket, key, err)
+	}
+	image := compareImage(value, data)
+	if last, ok := s.persisted[persistedKey(bucket, key)]; ok && bytes.Equal(last, image) {
+		return nil
+	}
+	return s.putBytes(bucket, key, data, image)
+}
+
+// compareImage is the form two writes of one record are compared in: the
+// record's marshalled bytes, with the fields that change on every tick and
+// carry nothing a restart needs cleared. Today that is a session's
+// LastHealthCheck, the time evaluateHealth last ran a heartbeat check; nothing
+// reads it back (marvel#1214), and a restart only needs the verdict, which
+// HealthState and FailureCount hold. The file still gets the full record
+// whenever anything else changes, so the field it holds is at most one change
+// old. data is the full marshalled record, used when there is nothing to clear.
+func compareImage(value any, data []byte) []byte {
+	sess, ok := value.(*Session)
+	if !ok || sess.LastHealthCheck.IsZero() {
+		return data
+	}
+	c := *sess
+	c.LastHealthCheck = time.Time{}
+	img, err := json.Marshal(&c)
+	if err != nil {
+		return data
+	}
+	return img
 }
 
 // persistDelete removes a single record from bbolt and bumps the
@@ -383,12 +455,16 @@ func (s *Store) persistDelete(bucket []byte, key string) error {
 	if s.bolt == nil {
 		return nil
 	}
-	return s.bolt.Update(func(tx *bolt.Tx) error {
+	err := s.boltUpdate(func(tx *bolt.Tx) error {
 		if err := tx.Bucket(bucket).Delete([]byte(key)); err != nil {
 			return fmt.Errorf("delete %s/%s: %w", bucket, key, err)
 		}
 		return bumpVersion(tx)
 	})
+	if err == nil {
+		delete(s.persisted, persistedKey(bucket, key))
+	}
+	return err
 }
 
 // RoleHealthRecord is the durable form of a role's crash-loop state:
@@ -457,6 +533,20 @@ func (s *Store) DeleteRoleHealth(key string) error {
 	defer s.mu.Unlock()
 	return s.persistDelete(bucketRoleHealth, key)
 }
+
+// boltUpdate runs fn in one bbolt write transaction and counts it. Every
+// runtime write path (persistPut, persistDelete, the exposure commit and the
+// orphan-duty purge) goes through it, so BoltUpdates is the number of
+// transactions, and so of syncs, the Store has started.
+func (s *Store) boltUpdate(fn func(tx *bolt.Tx) error) error {
+	s.boltUpdates.Add(1)
+	return s.bolt.Update(fn)
+}
+
+// BoltUpdates reports how many bbolt write transactions this Store has
+// started since it was made. It is a measurement aid: the daemon never reads
+// it.
+func (s *Store) BoltUpdates() int64 { return s.boltUpdates.Load() }
 
 // ResourceVersion returns the current monotonic version counter — the
 // resourceVersion analog from kubernetes. Bumped on every persisted

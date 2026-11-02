@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -13,6 +14,14 @@ import (
 // every live session from its account's reading, once per transition. It is a
 // restart-neutral advisory: nothing it does restarts, kills or shifts anything.
 func (d *Daemon) evaluateLimits(now time.Time) {
+	// One write set per tick (marvel#1214): the limited condition is written
+	// once at the end for the sessions it changed, not once per live session.
+	ws := d.store.NewWriteSet()
+	defer func() {
+		if err := ws.Flush(); err != nil {
+			log.Printf("warning: limits tick: %v", err)
+		}
+	}()
 	for _, sess := range d.store.ListSessions() {
 		if !sess.State.CountsAsAlive() && sess.Limit == nil {
 			continue
@@ -24,7 +33,7 @@ func (d *Daemon) evaluateLimits(now time.Time) {
 			reason string
 			prov   *api.LimitProvenance
 		)
-		err := d.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		err := ws.UpdateSession(sess.Key(), func(live *api.Session) error {
 			next, ch, why := api.EvaluateLimit(live.Limit, key, reading, state, now)
 			if ch == api.LimitUnchanged {
 				return nil

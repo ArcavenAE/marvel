@@ -44,15 +44,16 @@ func within(t *testing.T, f func()) {
 func TestHungTmuxReturnsTypedTimeout(t *testing.T) {
 	d := hungDriver(t, "")
 	calls := map[string]func() error{
-		"PaneStatus":  func() error { _, err := d.PaneStatus("%1"); return err },
-		"ListSession": func() error { _, err := d.ListSessions(); return err },
-		"ListPanes":   func() error { _, err := d.ListPanes("s"); return err },
-		"PanePID":     func() error { _, err := d.PanePID("%1"); return err },
-		"KillPane":    func() error { return d.KillPane("%1") },
-		"CapturePane": func() error { _, err := d.CapturePane("%1"); return err },
-		"SendKeys":    func() error { return d.SendKeys("%1", "hi", true, true) },
-		"NewSession":  func() error { return d.NewSession("s") },
-		"KillSession": func() error { return d.KillSession("s") },
+		"PaneStatus":   func() error { _, err := d.PaneStatus("%1"); return err },
+		"PaneStatuses": func() error { _, err := d.PaneStatuses(); return err },
+		"ListSession":  func() error { _, err := d.ListSessions(); return err },
+		"ListPanes":    func() error { _, err := d.ListPanes("s"); return err },
+		"PanePID":      func() error { _, err := d.PanePID("%1"); return err },
+		"KillPane":     func() error { return d.KillPane("%1") },
+		"CapturePane":  func() error { _, err := d.CapturePane("%1"); return err },
+		"SendKeys":     func() error { return d.SendKeys("%1", "hi", true, true) },
+		"NewSession":   func() error { return d.NewSession("s") },
+		"KillSession":  func() error { return d.KillSession("s") },
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {

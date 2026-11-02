@@ -298,7 +298,7 @@ func (s *Store) commitExposure(key string, raw []byte, rec ExposureRecord) error
 		if err != nil {
 			return fmt.Errorf("marshal exposure seal: %w", err)
 		}
-		if err := s.bolt.Update(func(tx *bolt.Tx) error {
+		if err := s.boltUpdate(func(tx *bolt.Tx) error {
 			if err := tx.Bucket(bucketExposure).Put([]byte(key), raw); err != nil {
 				return fmt.Errorf("put exposure %s: %w", key, err)
 			}
