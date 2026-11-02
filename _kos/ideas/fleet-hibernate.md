@@ -93,3 +93,149 @@ relying on it.
 - Resume by fresh shift loses whatever a handoff did not capture. That is
   the price of hibernate over suspend, and the operator chooses per use.
 - Suspend and hibernate could share one verb with a mode, or stay two verbs.
+
+## Addendum, 2026-11-02: hibernate across a reboot, resuming the same sessions
+
+Source: operator, relayed by director on 2026-11-02. Still an idea,
+pre-hypothesis; nothing below is designed or measured.
+
+> "kos idea marvel today we have a pause/resume, but that works only while
+> the os continues to run, does not survive a reboot. what would it look like
+> to have a full hibernate, where agents are exited, the full state of marvel
+> is written to a file, work manifest including resume strings, and there is
+> some method post-reboot to start everything up, do a preflight check, then
+> resume each session?"
+
+### How it differs from the two ideas above
+
+- **Suspend** (`_kos/ideas/fleet-pause-resume.md`) keeps every process alive
+  and frozen. It keeps context, and it does not survive a reboot, because
+  the processes do not.
+- **Hibernate as captured on 2026-10-10** (the sections above) ends the
+  seats and resumes with a fresh shift that reads their handoffs. It
+  survives a reboot, and it gives up context.
+- **This one** ends the seats, and after the reboot it resumes the same
+  harness sessions through each harness's resume string: the Claude Code
+  session id, and whatever codex and opencode offer in its place. Context
+  survives the reboot, because each conversation is reopened rather than
+  replaced.
+
+It is closest to `_kos/ideas/harness-update-pending-exit-and-resume.md`,
+which exits and resumes one seat for a pending update. This idea does the
+same for every seat, with a reboot in between.
+
+### What marvel holds today (read at origin/main c815c13e)
+
+- For Claude Code, marvel already names the session: `Session.HarnessSessionID`
+  (`internal/api/types.go`) holds the id marvel assigned at launch through
+  `--session-id`. That is the resume string this idea needs for Claude seats.
+  It is re-minted on every launch, so it names the current conversation,
+  not the first one.
+- Claude is the only adapter that implements `SessionIDAssigner`
+  (`internal/runtime/claude.go`). codex, opencode and the other adapters
+  record no session id, so their resume strings would have to be discovered
+  or added.
+
+### Recommended direction: one verb, two modes
+
+The operator, 2026-11-02, verbatim: "perhaps we should support the 10-10 or
+resume approach?" Director recommends supporting both, as one verb with a
+mode. This is the idea's direction, not a design.
+
+- **Resume mode.** Exit each seat cleanly and record its harness resume id,
+  working directory and launch args in a state file. After the reboot, run
+  a preflight, then start each seat with its resume id, so its context is
+  kept.
+- **Handoff mode.** The 10-10 path above: ordered sign-off, then a fresh
+  shift that reads the handoffs. It is for a harness with no resume id, and
+  for a seat near its max age, where keeping the context is the wrong
+  choice.
+- **Default per seat:** resume where the harness gives an id, handoff
+  otherwise.
+
+Each harness's help text names a resume-by-id form (versions read
+2026-11-02; whether each works after a reboot is not measured):
+
+| harness | resume by id |
+|---|---|
+| Claude Code 2.1.316 | `claude --resume <id>` |
+| codex 0.160.1 | `codex resume <id>` |
+| opencode 1.18.15 | `opencode --session <id>` |
+| crush 0.88.1 | `crush --session <id>` |
+
+### A resume journal written all the time, not only at hibernate
+
+A recent unplanned crash showed the record is needed even when nobody
+called hibernate. So marvel would write the resume journal continuously:
+on each spawn, and again whenever a seat's resume id changes. An unplanned
+reboot or crash can then use the same post-reboot start as a planned one,
+reading the last journal entry for each seat instead of a file written at
+exit.
+
+### The parts
+
+1. **The journal** (above). One entry per seat: its mode, its resume id
+   where it has one, its working directory, role, workdir and launch args.
+2. **A planned exit.** For a resume-mode seat, the harness exits cleanly and
+   the journal entry is brought up to date, with any director messages
+   still pending in its inbox. A handoff-mode seat signs off as in the 10-10
+   idea. The order can follow the 10-10 sign-off (workers first,
+   supervisors last), so a supervisor's record includes what its workers
+   left.
+3. **One state file.** It holds:
+   - the daemon's state;
+   - the seats, with their journal entries;
+   - the teams;
+   - the bus subjects in use;
+   - messages held for delivery.
+
+   It is written atomically, with a terminal marker last, so a partial file
+   reads as incomplete rather than as a smaller fleet. It goes where a host
+   backup can carry it. After an unplanned stop the journal stands in for
+   the parts the exit would have written.
+4. **A post-boot start and a preflight.** The start is launchd or an
+   operator command. The preflight checks each of these before anything
+   resumes, and stops with a named failure:
+   - the daemon is up;
+   - the hub and leaf bus links are up;
+   - credentials are present and valid;
+   - worktree locks are intact;
+   - there is enough free disk;
+   - each harness binary is present, at a version it can resume from.
+5. **A start per seat.** Supervisors go first, then their workers.
+   - A resume-mode seat relaunches in its recorded directory with its
+     resume id.
+   - A handoff-mode seat starts as a fresh shift that reads its handoff.
+   - A resume that fails falls back to handoff mode, so a failed resume
+     costs context and never the seat.
+
+### Tensions
+
+- **A resumed context may be stale.** The repos, branches and tickets a
+  seat was reading can change while it is down, and a resumed seat does not
+  know that unless it is told.
+- **The harness may have pruned the id.** A harness that cleans old
+  sessions leaves a resume id that names nothing, so the fallback to
+  handoff mode is the common path for a long stop, not a rare one.
+- **Resume support differs across harnesses.** codex, opencode and crush
+  each have a resume form, but how each behaves after a reboot is
+  unmeasured.
+
+### Open questions
+
+- **Harness resume reliability.** Does each harness reopen a session by id
+  after its process, and the host, have restarted? Does a version upgrade
+  in between break the resume?
+- **Transcript retention.** A resume needs the harness's own transcript on
+  disk. Where each harness keeps it, how long it keeps it, and whether a
+  per-seat harness home (`HarnessHome`) moves or is cleaned at reboot are all
+  open.
+- **Bus durables.** Which director and marvel subjects keep their messages
+  across a hub restart, and which are lost unless the state file carries
+  them.
+- **Auth after reboot.** Whether harness logins, keychain access and marvel
+  peer keys come back without a person at the console. If they do not, the
+  preflight is where that shows, before any seat resumes.
+- **Recording the id for every harness.** Today marvel records an id only
+  for Claude Code. Whether the others can be assigned an id at launch or
+  only discovered after it is open.
