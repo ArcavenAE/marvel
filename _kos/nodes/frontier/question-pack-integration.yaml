@@ -14,10 +14,28 @@ content: |
   minimum marvel version? How does multi-pack conflict resolution work
   when two packs provide the same artifact type? How does a compiled
   binary (forestage) discover packs at runtime?
+
+  REVISED 2026-11-02. The companies design (`docs/design/companies.md`,
+  marvel#1191, c815c13e; status "design, for a ruling", nothing built) states
+  "Pack is not a marvel word" and replaces the pack framing above with a
+  company (a library of team, workflow and agent definitions), a cast (the
+  teams running on one cluster, each drawn from a company), and three tiers:
+  master (the library's git repository at a commit), reference copy (one
+  installed version under a company root) and working copy (what one session
+  runs from, derived at launch). marvel#1210 (c1976d32) adds that the set of
+  paths `marvel cp` refuses is the companies root set. The questions above
+  about manifest format, dependencies, minimum version and conflict
+  resolution should be read through that vocabulary, with the design as the
+  open proposal. This stays frontier until the operator rules the design.
+
 edges:
   - target: aae-orc::question-pack-format
     type: derives
     note: "Cross-repo projection from orchestrator F6"
+  - target: question-cross-host-file-copy
+    type: supports
+    note: "the cp refusal set is the companies root set (marvel#1210), so the two designs share one boundary"
+
 provenance:
   created_by: human
   session: session-008

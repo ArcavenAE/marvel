@@ -111,6 +111,12 @@ content: |
   field's meaning never changes on the wire; new meaning gets a new additive
   field, tested by decoding the new JSON with the old client's struct.
 
+  HARVEST 2026-11-02. Two upgrade-path changes. A direct upgrade now notes
+  a stale marvel-simulator left beside the new binary (marvel#1189, 9ab582a5).
+  The version probe now carries a timeout, so a hung daemon cannot stall it
+  (marvel#1199, 3510aced); marvel#1211 (cbc13cb9) makes the probe's kill-case
+  test accept the deadline error. The two-plane model is unchanged.
+
 edges:
   - target: elem-release-pipeline
     type: derives

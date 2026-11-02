@@ -1,0 +1,51 @@
+id: question-cross-host-file-copy
+type: question
+confidence: frontier
+title: "Can marvel move a verified file between federated hosts without opening a general file channel?"
+tags:
+  - marvel
+  - multi-host
+  - cp
+content: |
+  Between two hosts that marvel already federates there is no clean way to move
+  a checksum-verified file. The case that earned the question (2026-09-21): a
+  roughly 15 KB manifest sat on one host, the operator's director on another
+  needed those exact bytes to run `marvel work`, and every channel failed (no
+  shared filesystem, host SSH closed, tmux inject truncating, git ruled out for
+  host-local paths in a public repo). Idea: `_kos/ideas/marvel-scp-verified-transfer.md`.
+
+  The probe brief `_kos/probes/brief-cross-host-artifact-transfer.md` (DRAFT
+  2026-10-24, never run) asked whether a general file channel was the missing
+  piece at all. It is CARRIED FORWARD into the design, not run:
+  `docs/design/marvel-cp.md` (marvel#1193, revisions 2 and 3; marvel#1221 bounds
+  `file.get` before it reads). Its section 1 narrows the use case to private
+  data, because distributing a cast is served by the master and the installers.
+
+  RULED (operator, 2026-11-01, relayed by director; section 9 of the design):
+  R1 build `marvel cp` at all, narrowly; R2 off unless the owner's policy enables
+  it, and off on any daemon without the request bound (marvel#1197); R3 add a
+  `file` key scope; R4 no cp-specific size cap, the existing transport limits
+  (24 MiB request bound, 32 MiB reply bound) set the ceiling. Director ruled on
+  2026-11-02 that refusing a `file.get` that could not fit the reply bound,
+  before any read, matches R4; the operator may override.
+
+  SHAPE the design scopes: receive-side containment in a jail the owner names,
+  no-clobber writes, an owner-held off switch, and refusal of any jail that
+  overlaps a company root or a per-session working copy (`docs/design/companies.md`,
+  marvel#1210).
+
+  STATE: design only. Nothing is built, and nothing is on by default. The
+  question stays open until a build exists and the case it was written for (a
+  private file between two hosts) is run through it.
+edges:
+  - target: question-pack-integration
+    type: supports
+    note: "the cp refusal set is the companies root set, so the file channel can never write a reference copy"
+  - target: question-multi-host
+    type: derives
+    note: "the file channel rides the federated mrvl:// transport between hosts"
+provenance:
+  created_by: agent
+  session: harvest-2026-11-02
+  created_at: "2026-11-02"
+  extracted_from: "docs/design/marvel-cp.md, marvel#1193, #1210, #1221, and _kos/ideas/marvel-scp-verified-transfer.md"

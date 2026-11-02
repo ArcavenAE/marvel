@@ -42,6 +42,20 @@ content: |
   age recycling for every long-running interactive role, with the bound the
   operator sets; and recovering the busiest host's file-event daemon, which is
   outside marvel.
+
+  HARVEST 2026-11-02 (finding-marvel-exy5, marvel#1214, open). Marvel's own
+  write and exec rates, measured on one host by a 60 s root capture on
+  2026-11-02 and read against main f9a43400: about 8,600 synced 16 KB pwrites a
+  minute to the daemon's bolt state file (about 140 MB a minute, about 200 GB
+  a day) and 827 tmux client starts a minute. The code accounts for both: two
+  loops that run every 2 s persist every running session on each pass, changed
+  or not, and the dead-seat check runs one `list-panes` per seat per pass. By
+  the subject test above these rates are marvel's own footprint. A fix is
+  planned on marvel#1214; nothing is merged. The file-event growth cause stays
+  unconfirmed until a fix lands and the rate is measured again. The same
+  capture counted 773 git processes in 60 s, which marvel's own code does not
+  explain, so that rate is not attributed to marvel.
+
 edges:
   - target: question-shift-triggers
     type: supports
@@ -52,6 +66,10 @@ edges:
   - target: elem-agentic-resource-matrix
     type: derives
     note: "memory headroom is a compute row of the matrix; the design keeps any gate to the admission rules"
+  - target: finding-marvel-exy5-daemon-state-write-and-tmux-exec-rate
+    type: supports
+    note: "the measured write and exec rates; marvel's own footprint by the subject test"
+
 provenance:
   created_by: agent
   session: harvest-2026-11-01

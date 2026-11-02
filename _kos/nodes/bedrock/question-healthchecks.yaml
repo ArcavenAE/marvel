@@ -51,6 +51,16 @@ content: |
   freeze is the one thing decay never auto-thaws (cleared only by
   reset-health or team-delete). See finding-032 step 5 and marvel
   CLAUDE.md "Recovery behavior".
+
+  HARVEST 2026-11-02 (finding-marvel-exy5, marvel#1214). A cost note, no
+  change of contract. The health pass calls `UpdateSession` once per running
+  seat on every 2 s reconcile pass (`evaluateHealth`), and each call is one
+  synced bolt write whether or not the health reading changed. In the code
+  reading on marvel#1214 it is the largest source of state writes: about 28
+  running seats come to about 1,680 commits a minute. Heartbeat staleness,
+  restart policy and the decay rules above are unchanged; what is new is what
+  they cost. A coalescing fix is planned on marvel#1214 and is not merged.
+
 edges:
   - target: finding-032-session-listing-generation-join
     type: derives
@@ -58,6 +68,10 @@ edges:
   - target: aae-orc::question-marvel-beyond-mvp
     type: derives
     note: "Cross-repo projection from orchestrator F5"
+  - target: finding-marvel-exy5-daemon-state-write-and-tmux-exec-rate
+    type: supports
+    note: "the health pass is the dominant state-write source, so heartbeat evaluation has a write cost"
+
 provenance:
   created_by: human
   session: session-008
