@@ -136,6 +136,19 @@ The operator ruled all four on 2026-11-01 (Desk, 23:54Z to 23:57Z), relayed by d
 - R3. Whether the new `file` key scope is wanted, or `admin` alone suffices until the principal model (aae-orc-bs3x). Ruled: option 1, add the `file` scope (A4).
 - R4. The size cap and ceiling (I3). Ruled: option 3, not the recommendation (1 MiB by default, raisable to 16 MiB). In the ruling's words: "no cp-specific cap, and the existing transport limits (the 24 MiB request bound and the 32 MiB reply bound) set the ceiling, so a file over the limit fails at the transport." I3, I5, I6, A3 and section 10 are written to it. On 2026-11-02 director ruled that refusing, before any read, a `file.get` that could not fit the existing reply bound matches option 3 (I3); the operator may override.
 
+## 9a. A scheduled publish verb, and the bound on its reads
+
+**Why this is written here.** The jail in section 3 and the policy in section 6 limit what cp itself can read and write. A scheduled publish verb, run by the daemon with no one at the keyboard, would read files on its own. If its reach were left to its own configuration, it could be built to read anything that configuration names, and the containment cp was ruled on would not hold for it. This section records the ruling and its bound so a later build has to meet them.
+
+**The ruling.** Desk card fileshare-3, 2026-11-02: option 3, "marvel verb, run by the daemon on a schedule." The card named its cost as "as option 2, and it publishes with no owner at the keyboard". Option 2's cost was that marvel gains read reach outside the cp jail. The operator confirmed the bound below on 2026-11-02.
+
+- P1. The owner's policy file, the one marvel cannot write, gains a per-workspace entry naming the verb's read paths, separate from the jail and its prefixes (A3) and under the same A1 checks. The paths are named there and nowhere else. The scheduled verb reads only those paths; nothing outside them is read or packed.
+- P2. A missing, unreadable or daemon-writable policy file turns the verb off, by the same checks and with the same refusal that A1 and A2 apply to cp. There is no built-in default list of paths.
+- P3. The verb is generic. It takes the paths the owner lists, as `<owner-listed path>` entries, and knows nothing of the layout of any other component. No path belonging to another component is built into it (ADR-005, component independence).
+- P4. The policy is read on each scheduled run, before anything else, as A1 reads it for each cp call. Removing the file or setting `enabled = false` (A6) stops the next run. This follows from P2 and A6.
+
+**Not decided here.** Which paths the owner lists is the owner's to name, not this section's. The publish set and any one-way mirror are separate items, recorded elsewhere; a mirror needs its own design note. This section names no real directory and sets no publish set.
+
 ## 10. Out of scope
 
 Directories, recursion, streaming, resumable transfer, files over the transport limits (I3), seat-to-seat copies on one host that need no daemon, any write to a company root or installer store, distributing casts or company versions, any content inspection, and any change to how `marvel work` resolves a workspace root.
