@@ -83,7 +83,7 @@ marvel daemon
 ```
 
 Listens on `~/.marvel/run/marvel.sock`. Only processes on the same machine can
-connect. No authentication required — anyone who can reach the socket
+connect. No authentication required: anyone who can reach the socket
 can issue commands.
 
 **When to use:** Personal development machine, single-user, no remote
@@ -96,7 +96,7 @@ marvel daemon --mrvl
 ```
 
 Starts both the Unix socket (local) and the mrvl:// listener (remote,
-port 6785). The mrvl:// listener is an embedded SSH server — no dependency
+port 6785). The mrvl:// listener is an embedded SSH server, with no dependency
 on the system's sshd.
 
 On first run, the daemon generates an ed25519 host key at
@@ -107,7 +107,7 @@ Output:
 ```
 marvel daemon listening on ~/.marvel/run/marvel.sock (unix)
 mrvl:// listener on :6785
-remote access: --cluster <name>  (config: mrvl://kinu:6785)
+remote access: --cluster <name>  (config: mrvl://<host>:6785)
 ```
 
 **When to use:** You want to manage agents from another machine, or
@@ -203,9 +203,9 @@ recorded intent to come back to, so the next start kills every
 The mrvl:// listener authenticates clients using SSH public keys stored
 in `~/.marvel/authorized_keys` (OpenSSH format, same as `~/.ssh/authorized_keys`).
 
-For the full client + daemon key workflow — including generating
+For the full client + daemon key workflow, including generating
 dedicated marvel keys, permission conventions, the `~/.marvel/` layout,
-and `marvel keys doctor` — see the [keys guide](keys.md).
+and `marvel keys doctor`, see the [keys guide](keys.md).
 
 ### Typical workflow
 
@@ -236,7 +236,7 @@ marvel keys authorized
 Output:
 ```
 FINGERPRINT                                         TYPE         COMMENT
-SHA256:abc...                                       ssh-ed25519  michael@laptop
+SHA256:abc...                                       ssh-ed25519  <user>@laptop
 SHA256:def...                                       ssh-ed25519  deploy@ci
 ```
 
@@ -260,17 +260,17 @@ to the right daemon. Clients record trusted daemon keys in
 `~/.marvel/known_hosts`; first connection prompts interactively, and
 `marvel keys trust <cluster>` shows the fingerprint and asks before it records
 the key (`--yes` skips the question for scripted bootstraps). Host key changes are
-detected and refused — see the [keys guide](keys.md) for details.
+detected and refused; see the [keys guide](keys.md) for details.
 
 ## Cluster configuration
 
 Clusters are stored in `~/.marvel/config.yaml`. This is the client-side
-config — it tells the CLI how to reach each daemon.
+config; it tells the CLI how to reach each daemon.
 
 ### Add a cluster
 
 ```bash
-marvel config add-cluster kinu mrvl://kinu
+marvel config add-cluster <host> mrvl://<host>
 marvel config add-cluster staging mrvl://deploy@staging.example.com:7000
 marvel config add-cluster dev /tmp/marvel-dev.sock
 ```
@@ -289,7 +289,7 @@ marvel config list
 Output:
 ```
 * local           ~/.marvel/run/marvel.sock
-  kinu            mrvl://michael@kinu
+  <host>          mrvl://<user>@<host>
   staging         mrvl://deploy@staging.example.com:7000
 ```
 
@@ -298,10 +298,10 @@ The `*` marks the current cluster.
 ### Switch clusters
 
 ```bash
-marvel config use-cluster kinu
+marvel config use-cluster <host>
 ```
 
-All subsequent commands go to the `kinu` daemon until you switch again.
+All subsequent commands go to the `<host>` daemon until you switch again.
 
 ### Remove a cluster
 
@@ -657,7 +657,7 @@ You develop on a laptop but run agents on a workstation with more resources.
 **On the workstation:**
 ```bash
 marvel daemon --mrvl
-# authorize yourself — copy laptop's ~/.marvel/keys/client_ed25519.pub here
+# authorize yourself: copy laptop's ~/.marvel/keys/client_ed25519.pub here
 marvel keys authorize /tmp/laptop.pub
 ```
 
@@ -928,7 +928,7 @@ session dev/squad-worker-g1-0 using forestage adapter    # adapter selection
 session dev/squad-worker-g1-0 running in pane %5         # session created
 health: session ... failed (restart_policy=always)       # health failure
 shift: initiated for dev/squad gen 1→2                   # shift started
-ssh: client connected: michael@10.0.0.42 (SHA256:abc...) # remote connection
+ssh: client connected: <user>@10.0.0.42 (SHA256:abc...)  # remote connection
 inject: dev/squad-worker-g1-0 <- 42 bytes                # executive injection
 ```
 

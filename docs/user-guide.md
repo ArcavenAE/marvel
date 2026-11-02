@@ -1,6 +1,6 @@
 # User Guide
 
-This guide covers daily use of marvel — writing manifests, managing sessions,
+This guide covers daily use of marvel: writing manifests, managing sessions,
 and interacting with running agents.
 
 ## Quick start
@@ -125,7 +125,7 @@ exits immediately). The canonical set:
 | `dontAsk` | Suppress prompts |
 | `plan` | Plan first, approve before acting |
 
-An empty `permissions` means "unset" — the adapter's own default applies.
+An empty `permissions` means "unset"; the adapter's own default applies.
 
 **`dangerous_permissions` is separate.** The boolean `dangerous_permissions:
 true` appends `--dangerously-skip-permissions`, which removes the permission
@@ -255,7 +255,7 @@ stream, and only a stream-capable harness in headless mode publishes one
 at apply time rather than accepted with a ceiling nothing can ever report
 against; a `generic` role declaring `mode: headless` does not count, because
 that adapter has no stream to read. **It is a since-accounting-started
-budget** — the meter lives in the daemon's memory, so the window restarts
+budget**: the meter lives in the daemon's memory, so the window restarts
 with the daemon and with `marvel daemon reexec`. Every figure marvel prints
 for it carries that window.
 
@@ -627,7 +627,7 @@ send the word, `--literal` says so explicitly and is believed.
 
 **When to use:** Giving an agent a task, interrupting a stuck agent,
 sending Ctrl-C to stop a runaway process. This is the "executive
-privilege" operation — you're typing into another agent's terminal.
+privilege" operation: you're typing into another agent's terminal.
 
 ## Events
 
@@ -724,14 +724,14 @@ the team structure.
 
 ```bash
 # Add a remote cluster
-marvel config add-cluster kinu mrvl://kinu
+marvel config add-cluster <host> mrvl://<host>
 marvel config add-cluster staging mrvl://deploy@staging:7000
 
 # List clusters
 marvel config list
 
 # Switch to a remote cluster
-marvel config use-cluster kinu
+marvel config use-cluster <host>
 
 # All commands now go to the remote daemon
 marvel get sessions
@@ -741,14 +741,14 @@ marvel capture prod/squad-worker-g1-0
 ### Explicit cluster per command
 
 ```bash
-marvel get sessions --cluster kinu
+marvel get sessions --cluster <host>
 marvel capture prod/squad-worker-g1-0 --cluster staging
 ```
 
 ### Explicit address (advanced)
 
 ```bash
-marvel get sessions --socket mrvl://kinu
+marvel get sessions --socket mrvl://<host>
 marvel get sessions --socket /tmp/marvel-dev.sock
 ```
 

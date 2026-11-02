@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
@@ -2353,6 +2354,10 @@ exact release tag and nothing else. A dev build is not upgraded. A direct
 download is checked against the release's checksums.txt when it publishes
 one, and the build it replaces is kept under the marvel home in versions/.
 
+A direct download carries marvel alone. When a marvel-simulator on PATH is
+then a different build from the marvel just installed, upgrade prints one
+note; it downloads nothing. A Homebrew install replaces both programs.
+
 This replaces the binary on disk. A running daemon keeps executing the
 old image until it restarts. Pass --daemon to tell the running daemon to
 re-exec in place after the install, adopting its live panes so agents
@@ -2375,6 +2380,9 @@ Homebrew install on Linux, where the daemon cannot re-exec into the new build.`,
 			if err != nil {
 				return err
 			}
+			noteStaleSimulator(cmd.OutOrStdout(), res, exec.LookPath,
+				func(path string) (string, error) { return runSimulatorVersion(path, versionProbeTimeout) },
+				func(path string) (string, error) { return runInstalledVersion(path, versionProbeTimeout) })
 			return afterUpgrade(res, reexecDaemon, func() error {
 				if err := preflightReexec(cmd.ErrOrStderr()); err != nil {
 					return err

@@ -192,6 +192,25 @@ content: |
   manifest (the prune preview covers whole teams). The ticket is
   aae-orc-qawkf.
 
+  STATE 2026-11-01 (the work-prune chain, completed). Four PRs shipped the
+  write-side counterpart of finding-043: marvel#1124 (a preview of what
+  `marvel work --prune` would delete), marvel#1126 (`--prune` removes the
+  teams a manifest no longer names), marvel#1129 (a seat is asked for its
+  handoff before it is removed: Retire replaces Delete at the role drop,
+  scale-down and prune, and each retirement reports `session.retired`,
+  section 6) and marvel#1130 (plain `--prune` with no digest; the preview is
+  optional). The design record is docs/design/work-prune.md, which carries two
+  operator rulings of 2026-10-28. The digest is ruled out: "no it's needless
+  hurdles and doesnt protect what is important, it's a false protection"
+  (section 5). Running headless seats are left alone by operator ruling
+  2026-10-28: a prune defers a team that has one, and scale-down and a role
+  drop delete such a seat at once, as before the design (sections 5 and 6.2).
+  The paragraph above, where `--prune` previews before it removes, describes
+  the optional preview and not a precondition. Open items the design lists
+  (section 9): operator `marvel shift` drains the old seat without a handoff
+  (with marvel#1063); scale-down can shed a `marvel run` session placed in a
+  manifest role; re-apply converges a held team. Tracked in aae-orc-ub7ha.
+
 edges:
   - target: question-marvel-transaction-log
     type: derives

@@ -417,7 +417,8 @@ func TestAdoptedBrokerThatCannotBeSignalledIsStillAdopted(t *testing.T) {
 	writePidfile(t, s, pid)
 	writeSidecar(t, s, pid, f.id)
 	standInListener(t, s)
-	var logs bytes.Buffer
+	// Start leaves the tick goroutine running, so the sink is locked.
+	var logs lockedBuffer
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
@@ -427,8 +428,11 @@ func TestAdoptedBrokerThatCannotBeSignalledIsStillAdopted(t *testing.T) {
 	if st := s.Status(); !st.Adopted || !st.Ready || st.PID != pid {
 		t.Errorf("status = %+v, want adopted, ready, pid %d", st, pid)
 	}
-	if !strings.Contains(logs.String(), "reload adopted nats-server pid") {
-		t.Errorf("log = %q, want the failed reload reported", logs.String())
+	checks := logOnEveryCheck(t, s)
+	var got string
+	readDuringChecks(t, checks, func() { got = logs.String() })
+	if !strings.Contains(got, "reload adopted nats-server pid") {
+		t.Errorf("log = %q, want the failed reload reported", got)
 	}
 	started := eventsOfKind(ring, events.KindBusStarted)
 	if len(started) != 1 || !strings.Contains(started[0].Message, "adopted") {

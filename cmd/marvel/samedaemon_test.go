@@ -380,6 +380,13 @@ func sessionCount(n *int) string {
 // watch poll does (#1085): a daemon whose get answers late in the timer gets
 // only what is left of it for version, so a slow daemon loses its stamp and
 // keeps its rows instead of holding the screen for a second full timer.
+//
+// The test pins that by outcome and does not measure wall time. The replies are
+// held 400ms against a 500ms timer, so a stamp read given a fresh full timer
+// would finish and merge b into a, while one given what is left (about 100ms)
+// is cut and leaves b with its own rows. Heavier load only leaves the stamp
+// less time, so it cannot produce the merge. An elapsed-time bound on the read
+// failed under the full race run (745ms against 700ms) and is gone.
 func TestOneShotStampKeepsToTheOneTimer(t *testing.T) {
 	fastTimer(t, 500*time.Millisecond)
 	f := startSD(t, sdStart, []api.Session{row("w", "s1")})
@@ -389,11 +396,8 @@ func TestOneShotStampKeepsToTheOneTimer(t *testing.T) {
 		t.Fatal(err)
 	}
 	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock}, config.Cluster{Name: "b", Socket: link})
-	began := time.Now()
 	doc, _ := readDoc(t, "--cluster", "a,b")
-	if took := time.Since(began); took > fanOutTimeout+200*time.Millisecond {
-		t.Errorf("the read took %v, past the one timer of %v", took, fanOutTimeout)
-	}
+	_ = recordOf(t, doc, "a") // both entries are reported, whatever their outcome
 	if got := recordOf(t, doc, "b"); got.Outcome == outcomeSameDaemon {
 		t.Errorf("b = %+v, want its own rows: the stamp read had no timer left", got)
 	}

@@ -89,3 +89,18 @@ A builder seat's clone of this repository hit it once, reported verbatim except 
 - **Workaround:** `GOLANGCI_LINT_CACHE` pointed at a scratch directory for the commit. The hook ran in full and nothing was skipped.
 - **Cause, unconfirmed:** the seat's reading was "default golangci-lint cache entries keyed on file content replayed with the old absolute paths of a worktree that has since been removed". That is a content key with a stored absolute path, not candidate (a) from the third instance, which puts the absolute path in the key. It sits closer to (b), and to the fourth instance's 2.13.2 result (a key that does not depend on the path, with a stored path), except that 2.13.2 stored a relative path where this reading says absolute. This sighting adds a vote, not a mechanism.
 - **Against the earlier instances:** the linter is errcheck, as in the first and third; the second was staticcheck and the fourth unparam. The carrier is a removed worktree, as in the third; the first was another session's checkout whose file was gone, and the fourth recorded no carrier. The golangci-lint version and the files and lines named were not recorded, so this sighting cannot answer the fourth instance's version question.
+
+## Sixth instance, 2026-10-30: errcheck on files that were not in the tree
+
+A seat's pre-commit `golangci-lint` step reported errcheck issues in files that are not in the tree. The paths pointed at a marvel worktree that had been removed minutes earlier.
+
+- **Evidence:** the raw log of this sighting was not kept, so the paths, lines and golangci-lint version are not recorded here.
+- **Against the earlier instances:** the linter is errcheck, as in the first, third and fifth, and the carrier is a removed worktree again, as in the third and fifth.
+
+## Seventh instance, 2026-11-01: twice in one commit attempt, and a reused scratch cache did not clear it
+
+A marvel builder seat hit it twice in one commit attempt. A retry with a scratch cache still failed, and a fresh, empty `GOLANGCI_LINT_CACHE` directory cleared it. Lint then ran for real, with 0 issues.
+
+- **Workaround:** a fresh, empty `GOLANGCI_LINT_CACHE` for each run. This is not a bypass: lint, vet and format all still run.
+- **Cause, not established:** it fits a cache keyed on absolute paths and reused after the tree behind them was removed, which is candidate (a) from the third instance. This sighting does not separate (a) from (b). It adds a vote, not a mechanism.
+- **Evidence:** the commit output around 2026-11-01 16:20Z, for commit attempt 499d3f72.

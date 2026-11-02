@@ -65,6 +65,12 @@ func say(format string, args ...any) {
 type Result struct {
 	// Changed is true only when the installed binary differs after the upgrade.
 	Changed bool
+	// Direct is true when the upgrade replaced the binary from a release
+	// download, which carries marvel alone. A package manager install replaces
+	// every program the package ships, so it is false there.
+	Direct bool
+	// Binary is the installed binary after a direct upgrade, empty otherwise.
+	Binary string
 }
 
 // installMethod describes how marvel was installed.
@@ -98,6 +104,7 @@ func runInstall(method installMethod, exe, current, channel, targetVersion strin
 	res, err := runWith(exe, func() error {
 		return runMethod(method, current, channel, targetVersion)
 	})
+	res = markDirect(res, method, exe, err)
 	if err == nil && method == methodHomebrew {
 		if l, lerr := storeLayout(); lerr != nil {
 			storeNote("%v; the upgrade is not recorded", lerr)
@@ -106,6 +113,16 @@ func runInstall(method installMethod, exe, current, channel, targetVersion strin
 		}
 	}
 	return res, err
+}
+
+// markDirect records on res that a release download replaced the binary at exe.
+// It does so only for a direct install that succeeded: any other method, or a
+// failure, leaves res as runWith returned it.
+func markDirect(res Result, method installMethod, exe string, err error) Result {
+	if err == nil && method == methodDirect {
+		res.Direct, res.Binary = true, exe
+	}
+	return res
 }
 
 // resolvedPath follows the links brew retargets, so a recorded keg is the

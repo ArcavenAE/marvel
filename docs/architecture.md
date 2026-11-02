@@ -1,7 +1,7 @@
 # Architecture Overview
 
 Marvel is a control plane for AI agent workloads. It manages the lifecycle
-of agent sessions running in tmux panes — starting, stopping, health-checking,
+of agent sessions running in tmux panes: starting, stopping, health-checking,
 shifting, and scaling them according to declarative manifests.
 
 ## Design principles
@@ -288,8 +288,8 @@ Named clusters are stored in `~/.marvel/config.yaml`:
 clusters:
   - name: local
     socket: ~/.marvel/run/marvel.sock
-  - name: kinu
-    server: mrvl://michael@kinu
+  - name: <host>
+    server: mrvl://<user>@<host>
   - name: staging
     server: mrvl://deploy@staging.example.com:7000
 
