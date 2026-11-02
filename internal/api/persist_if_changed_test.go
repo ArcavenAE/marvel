@@ -236,3 +236,24 @@ func TestFirstUpdateAfterReopenWritesOnce(t *testing.T) {
 		t.Errorf("three no-ops after a reopen started %d transactions, want 1", got)
 	}
 }
+
+// The last-written bytes describe the file just closed. They must not outlive
+// it, or a Store pointed at another file would skip a write on the strength of
+// bytes that file never held.
+func TestCloseBoltForgetsTheLastWrittenBytes(t *testing.T) {
+	t.Parallel()
+	s, _ := openCountedStore(t)
+	sess := &Session{Name: "a-0", Workspace: "ws", Team: "t", Role: "r", State: SessionRunning}
+	if err := s.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.persisted) == 0 {
+		t.Fatal("no last-written bytes were remembered after a write")
+	}
+	if err := s.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.persisted) != 0 {
+		t.Errorf("CloseBolt left %d last-written records", len(s.persisted))
+	}
+}
