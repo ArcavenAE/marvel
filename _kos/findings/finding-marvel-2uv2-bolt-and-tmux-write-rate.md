@@ -103,6 +103,13 @@ or clears 15 sessions starts one
   reaping it, so a pane created after the listing is never reaped on an absence.
   A healthy pass makes no second client.
 
+## See also
+
+`finding-marvel-exy5-daemon-state-write-and-tmux-exec-rate` harvests the
+capture and the code reading made at main f9a43400, before the change, and
+names the fix this finding records after it. Its line that no PR yet
+references marvel#1214 was true on 2026-11-02, before marvel#1228 merged.
+
 Relevant paths: `internal/api/bolt.go`, `internal/api/store.go`,
 `internal/api/write_set.go`, `internal/team/controller.go`,
 `internal/daemon/limits.go`, `internal/session/manager.go`,
