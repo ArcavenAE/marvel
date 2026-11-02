@@ -143,15 +143,17 @@ func writeRateRig(t *testing.T) (*api.Store, *session.Manager, *Controller, stri
 }
 
 // TestWriteRateByCaller logs the per-pass cost of a steady fleet, split by the
-// caller that pays it. It asserts nothing about the numbers; the commits that
-// cut them carry their own assertions. Run it with -v to read the figures.
+// caller that pays it, and asserts the figures marvel#1214 brought it to: no
+// bolt transaction for a pass that changed nothing, and one list-panes -a per
+// pass and no one-pane list-panes. Run it with -v to read the figures.
 func TestWriteRateByCaller(t *testing.T) {
 	if testing.Short() {
 		t.Skip("the write-rate harness starts 30 panes and runs about 15 s")
 	}
 	store, mgr, ctrl, log := writeRateRig(t)
 
-	report := func(label string, fn func()) {
+	report := func(label string, fn func(), wantListAll bool) {
+		t.Helper()
 		u0 := store.BoltUpdates()
 		for i := 0; i < writeRatePasses; i++ {
 			fn()
@@ -161,9 +163,22 @@ func TestWriteRateByCaller(t *testing.T) {
 		t.Logf("%-34s %d passes: bolt updates %d (%.1f/pass, %.0f/min at 30 passes/min), tmux execs %s",
 			label, writeRatePasses, u, float64(u)/float64(writeRatePasses),
 			float64(u)/float64(writeRatePasses)*30, formatExecs(ex))
+		if u != 0 {
+			t.Errorf("%s: %d bolt updates over %d passes of an unchanged fleet, want 0", label, u, writeRatePasses)
+		}
+		if ex["list-panes"] != 0 {
+			t.Errorf("%s: %d one-pane list-panes, want 0", label, ex["list-panes"])
+		}
+		want := 0
+		if wantListAll {
+			want = writeRatePasses
+		}
+		if ex["list-panes-a"] != want {
+			t.Errorf("%s: %d list-panes -a over %d passes, want %d", label, ex["list-panes-a"], writeRatePasses, want)
+		}
 	}
-	report("ReconcileOnce (whole pass)", ctrl.ReconcileOnce)
-	report("ReapDead only", func() { mgr.ReapDead() })
-	report("evaluateHealth only", ctrl.evaluateHealth)
+	report("ReconcileOnce (whole pass)", ctrl.ReconcileOnce, true)
+	report("ReapDead only", func() { mgr.ReapDead() }, true)
+	report("evaluateHealth only", ctrl.evaluateHealth, false)
 	t.Logf("seats=%d, process-alive health check, no heartbeat roles in this rig", writeRateSeats)
 }

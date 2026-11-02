@@ -617,6 +617,53 @@ func (d *Driver) PaneStatus(paneID string) (PaneStatus, error) {
 	}, nil
 }
 
+// PaneStatuses reads liveness and exit status for every pane on this driver's
+// server in a single `list-panes -a` call, keyed by pane id (marvel#1214).
+// PaneStatus does the same for one pane, and a caller that asks about every
+// pane each pass paid one tmux client per pane for it.
+//
+// A pane absent from the map is not proof it is gone: a caller about to act on
+// an absence confirms it with PaneStatus first. The error rules are
+// PaneStatus's: a timeout is an error, and so is any failure that is not the
+// server's absence; with no server for this socket alive the answer is an empty
+// map and no error, since a server that is gone runs no panes. The listing is
+// of the server this driver's socket names, so a pane on another server never
+// appears.
+func (d *Driver) PaneStatuses() (map[string]PaneStatus, error) {
+	out, err := d.cmd("list-panes", "-a",
+		"-F", "#{pane_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}\t#{"+PaneMarker+"}").CombinedOutput()
+	if err != nil {
+		if errors.Is(err, ErrTmuxTimeout) {
+			return nil, fmt.Errorf("pane-statuses: %w", err)
+		}
+		text := string(out)
+		if d.serverAbsent(text) {
+			return map[string]PaneStatus{}, nil
+		}
+		return nil, fmt.Errorf("pane-statuses: %s: %w", text, err)
+	}
+	statuses := map[string]PaneStatus{}
+	// Split on newlines only: TrimSpace would also strip the tabs that end a
+	// last line whose marker column is empty, a pane marvel did not create.
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\r\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 5 {
+			return nil, fmt.Errorf("pane-statuses: unparseable %q", line)
+		}
+		statuses[parts[0]] = PaneStatus{
+			Exists:     true,
+			Dead:       parts[1] == "1",
+			ExitStatus: parts[2],
+			Signal:     parts[3],
+			Created:    parts[4] == paneMarkerValue,
+		}
+	}
+	return statuses, nil
+}
+
 // PanePID returns the pid of the process tmux started in the pane. That
 // process is a shell, not the runtime binary: tmux execs the command
 // line through one. Callers measuring resource use must walk the
