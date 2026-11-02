@@ -27,6 +27,7 @@ A reference copy is installed from the master at a version. A working copy is de
 - **What marvel skips:** any entry whose name starts with `.` (an installer's staging and lock files), any `<version>` without a `company.toml`, and any `<name>` with no such version. A root can therefore be a general package store holding other content.
 - **Ambiguity:** a name held in two roots is refused, for an exact pin and for a name-only pin alike, naming both roots. marvel never picks one.
 - marvel refuses a root that is inside, or contains, a `marvel cp` jail (`docs/design/marvel-cp.md`), so the file channel can never write a reference copy.
+the same set of paths, read the same way, is the one marvel cp refuses.
 
 ### Layout of a version
 
