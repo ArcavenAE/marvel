@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // marvel#1214: an update that leaves the file's copy of a record as it is
@@ -255,5 +256,62 @@ func TestCloseBoltForgetsTheLastWrittenBytes(t *testing.T) {
 	}
 	if len(s.persisted) != 0 {
 		t.Errorf("CloseBolt left %d last-written records", len(s.persisted))
+	}
+}
+
+// LastHealthCheck is stamped on every heartbeat-role health tick and nothing
+// reads it back, so a change in it alone does not start a transaction. Anything
+// else that changes still writes the whole record, LastHealthCheck included.
+func TestLastHealthCheckAloneStartsNoTransaction(t *testing.T) {
+	t.Parallel()
+	s, path := openCountedStore(t)
+	sess := &Session{Name: "a-0", Workspace: "ws", Team: "t", Role: "r", State: SessionRunning, PaneID: "%1"}
+	if err := s.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	u0, v0 := s.BoltUpdates(), s.ResourceVersion()
+	base := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		at := base.Add(time.Duration(i) * 2 * time.Second)
+		if err := s.UpdateSession(sess.Key(), func(live *Session) error {
+			live.LastHealthCheck = at
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := s.BoltUpdates() - u0; got != 0 {
+		t.Errorf("5 changes of LastHealthCheck alone started %d transactions, want 0", got)
+	}
+	if got := s.ResourceVersion() - v0; got != 0 {
+		t.Errorf("5 changes of LastHealthCheck alone advanced the version by %d, want 0", got)
+	}
+
+	// A real change writes the record as it is now, LastHealthCheck with it.
+	last := base.Add(time.Minute)
+	if err := s.UpdateSession(sess.Key(), func(live *Session) error {
+		live.LastHealthCheck = last
+		live.PaneID = "%9"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.BoltUpdates() - u0; got != 1 {
+		t.Errorf("a real change beside LastHealthCheck started %d transactions, want 1", got)
+	}
+	if err := s.CloseBolt(); err != nil {
+		t.Fatal(err)
+	}
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	got, err := s2.GetSession(sess.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LastHealthCheck.Equal(last) || got.PaneID != "%9" {
+		t.Errorf("after reopen LastHealthCheck=%v PaneID=%q, want %v and %%9", got.LastHealthCheck, got.PaneID, last)
 	}
 }

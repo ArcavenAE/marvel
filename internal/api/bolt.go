@@ -373,12 +373,12 @@ func (s *Store) persistPut(bucket []byte, key string, value any) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s/%s: %w", bucket, key, err)
 	}
-	return s.putBytes(bucket, key, data)
+	return s.putBytes(bucket, key, data, compareImage(value, data))
 }
 
 // putBytes writes one already-marshalled record and bumps the version, in one
-// transaction, and remembers the bytes as what the file now holds for the key.
-func (s *Store) putBytes(bucket []byte, key string, data []byte) error {
+// transaction, and remembers image as what the file now holds for the key.
+func (s *Store) putBytes(bucket []byte, key string, data, image []byte) error {
 	err := s.boltUpdate(func(tx *bolt.Tx) error {
 		if err := tx.Bucket(bucket).Put([]byte(key), data); err != nil {
 			return fmt.Errorf("put %s/%s: %w", bucket, key, err)
@@ -388,7 +388,7 @@ func (s *Store) putBytes(bucket []byte, key string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	s.rememberPersisted(bucket, key, data)
+	s.rememberPersisted(bucket, key, image)
 	return nil
 }
 
@@ -420,10 +420,33 @@ func (s *Store) persistPutIfChanged(bucket []byte, key string, value any) error 
 	if err != nil {
 		return fmt.Errorf("marshal %s/%s: %w", bucket, key, err)
 	}
-	if last, ok := s.persisted[persistedKey(bucket, key)]; ok && bytes.Equal(last, data) {
+	image := compareImage(value, data)
+	if last, ok := s.persisted[persistedKey(bucket, key)]; ok && bytes.Equal(last, image) {
 		return nil
 	}
-	return s.putBytes(bucket, key, data)
+	return s.putBytes(bucket, key, data, image)
+}
+
+// compareImage is the form two writes of one record are compared in: the
+// record's marshalled bytes, with the fields that change on every tick and
+// carry nothing a restart needs cleared. Today that is a session's
+// LastHealthCheck, the time evaluateHealth last ran a heartbeat check; nothing
+// reads it back (marvel#1214), and a restart only needs the verdict, which
+// HealthState and FailureCount hold. The file still gets the full record
+// whenever anything else changes, so the field it holds is at most one change
+// old. data is the full marshalled record, used when there is nothing to clear.
+func compareImage(value any, data []byte) []byte {
+	sess, ok := value.(*Session)
+	if !ok || sess.LastHealthCheck.IsZero() {
+		return data
+	}
+	c := *sess
+	c.LastHealthCheck = time.Time{}
+	img, err := json.Marshal(&c)
+	if err != nil {
+		return data
+	}
+	return img
 }
 
 // persistDelete removes a single record from bbolt and bumps the
