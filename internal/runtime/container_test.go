@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -261,6 +262,13 @@ func TestContainerCommandRemovesTheContainerOnNormalExit(t *testing.T) {
 // remove it, for HUP and for TERM, which cover a pane kill, a deleted team, a
 // shift drain and a stop with teardown.
 func TestContainerCommandRemovesTheContainerWhenThePaneIsKilled(t *testing.T) {
+	// A process that starts with SIGHUP ignored (nohup does this) passes the
+	// setting to its children, and a shell cannot trap a signal that was
+	// ignored on entry, so every hangup case below would fail with the same
+	// "did not exit" and point at the wrapper. Say the real cause once.
+	if signal.Ignored(syscall.SIGHUP) {
+		t.Fatal("SIGHUP is ignored in this test process (started under nohup?), so the wrapper's HUP trap cannot run in its children; run the test without nohup")
+	}
 	for _, sh := range shells(t) {
 		for _, sig := range []syscall.Signal{syscall.SIGHUP, syscall.SIGTERM} {
 			bin, log := fakeRuntime(t, "30")
