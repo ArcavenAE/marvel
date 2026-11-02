@@ -34,6 +34,8 @@ Next, the [tour](tour.md) runs the simulator that ships beside marvel: kill a se
 
 ## Stage 1: one real harness
 
+This stage has not been run end to end: the `marvel doctor` step and the `marvel inject` reply below were not run against a real harness.
+
 You need a harness on your PATH and logged in, for example Claude Code. Save this as `first-seat.toml`:
 
 ```toml
@@ -113,7 +115,7 @@ marvel daemon &
 
 `marvel doctor` checks one thing about the bus: that nats-server is on your PATH at 2.14.0 or newer. It does not check that the broker is running.
 
-Proof: `marvel bus status` reads `ready: yes`.
+Proof: `marvel bus status` prints the line `ready:    yes`.
 
 ## Stage 3: seats that reach each other
 

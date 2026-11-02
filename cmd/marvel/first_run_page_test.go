@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 )
 
@@ -124,6 +126,24 @@ func TestFirstRunPageStages(t *testing.T) {
 				}
 			}
 		}
+	}
+
+	// Stage 2's proof quotes the line the command prints, spacing included.
+	var out bytes.Buffer
+	printBusStatus(&out, bus.Status{Managed: true, Ready: true})
+	var readyLine string
+	for _, l := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(l, "ready:") {
+			readyLine = l
+		}
+	}
+	if readyLine == "" || !strings.Contains(stages["2"], "`"+readyLine+"`") {
+		t.Errorf("stage 2 does not quote the printed line %q", readyLine)
+	}
+
+	// Stage 1 says plainly that it was not run end to end.
+	if !strings.Contains(stages["1"], "has not been run end to end") {
+		t.Error("stage 1 does not say it was not run end to end")
 	}
 
 	// Stage 3 is a placeholder: no command, no proof.
