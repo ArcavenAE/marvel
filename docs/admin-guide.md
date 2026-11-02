@@ -323,15 +323,24 @@ wrong.
 
 ### Declaring it
 
-The broker is a cluster Services entry in the client config:
+The broker is a cluster Services entry in the client config, under the cluster
+that owns it:
 
 ```yaml
-services:
-  - name: bus
-    class: message-bus
-    provider: nats-server
-    mode: managed
+clusters:
+  - name: local
+    services:
+      - name: bus
+        class: message-bus
+        provider: nats-server
+        mode: managed
+        listen: 127.0.0.1:4222
+current_cluster: local
 ```
+
+A managed bus needs an explicit `listen` address; marvel does not derive one,
+and an entry without it is refused when the config is read. Pick any free port.
+An entry written at the top of the file, outside a cluster, is not read at all.
 
 `class` and `provider` are checked against registries, so a typo is refused at
 read time rather than at attach. `mode` is one of:
@@ -441,7 +450,7 @@ reloads, so agents on the broker keep running.
 
 The hub itself is declared on the cluster's bus entry, before the daemon
 starts. In the Services spelling from "Declaring it", it goes inside the
-entry:
+entry, which sits under its cluster as above:
 
 ```yaml
 services:
