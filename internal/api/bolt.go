@@ -369,7 +369,7 @@ func (s *Store) persistPut(bucket []byte, key string, value any) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s/%s: %w", bucket, key, err)
 	}
-	return s.bolt.Update(func(tx *bolt.Tx) error {
+	return s.boltUpdate(func(tx *bolt.Tx) error {
 		if err := tx.Bucket(bucket).Put([]byte(key), data); err != nil {
 			return fmt.Errorf("put %s/%s: %w", bucket, key, err)
 		}
@@ -383,7 +383,7 @@ func (s *Store) persistDelete(bucket []byte, key string) error {
 	if s.bolt == nil {
 		return nil
 	}
-	return s.bolt.Update(func(tx *bolt.Tx) error {
+	return s.boltUpdate(func(tx *bolt.Tx) error {
 		if err := tx.Bucket(bucket).Delete([]byte(key)); err != nil {
 			return fmt.Errorf("delete %s/%s: %w", bucket, key, err)
 		}
@@ -457,6 +457,20 @@ func (s *Store) DeleteRoleHealth(key string) error {
 	defer s.mu.Unlock()
 	return s.persistDelete(bucketRoleHealth, key)
 }
+
+// boltUpdate runs fn in one bbolt write transaction and counts it. Every
+// runtime write path (persistPut, persistDelete, the exposure commit and the
+// orphan-duty purge) goes through it, so BoltUpdates is the number of
+// transactions, and so of syncs, the Store has started.
+func (s *Store) boltUpdate(fn func(tx *bolt.Tx) error) error {
+	s.boltUpdates.Add(1)
+	return s.bolt.Update(fn)
+}
+
+// BoltUpdates reports how many bbolt write transactions this Store has
+// started since it was made. It is a measurement aid: the daemon never reads
+// it.
+func (s *Store) BoltUpdates() int64 { return s.boltUpdates.Load() }
 
 // ResourceVersion returns the current monotonic version counter — the
 // resourceVersion analog from kubernetes. Bumped on every persisted

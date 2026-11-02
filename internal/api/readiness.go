@@ -308,7 +308,7 @@ func (s *Store) purgeOrphanDuties() error {
 	if len(orphans) == 0 || s.bolt == nil {
 		return nil
 	}
-	return s.bolt.Update(func(tx *bolt.Tx) error {
+	return s.boltUpdate(func(tx *bolt.Tx) error {
 		for _, k := range orphans {
 			if err := tx.Bucket(bucketDutyReadiness).Delete([]byte(k)); err != nil {
 				return fmt.Errorf("delete orphan readiness %s: %w", k, err)

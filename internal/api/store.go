@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -61,6 +62,10 @@ type Store struct {
 	// OpenBolt; cleared by CloseBolt. See bolt.go for the WAL discipline.
 	bolt     *bolt.DB
 	boltPath string
+	// boltUpdates counts the runtime bolt.Update transactions this Store has
+	// started (see boltUpdate). It exists so a test or a scratch daemon can
+	// measure the write rate without root; nothing in the daemon reads it.
+	boltUpdates atomic.Int64
 
 	// contextResolver walks the context-window ladder for the heartbeat
 	// path. Nil means no resolution: a heartbeat carrying a window is
