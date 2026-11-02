@@ -105,6 +105,29 @@ A review measured it in a sandboxed scratch test: no duties gave 0 pairs, and on
 
 No source of proven cells exists. A duty is eligible only when its cell is proven, current, and observed from the seat, pane or peer vantage; `routeDuty` sends a host-vantage proof to ask-first. At `940cc335`, nothing outside tests calls `Store.RecordDuty`, and nothing outside tests calls `Store.SeatReadiness`. So there are no cells to read, and no read path for any. Director observes seats from the host, so it cannot write a seat-vantage proof honestly.
 
+**What a pair needs, exactly.** For an item of class `C` to pair with a seat, `seat-eligibility.json` must carry all of the following. These are `routeDuty`'s rules (`internal/api/readiness_route.go`) and the cell type `asof.Cell` (`internal/asof/asof.go`).
+
+- `duties_by_class` names at least one duty for `C`, for example `{"pr-review": ["first-turn"]}`. An empty list routes ask-first.
+- For every duty `D` in that list, the seat's `cells` holds a cell named `duty.D` (`DutyCellName`) with:
+  - `value`: `"proven"`. `"fail"` and `"unproven"` route ask-first; a structural fail excludes the seat.
+  - `observed_at`: set. A zero time reads as never observed.
+  - `valid_until`: at or after the run's `now`, so the cell is fresh. A past time reads as expired. A zero time never expires; the file should always set one.
+  - `source`: `<vantage>:<stage>` from the closed vocabulary (`internal/api/readiness.go`), with the vantage `seat`, `pane` or `peer`, never `host`, for example `"pane:turn"`. A `host` proof routes ask-first.
+- The seat has no `withdrawn.D` cell whose value is `"withdrawn"`. A withdrawal excludes the seat, and it never expires.
+
+An example seat row that pairs:
+
+```json
+{"cluster": "<cluster>", "address": "agent://team/name",
+ "classes": ["pr-review"], "scopes": ["marvel"],
+ "cells": {"duty.first-turn": {"value": "proven",
+           "observed_at": "2026-11-02T05:00:00Z",
+           "valid_until": "2026-11-02T05:30:00Z",
+           "source": "pane:turn"}}}
+```
+
+What is missing today is every such cell: nothing observes a seat's first turn from its pane and records it, and nothing reads such a record into the file.
+
 **Options.**
 
 1. **marry reports would-pair-if-proven.** For an item whose class and scope match a free seat that `RouteSeat` sends to ask-first, the output counts the seat as `ask_first` with its route reasons, beside today's `no-eligible-seat`. It is read-only, it writes no lease, and the shadow pilot learns how many pairs proven duties would give, without any cell being invented. idle-shadow sets `duties_by_class` to one duty per class, so the reasons name what is missing.
