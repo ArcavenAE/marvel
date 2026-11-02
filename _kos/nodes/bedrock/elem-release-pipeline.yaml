@@ -48,6 +48,13 @@ content: |
     port counter sits in the top 4000 of the range, because the monitoring
     port is the listen port plus 4000. The flake tracks the counter, not
     chance.
+
+  HARVEST 2026-11-02, finding-026 has seven instances. The seventh
+  (marvel#1205, 456df928) found that a reused scratch cache did not clear the
+  phantom and a fresh, empty `GOLANGCI_LINT_CACHE` did, so the workaround above
+  is a new cache, not a cleaned one. The cause is still not established; each
+  instance is a vote, not a mechanism.
+
 edges:
   - target: aae-orc::elem-rapid-development
     type: implements
