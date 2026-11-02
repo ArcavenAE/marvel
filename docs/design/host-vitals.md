@@ -9,7 +9,7 @@ Proposal, 2026-11-02. Code read at marvel `8587651a`. Nothing here is built.
 
 ## 0. Why
 
-On one fleet host, the macOS file-event daemon (fseventsd) grew for weeks: about 14 GB resident on 2026-10-06, an 86 GB footprint when the graphical session crashed on 2026-10-30, and still 27 to 29 GB days later. Nothing noticed. A one-off 54 GB job then pushed that host into swap exhaustion, and the only warning was a low-memory panel on a screen nobody was watching. Separately, four stuck tmux clients spun at 100% CPU for three hours (the #805 class). The other two fleet hosts read flat over the same weeks (fseventsd 8 to 11 MB), so this is a per-host problem, and only a sampler on each host sees it.
+On one fleet host, the macOS file-event daemon (fseventsd) grew for weeks: about 14 GB resident on 2026-10-06, an 86 GB footprint when the graphical session crashed late on 2026-10-30 local time (2026-10-31 04:53Z), and still 27 to 29 GB days later. Nothing noticed. A one-off 54 GB job then pushed that host into swap exhaustion, and the only warning was a low-memory panel on a screen nobody was watching. Separately, four stuck tmux clients spun at 100% CPU for three hours (the #805 class). The other two fleet hosts read flat over the same weeks (fseventsd 8 to 11 MB), so this is a per-host problem, and only a sampler on each host sees it.
 
 marvel already runs on every fleet host. It already reads the whole process table every 5 seconds to price its own seats. A host reading from the same pass costs it no new process, and gives each host the early warning that host lacked.
 
@@ -20,7 +20,7 @@ This is the direction the operator approved:
 | part | owner | does |
 |---|---|---|
 | sample | marvel, on every host it runs on | reads the vitals once a minute, serves them, emits them |
-| consume and decide | director | receives the events and decides what reaches the operator. director#470 is reworked from sampling to consuming. |
+| consume and decide | director | receives the events and decides what reaches the operator. director#470 is still open and still proposes a sampler outside marvel; under this split it would be reworked from sampling to consuming, and it has not been yet. |
 | trend | critic, from outside | growth per day and wear per week, across hosts and over weeks |
 
 marvel never decides what is worth a person's attention, and director never reads a host's process table. Each part is useful without the others (section 6).
@@ -52,11 +52,12 @@ The budget is one process-table read a minute. The design spends less than that.
 - `RunMetrics` already runs `ps -A -o pid=,ppid=,pcpu=,rss=` once per pass, every 5 s (`internal/procstat/read_darwin.go`, `MetricsInterval` in `internal/daemon/daemon.go`): 12 execs a minute today.
 - The vitals read takes every twelfth pass and adds three columns to the same call (elapsed time, CPU time, command name). That is no new exec, and a few tens of KB more output once a minute on a host with about 900 processes.
 - Swap and pressure are sysctl calls in the daemon's own process. smartctl is one exec a week.
-- For scale: on the busiest host, the reconcile loop's per-pane `tmux list-panes` was measured at about 827 execs a minute (#1214). A standalone sampler at one `ps` a minute would add about 0.12% to that. Riding the existing pass adds nothing.
+- **A host with no seats.** As the code stands at `1ffe3872`, the metrics pass returns before it runs `ps` when no live session has a pid (`SampleMetricsOnce`, `internal/daemon/metrics.go`), and `Sampler.Sample` returns early when it is given no roots (`internal/procstat/procstat.go`). So on an enabled host with no seats, a sampler that only rode the pass would read nothing. The build does not skip the reading: on the vitals pass, when the metrics pass ran no `ps`, the vitals read runs it once itself. A host with no seats then costs one `ps` a minute, the budget above, and a host with a live seat costs nothing beyond today.
+- For scale: on the busiest host, a root capture measured about 827 tmux client starts a minute (#1214). Attributing them to the reconcile loop's per-pane `tmux list-panes` comes from reading the code on that issue, not from a measurement. A standalone sampler at one `ps` a minute would add about 0.12% to that. Riding the existing pass adds nothing.
 
 ## 3. Output
 
-- **A bus event.** Once a minute, one small `host.vitals` envelope per host: the readings, and the thresholds over their line. It goes through marvel's existing bus publisher (`internal/bus`) where a bus is configured. director#470 names the subject it consumes.
+- **A bus event.** Once a minute, one small `host.vitals` envelope per host: the readings, and the thresholds over their line. It goes through marvel's existing bus publisher (`internal/bus`) where a bus is configured. The subject is for director#470 to name once it is reworked to consume; it is still open.
 - **marvel's own events ring.** Only crossings, not every sample: `host.vitals.crossed` when a threshold is first passed, and `host.vitals.cleared` when it is no longer passed. `marvel events` shows them without a bus.
 - **OTel metrics, where enabled.** One gauge per vital (`marvel.host.swap_used_bytes`, `marvel.host.memory_pressure_level`, `marvel.host.process_rss_bytes` for the top processes, `marvel.host.orphan_cpu_seconds`, `marvel.host.ssd_percentage_used`), per SOUL section 6: always available, never mandatory. marvel's OTel package today has one gauge, used only by the simulator (`internal/otel/metrics.go`), so exporting from the daemon is new work.
 - **`marvel get vitals`.** The latest sample, its time, each threshold with its state, and each GAP line. `-o json` for scripts. It reads daemon memory only; the samples are not written to bolt (section 7).
@@ -102,7 +103,7 @@ Using the incident timeline, in UTC:
 | the stuck tmux clients | orphan over 90% for 30 minutes | 30 minutes into the spin | about 2.5 of the 3 hours |
 | SSD wear | up 1 point a week | not dated: no wear reading exists | none known |
 
-In each case the event reaches director, and director decides whether the operator is told. On 2026-10-30 that is the difference between a decision made in time and a crash found the next morning.
+In each case the event reaches director, and director decides whether the operator is told. On the night of 2026-10-30 that is the difference between a decision made in time and a crash found the next morning.
 
 ## 9. Operator decision
 
@@ -115,9 +116,11 @@ The initial-release party ruled 5-0 against any new always-on loop in the daemon
 
 The recommendation above was valid until 2026-11-09; with the ruling recorded, it stands as ruled.
 
+Note added 2026-11-02, after review; the ruling is unchanged. "Zero new execs" holds while at least one seat on the host has a pid. On an enabled host with none, the metrics pass runs no `ps`, so the vitals read runs one a minute itself (section 2.2).
+
 ## 10. Candidate requirements (provisional)
 
-- **HV-1** (provisional; source: incident, the operator's direction). marvel samples host vitals once a minute on every host where the cluster config turns it on, with no new process exec beyond the pass `RunMetrics` already runs, and one weekly `smartctl`.
+- **HV-1** (provisional; source: incident, the operator's direction). marvel samples host vitals once a minute on every host where the cluster config turns it on. It adds no process exec beyond the pass `RunMetrics` already runs while a seat is live, at most one `ps` a minute while none is (section 2.2), and one weekly `smartctl`.
 - **HV-2** (provisional; source: HH-1, HH-3). A vital never causes marvel to signal, kill or restart a process.
 - **HV-3** (provisional; source: SOUL section 8). Every threshold is a declared constant and a diagnostic; none gates anything.
 - **HV-4** (provisional; source: SOUL section 2). With no director, the sampler and `marvel get vitals` work unchanged. With no marvel, director shows a GAP for that host.
