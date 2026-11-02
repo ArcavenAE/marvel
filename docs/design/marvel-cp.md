@@ -142,7 +142,7 @@ The operator ruled all four on 2026-11-01 (Desk, 23:54Z to 23:57Z), relayed by d
 
 **The ruling.** Desk card fileshare-3, 2026-11-02: option 3, "marvel verb, run by the daemon on a schedule." The card named its cost as "as option 2, and it publishes with no owner at the keyboard". Option 2's cost was that marvel gains read reach outside the cp jail. The operator confirmed the bound below on 2026-11-02.
 
-- P1. The scheduled verb reads only paths named in the owner's policy file, the one marvel cannot write (A1, A3). Nothing outside those paths is read or packed.
+- P1. The owner's policy file, the one marvel cannot write, gains a per-workspace entry naming the verb's read paths, separate from the jail and its prefixes (A3) and under the same A1 checks. The paths are named there and nowhere else. The scheduled verb reads only those paths; nothing outside them is read or packed.
 - P2. A missing, unreadable or daemon-writable policy file turns the verb off, by the same checks and with the same refusal that A1 and A2 apply to cp. There is no built-in default list of paths.
 - P3. The verb is generic. It takes the paths the owner lists, as `<owner-listed path>` entries, and knows nothing of the layout of any other component. No path belonging to another component is built into it (ADR-005, component independence).
 - P4. The policy is read on each scheduled run, before anything else, as A1 reads it for each cp call. Removing the file or setting `enabled = false` (A6) stops the next run. This follows from P2 and A6.
