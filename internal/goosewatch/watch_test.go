@@ -505,7 +505,11 @@ func TestKillMidLineStillEndsTheSessionInTheParser(t *testing.T) {
 			wantExit: ExitWatchdog, wantText: "watchdog: idle",
 		},
 		"signal": {
-			signal: true, idle: time.Second,
+			// The idle limit counts from run start, so under load a 1s limit can fire
+			// before the shell writes the ready file and the signal is never sent.
+			// 5s leaves fixture start-up out of the race; the signal ends the run
+			// within a moment of the ready file.
+			signal: true, idle: 5 * time.Second,
 			wantExit: 143, wantText: "stopped: TERM",
 		},
 	}
