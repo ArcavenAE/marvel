@@ -962,6 +962,82 @@ marvel delete team dev/squad
 marvel delete workspace dev
 ```
 
+### Removing the teams a manifest no longer names
+
+`marvel work` only reaches the teams a manifest names. Drop a team from the
+file and it keeps running until someone deletes it. `--prune` removes it:
+
+```bash
+# Preview what would be removed. Writes nothing.
+marvel plan -f demo.toml --prune
+
+# Apply the manifest and remove the teams it no longer names
+marvel work demo.toml --prune
+```
+
+`plan` takes the manifest with `-f`; `work` takes it as its argument. `plan -f`
+needs `--prune`, and takes no workspace/team argument.
+
+**What is removed.** Only a team that this file put there and that no other
+file names. marvel records each applied team's manifest source (the host and
+the resolved path of the file), and a team is removed only when this file is
+its sole source and the file no longer names it. The preview and the apply
+read the same rules, and the apply recomputes the set when it runs, so run the
+preview first if you want to see the set, but it is optional.
+
+**What the preview prints.** `marvel plan` prints to stdout a line
+`prune plan for workspace/<name> from <source>`, a line saying the pre-flight
+checks are not evaluated, and then these groups, each left out when empty:
+
+- `would delete`: the teams, with seat counts by state and a handoff note:
+  `handoff: declared, window <W>` when every role declares a handoff,
+  `handoff: none` when none does, `handoff: some roles` otherwise;
+- `kept, claimed by another file too`: teams another manifest source also
+  names, with the source and when it was applied;
+- `kept, unclaimed`: teams applied before claims existed, or by an older
+  client. Delete these by hand with `marvel delete team`;
+- `kept, holds marvel run sessions`: a team with run sessions is not the
+  manifest's to remove;
+- `deferred`: a team that cannot go yet, with the reason, for example a live
+  headless seat or a shift in progress;
+- `named by this file and held`: teams the file still names that re-apply
+  converges.
+
+With `--detailed-exitcode`, `plan` exits 2 when something would be deleted. A
+daemon without the preview answers an error and `plan` exits 1.
+
+**What `work --prune` prints.** After `workspace/<name> ready` on stdout, one
+line per team: `pruned <team>` for a team deleted now, `draining <team>` for a
+team whose seats are still leaving (it is deleted once they have gone), and
+`not pruned <team>` with the reason for a team the final check kept or
+deferred. `pruned: nothing` prints when no team was removed. Apply advisories
+still print as `warning:` lines on stderr. `work --prune` exits 1 and applies
+nothing when marvel cannot work out the manifest's source. Against a daemon
+that predates `--prune`, the apply stands, nothing is pruned, and the command
+exits 1 with a message saying so.
+
+**The handoff goes first.** A seat that is running and interactive is asked
+for its handoff before its pane is killed, whether it is removed by a prune,
+by a scale-down or because its role was dropped from the manifest. marvel types
+into the pane a notice that begins `retire: this seat is being removed; write
+your handoff now`, with the role's `shift.handoff` path, marker and window
+appended when the role declares them. The pane is killed one reconcile tick
+after the marker appears, or when the window ends: the role's `handoff_window`,
+5 minutes by default. A role with no handoff path gets the notice without a
+path and the same 5 minute window, and a seat of a role the manifest dropped
+gets that plain window too. A prune runs all its seats' windows at once.
+
+Before the kill, marvel saves the pane's last 500 lines to
+`<marvel home>/retired/<workspace>/<name>-<stamp>.txt`, so what the seat had on
+screen survives a seat that did not answer. marvel never deletes a handoff
+file. Each retirement records `session.retired` with the outcome
+`handoff-written`, `handoff-missing` or `not-asked`, and a pruned team records
+`team.pruned`.
+
+A running headless seat is not asked, because a headless run reads no
+keystrokes; a team with one is deferred by a prune, and a seat that is not
+running is deleted at once.
+
 ## Reclaiming leftover tmux state
 
 A restarted daemon adopts the panes it has records for and **leaves the rest
