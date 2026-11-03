@@ -63,6 +63,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -138,6 +139,11 @@ type Config struct {
 	// prober, set by a test, replaces the production childproof Prober for the
 	// wrapper's own reads and signals.
 	prober *childproof.Prober
+
+	// afterStart, set by a test, runs after goose has started and before the
+	// wrapper tells the guard its group. It gets goose's stderr read end, which
+	// reads EOF only when goose has exited.
+	afterStart func(errR *os.File)
 
 	// beforeStart, set by a test, runs after the signal subscription and before
 	// the guard and goose are started.
@@ -227,18 +233,40 @@ func Run(cfg Config) int {
 	_ = errW.Close()
 	pgid := cmd.Process.Pid
 
+	if cfg.afterStart != nil {
+		cfg.afterStart(errR)
+	}
+
 	// Tell the guard which group to end if this wrapper dies. goose must be the
 	// leader of its own group, as Setpgid makes it, and its identity is read
-	// from the kernel so the guard can prove it again later. Without the proof
-	// goose is ended and not left unguarded.
+	// from the kernel so the guard can prove it again later.
+	//
+	// When the proof fails, goose is ended first and waited for second. The kill
+	// runs before cmd.Wait, as the raw kill's exception requires: until goose is
+	// waited its pid and group cannot be reused. It is not wasted when goose has
+	// already exited, because it also ends any children the leader left in the
+	// group. The wait status then says which case it was:
+	//   - exited, or died of a signal other than KILL: goose ended on its own
+	//     before the guard could be told, so there is nothing to guard. The run
+	//     continues as a normal one and returns goose's own code (128+n for such a
+	//     signal).
+	//   - killed by SIGKILL: marvel cannot tell its own kill from another one, so
+	//     it does not guess; the run is refused with 126.
+	// Either way one stderr line says what ran. The guard, which never received a
+	// group, exits on the wrapper's "done" and signals nothing.
+	waited := false
+	var waitErr error
 	if err := guard.announce(cmd, pgid); err != nil {
 		guard.endUnannounced(pgid)
-		_ = cmd.Wait()
-		_ = outR.Close()
-		_ = errR.Close()
-		errs.own("cannot prove the goose process for the guard: %v; goose was ended", err)
-		errs.finish(nil, "")
-		return ExitCannotRun
+		waitErr = cmd.Wait()
+		waited = true
+		errs.own("cannot prove the goose process for the guard: %v; goose: %s", err, describeExit(cmd.ProcessState, waitErr))
+		if diedOfKill(cmd.ProcessState) {
+			_ = outR.Close()
+			_ = errR.Close()
+			errs.finish(nil, "")
+			return ExitCannotRun
+		}
 	}
 
 	tr := newTracker(start)
@@ -273,7 +301,7 @@ func Run(cfg Config) int {
 	}
 
 	monitorDone := make(chan struct{})
-	go func() {
+	monitor := func() {
 		tick := time.NewTicker(tickFor(cfg.Idle))
 		defer tick.Stop()
 		for {
@@ -299,9 +327,13 @@ func Run(cfg Config) int {
 				}
 			}
 		}
-	}()
-
-	waitErr := cmd.Wait()
+	}
+	// A goose already waited for has nothing left to watch, and its pid and
+	// group may be reused, so the monitor never starts for it.
+	if !waited {
+		go monitor()
+		waitErr = cmd.Wait()
+	}
 	close(exited)
 	close(monitorDone)
 	// A grandchild that kept a pipe open past goose's exit is given Grace to
@@ -364,6 +396,31 @@ func writeMarker(w io.Writer, reason, sig string, midLine bool) {
 }
 
 // exitCode is goose's exit status, or 128 plus the signal that ended it.
+// describeExit says how a waited goose ended, for the one line an announce
+// failure writes: "exit status 7", or "died of signal killed".
+func describeExit(ps *os.ProcessState, waitErr error) string {
+	if ps == nil {
+		if waitErr != nil {
+			return "unknown (" + waitErr.Error() + ")"
+		}
+		return "unknown"
+	}
+	if ws, ok := ps.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return "died of signal " + ws.Signal().String()
+	}
+	return "exit status " + strconv.Itoa(ps.ExitCode())
+}
+
+// diedOfKill reports whether goose ended by SIGKILL. marvel's own kill after a
+// failed proof is a SIGKILL, and it cannot tell that from another one.
+func diedOfKill(ps *os.ProcessState) bool {
+	if ps == nil {
+		return true
+	}
+	ws, ok := ps.Sys().(syscall.WaitStatus)
+	return ok && ws.Signaled() && ws.Signal() == syscall.SIGKILL
+}
+
 func exitCode(ps *os.ProcessState, waitErr error) int {
 	if ps == nil {
 		if waitErr != nil {

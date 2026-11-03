@@ -3,6 +3,7 @@ package goosewatch
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -289,8 +290,12 @@ func TestACleanRunLeavesNoGuardLine(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("exit = %d", r.code)
 	}
-	if strings.Contains(r.stderr, "guard:") {
-		t.Errorf("stderr file = %q", r.stderr)
+	// The guard's own lines start with "guard: ". The wrapper's announce-failure
+	// line, which a fast exit can earn on a slow host, starts with "goose-watch:".
+	for _, line := range strings.Split(r.stderr, "\n") {
+		if strings.HasPrefix(line, "guard: ") {
+			t.Errorf("stderr file holds a guard line: %q", r.stderr)
+		}
 	}
 }
 
@@ -310,7 +315,7 @@ func TestUnannouncedGooseIsEndedByTheRawGroupKill(t *testing.T) {
 		t.Fatal(err)
 	}
 	pidFile := filepath.Join(t.TempDir(), "goose.pid")
-	r := runSh(t, fmt.Sprintf("echo $$ > %s; sleep 30; exit 0", pidFile), time.Minute, time.Minute, func(c *Config) {
+	r := runSh(t, fmt.Sprintf("echo $$ > %s; exec sleep 30", pidFile), time.Minute, time.Minute, func(c *Config) {
 		c.prober = prober
 	})
 	if r.code != ExitCannotRun {
@@ -383,5 +388,111 @@ func TestAnnounceFailureWithAChildIsEndedThroughTheProber(t *testing.T) {
 	}
 	if err := syscall.Kill(bystander.Process.Pid, 0); err != nil {
 		t.Errorf("the bystander is gone: %v", err)
+	}
+}
+
+// failingProber reads no identity, so Spawned fails after its retry window.
+func failingProber(t *testing.T) *childproof.Prober {
+	t.Helper()
+	p, err := childproof.NewForTest(
+		func(int) (childproof.Identity, error) { return childproof.Identity{}, errors.New("no identity") },
+		syscall.Kill,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// waitForGooseToEnd holds the wrapper between goose's start and the guard's
+// announcement until goose's stderr reads EOF. goose writes nothing to stderr,
+// so EOF comes only when the process has exited, and its wait status is final
+// from then on: no timing decides which case a test is in.
+func waitForGooseToEnd(errR *os.File) { _, _ = io.Copy(io.Discard, errR) }
+
+// A goose that ends before the wrapper can prove it for the guard is not a
+// failed launch. The announce fails, goose is ended first and waited for second,
+// and the wait status says goose finished on its own: the run continues as a
+// normal one and returns goose's own code, with its stream lines, plus one line
+// that says which branch ran.
+func TestAGooseThatEndedBeforeTheGuardWasToldKeepsItsOwnExitCode(t *testing.T) {
+	t.Parallel()
+	bystander := startOwn(t)
+	r := runSh(t, "printf '%s\\n' 'line one' 'line two'; exit 7", time.Minute, time.Minute, func(c *Config) {
+		c.prober = failingProber(t)
+		c.afterStart = waitForGooseToEnd
+	})
+	if r.code != 7 {
+		t.Errorf("exit = %d, want goose's 7", r.code)
+	}
+	if !strings.HasPrefix(r.stdout, "line one\nline two\n") {
+		t.Errorf("stdout = %q, want goose's lines first", r.stdout)
+	}
+	if !strings.Contains(r.stderr, "cannot prove the goose process for the guard") || !strings.Contains(r.stderr, "goose: exit status 7") {
+		t.Errorf("stderr file = %q, want the announce-failure line with goose's status", r.stderr)
+	}
+	if err := syscall.Kill(bystander.Process.Pid, 0); err != nil {
+		t.Errorf("the bystander is gone: %v", err)
+	}
+}
+
+// A goose that died of a signal other than KILL before the proof is returned as
+// 128 plus the signal, as the wrapper does elsewhere.
+func TestAGooseThatDiedOfAnotherSignalBeforeTheGuardWasToldReturns128PlusIt(t *testing.T) {
+	t.Parallel()
+	r := runSh(t, "kill -TERM $$", time.Minute, time.Minute, func(c *Config) {
+		c.prober = failingProber(t)
+		c.afterStart = waitForGooseToEnd
+	})
+	if r.code != 128+int(syscall.SIGTERM) {
+		t.Errorf("exit = %d, want %d", r.code, 128+int(syscall.SIGTERM))
+	}
+	if !strings.Contains(r.stderr, "goose: died of signal terminated") {
+		t.Errorf("stderr file = %q", r.stderr)
+	}
+}
+
+// A goose still running whose proof fails is ended by the kill and refused with
+// 126: marvel cannot tell its own KILL from another one, so it does not guess.
+// goose here is the leader itself (exec sleep): a leader with a child can see the
+// child die of the group kill and exit 0 before its own copy of the signal lands,
+// which is a normal exit and is returned as goose's own.
+func TestAGooseStillRunningWhoseProofFailsIsRefusedWith126(t *testing.T) {
+	t.Parallel()
+	bystander := startOwn(t)
+	r := runSh(t, "exec sleep 30", time.Minute, time.Minute, func(c *Config) { c.prober = failingProber(t) })
+	if r.code != ExitCannotRun {
+		t.Errorf("exit = %d, want %d", r.code, ExitCannotRun)
+	}
+	if !strings.Contains(r.stderr, "goose: died of signal killed") {
+		t.Errorf("stderr file = %q, want the line with the signal status", r.stderr)
+	}
+	if r.elapsed > 15*time.Second {
+		t.Errorf("the run lasted %v: goose was not ended", r.elapsed)
+	}
+	if err := syscall.Kill(bystander.Process.Pid, 0); err != nil {
+		t.Errorf("the bystander is gone: %v", err)
+	}
+}
+
+// A guard that never receives a group exits on the wrapper's "done", or on EOF
+// with no announced group, and signals nothing.
+func TestAGuardThatWasNeverToldAGroupSignalsNothing(t *testing.T) {
+	t.Parallel()
+	for name, input := range map[string]string{"done": "done\n", "EOF with nothing": ""} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			bystander := startOwn(t)
+			file := filepath.Join(t.TempDir(), "stderr.log")
+			if code := RunGuard(GuardConfig{In: strings.NewReader(input), Grace: 100 * time.Millisecond, StderrFile: file, Arg: "30"}); code != 0 {
+				t.Errorf("exit = %d", code)
+			}
+			if _, err := os.Stat(file); err == nil {
+				t.Errorf("the guard wrote %q", fileLines(file))
+			}
+			if err := syscall.Kill(bystander.Process.Pid, 0); err != nil {
+				t.Errorf("the bystander was signalled: %v", err)
+			}
+		})
 	}
 }
