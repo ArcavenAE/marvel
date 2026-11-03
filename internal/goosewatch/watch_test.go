@@ -43,6 +43,7 @@ func runSh(t *testing.T, script string, wall, idle time.Duration, mod func(*Conf
 		Stdout:     &bytes.Buffer{},
 		Stderr:     &bytes.Buffer{},
 		Signals:    make(chan os.Signal),
+		GuardArgv:  testGuardArgv(),
 	}
 	if mod != nil {
 		mod(&cfg)
