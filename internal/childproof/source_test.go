@@ -149,6 +149,9 @@ func TestNewForTestCheckSeesEachWayToReachIt(t *testing.T) {
 // allowed file fails as a call in any other file does.
 var spawnedAllowed = map[string]int{
 	"internal/workload/lifecycle.go": 1,
+	// The goose-watch wrapper reads its own fresh child, started and not yet
+	// waited, to hand the guard goose's identity (goosewatch.announce).
+	"internal/goosewatch/guard.go": 1,
 }
 
 // spawnedRefs returns the position of every selector named Spawned in a parsed

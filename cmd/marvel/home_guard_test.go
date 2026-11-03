@@ -12,7 +12,16 @@ import (
 
 // TestMain gives every test in the package a scratch HOME and no MARVEL_*
 // variables through the shared guard; see internal/homeguard.
-func TestMain(m *testing.M) { os.Exit(homeguard.Run(m)) }
+func TestMain(m *testing.M) {
+	// The wrapper starts its guard as `<this binary> goose-guard`, which under
+	// test is this test binary; answer it as the real subcommand.
+	if len(os.Args) > 1 && os.Args[1] == "goose-guard" {
+		cmd := newGooseGuardCmd()
+		cmd.SetArgs(os.Args[2:])
+		os.Exit(exitCodeFor(cmd.Execute()))
+	}
+	os.Exit(homeguard.Run(m))
+}
 
 // TestMarvelPathsResolveUnderATempDir fails when the paths a test reads or
 // writes (known_hosts, config.yaml) would land outside the temp dir, for

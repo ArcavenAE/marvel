@@ -16,6 +16,23 @@
 // newline comes first), and exits 124. goose never exits 124 (it exits 1 for
 // every failure), so the reap can tell a kill from a goose failure.
 //
+// A SIGKILL of the wrapper cannot be caught, so a separate guard process
+// (guard.go, `marvel goose-guard`) outlives it: it holds the read end of a pipe
+// only the wrapper holds, and on EOF with no "done" it proves goose's process
+// group through internal/childproof and ends it with TERM, then KILL. The one
+// window it does not cover is the time between goose starting and the guard
+// being told its group, a wrapper SIGKILLed inside it leaves goose unguarded; a
+// guard that is itself SIGKILLed while the wrapper lives leaves goose unguarded
+// too. If the goose leader has already exited while members of its group live,
+// the proof fails and the guard does nothing. When the leader exits during the
+// grace while members of its group live, the guard sends no KILL and its line
+// says "leader exited, KILL not sent, group children may remain": the same
+// residual, seen after the TERM. The guard reads the group with signal 0 on -pgid
+// (groupAlive, EPERM counts as alive) only to choose which of those lines it
+// writes: every TERM and KILL goes through childproof, which has no group
+// probe, so the worst a stale answer does is word a line wrongly, never signal
+// the wrong process.
+//
 // A TERM, HUP or INT sent to the wrapper (a pane kill) is forwarded to goose's
 // group with the same grace and ends the run with exit 128 plus the signal. It is
 // not a watchdog kill, so its stderr line is "wrapper: forwarded <SIG>", never a
@@ -49,6 +66,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/childproof"
 )
 
 // Exit codes. ExitWatchdog is the code C3 names; the other two are the shell's
@@ -112,6 +131,17 @@ type Config struct {
 	// Signals delivers the signals to forward to goose; nil subscribes to TERM,
 	// HUP and INT.
 	Signals <-chan os.Signal
+	// GuardArgv is the command that runs the guard, before the flags the wrapper
+	// appends. Nil means this binary's hidden `goose-guard` subcommand.
+	GuardArgv []string
+
+	// prober, set by a test, replaces the production childproof Prober for the
+	// wrapper's own reads and signals.
+	prober *childproof.Prober
+
+	// beforeStart, set by a test, runs after the signal subscription and before
+	// the guard and goose are started.
+	beforeStart func()
 }
 
 // Run runs the command under the watchdog and returns the exit code the wrapper
@@ -135,6 +165,30 @@ func Run(cfg Config) int {
 	// A write to a sink the reader has closed returns EPIPE instead of ending
 	// the wrapper with SIGPIPE, so goose is still watched and ended.
 	signal.Ignore(syscall.SIGPIPE)
+
+	// The subscription comes before anything is started, so a signal that
+	// arrives while the guard and goose are starting is held in the channel and
+	// forwarded as soon as goose exists, not lost.
+	sigs := cfg.Signals
+	if sigs == nil {
+		ch := make(chan os.Signal, 4)
+		signal.Notify(ch, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+		defer signal.Stop(ch)
+		sigs = ch
+	}
+	if cfg.beforeStart != nil {
+		cfg.beforeStart()
+	}
+
+	// The guard comes before goose and fails closed: without it a SIGKILL of
+	// this wrapper would leave goose with no bound, so goose is not started.
+	guard, err := startGuard(cfg)
+	if err != nil {
+		errs.own("cannot start the guard: %v; goose was not started", err)
+		errs.finish(nil, "")
+		return ExitCannotRun
+	}
+	defer guard.end()
 
 	outR, outW, err := os.Pipe()
 	if err != nil {
@@ -173,6 +227,20 @@ func Run(cfg Config) int {
 	_ = errW.Close()
 	pgid := cmd.Process.Pid
 
+	// Tell the guard which group to end if this wrapper dies. goose must be the
+	// leader of its own group, as Setpgid makes it, and its identity is read
+	// from the kernel so the guard can prove it again later. Without the proof
+	// goose is ended and not left unguarded.
+	if err := guard.announce(cmd, pgid); err != nil {
+		guard.endUnannounced(pgid)
+		_ = cmd.Wait()
+		_ = outR.Close()
+		_ = errR.Close()
+		errs.own("cannot prove the goose process for the guard: %v; goose was ended", err)
+		errs.finish(nil, "")
+		return ExitCannotRun
+	}
+
 	tr := newTracker(start)
 	var readers sync.WaitGroup
 	readers.Add(2)
@@ -204,13 +272,6 @@ func Run(cfg Config) int {
 		}
 	}
 
-	sigs := cfg.Signals
-	if sigs == nil {
-		ch := make(chan os.Signal, 4)
-		signal.Notify(ch, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
-		defer signal.Stop(ch)
-		sigs = ch
-	}
 	monitorDone := make(chan struct{})
 	go func() {
 		tick := time.NewTicker(tickFor(cfg.Idle))
