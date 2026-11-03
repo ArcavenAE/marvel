@@ -54,7 +54,7 @@ Lines that are not met yet still go into the adapter doc, with the reason. A `no
 
 ## Registration
 
-22. The harness is registered and the matrix regenerated with `MARVEL_UPDATE_MATRIX=1`, with every new cell cited.
+22. The harness is registered and the matrix regenerated with `go test ./internal/runtime -run TestFeatureMatrix -args -update-matrix`, with every new cell cited.
 27. The adapter doc lists each optional interface as yes or no, with a cite, matching its `init` assertions.
 
 Line numbers are kept from the design vote so that votes and reviews can cite them; they are grouped here by subject, not by number.
