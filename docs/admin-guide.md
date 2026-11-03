@@ -308,8 +308,9 @@ The `*` marks the current cluster.
 `marvel get sessions --all-clusters` reads each cluster in this file in
 parallel, and `--cluster a,b` reads the ones you name. The client config needs
 at least one entry; an empty list is refused. Each cluster gets its own
-10 second timer and its own status line, and two entries that reach one
-daemon are read once. The [user guide](user-guide.md#reading-several-clusters)
+10 second timer and its own status line. Two entries with the same address
+are dialled once; two that reach one daemon some other way are both read and
+then merged when the daemon reports the same pid and start time to each. The [user guide](user-guide.md#reading-several-clusters)
 has the output, the `-o json` document and the exit codes.
 
 ### Switch clusters
