@@ -797,8 +797,10 @@ by hand. Two conditions exist, and the table takes one directly or a list under
 `any`, where the first condition that holds acts:
 
 - `on = "context-pressure"` with `headroom_tokens`: the seat's remaining
-  context has fallen to that many tokens. Declare `runtime.context_window` so
-  `apply` can check the number against the window.
+  context has fallen to that many tokens. Declare `runtime.context_window`:
+  with it, `apply` refuses a `headroom_tokens` at or above the window. Without
+  it, a headroom at or above the window that marvel resolves at runtime makes
+  the condition hold on the first fresh reading.
 - `on = "max-age"` with `max_age`: the seat is older than that (at least 15
   minutes). It is the backstop for a seat whose context marvel cannot meter, or
   one stuck at a prompt that never fills its context. `quiet_for` (default 5m)
@@ -810,8 +812,9 @@ marvel never replaces a seat that has not written its handoff. When a condition
 holds it types a request into the pane, naming the handoff path, the marker and
 the window when the role declares them, and records
 `team.shift-handoff-requested`. It then watches the handoff file. When the last
-line is `handoff_marker`, the shift starts and the successor gets
-`MARVEL_PREDECESSOR`. If the window (`handoff_window`, default 5m) ends with no
+non-empty line is `handoff_marker`, the shift starts and the successor gets
+`MARVEL_PREDECESSOR`. Only a regular file counts: a handoff path that is a
+symlink never completes. If the window (`handoff_window`, default 5m) ends with no
 marker, or the role declares no handoff path, marvel records
 `team.shift-handoff-missing` and leaves the seat running; the team's supervisor
 decides whether to call `marvel shift`.
@@ -832,17 +835,24 @@ any = [
 
 Two notices come from the reading side:
 
-- At `apply`, an interactive role with one replica and no max-age trigger gets
-  an advisory that a seat of it runs until something else ends it. A
-  context-pressure arm without `runtime.context_window` gets one too. Neither
-  refuses the manifest.
+- `apply` writes two advisories to the daemon's log, not to its own output. An
+  interactive role with one replica and no max-age trigger gets one saying that
+  a seat of it runs until something else ends it. A context-pressure arm
+  without `runtime.context_window` gets the other. Neither refuses the
+  manifest.
 - If a max-age request passes `max_defer` and the escalation never reached the
   team's supervisor, marvel records `team.shift-request-stuck` once. The seat
   may never have been asked and nobody was told. It only reports: marvel does
   not retry or shift on it.
 
-A max-age condition on a headless role is refused at `apply`, as are keys this
-marvel does not know.
+`apply` refuses:
+
+- a max-age condition on a headless role, or on a role with more than one
+  replica;
+- a context-pressure condition on a role that declares no `handoff` and
+  `handoff_marker`;
+- `handoff` without `handoff_marker`, or the reverse;
+- keys this marvel does not know.
 
 ## Connecting to remote daemons
 
@@ -897,10 +907,13 @@ stderr with its outcome (`answered`, `unreachable`, `no_answer_in_time`,
 `auth_refused` and so on). A cluster that fails shows its line and leaves the
 other rows alone.
 
-Two config entries can reach one daemon. When marvel can show that from the
-same address, the same socket or the same verified host key, it reads the
-daemon once. The second entry prints a `same_daemon` line that names the first
-and adds no rows.
+Two config entries can reach one daemon. When they have the same address,
+marvel dials once, and the second entry reads `same_daemon` and adds no rows.
+When they reach the same socket or the same verified host key, both are read.
+If the daemon reports the same pid and start time to each, the second entry
+reads `same_daemon`, names the first, and shows only the rows the first did
+not. If the two readings do not agree, or the timer ran out, both entries stay
+separate and both sets of rows show.
 
 With `-o json` or `-o yaml` the output is one object,
 `{"clusters": [...], "sessions": [...]}`: one record per cluster with its
@@ -908,9 +921,10 @@ outcome, and the rows of the clusters that answered, each with a `cluster`
 field; the status lines are not printed. `-o` and `-w` cannot be combined.
 
 The exit code is 0 when every cluster answered, 10 when some did and some did
-not, and the failure's own code when none answered for one reason (6
-unreachable, 7 no answer in time, 8 auth refused, 9 host key). It is 11 when
-none answered and the reasons differ. `--cluster` with a list and
+not, and the failure's own code when none answered for one reason (5 an
+unusable answer, 6 unreachable, 7 no answer in time, 8 auth refused, 9 host
+key). It is 11 when none answered and the reasons differ. A cluster that is
+still starting also gives 10, even when every cluster returned rows. `--cluster` with a list and
 `--all-clusters` apply to `get sessions` only, cannot be combined with each
 other or with `--socket` or `--identity`, and are refused inside a marvel seat.
 
