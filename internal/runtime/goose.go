@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -21,17 +22,14 @@ const gooseHomeEnv = "GOOSE_PATH_ROOT"
 // sink marvel hands it, and internal/runtime/goose reads it (v1.1 C4).
 //
 // Interactive: goose launches plain, with the mode, the private home and the
-// seeded files. Headless: every launch is still refused (goose_buildphase.go),
-// because the run has no bound until the watchdog wrapper lands (v1.1 C3, L4).
-// The headless posture rules, the stream and the headless launch line are
-// written and tested behind that refusal: `auto` inside a sandbox will launch
-// `goose run --output-format stream-json -q -t <prompt>`, and `approve` and
-// `smart_approve` stay refused because both fail there (v1.1 L5).
-type Goose struct {
-	// headlessBuilt lifts the build-phase refusal of headless launches. Only
-	// tests set it; see goose_buildphase.go.
-	headlessBuilt bool
-}
+// seeded files. Headless: `auto` inside a sandbox launches `goose run
+// --output-format stream-json -q -t <prompt>` under the watchdog wrapper
+// (`marvel goose-watch`, v1.1 C3), because goose streams without a bound (L4).
+// `approve` and `smart_approve` stay refused because both fail there (v1.1 L5).
+// A headless launch the wrapper cannot serve, a container placement or a marvel
+// binary that cannot be found, is refused with `watchdog-unavailable` and never
+// launched unbounded.
+type Goose struct{}
 
 func (g *Goose) Name() string { return "goose" }
 
@@ -88,18 +86,28 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// A headless role with no prompt gets the refusal stub, never ErrNoPrompt: a
 	// Prepare error is answered by the manager with the raw command, which would
 	// launch goose at the host's GOOSE_MODE with none of the seeded files. This
-	// guard stands on its own, so it outlives the build-phase refusal below
-	// (ruling I-51:goose-empty-prompt-durable). Apply refuses the same role
-	// earlier (api.ManifestRuntime, runtime.prompt).
+	// guard stands on its own (ruling I-51:goose-empty-prompt-durable). Apply
+	// refuses the same role earlier (api.ManifestRuntime, runtime.prompt).
 	if headless && ctx.Session.Runtime.Prompt == "" {
 		return gooseRefusalResult(ctx, env, stderrFile, gooseRefuseNoPrompt), nil
 	}
-	// Build phase, before the posture rules. See goose_buildphase.go.
-	if reason := gooseBuildPhaseRefusal(headless, g.headlessBuilt); reason != "" {
-		return gooseRefusalResult(ctx, env, stderrFile, reason), nil
-	}
 	if reason := gooseRefusal(ctx); reason != "" {
 		return gooseRefusalResult(ctx, env, stderrFile, reason), nil
+	}
+	// The watchdog is the bound on a headless run, so a launch it cannot serve
+	// is refused and not launched without it. The wrapper is a subcommand of the
+	// marvel binary, which is not in a container image, and it needs the binary
+	// to be found.
+	var watchExe string
+	if headless {
+		exe, err := gooseExecutable()
+		if ctx.Placement == api.PlacementContainer || err != nil {
+			if err != nil && ctx.Placement != api.PlacementContainer {
+				log.Printf("session %s: goose watchdog: marvel binary not found: %v", ctx.Session.Key(), err)
+			}
+			return gooseRefusalResult(ctx, env, stderrFile, gooseRefuseWatchdogUnavailable), nil
+		}
+		watchExe = exe
 	}
 
 	posture := goosePosture(ctx)
@@ -129,19 +137,63 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	}
 	full = append(full, args...)
 	full = append(full, "-t", ctx.Session.Runtime.Prompt)
-	cmd := redirectStdin(buildCommand(binary, full), os.DevNull)
+	cmd := redirectStdin(gooseWatchCommand(ctx, watchExe, binary, full, stderrFile), os.DevNull)
 	result := &LaunchResult{
 		Env:         env,
 		FirstPrompt: newFirstPrompt(FirstPromptRole, ctx.Session.Runtime.Prompt),
 	}
-	// stdout is the stream sink; stderr stays in the per-launch file, so the
-	// stream holds only goose's JSON lines.
+	// stdout is the stream sink and holds only goose's JSON lines, copied through
+	// the wrapper. goose's stderr goes to the per-launch file, which the wrapper
+	// opens and holds to its cap.
 	if ctx.StreamPath != "" {
 		cmd = redirectStdout(cmd, ctx.StreamPath)
 		result.Stream = &StreamSpec{Format: StreamFormatGooseJSON, Path: ctx.StreamPath}
 	}
-	result.Command = withStderr(cmd, stderrFile)
+	result.Command = cmd
 	return result, nil
+}
+
+// The watchdog limits of C3. The wall-clock limit is the role's active_deadline
+// for a scheduled role and gooseWallDefault otherwise. The idle default is a
+// guess above the largest step seen between stream lines (30 s in one
+// uncommitted run, 4 s in the committed set); the wrapper records the longest
+// gap of every run so it can be measured.
+const (
+	gooseWallDefault = 45 * time.Minute
+	gooseIdleLimit   = 300 * time.Second
+	gooseGrace       = 10 * time.Second
+	gooseStderrCap   = 64 << 10
+)
+
+// gooseRefuseWatchdogUnavailable is the slug of the refusal of a headless launch
+// the watchdog cannot serve.
+const gooseRefuseWatchdogUnavailable = "watchdog-unavailable"
+
+// gooseWallLimit is the run's wall-clock limit.
+func gooseWallLimit(ctx *LaunchContext) time.Duration {
+	if ctx.Role != nil && ctx.Role.Schedule != nil && ctx.Role.Schedule.ActiveDeadline > 0 {
+		return ctx.Role.Schedule.ActiveDeadline
+	}
+	return gooseWallDefault
+}
+
+// gooseWatchCommand is goose's command line under the wrapper:
+// `marvel goose-watch <limits> --stderr-file F -- goose run ...`.
+func gooseWatchCommand(ctx *LaunchContext, exe, binary string, gooseArgs []string, stderrFile string) string {
+	args := []string{
+		"goose-watch",
+		"--wall", gooseWallLimit(ctx).String(),
+		"--idle", gooseIdleLimit.String(),
+		"--grace", gooseGrace.String(),
+	}
+	if stderrFile != "" {
+		args = append(args, "--stderr-file", stderrFile, "--stderr-cap", fmt.Sprint(gooseStderrCap))
+	}
+	// The command may carry arguments of its own; each field is quoted apart.
+	args = append(args, "--")
+	args = append(args, strings.Fields(binary)...)
+	args = append(args, gooseArgs...)
+	return buildCommand(shellQuote(exe), args)
 }
 
 // withStderr sends the command's stderr to file, or leaves it in the pane when

@@ -30,6 +30,19 @@ const Harness = "goose"
 // ErrKindVendor tags an error goose itself reported on an `error` line.
 const ErrKindVendor = "vendor"
 
+// WatchdogType is the type of the marvel-authored line the watchdog wrapper
+// writes as the last line of the stream when it ends a run. It is not a goose
+// type.
+const WatchdogType = "marvel.watchdog"
+
+// watchdogExit is the exit code the wrapper ends a killed run with.
+const watchdogExit = 124
+
+type heldWatchdog struct {
+	reason string
+	raw    json.RawMessage
+}
+
 // ErrKindOutputLimit tags the output-token-limit flag on a message's metadata.
 // A run cut at its limit can still end with `complete` and exit 0, so the flag
 // stays visible (mapping.md).
@@ -58,6 +71,10 @@ type Parser struct {
 	// limitSeen is set once the output-limit error has been emitted, so the
 	// flag is reported once per run.
 	limitSeen bool
+	// watchdog holds a marvel.watchdog line until it is known to be the last.
+	watchdog *heldWatchdog
+	// completed is set when a complete line has ended the session.
+	completed bool
 	// sawJSON is set at the first line that starts with `{`. A line before it
 	// that is not JSON is the banner goose prints despite -q and is skipped; one
 	// after it is unexpected input and is reported.
@@ -79,42 +96,140 @@ func NewParserWithSeq(cfg Config, seq *events.SeqAssigner) *Parser {
 	return &Parser{cfg: cfg, seq: seq, clock: clock, open: map[string]string{}}
 }
 
+// maxLine is the longest stream line the parser reads whole. A longer line is
+// read to its newline without being kept, reported as a parse error with a
+// bounded prefix, and the stream goes on (a bufio.Scanner would stop the parse
+// at it and lose every later line).
+const maxLine = 4 << 20
+
+// longLinePrefix is how much of an over-long line the parse error quotes.
+const longLinePrefix = 256
+
 // Parse consumes line-delimited JSON from r, one goose line per line, until r
 // returns io.EOF or an unrecoverable read error. Blank lines are skipped, and so
 // is any line before the first JSON object that does not start with `{`: that is
 // the banner goose prints despite -q. After the first object, a line that does
 // not start with `{` and a line that does but does not decode both emit
-// error{kind:"parse"}, the first with the line bounded. An unknown line or
-// content type emits error{kind:"unmapped"} with the raw line preserved. Parsing
-// continues in every case. ctx cancellation is polled between lines.
+// error{kind:"parse"}, the first with the line bounded. A line over maxLine
+// emits error{kind:"parse"} with a bounded prefix and no raw line. An unknown
+// line or content type emits error{kind:"unmapped"} with the raw line
+// preserved. Parsing continues in every case. ctx cancellation is polled between
+// lines.
+//
+// A `marvel.watchdog` line is the one line the wrapper writes when it ends a run
+// (docs/design/goose-adapter-v1.1.md C3). It counts only as the stream's last
+// line: it is held until the next line or EOF, and any later line makes it an
+// unmapped error, so goose output cannot end a session by imitating it.
 func (p *Parser) Parse(ctx context.Context, r io.Reader, emit func(events.Event)) error {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	for scanner.Scan() {
+	br := bufio.NewReaderSize(r, 64*1024)
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
+		line, size, err := readLine(br)
+		if len(line) > 0 || size > 0 {
+			p.handleInput(line, size, emit)
 		}
-		if line[0] != '{' {
-			if p.sawJSON {
-				emit(p.newEvent(events.KindError, events.ErrorData{
-					Kind:    events.ErrKindParse,
-					Message: "line is not a json object: " + events.TruncateString(string(line), events.MaxSummaryBytes),
-				}, nil))
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				p.finishWatchdog(emit)
+				return nil
 			}
+			return fmt.Errorf("read stream: %w", err)
+		}
+	}
+}
+
+// readLine reads one line. It returns the line without its newline when it is
+// within maxLine. For a longer line it returns only the first longLinePrefix
+// bytes and the full size, and reads on to the newline without keeping the rest.
+// The error is io.EOF at the end of the stream, after which line may still hold a
+// final line with no newline.
+func readLine(br *bufio.Reader) (line []byte, size int, err error) {
+	var buf []byte
+	long := false
+	for {
+		chunk, rerr := br.ReadSlice('\n')
+		size += len(chunk)
+		if !long {
+			if size > maxLine {
+				long = true
+				buf = append(buf[:0], buf[:min(len(buf), longLinePrefix)]...)
+			} else {
+				buf = append(buf, chunk...)
+			}
+		}
+		if errors.Is(rerr, bufio.ErrBufferFull) {
 			continue
 		}
+		buf = bytes.TrimRight(buf, "\r\n")
+		if long {
+			return buf[:min(len(buf), longLinePrefix)], size, rerr
+		}
+		return buf, 0, rerr
+	}
+}
+
+// handleInput handles one line. size is 0 for a line read whole, and the full
+// length for an over-long one, whose line holds only a prefix.
+func (p *Parser) handleInput(line []byte, size int, emit func(events.Event)) {
+	if size > 0 {
+		p.flushWatchdog(emit)
 		p.sawJSON = true
-		p.handleLine(line, emit)
+		emit(p.newEvent(events.KindError, events.ErrorData{
+			Kind:    events.ErrKindParse,
+			Message: fmt.Sprintf("line over the size limit (%d bytes): %s", size, strings.ToValidUTF8(string(line), "?")),
+		}, nil))
+		return
 	}
-	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("read stream: %w", err)
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		return
 	}
-	return nil
+	p.flushWatchdog(emit)
+	if line[0] != '{' {
+		if p.sawJSON {
+			emit(p.newEvent(events.KindError, events.ErrorData{
+				Kind:    events.ErrKindParse,
+				Message: "line is not a json object: " + events.TruncateString(string(line), events.MaxSummaryBytes),
+			}, nil))
+		}
+		return
+	}
+	p.sawJSON = true
+	p.handleLine(line, emit)
+}
+
+// flushWatchdog reports a held watchdog line that turned out not to be last.
+func (p *Parser) flushWatchdog(emit func(events.Event)) {
+	if p.watchdog == nil {
+		return
+	}
+	w := p.watchdog
+	p.watchdog = nil
+	emit(p.unmapped("marvel.watchdog line is not the last line of the stream", w.raw))
+}
+
+// finishWatchdog ends the session for a watchdog line that was the last line. A
+// run that already completed is not ended twice.
+func (p *Parser) finishWatchdog(emit func(events.Event)) {
+	if p.watchdog == nil {
+		return
+	}
+	w := p.watchdog
+	p.watchdog = nil
+	if p.completed {
+		emit(p.unmapped("marvel.watchdog line after complete", w.raw))
+		return
+	}
+	data := events.SessionEndedData{
+		Reason:   "watchdog: " + w.reason,
+		ExitCode: watchdogExit,
+	}
+	if len(p.denied) > 0 {
+		data.Metering = &events.Metering{PermissionDenials: append([]events.PermissionDenial(nil), p.denied...)}
+	}
+	emit(p.newEvent(events.KindSessionEnded, data, nil))
 }
 
 type gooseMessage struct {
@@ -177,6 +292,16 @@ func (p *Parser) handleLine(line []byte, emit func(events.Event)) {
 	}
 
 	switch head.Type {
+	case WatchdogType:
+		var w struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.Unmarshal(raw, &w)
+		if w.Reason != "idle" && w.Reason != "wall-clock" {
+			emit(p.unmapped("marvel.watchdog line without a known reason", raw))
+			return
+		}
+		p.watchdog = &heldWatchdog{reason: w.Reason, raw: raw}
 	case "message":
 		p.handleMessage(head.Message, raw, emit)
 	case "complete":
@@ -319,6 +444,7 @@ func (p *Parser) handleComplete(raw json.RawMessage, emit func(events.Event)) {
 		}, raw))
 		return
 	}
+	p.completed = true
 	data := events.SessionEndedData{
 		ExitCode: 0,
 		Usage:    events.Usage{In: c.InputTokens, Out: c.OutputTokens},
