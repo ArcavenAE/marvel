@@ -611,7 +611,8 @@ record because the command runs on that cluster's daemon. A record holds the
 full envelope of the send, text included, and any admin caller on that daemon
 can read any record by number. Text from the record is escaped, never printed
 raw: a character a terminal could act on prints as `\uXXXX`, or as a Go
-escape such as `\x1b` in the `refusal`, `msg_id` and a non-JSON envelope.
+escape such as `\x1b` in the plain output, in the `refusal`, `msg_id` and a
+non-JSON envelope. Under `-o json` every field is JSON-escaped instead.
 
 ### Connecting to a shared hub
 
@@ -1099,7 +1100,7 @@ describes behavior that has not shipped; do not rely on it yet.
 
 | Pair | Rule |
 |---|---|
-| CLI against daemon | Either may be newer. The daemon keeps each RPC method and field for at least one release after its replacement ships. `marvel version` shows both builds. Every verb that reaches the daemon prints one `warning: the running daemon is a different build ...` line on stderr when the daemon's version or channel differs from the client's, or when the version is the same and the commit differs. It prints once per command, however many calls the command makes, and the line ends by saying that `marvel daemon reexec`, run on the daemon's host, adopts the binary it is run from. A daemon that predates the build stamp prints nothing. A difference marvel cannot rule out, such as a dirty build or a dev build with no commit, is a note that only `marvel version` prints. |
+| CLI against daemon | Either may be newer. The daemon keeps each RPC method and field for at least one release after its replacement ships. `marvel version` shows both builds. Every command that reaches the selected daemon prints one `warning: the running daemon is a different build ...` line on stderr when the daemon's version or channel differs from the client's, or when the version is the same and the commit differs. It prints once per command, however many calls the command makes. The multi-cluster read of `get sessions --cluster a,b` and `--all-clusters` does not print it, because it dials each daemon directly. The line ends by saying that `marvel daemon reexec`, run on the daemon's host, adopts the binary it is run from. A daemon that predates the build stamp prints nothing. A difference marvel cannot rule out, such as a dirty build or a dev build with no commit, is a note that only `marvel version` prints. |
 | A verb the daemon does not support | Planned, item 10: the CLI refuses and names the missing capability. Today there is no daemon-side capability answer, and `marvel version --capabilities` is local: it dials no daemon and reports only this binary's reexec handoff format. A verb the daemon lacks fails with whatever the daemon returns. |
 | Daemon downgrade | Not by reexec: reexec refuses a target older than the running daemon. A downgrade is a stop and a fresh start of the older binary, and is safe only where that binary reads every record the newer one wrote: the store schema (a binary refuses a store whose schema is newer than its own) and the broker identity record, which carries its own schema version. |
 | Daemon and the director shim | Out of marvel's scope. The shim has its own contract (`docs/design/shim-heartbeat-feed.md`). |
