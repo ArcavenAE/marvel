@@ -20,8 +20,10 @@ Envelope:
 Runs: R1 tool call (`tree`) and answer; R3 denied tool (`shell` under never_allow); R4 unknown
 model (404); R5 plain answer; R2 tool outside the permission list in `approve` mode.
 
-What Ollama does not show: `thinking.signature` is empty, `id` is `chatcmpl-N`, cache token
-counts are 0, and there is no cost. Bedrock streaming, usage and cost fields are not recorded.
+What Ollama does not show: `thinking.signature` is empty, `id` is `chatcmpl-N`, and there is no
+cost. `cache_write_input_tokens` is 0 in every `complete` line. `cache_read_input_tokens` is not
+0 here: it is 3217 (R1), 3211 (R3), 3 (R5), 7 (R9) and 3 (R10, R11), so a parser must not treat
+it as always zero. Bedrock streaming, usage and cost fields are not recorded.
 
 Added in a second commit, trimmed (the raw runs are 940, 15610 and 40958 lines):
 
