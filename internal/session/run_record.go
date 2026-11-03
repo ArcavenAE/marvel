@@ -7,6 +7,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/runtime"
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
 	"github.com/arcavenae/marvel/internal/usage"
 )
@@ -49,6 +50,22 @@ func (d *usageDrain) note(ev rtevents.Event) {
 	}
 }
 
+// gooseStderrTail is the stderr tail a goose run's record keeps, and "" for a
+// run on any other harness: only the goose reap fills stderr_tail. The reader
+// has already replaced credential shapes. A failure to read it costs the tail,
+// never the record, and the log line names no path content.
+func (m *Manager) gooseStderrTail(sess api.Session) string {
+	if sess.Runtime.Name != "goose" || sess.HarnessHome == "" {
+		return ""
+	}
+	tail, err := runtime.GooseStderrTail(sess.HarnessHome)
+	if err != nil {
+		log.Printf("warning: session %s: goose stderr tail: %v", sess.Key(), err)
+		return ""
+	}
+	return tail
+}
+
 // recordScheduledRun adds a session's run to its role's history when the
 // role is on a schedule, settles it against the role's current firing
 // (retries, on_failure), and emits run.succeeded, run.failed or
@@ -88,6 +105,7 @@ func (m *Manager) recordScheduledRun(sess api.Session, outcome api.RunOutcome, e
 		PermissionDenials: tail.denials,
 	}
 	rec.SetResult(tail.result)
+	rec.SetStderrTail(m.gooseStderrTail(sess))
 
 	key := sess.Workspace + "/" + sess.Team + "/" + sess.Role
 	bound := sched.HistoryBound()

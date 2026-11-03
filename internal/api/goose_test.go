@@ -189,3 +189,72 @@ func TestStoreSnapshotDoesNotShareTheGooseLists(t *testing.T) {
 		t.Error("a snapshot shares the goose list with the stored runtime")
 	}
 }
+
+// A headless goose role with no prompt is refused at apply, in both formats.
+// The refusal is scoped to goose: the same role on another adapter applies, and
+// so does an interactive goose role (ruling I-51:goose-empty-prompt-durable).
+func TestGooseHeadlessRoleNeedsAPromptAtApply(t *testing.T) {
+	t.Parallel()
+	tomlRole := func(image, extra string) string {
+		return `
+[workspace]
+name = "acme"
+
+[[team]]
+name = "crew"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "` + image + `"
+    command = "` + image + `"
+` + extra
+	}
+	yamlRole := func(image, extra string) string {
+		return `
+workspace:
+  name: acme
+teams:
+  - name: crew
+    roles:
+      - name: worker
+        replicas: 1
+        runtime:
+          image: ` + image + `
+          command: ` + image + `
+` + extra
+	}
+	tests := []struct {
+		name    string
+		image   string
+		toml    string
+		yaml    string
+		wantErr bool
+	}{
+		{"headless, no prompt", "goose", `    mode = "headless"`, `          mode: headless`, true},
+		{"headless, prompt", "goose", "    mode = \"headless\"\n    prompt = \"say ok\"", "          mode: headless\n          prompt: say ok", false},
+		{"interactive, no prompt", "goose", ``, ``, false},
+		{"headless on another adapter, no prompt", "claude", `    mode = "headless"`, `          mode: headless`, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for format, body := range map[string]string{"toml": tomlRole(tc.image, tc.toml), "yaml": yamlRole(tc.image, tc.yaml)} {
+				var err error
+				if format == "toml" {
+					_, err = ParseManifestBytes([]byte(body))
+				} else {
+					_, err = parseManifestYAML([]byte(body))
+				}
+				switch {
+				case !tc.wantErr && err != nil:
+					t.Errorf("%s: unexpected error: %v", format, err)
+				case tc.wantErr && (err == nil || !strings.Contains(err.Error(), "runtime.prompt is required for a headless goose role")):
+					t.Errorf("%s: error = %v, want the headless goose prompt refusal", format, err)
+				}
+			}
+		})
+	}
+}
