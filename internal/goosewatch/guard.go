@@ -66,7 +66,11 @@ func startGuard(cfg Config) (*guardHandle, error) {
 		return nil, err
 	}
 	_ = pr.Close()
-	g := &guardHandle{w: pw, done: make(chan struct{}), arg: arg, prober: childproof.New(), started: true}
+	prober := cfg.prober
+	if prober == nil {
+		prober = childproof.New()
+	}
+	g := &guardHandle{w: pw, done: make(chan struct{}), arg: arg, prober: prober, started: true}
 	go func() {
 		_ = cmd.Wait()
 		close(g.done)

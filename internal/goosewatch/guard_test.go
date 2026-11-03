@@ -8,20 +8,23 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/childproof"
 )
 
-// startOwn starts a command the test owns, in its own process group, and ends it
+// startOwn starts a `sleep` the test owns, in its own process group, and ends it
 // at cleanup. Every kill in this file targets a process started this way, from
 // its exec.Cmd, and nothing is killed by pattern or by name.
-func startOwn(t *testing.T, name string, args ...string) *exec.Cmd {
+func startOwn(t *testing.T) *exec.Cmd {
 	t.Helper()
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command("sleep", "30")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start %s: %v", name, err)
+		t.Fatalf("start sleep: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
@@ -164,7 +167,7 @@ func TestGuardKillsAGooseThatIgnoresTerm(t *testing.T) {
 // bystander process alone.
 func TestGuardExitsOnDoneAndLeavesABystanderAlone(t *testing.T) {
 	t.Parallel()
-	bystander := startOwn(t, "sleep", "30")
+	bystander := startOwn(t)
 	dir := t.TempDir()
 	cfg := Config{
 		Argv:       []string{"/bin/sh", "-c", "exit 0"},
@@ -213,7 +216,7 @@ func TestAGuardThatCannotStartMeans126AndGooseNeverStarts(t *testing.T) {
 // process it was pointed at lives.
 func TestGuardDoesNothingWhenTheProofFails(t *testing.T) {
 	t.Parallel()
-	target := startOwn(t, "sleep", "30")
+	target := startOwn(t)
 	file := filepath.Join(t.TempDir(), "stderr.log")
 	in := strings.NewReader(fmt.Sprintf("pgid %d start not-its-start-time\n", target.Process.Pid))
 	if code := RunGuard(GuardConfig{In: in, Grace: 200 * time.Millisecond, StderrFile: file, Arg: "30"}); code != 0 {
@@ -231,7 +234,7 @@ func TestGuardDoesNothingWhenTheProofFails(t *testing.T) {
 // A pgid past 32 bits would act on another process on darwin; it is refused.
 func TestGuardRefusesAPgidPast32Bits(t *testing.T) {
 	t.Parallel()
-	own := startOwn(t, "sleep", "30")
+	own := startOwn(t)
 	wide := int64(own.Process.Pid) + 1<<32
 	if _, _, err := parsePgidLine(fmt.Sprintf("pgid %d start x", wide)); err == nil {
 		t.Error("a pgid past 32 bits was accepted")
@@ -288,5 +291,97 @@ func TestACleanRunLeavesNoGuardLine(t *testing.T) {
 	}
 	if strings.Contains(r.stderr, "guard:") {
 		t.Errorf("stderr file = %q", r.stderr)
+	}
+}
+
+// When the wrapper cannot read goose's identity (Spawned fails), it cannot tell
+// the guard its group and ends goose with the one raw group kill the MS-9
+// exception allows. The read seam fails; goose, which the wrapper started, ends
+// within the run, the wrapper exits 126, and a process in another group is
+// untouched.
+func TestUnannouncedGooseIsEndedByTheRawGroupKill(t *testing.T) {
+	t.Parallel()
+	bystander := startOwn(t)
+	prober, err := childproof.NewForTest(
+		func(int) (childproof.Identity, error) { return childproof.Identity{}, errors.New("no identity") },
+		syscall.Kill,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pidFile := filepath.Join(t.TempDir(), "goose.pid")
+	r := runSh(t, fmt.Sprintf("echo $$ > %s; sleep 30; exit 0", pidFile), time.Minute, time.Minute, func(c *Config) {
+		c.prober = prober
+	})
+	if r.code != ExitCannotRun {
+		t.Errorf("exit = %d, want %d", r.code, ExitCannotRun)
+	}
+	if !strings.Contains(r.stderr, "cannot prove the goose process for the guard") {
+		t.Errorf("stderr file = %q", r.stderr)
+	}
+	// A goose that was not ended would keep the run for the full 30 s sleep.
+	if r.elapsed > 15*time.Second {
+		t.Errorf("the run lasted %v: goose was not ended", r.elapsed)
+	}
+	if pgid := readPid(t, pidFile); pgid > 1 && !groupGone(pgid) {
+		t.Errorf("goose group %d is still alive", pgid)
+	}
+	if err := syscall.Kill(bystander.Process.Pid, 0); err != nil {
+		t.Errorf("the bystander is gone: %v", err)
+	}
+}
+
+// When Spawned succeeds but the leader check fails, goose is ended through
+// Prober.Signal, never by a raw kill: the call lands on the seam, once, with
+// KILL. The proven process does not lead its own group in the seam's reading, so
+// childproof signals it alone, and the bystander is untouched.
+func TestAnnounceFailureWithAChildIsEndedThroughTheProber(t *testing.T) {
+	t.Parallel()
+	bystander := startOwn(t)
+	type call struct {
+		pid int
+		sig syscall.Signal
+	}
+	var mu sync.Mutex
+	var calls []call
+	prober, err := childproof.NewForTest(
+		func(pid int) (childproof.Identity, error) {
+			id, err := childproof.ReadIdentityForTest(pid)
+			id.Pgid = pid + 1 // not its own group leader
+			return id, err
+		},
+		func(pid int, sig syscall.Signal) error {
+			mu.Lock()
+			calls = append(calls, call{pid, sig})
+			mu.Unlock()
+			return syscall.Kill(pid, sig)
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := runSh(t, "exec sleep 30", time.Minute, time.Minute, func(c *Config) { c.prober = prober })
+	if r.code != ExitCannotRun {
+		t.Errorf("exit = %d, want %d", r.code, ExitCannotRun)
+	}
+	if r.elapsed > 15*time.Second {
+		t.Errorf("the run lasted %v: goose was not ended", r.elapsed)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	kills := 0
+	for _, c := range calls {
+		if c.sig == syscall.SIGKILL {
+			kills++
+			if c.pid <= 1 {
+				t.Errorf("KILL went to %d, want goose's own pid", c.pid)
+			}
+		}
+	}
+	if kills != 1 {
+		t.Errorf("KILL calls through the prober = %d, want 1 (%v)", kills, calls)
+	}
+	if err := syscall.Kill(bystander.Process.Pid, 0); err != nil {
+		t.Errorf("the bystander is gone: %v", err)
 	}
 }

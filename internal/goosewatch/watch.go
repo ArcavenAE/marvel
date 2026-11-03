@@ -27,7 +27,11 @@
 // the proof fails and the guard does nothing. When the leader exits during the
 // grace while members of its group live, the guard sends no KILL and its line
 // says "leader exited, KILL not sent, group children may remain": the same
-// residual, seen after the TERM.
+// residual, seen after the TERM. The guard reads the group with signal 0 on -pgid
+// (groupAlive, EPERM counts as alive) only to choose which of those lines it
+// writes: every TERM and KILL goes through childproof, which has no group
+// probe, so the worst a stale answer does is word a line wrongly, never signal
+// the wrong process.
 //
 // A TERM, HUP or INT sent to the wrapper (a pane kill) is forwarded to goose's
 // group with the same grace and ends the run with exit 128 plus the signal. It is
@@ -62,6 +66,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/childproof"
 )
 
 // Exit codes. ExitWatchdog is the code C3 names; the other two are the shell's
@@ -128,6 +134,10 @@ type Config struct {
 	// GuardArgv is the command that runs the guard, before the flags the wrapper
 	// appends. Nil means this binary's hidden `goose-guard` subcommand.
 	GuardArgv []string
+
+	// prober, set by a test, replaces the production childproof Prober for the
+	// wrapper's own reads and signals.
+	prober *childproof.Prober
 
 	// beforeStart, set by a test, runs after the signal subscription and before
 	// the guard and goose are started.
