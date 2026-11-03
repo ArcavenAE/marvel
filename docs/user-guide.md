@@ -774,6 +774,49 @@ marvel get sessions --cluster <host>
 marvel capture prod/squad-worker-g1-0 --cluster staging
 ```
 
+### Reading several clusters
+
+`get sessions` can read more than one cluster in one command. Reads only:
+every write still names one cluster.
+
+```bash
+# Two named clusters
+marvel get sessions --cluster staging,prod
+
+# Every cluster in the client config
+marvel get sessions --all-clusters
+
+# Watch across clusters
+marvel get sessions --all-clusters -w
+
+# One document for the set
+marvel get sessions --all-clusters -o json
+```
+
+Each cluster is read in parallel under its own 10 second timer, so one slow
+cluster does not hold up the rest. The table gains a KEY column of
+`<cluster>:<workspace>/<name>`, and each cluster prints one status line on
+stderr with its outcome (`answered`, `unreachable`, `no_answer_in_time`,
+`auth_refused` and so on). A cluster that fails shows its line and leaves the
+other rows alone.
+
+Two config entries can reach one daemon. When marvel can show that from the
+same address, the same socket or the same verified host key, it reads the
+daemon once. The second entry prints a `same_daemon` line that names the first
+and adds no rows.
+
+With `-o json` or `-o yaml` the output is one object,
+`{"clusters": [...], "sessions": [...]}`: one record per cluster with its
+outcome, and the rows of the clusters that answered, each with a `cluster`
+field; the status lines are not printed. `-o` and `-w` cannot be combined.
+
+The exit code is 0 when every cluster answered, 10 when some did and some did
+not, and the failure's own code when none answered for one reason (6
+unreachable, 7 no answer in time, 8 auth refused, 9 host key). It is 11 when
+none answered and the reasons differ. `--cluster` with a list and
+`--all-clusters` apply to `get sessions` only, cannot be combined with each
+other or with `--socket` or `--identity`, and are refused inside a marvel seat.
+
 ### Explicit address (advanced)
 
 ```bash
