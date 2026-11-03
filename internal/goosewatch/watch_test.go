@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -60,6 +61,51 @@ func runSh(t *testing.T, script string, wall, idle time.Duration, mod func(*Conf
 		out = buf.String()
 	}
 	return result{code: code, stdout: out, stderr: string(b), elapsed: elapsed}
+}
+
+// signalOnFile sends one signal once a file exists, so a test lands the signal
+// on an event the fake goose reports from its own side instead of on a clock.
+// The poll runs in its own goroutine, which must not call t.Fatal, so on
+// timeout it sends nothing and finish reports it from the test goroutine.
+type signalOnFile struct {
+	mu       sync.Mutex
+	sentAt   time.Time
+	timedOut bool
+}
+
+// sendSignalWhenFile polls for path for at most 10s, then sends sig on sigs
+// (which must be buffered). path must be absolute and under t.TempDir.
+func sendSignalWhenFile(sigs chan<- os.Signal, sig os.Signal, path string) *signalOnFile {
+	s := &signalOnFile{}
+	go func() {
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(path); err == nil {
+				s.mu.Lock()
+				s.sentAt = time.Now()
+				s.mu.Unlock()
+				sigs <- sig
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		s.mu.Lock()
+		s.timedOut = true
+		s.mu.Unlock()
+	}()
+	return s
+}
+
+// finish reports a fake goose that never became ready and returns when the
+// signal was sent (zero if it was not).
+func (s *signalOnFile) finish(t *testing.T) time.Time {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.timedOut {
+		t.Errorf("the fake goose never reported ready, so no signal was sent")
+	}
+	return s.sentAt
 }
 
 func lastLine(s string) string {
@@ -276,12 +322,11 @@ func TestSignalsAreForwardedWithTheirOwnMarker(t *testing.T) {
 	for sig, name := range map[syscall.Signal]string{syscall.SIGTERM: "TERM", syscall.SIGHUP: "HUP", syscall.SIGINT: "INT"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ready := filepath.Join(t.TempDir(), "ready")
 			sigs := make(chan os.Signal, 1)
-			go func() {
-				time.Sleep(300 * time.Millisecond)
-				sigs <- sig
-			}()
-			r := runSh(t, `sleep 30`, 10*time.Second, 5*time.Second, func(c *Config) { c.Signals = sigs })
+			sent := sendSignalWhenFile(sigs, sig, ready)
+			r := runSh(t, `: > `+ready+`; sleep 30`, 10*time.Second, 5*time.Second, func(c *Config) { c.Signals = sigs })
+			sinceSent := time.Since(sent.finish(t))
 			if r.code != 128+int(sig) {
 				t.Errorf("exit = %d, want %d", r.code, 128+int(sig))
 			}
@@ -295,8 +340,10 @@ func TestSignalsAreForwardedWithTheirOwnMarker(t *testing.T) {
 			if strings.Contains(r.stderr, "watchdog: idle") || strings.Contains(r.stderr, "watchdog: wall-clock") {
 				t.Errorf("a forwarded signal was reported as a watchdog kill: %q", r.stderr)
 			}
-			if r.elapsed > 3*time.Second {
-				t.Errorf("ended after %v", r.elapsed)
+			// The bound runs from the send: the fake goose's start-up under load is
+			// not what this test measures.
+			if sinceSent > 3*time.Second {
+				t.Errorf("ended %v after the signal was sent", sinceSent)
 			}
 		})
 	}
@@ -383,15 +430,19 @@ func itoa(n int) string {
 // exit code.
 func TestASignalAfterAWatchdogKillChangesNothing(t *testing.T) {
 	t.Parallel()
+	// The fake goose reports from its TERM trap, so the signal is sent once the
+	// watchdog's own TERM has landed and the grace is running. The trap runs a
+	// command, so unlike `trap '' TERM` it does not make the children ignore TERM:
+	// each `sleep 0.1` dies on the group's TERM and the loop starts the next one.
+	// The shell not exiting on TERM is the property under test.
+	termed := filepath.Join(t.TempDir(), "termed")
 	sigs := make(chan os.Signal, 1)
-	go func() {
-		time.Sleep(1400 * time.Millisecond)
-		sigs <- syscall.SIGTERM
-	}()
-	r := runSh(t, `trap '' TERM; printf '%s\n' '`+textLine+`'; while :; do sleep 0.1; done`, 20*time.Second, time.Second, func(c *Config) {
+	sent := sendSignalWhenFile(sigs, syscall.SIGTERM, termed)
+	r := runSh(t, `trap ': > `+termed+`' TERM; printf '%s\n' '`+textLine+`'; while :; do sleep 0.1; done`, 20*time.Second, time.Second, func(c *Config) {
 		c.Signals = sigs
 		c.Grace = 2 * time.Second
 	})
+	sent.finish(t)
 	wantKilled(t, r, ReasonIdle)
 	if strings.Contains(r.stderr, "wrapper: forwarded") || strings.Contains(r.stdout, `"reason":"signal"`) {
 		t.Errorf("a signal after a watchdog kill was reported: %q %q", r.stderr, r.stdout)
@@ -402,15 +453,18 @@ func TestASignalAfterAWatchdogKillChangesNothing(t *testing.T) {
 // TERM through the grace, changes nothing: the run ends as a forwarded signal.
 func TestALimitAfterAForwardedSignalChangesNothing(t *testing.T) {
 	t.Parallel()
+	// The signal goes out when the fake goose is up, at some T_r after the run
+	// starts, and the wall limit must fall inside the grace that follows:
+	// T_r < Wall < T_r + Grace. Wall 3s and Grace 4s hold that for any T_r under
+	// 3s, and a later T_r fails loudly instead of flaking.
+	ready := filepath.Join(t.TempDir(), "ready")
 	sigs := make(chan os.Signal, 1)
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		sigs <- syscall.SIGTERM
-	}()
-	r := runSh(t, `trap '' TERM; while :; do sleep 0.1; done`, 1200*time.Millisecond, 10*time.Second, func(c *Config) {
+	sent := sendSignalWhenFile(sigs, syscall.SIGTERM, ready)
+	r := runSh(t, `trap '' TERM; : > `+ready+`; while :; do sleep 0.1; done`, 3*time.Second, 10*time.Second, func(c *Config) {
 		c.Signals = sigs
-		c.Grace = 2 * time.Second
+		c.Grace = 4 * time.Second
 	})
+	sent.finish(t)
 	if r.code != 128+int(syscall.SIGTERM) {
 		t.Errorf("exit = %d, want %d", r.code, 128+int(syscall.SIGTERM))
 	}
@@ -433,32 +487,41 @@ func TestKillMidLineStillEndsTheSessionInTheParser(t *testing.T) {
 	t.Parallel()
 	denied := `{"type":"message","message":{"role":"user","content":[{"type":"toolResponse","id":"c1","toolResult":{"status":"success","value":{"content":[{"type":"text","text":"no"}],"isError":true}}}]}}`
 	cases := map[string]struct {
-		mod      func(*Config)
-		script   string
+		signal   bool // send TERM once the fake goose has printed the partial line
+		idle     time.Duration
 		wantExit int
 		wantText string
 	}{
 		"idle": {
-			script:   `printf '%s\n' '` + reqLine + `' '` + denied + `'; printf '%s' '{"type":"message","mess'; sleep 30`,
+			// Idle is the clock under test, so there is no event to wait on. The
+			// limit counts from run start, and the partial line only exists once the
+			// shell has printed it; under load the shell can take over 1s to get
+			// there, and the run is then killed with no partial line, which is
+			// correct behavior. 3s leaves the fixture's start-up out of the race.
+			idle:     3 * time.Second,
 			wantExit: ExitWatchdog, wantText: "watchdog: idle",
 		},
 		"signal": {
-			script:   `printf '%s\n' '` + reqLine + `' '` + denied + `'; printf '%s' '{"type":"message","mess'; sleep 30`,
+			signal: true, idle: time.Second,
 			wantExit: 143, wantText: "stopped: TERM",
-			mod: func(c *Config) {
-				sigs := make(chan os.Signal, 1)
-				go func() {
-					time.Sleep(500 * time.Millisecond)
-					sigs <- syscall.SIGTERM
-				}()
-				c.Signals = sigs
-			},
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			r := runSh(t, tc.script, 10*time.Second, time.Second, tc.mod)
+			ready := filepath.Join(t.TempDir(), "ready")
+			script := `printf '%s\n' '` + reqLine + `' '` + denied + `'; printf '%s' '{"type":"message","mess'; : > ` + ready + `; sleep 30`
+			var mod func(*Config)
+			var sent *signalOnFile
+			if tc.signal {
+				sigs := make(chan os.Signal, 1)
+				sent = sendSignalWhenFile(sigs, syscall.SIGTERM, ready)
+				mod = func(c *Config) { c.Signals = sigs }
+			}
+			r := runSh(t, script, 10*time.Second, tc.idle, mod)
+			if sent != nil {
+				sent.finish(t)
+			}
 			if r.code != tc.wantExit {
 				t.Fatalf("exit = %d, want %d", r.code, tc.wantExit)
 			}

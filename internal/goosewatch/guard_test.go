@@ -181,10 +181,14 @@ func TestGuardExitsOnDoneAndLeavesABystanderAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.end()
+	// end() waits at most 2s for the guard, and a guard process that is slow to
+	// start can outlive that wait. It still reads "done" and exits 0 (RunGuard
+	// returns on "done" in either order with the EOF), so g.done closing within
+	// 10s is the property this test names.
 	select {
 	case <-g.done:
-	default:
-		t.Fatal("the guard was still running after done")
+	case <-time.After(10 * time.Second):
+		t.Fatal("the guard was still running 10s after done")
 	}
 	if err := syscall.Kill(bystander.Process.Pid, 0); err != nil {
 		t.Errorf("the bystander is gone: %v", err)
