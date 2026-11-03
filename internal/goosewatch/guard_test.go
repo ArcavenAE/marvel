@@ -336,55 +336,112 @@ func TestUnannouncedGooseIsEndedByTheRawGroupKill(t *testing.T) {
 	}
 }
 
-// When Spawned succeeds but the leader check fails, goose is ended through
-// Prober.Signal, never by a raw kill: the call lands on the seam, once, with
-// KILL. The proven process does not lead its own group in the seam's reading, so
-// childproof signals it alone, and the bystander is untouched.
-func TestAnnounceFailureWithAChildIsEndedThroughTheProber(t *testing.T) {
+// waitForPidFile holds the wrapper between goose's start and the announce until
+// goose has written its pid, so the group check afterwards has a pid to look at
+// and no timing decides it.
+func waitForPidFile(t *testing.T, pidFile string) func(*os.File) {
+	return func(*os.File) {
+		waitFor(t, "goose to write its pid", 10*time.Second, func() bool { return readPid(t, pidFile) > 1 })
+	}
+}
+
+// wantReasonThenStatus checks the one announce-failure line: the proof-failure
+// reason first, then how goose ended, which is the KILL's effect (Signaled KILL).
+func wantReasonThenStatus(t *testing.T, stderr string) {
+	t.Helper()
+	reason := strings.Index(stderr, "cannot prove the goose process for the guard")
+	status := strings.Index(stderr, "goose: died of signal killed")
+	if reason < 0 || status < reason {
+		t.Errorf("stderr file = %q, want the proof-failure reason, then \"goose: died of signal killed\"", stderr)
+	}
+}
+
+// When Spawned succeeds but the leader check fails, goose is ended by the one raw
+// group KILL, before any wait, and the result is 126: nothing re-reads the
+// identity, so when the shell's own exec lands does not matter.
+func TestAnnounceFailureIsEndedByTheRawGroupKill(t *testing.T) {
 	t.Parallel()
 	bystander := startOwn(t)
-	type call struct {
-		pid int
-		sig syscall.Signal
-	}
-	var mu sync.Mutex
-	var calls []call
 	prober, err := childproof.NewForTest(
 		func(pid int) (childproof.Identity, error) {
 			id, err := childproof.ReadIdentityForTest(pid)
 			id.Pgid = pid + 1 // not its own group leader
 			return id, err
 		},
-		func(pid int, sig syscall.Signal) error {
-			mu.Lock()
-			calls = append(calls, call{pid, sig})
-			mu.Unlock()
-			return syscall.Kill(pid, sig)
-		},
+		syscall.Kill,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := runSh(t, "exec sleep 30", time.Minute, time.Minute, func(c *Config) { c.prober = prober })
+	pidFile := filepath.Join(t.TempDir(), "goose.pid")
+	r := runSh(t, fmt.Sprintf("echo $$ > %s; exec sleep 30", pidFile), time.Minute, time.Minute, func(c *Config) {
+		c.prober = prober
+		c.afterStart = waitForPidFile(t, pidFile)
+	})
 	if r.code != ExitCannotRun {
 		t.Errorf("exit = %d, want %d", r.code, ExitCannotRun)
 	}
+	wantReasonThenStatus(t, r.stderr)
 	if r.elapsed > 15*time.Second {
 		t.Errorf("the run lasted %v: goose was not ended", r.elapsed)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	kills := 0
-	for _, c := range calls {
-		if c.sig == syscall.SIGKILL {
-			kills++
-			if c.pid <= 1 {
-				t.Errorf("KILL went to %d, want goose's own pid", c.pid)
-			}
-		}
+	if pgid := readPid(t, pidFile); !groupGone(pgid) {
+		t.Errorf("goose group %d is still alive", pgid)
 	}
-	if kills != 1 {
-		t.Errorf("KILL calls through the prober = %d, want 1 (%v)", kills, calls)
+	if err := syscall.Kill(bystander.Process.Pid, 0); err != nil {
+		t.Errorf("the bystander is gone: %v", err)
+	}
+}
+
+// The reviewer's case: the first identity read succeeds with a leader check that
+// fails, and every later read errors, as it does when the identity changed or the
+// process is gone. A re-proof would refuse and goose would run for its whole life;
+// the raw KILL sends nothing through a re-proof, so goose ends at once.
+func TestAnnounceFailureWithARefusedReproofStillEndsGoose(t *testing.T) {
+	t.Parallel()
+	bystander := startOwn(t)
+	var mu sync.Mutex
+	reads := 0
+	prober, err := childproof.NewForTest(
+		func(pid int) (childproof.Identity, error) {
+			mu.Lock()
+			reads++
+			n := reads
+			mu.Unlock()
+			if n > 1 {
+				return childproof.Identity{}, errors.New("identity changed")
+			}
+			id, err := childproof.ReadIdentityForTest(pid)
+			id.Pgid = pid + 1
+			return id, err
+		},
+		syscall.Kill,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pidFile := filepath.Join(t.TempDir(), "goose.pid")
+	// The clock starts when goose has written its pid, so wrapper start-up under
+	// load does not count against the bound.
+	var gooseUp time.Time
+	r := runSh(t, fmt.Sprintf("echo $$ > %s; exec sleep 3", pidFile), time.Minute, time.Minute, func(c *Config) {
+		c.prober = prober
+		c.afterStart = func(f *os.File) {
+			waitForPidFile(t, pidFile)(f)
+			gooseUp = time.Now()
+		}
+	})
+	sinceUp := time.Since(gooseUp)
+	if r.code != ExitCannotRun {
+		t.Errorf("exit = %d, want %d", r.code, ExitCannotRun)
+	}
+	// goose is `exec sleep 3`: a goose left running would hold the run for 3s.
+	if sinceUp > 2500*time.Millisecond {
+		t.Errorf("the run lasted %v after goose wrote its pid: goose was left running", sinceUp)
+	}
+	wantReasonThenStatus(t, r.stderr)
+	if pgid := readPid(t, pidFile); !groupGone(pgid) {
+		t.Errorf("goose group %d is still alive", pgid)
 	}
 	if err := syscall.Kill(bystander.Process.Pid, 0); err != nil {
 		t.Errorf("the bystander is gone: %v", err)

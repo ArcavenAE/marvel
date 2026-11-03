@@ -40,6 +40,16 @@
 // as goose's own although marvel did kill it. Telling the two apart needs a peek
 // at the status before the kill (waitid with WNOWAIT where the platform has it).
 //
+// A second window, on the raw kills of the watchdog and of forwarded signals,
+// tracked by aae-orc-kwnq8: cmd.Wait reaps goose before close(exited) and
+// close(monitorDone). In between, a monitor goroutine already handling a tick
+// (endRun, then terminateGroup), a forwarded signal, or a killAfter goroutine
+// (whose select can pick the grace timer at random) can still call kill(-pgid)
+// after the reap. Once goose is reaped its pid is free, and the target is a
+// group only if a new process with that pid has made itself a group leader,
+// which is unlikely but not ruled out. The KILL that endUnannounced sends has no
+// such window: it runs before cmd.Wait, while the unreaped child holds its pid.
+//
 // A TERM, HUP or INT sent to the wrapper (a pane kill) is forwarded to goose's
 // group with the same grace and ends the run with exit 128 plus the signal. It is
 // not a watchdog kill, so its stderr line is "wrapper: forwarded <SIG>", never a
@@ -402,7 +412,6 @@ func writeMarker(w io.Writer, reason, sig string, midLine bool) {
 	_, _ = w.Write(append(line, '\n'))
 }
 
-// exitCode is goose's exit status, or 128 plus the signal that ended it.
 // describeExit says how a waited goose ended, for the one line an announce
 // failure writes: "exit status 7", or "died of signal killed".
 func describeExit(ps *os.ProcessState, waitErr error) string {
@@ -428,6 +437,7 @@ func diedOfKill(ps *os.ProcessState) bool {
 	return ok && ws.Signaled() && ws.Signal() == syscall.SIGKILL
 }
 
+// exitCode is goose's exit status, or 128 plus the signal that ended it.
 func exitCode(ps *os.ProcessState, waitErr error) int {
 	if ps == nil {
 		if waitErr != nil {
