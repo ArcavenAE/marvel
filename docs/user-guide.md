@@ -755,8 +755,10 @@ by hand. Two conditions exist, and the table takes one directly or a list under
 `any`, where the first condition that holds acts:
 
 - `on = "context-pressure"` with `headroom_tokens`: the seat's remaining
-  context has fallen to that many tokens. Declare `runtime.context_window` so
-  `apply` can check the number against the window.
+  context has fallen to that many tokens. Declare `runtime.context_window`:
+  with it, `apply` refuses a `headroom_tokens` at or above the window. Without
+  it, a headroom at or above the window that marvel resolves at runtime makes
+  the condition hold on the first fresh reading.
 - `on = "max-age"` with `max_age`: the seat is older than that (at least 15
   minutes). It is the backstop for a seat whose context marvel cannot meter, or
   one stuck at a prompt that never fills its context. `quiet_for` (default 5m)
@@ -768,8 +770,9 @@ marvel never replaces a seat that has not written its handoff. When a condition
 holds it types a request into the pane, naming the handoff path, the marker and
 the window when the role declares them, and records
 `team.shift-handoff-requested`. It then watches the handoff file. When the last
-line is `handoff_marker`, the shift starts and the successor gets
-`MARVEL_PREDECESSOR`. If the window (`handoff_window`, default 5m) ends with no
+non-empty line is `handoff_marker`, the shift starts and the successor gets
+`MARVEL_PREDECESSOR`. Only a regular file counts: a handoff path that is a
+symlink never completes. If the window (`handoff_window`, default 5m) ends with no
 marker, or the role declares no handoff path, marvel records
 `team.shift-handoff-missing` and leaves the seat running; the team's supervisor
 decides whether to call `marvel shift`.
@@ -790,17 +793,24 @@ any = [
 
 Two notices come from the reading side:
 
-- At `apply`, an interactive role with one replica and no max-age trigger gets
-  an advisory that a seat of it runs until something else ends it. A
-  context-pressure arm without `runtime.context_window` gets one too. Neither
-  refuses the manifest.
+- `apply` writes two advisories to the daemon's log, not to its own output. An
+  interactive role with one replica and no max-age trigger gets one saying that
+  a seat of it runs until something else ends it. A context-pressure arm
+  without `runtime.context_window` gets the other. Neither refuses the
+  manifest.
 - If a max-age request passes `max_defer` and the escalation never reached the
   team's supervisor, marvel records `team.shift-request-stuck` once. The seat
   may never have been asked and nobody was told. It only reports: marvel does
   not retry or shift on it.
 
-A max-age condition on a headless role is refused at `apply`, as are keys this
-marvel does not know.
+`apply` refuses:
+
+- a max-age condition on a headless role, or on a role with more than one
+  replica;
+- a context-pressure condition on a role that declares no `handoff` and
+  `handoff_marker`;
+- `handoff` without `handoff_marker`, or the reverse;
+- keys this marvel does not know.
 
 ## Connecting to remote daemons
 
