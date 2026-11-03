@@ -158,8 +158,8 @@ type ManifestRole struct {
 	// image is refused, never given a default.
 	ContainerImage string `toml:"container_image,omitempty" yaml:"container_image,omitempty"`
 	// SandboxProfile is the absolute path of a sandbox-exec profile this role's
-	// seats run under, on darwin. Empty means none. The key name awaits the
-	// operator's ratification.
+	// seats run under, on darwin. Empty means none. The key name was ratified
+	// by the operator on 2026-11-03.
 	SandboxProfile string `toml:"sandbox_profile,omitempty" yaml:"sandbox_profile,omitempty"`
 	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
 	// shift key this marvel does not understand, and whether the table wrote

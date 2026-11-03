@@ -1,7 +1,7 @@
 (version 1)
 ; An example sandbox-exec profile for a headless goose seat that talks to a model
 ; server on localhost. Point a role at a copy of it with sandbox_profile (an
-; absolute path). The key name awaits ratification.
+; absolute path). The key name was ratified by the operator on 2026-11-03.
 ;
 ; marvel starts the seat as
 ;   /usr/bin/sandbox-exec -f <per-launch copy> -D K=V ... <command>

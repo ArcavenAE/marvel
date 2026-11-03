@@ -6,7 +6,7 @@ import (
 )
 
 // sandbox_profile is a per-role key, in TOML and in YAML, carried to the applied
-// role; absent means none. The key name awaits the operator's ratification.
+// role; absent means none. The key name was ratified by the operator on 2026-11-03.
 
 func TestValidSandboxProfile(t *testing.T) {
 	t.Parallel()

@@ -718,8 +718,8 @@ type Role struct {
 	// default image is ever substituted.
 	ContainerImage string `toml:"container_image,omitempty"`
 	// SandboxProfile is the absolute path of the sandbox-exec profile a seat of
-	// this role runs under (darwin only). Empty means none. The key name awaits
-	// the operator's ratification.
+	// this role runs under (darwin only). Empty means none. The key name was
+	// ratified by the operator on 2026-11-03.
 	SandboxProfile string        `toml:"sandbox_profile,omitempty"`
 	Runtime        Runtime       `toml:"runtime"`
 	RestartPolicy  RestartPolicy `toml:"restart_policy,omitempty"`

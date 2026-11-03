@@ -26,7 +26,7 @@ import (
 // is the container placement's (container_launch.go): a refusal at spawn with no
 // session record, a standing record with its own reason, one event per change,
 // and the refusal ends on its own once the cause is fixed. The key name,
-// sandbox_profile, awaits the operator's ratification.
+// sandbox_profile, was ratified by the operator on 2026-11-03.
 //
 // Two sites, because the profile must be known before the adapter prepares the
 // launch (its posture rule reads it there) and the container wrap, the model for
