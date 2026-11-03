@@ -188,9 +188,12 @@ func Run(cfg Config) int {
 	var reason, forwarded string
 	var forwardedNum syscall.Signal
 	var reasonMu sync.Mutex
+	// The first ending event wins: a limit that fires after a signal was
+	// forwarded changes nothing, and a signal that arrives after a limit ended
+	// the run is never read (the monitor is inside the kill, then returns).
 	endRun := func(r string) {
 		reasonMu.Lock()
-		first := reason == ""
+		first := reason == "" && forwarded == ""
 		if first {
 			reason = r
 		}
@@ -220,7 +223,7 @@ func Run(cfg Config) int {
 				// marker reason and its own last stderr line.
 				if s, ok := sig.(syscall.Signal); ok {
 					reasonMu.Lock()
-					if name, known := signalNames[s]; known && forwarded == "" {
+					if name, known := signalNames[s]; known && forwarded == "" && reason == "" {
 						forwarded, forwardedNum = name, s
 					}
 					reasonMu.Unlock()

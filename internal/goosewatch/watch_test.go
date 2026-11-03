@@ -372,3 +372,50 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// The first ending event wins. A signal that arrives while a watchdog kill is
+// waiting out its grace changes neither the marker, the last stderr line nor the
+// exit code.
+func TestASignalAfterAWatchdogKillChangesNothing(t *testing.T) {
+	t.Parallel()
+	sigs := make(chan os.Signal, 1)
+	go func() {
+		time.Sleep(1400 * time.Millisecond)
+		sigs <- syscall.SIGTERM
+	}()
+	r := runSh(t, `trap '' TERM; printf '%s\n' '`+textLine+`'; while :; do sleep 0.1; done`, 20*time.Second, time.Second, func(c *Config) {
+		c.Signals = sigs
+		c.Grace = 2 * time.Second
+	})
+	wantKilled(t, r, ReasonIdle)
+	if strings.Contains(r.stderr, "wrapper: forwarded") || strings.Contains(r.stdout, `"reason":"signal"`) {
+		t.Errorf("a signal after a watchdog kill was reported: %q %q", r.stderr, r.stdout)
+	}
+}
+
+// A limit that fires after a signal was forwarded, while goose is still ignoring
+// TERM through the grace, changes nothing: the run ends as a forwarded signal.
+func TestALimitAfterAForwardedSignalChangesNothing(t *testing.T) {
+	t.Parallel()
+	sigs := make(chan os.Signal, 1)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		sigs <- syscall.SIGTERM
+	}()
+	r := runSh(t, `trap '' TERM; while :; do sleep 0.1; done`, 1200*time.Millisecond, 10*time.Second, func(c *Config) {
+		c.Signals = sigs
+		c.Grace = 2 * time.Second
+	})
+	if r.code != 128+int(syscall.SIGTERM) {
+		t.Errorf("exit = %d, want %d", r.code, 128+int(syscall.SIGTERM))
+	}
+	if got := lastLine(r.stdout); got != `{"type":"marvel.watchdog","reason":"signal","signal":"TERM"}` {
+		t.Errorf("last stdout line = %q", got)
+	}
+	if got := lastLine(r.stderr); got != "wrapper: forwarded TERM" {
+		t.Errorf("last stderr line = %q", got)
+	}
+	if strings.Contains(r.stderr, "watchdog: wall-clock") {
+		t.Errorf("a limit after a forwarded signal was reported: %q", r.stderr)
+	}
+}
