@@ -279,8 +279,10 @@ and not in the pane.
 ### The environment a seat starts with
 
 marvel sets `DIRECTOR_CLUSTER` at spawn to the name of the cluster entry the
-daemon serves, so a seat marvel launched can name its cluster on the bus without
-a launch script. It is left unset when the daemon has no entry name. marvel does
+daemon serves, so a seat marvel launches through its adapter can name its
+cluster on the bus without a launch script. It is left unset when the daemon has
+no entry name, and an ad-hoc session started on the direct path, with no adapter,
+gets none of the `DIRECTOR_` values. marvel does
 not set `DIRECTOR_ROLE`: in director's shim that variable makes a session a
 holder of the role's inbox, so a role that wants role mail declares it in its
 own `runtime.env`.
@@ -311,8 +313,10 @@ as one JSON object and copies it into the projection as written, with numbers
 kept and nothing interpreted. An empty file, a missing file, or anything that is
 not a single JSON object holds the spawn: the file carries the role's deny
 rules, so a seat is never launched without it, and the spawn is retried on each
-reconcile until the file reads. The failure is recorded once as
-`policy.projection-failed`.
+reconcile until the file reads. The failure is recorded as
+`policy.projection-failed`, once for each distinct message, so a file that goes
+from missing to malformed is recorded twice. A running seat whose file goes bad
+gets its own event and keeps the file it has.
 
 ### With a team budget
 
@@ -901,10 +905,11 @@ tool named `submit_handoff(text)` for a harness that has no shell tool. Both
 send the text to the daemon with the seat's own heartbeat token, so a seat can
 write only its own handoff, and the daemon writes the role's declared handoff
 file, ending with the marker. The text is capped at 64 KiB, and the daemon takes
-it only while the seat holds a pending max-age handoff request and only on its
-local socket. The daemon's receipt, recorded as `handoff.put` (or
-`handoff.put-refused` with the reason), is what lets the shift start; the
-seat's own account of having written never counts. `marvel mcp handoff` is
+it only while the seat holds a pending handoff request that has not escalated,
+from max age or from context pressure, or a retire notice, and only on its local
+socket. The daemon records `handoff.put` (or `handoff.put-refused` with the
+reason), and the shift then starts on the marker, as it does for a file the seat
+writes itself. The daemon does not check that receipt before it shifts. `marvel mcp handoff` is
 started by the seat's harness, dials only the `MARVEL_SOCKET` of its own
 environment, and refuses `--socket`, `--cluster` and `--identity`. At this build
 no role asks marvel to seed that tool into a harness, so a seat reaches it only
