@@ -341,8 +341,11 @@ func TestSignalsAreForwardedWithTheirOwnMarker(t *testing.T) {
 				t.Errorf("a forwarded signal was reported as a watchdog kill: %q", r.stderr)
 			}
 			// The bound runs from the send: the fake goose's start-up under load is
-			// not what this test measures.
-			if sinceSent > 3*time.Second {
+			// not what this test measures. It only has to tell a forwarded-signal end
+			// from the fixture's sleep 30 running out, so 10s is enough; 3s failed at
+			// 3.05s under ten CPU burners from scheduling delay alone. An idle or wall
+			// end is already caught by the exit, marker and stderr assertions above.
+			if sinceSent > 10*time.Second {
 				t.Errorf("ended %v after the signal was sent", sinceSent)
 			}
 		})
