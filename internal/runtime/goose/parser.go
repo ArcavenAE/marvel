@@ -343,12 +343,12 @@ func (p *Parser) handleError(body, raw json.RawMessage, emit func(events.Event))
 	emit(p.newEvent(events.KindError, events.ErrorData{
 		Kind:    ErrKindVendor,
 		Message: events.TruncateString(text, events.MaxSummaryBytes),
-	}, boundedRaw(raw)))
+	}, raw))
 }
 
 // boundedRaw keeps a raw line only when it is within the summary limit. A cut
 // line would not be JSON, and a RawMessage that is not JSON fails to marshal, so
-// a longer line is dropped; the event's message already holds the bounded text.
+// a longer line is dropped; the event's message holds the bounded text.
 func boundedRaw(raw json.RawMessage) json.RawMessage {
 	if len(raw) > events.MaxSummaryBytes {
 		return nil
@@ -378,7 +378,16 @@ func boundRaw(raw json.RawMessage) any {
 	return events.TruncateString(string(raw), events.MaxSummaryBytes)
 }
 
+// newEvent stamps an event. Every error event is held to the summary limit: its
+// message is cut by TruncateString, and its raw line is kept only within the
+// limit (boundedRaw), because a goose line can carry a whole tool output and the
+// events.go discipline sends large content by pointer, not inline.
 func (p *Parser) newEvent(kind events.Kind, data any, raw json.RawMessage) events.Event {
+	if e, ok := data.(events.ErrorData); ok {
+		e.Message = events.TruncateString(e.Message, events.MaxSummaryBytes)
+		data = e
+		raw = boundedRaw(raw)
+	}
 	return events.Event{
 		SchemaVersion: events.SchemaVersion,
 		Event:         kind,

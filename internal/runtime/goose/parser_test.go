@@ -474,3 +474,49 @@ func TestParseStopsOnCancelledContext(t *testing.T) {
 		t.Fatal("Parse returned nil on a cancelled context")
 	}
 }
+
+// Every error event is held to the summary limit: an oversized line keeps its
+// raw line out of the event (a cut line is not JSON), carries a bounded message,
+// and the event still marshals. A line within the limit keeps its raw line.
+func TestParseOversizedErrorLinesDropTheRawLine(t *testing.T) {
+	t.Parallel()
+	pad := strings.Repeat("x", events.MaxSummaryBytes*2)
+	tests := []struct {
+		name, line, wantKind string
+	}{
+		{"unmapped line type", `{"type":"surprise","pad":"` + pad + `"}`, events.ErrKindUnmapped},
+		{"unmapped line type with a huge name", `{"type":"` + pad + `"}`, events.ErrKindUnmapped},
+		{"unmapped content item", `{"type":"message","message":{"role":"assistant","content":[{"type":"image","pad":"` + pad + `"}],"metadata":{}}}`, events.ErrKindUnmapped},
+		{"unmapped request", `{"type":"message","message":{"role":"assistant","content":[{"type":"toolRequest","id":"c","toolCall":{"status":"error","value":"` + pad + `"}}],"metadata":{}}}`, events.ErrKindUnmapped},
+		{"parse, message of the wrong type", `{"type":"message","message":"` + pad + `"}`, events.ErrKindParse},
+		{"parse, malformed json", `{"type":"message","pad":"` + pad, events.ErrKindParse},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := parseString(t, tt.line+"\n")
+			if len(got) != 1 {
+				t.Fatalf("events = %v, want one error", kinds(got))
+			}
+			d, ok := got[0].Data.(events.ErrorData)
+			if !ok || d.Kind != tt.wantKind {
+				t.Fatalf("data = %+v, want an %s error", got[0].Data, tt.wantKind)
+			}
+			if len(got[0].Raw) != 0 {
+				t.Errorf("raw line of %d bytes kept past the limit", len(got[0].Raw))
+			}
+			if len(d.Message) > events.MaxSummaryBytes {
+				t.Errorf("message is %d bytes, over the limit", len(d.Message))
+			}
+			if _, err := json.Marshal(got[0]); err != nil {
+				t.Errorf("the event does not marshal: %v", err)
+			}
+		})
+	}
+
+	// Within the limit the raw line stays, for the same shapes.
+	got := parseString(t, `{"type":"surprise"}`+"\n")
+	if len(got) != 1 || len(got[0].Raw) == 0 {
+		t.Errorf("a small unmapped line lost its raw line: %+v", got)
+	}
+}

@@ -24,11 +24,19 @@ After the first object, a line that does not start with `{` is
 | `message` | `error{kind,message}` | nothing (the `error` line says it, divergence 2) |
 | `message` | `metadata.outputTokenLimitReached` true | `error{kind:"output-limit"}`, once per run (divergence 3) |
 | `complete` | totals | `session.ended{exit_code:0,usage,metering}` |
-| `error` | `{error:"..."}` | `error{kind:"vendor",message}`, the raw line kept when within 64 KiB |
+| `error` | `{error:"..."}` | `error{kind:"vendor",message}` |
 
 One `message` line can carry many content items (R9: nine parallel
 `toolRequest` items on one line, nine `toolResponse` items on the next). Items
 emit in order, and a call and its response match by id, never by position.
+
+Every `error` event is held to the 64 KiB summary limit (`events.MaxSummaryBytes`,
+which sends large content by pointer and not inline). Its message is cut by
+`TruncateString`, which marks the dropped bytes, and its raw line, where one is
+carried (`vendor`, `unmapped` and `parse`), is kept only when the whole line is
+within the limit. Above it the raw line is dropped, because a cut line is not
+JSON and would not marshal. A goose line can carry a whole tool output, so this
+is not hypothetical. The opencode parser keeps its raw lines unbounded.
 
 ## What ran comes from tool results only (v1.1 C4)
 
