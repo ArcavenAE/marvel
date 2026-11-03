@@ -58,6 +58,10 @@ type Parser struct {
 	// limitSeen is set once the output-limit error has been emitted, so the
 	// flag is reported once per run.
 	limitSeen bool
+	// sawJSON is set at the first line that starts with `{`. A line before it
+	// that is not JSON is the banner goose prints despite -q and is skipped; one
+	// after it is unexpected input and is reported.
+	sawJSON bool
 }
 
 // NewParser constructs a parser with an internal SeqAssigner.
@@ -76,12 +80,13 @@ func NewParserWithSeq(cfg Config, seq *events.SeqAssigner) *Parser {
 }
 
 // Parse consumes line-delimited JSON from r, one goose line per line, until r
-// returns io.EOF or an unrecoverable read error. A line that does not start
-// with `{` is not a stream line (a banner goose printed despite -q) and is
-// skipped. A line that starts with `{` and does not decode emits
-// error{kind:"parse"}; an unknown line or content type emits
-// error{kind:"unmapped"} with the raw line preserved. Parsing continues in
-// both cases. ctx cancellation is polled between lines.
+// returns io.EOF or an unrecoverable read error. Blank lines are skipped, and so
+// is any line before the first JSON object that does not start with `{`: that is
+// the banner goose prints despite -q. After the first object, a line that does
+// not start with `{` and a line that does but does not decode both emit
+// error{kind:"parse"}, the first with the line bounded. An unknown line or
+// content type emits error{kind:"unmapped"} with the raw line preserved. Parsing
+// continues in every case. ctx cancellation is polled between lines.
 func (p *Parser) Parse(ctx context.Context, r io.Reader, emit func(events.Event)) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -91,9 +96,19 @@ func (p *Parser) Parse(ctx context.Context, r io.Reader, emit func(events.Event)
 			return err
 		}
 		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 || line[0] != '{' {
+		if len(line) == 0 {
 			continue
 		}
+		if line[0] != '{' {
+			if p.sawJSON {
+				emit(p.newEvent(events.KindError, events.ErrorData{
+					Kind:    events.ErrKindParse,
+					Message: "line is not a json object: " + events.TruncateString(string(line), events.MaxSummaryBytes),
+				}, nil))
+			}
+			continue
+		}
+		p.sawJSON = true
 		p.handleLine(line, emit)
 	}
 	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
@@ -236,13 +251,17 @@ func (p *Parser) handleToolRequest(item gooseItem, raw json.RawMessage, emit fun
 	// request is then reported as unmapped.
 	_ = json.Unmarshal(item.ToolCall.Value, &call)
 	name := call.Name
+	// A response that later names this id still takes its tool name from here,
+	// whether or not the request is well formed.
+	if item.ID != "" && name != "" {
+		p.open[item.ID] = name
+	}
 	// toolCall.status "success" means the request was well formed, not that
 	// the tool ran (C4). Anything else has no call to report.
 	if item.ID == "" || name == "" || item.ToolCall.Status != "success" {
 		emit(p.unmapped("goose toolRequest without a well-formed call", raw))
 		return
 	}
-	p.open[item.ID] = name
 	emit(p.newEvent(events.KindToolCall, events.ToolCallData{
 		Tool:   name,
 		CallID: item.ID,
@@ -324,7 +343,17 @@ func (p *Parser) handleError(body, raw json.RawMessage, emit func(events.Event))
 	emit(p.newEvent(events.KindError, events.ErrorData{
 		Kind:    ErrKindVendor,
 		Message: events.TruncateString(text, events.MaxSummaryBytes),
-	}, raw))
+	}, boundedRaw(raw)))
+}
+
+// boundedRaw keeps a raw line only when it is within the summary limit. A cut
+// line would not be JSON, and a RawMessage that is not JSON fails to marshal, so
+// a longer line is dropped; the event's message already holds the bounded text.
+func boundedRaw(raw json.RawMessage) json.RawMessage {
+	if len(raw) > events.MaxSummaryBytes {
+		return nil
+	}
+	return raw
 }
 
 func (p *Parser) unmapped(msg string, raw json.RawMessage) events.Event {

@@ -7,9 +7,11 @@ streaming, usage and cost are not recorded, so nothing here claims them.
 
 Each line is one JSON object with a top-level `type`. A `message` line is one
 chunk of an assistant or user message: a run streams hundreds to tens of
-thousands of them. Lines that do not start with `{` (a banner goose printed
-despite `-q`) are skipped; a line that starts with `{` and does not decode is
-`error{kind:"parse"}`.
+thousands of them. Blank lines are skipped, and so is any line before the first
+JSON object that does not start with `{` (the banner goose prints despite `-q`).
+After the first object, a line that does not start with `{` is
+`error{kind:"parse"}` with the line bounded, and so is a line that starts with
+`{` and does not decode.
 
 ## Verified mappings
 
@@ -22,7 +24,7 @@ despite `-q`) are skipped; a line that starts with `{` and does not decode is
 | `message` | `error{kind,message}` | nothing (the `error` line says it, divergence 2) |
 | `message` | `metadata.outputTokenLimitReached` true | `error{kind:"output-limit"}`, once per run (divergence 3) |
 | `complete` | totals | `session.ended{exit_code:0,usage,metering}` |
-| `error` | `{error:"..."}` | `error{kind:"vendor",message}` |
+| `error` | `{error:"..."}` | `error{kind:"vendor",message}`, the raw line kept when within 64 KiB |
 
 One `message` line can carry many content items (R9: nine parallel
 `toolRequest` items on one line, nine `toolResponse` items on the next). Items
@@ -45,7 +47,10 @@ matching `toolRequest` and the call id.
   over-counts on the safe side.
 - `toolCall.status` "success" means the request was well formed, not that the
   tool ran. A `toolRequest` that is not well formed (no id, no name, a status
-  other than "success") is `error{kind:"unmapped"}`.
+  other than "success") is `error{kind:"unmapped"}` with the raw line, not a
+  `tool.call`. A response that later names its id still gets `tool.result` and a
+  denial entry by the rule above, with the tool name when the request carried one
+  and an empty name when it did not.
 - A request with no response by `complete` is not-ran: `tool.call` stays, there
   is no `tool.result`, and it is not listed.
 - The exit code and the model's text never decide what ran. R3 exited 0 and the

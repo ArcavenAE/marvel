@@ -2,6 +2,7 @@ package goose
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -366,10 +367,91 @@ func TestParseUnknownShapes(t *testing.T) {
 	}
 }
 
-func TestParseSkipsLinesThatAreNotJSONObjects(t *testing.T) {
+const completeLine = `{"type":"complete","total_tokens":0,"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_write_input_tokens":0}`
+
+// The banner goose prints despite -q comes before the first JSON object, and is
+// skipped; so are blank lines.
+func TestParseSkipsABannerBeforeTheFirstJSONLine(t *testing.T) {
 	t.Parallel()
-	got := parseString(t, "goose banner\n\n"+`{"type":"complete","total_tokens":0,"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_write_input_tokens":0}`+"\n")
+	got := parseString(t, "goose banner\n\n  \n"+completeLine+"\n")
 	wantKinds(t, got, events.KindSessionEnded)
+}
+
+// After the first JSON object, a line that is not an object is unexpected input
+// and stays visible, bounded, and parsing continues.
+func TestParseReportsAStrayLineAfterTheFirstJSONLine(t *testing.T) {
+	t.Parallel()
+	stray := strings.Repeat("x", events.MaxSummaryBytes*2)
+	got := parseString(t, completeLine+"\nwarning: something\n"+stray+"\n"+completeLine+"\n")
+	wantKinds(t, got, events.KindSessionEnded, events.KindError, events.KindError, events.KindSessionEnded)
+	first := got[1].Data.(events.ErrorData)
+	if first.Kind != events.ErrKindParse || !strings.Contains(first.Message, "warning: something") {
+		t.Errorf("stray line error = %+v", first)
+	}
+	long := got[2].Data.(events.ErrorData)
+	if long.Kind != events.ErrKindParse || len(long.Message) > events.MaxSummaryBytes+len("line is not a json object: ") {
+		t.Errorf("long stray line error is %d bytes, kind %q: not bounded", len(long.Message), long.Kind)
+	}
+}
+
+// A response that names the id of a request that was not a tool.call still goes
+// through C4: ok=false and a denial entry, with the tool name when the request
+// had one and none when it did not.
+func TestParseResponseToAnUnmappedRequestStillCountsAsNotRun(t *testing.T) {
+	t.Parallel()
+	req := func(id, call string) string {
+		return `{"type":"message","message":{"role":"assistant","content":[{"type":"toolRequest","id":"` + id + `","toolCall":` + call + `}],"metadata":{}}}` + "\n"
+	}
+	resp := func(id string) string {
+		return `{"type":"message","message":{"role":"user","content":[{"type":"toolResponse","id":"` + id + `","toolResult":{"status":"success","value":{"content":[{"type":"text","text":"no"}],"isError":true}}}],"metadata":{}}}` + "\n"
+	}
+	stream := req("named", `{"status":"error","value":{"name":"write","arguments":{}}}`) +
+		req("nameless", `{"status":"success","value":{"arguments":{}}}`) +
+		resp("named") + resp("nameless") + completeLine + "\n"
+	got := parseString(t, stream)
+	wantKinds(t, got, events.KindError, events.KindError, events.KindToolResult, events.KindToolResult, events.KindSessionEnded)
+	for i, id := range []string{"named", "nameless"} {
+		if d := got[i].Data.(events.ErrorData); d.Kind != events.ErrKindUnmapped {
+			t.Errorf("request %s: error = %+v, want unmapped", id, d)
+		}
+		if r := got[i+2].Data.(events.ToolResultData); r.CallID != id || r.OK {
+			t.Errorf("response %s: result = %+v, want not ok", id, r)
+		}
+	}
+	end := ended(t, got[4])
+	if end.Metering == nil || len(end.Metering.PermissionDenials) != 2 {
+		t.Fatalf("metering = %+v, want two denials", end.Metering)
+	}
+	want := []events.PermissionDenial{{Tool: "write", CallID: "named"}, {Tool: "", CallID: "nameless"}}
+	for i, d := range end.Metering.PermissionDenials {
+		if d != want[i] {
+			t.Errorf("denial %d = %+v, want %+v", i, d, want[i])
+		}
+	}
+}
+
+// The raw line on a vendor error is bounded at the summary limit. A line over it
+// is dropped (a cut line is not JSON and would not marshal); the message keeps
+// the bounded text either way.
+func TestParseVendorErrorRawLineIsBounded(t *testing.T) {
+	t.Parallel()
+	small := parseString(t, `{"type":"error","error":"boom"}`+"\n")
+	if len(small) != 1 || len(small[0].Raw) == 0 {
+		t.Fatalf("a small error line lost its raw line: %+v", small)
+	}
+	big := parseString(t, `{"type":"error","error":"`+strings.Repeat("e", events.MaxSummaryBytes+10)+`"}`+"\n")
+	if len(big) != 1 {
+		t.Fatalf("events = %v", kinds(big))
+	}
+	if len(big[0].Raw) != 0 {
+		t.Errorf("raw line of %d bytes kept past the limit", len(big[0].Raw))
+	}
+	if d := big[0].Data.(events.ErrorData); len(d.Message) > events.MaxSummaryBytes {
+		t.Errorf("message is %d bytes, over the limit", len(d.Message))
+	}
+	if _, err := json.Marshal(big[0]); err != nil {
+		t.Errorf("the event does not marshal: %v", err)
+	}
 }
 
 // Ollama reports no cost and nothing here claims one.
