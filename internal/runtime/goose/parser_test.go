@@ -520,3 +520,159 @@ func TestParseOversizedErrorLinesDropTheRawLine(t *testing.T) {
 		t.Errorf("a small unmapped line lost its raw line: %+v", got)
 	}
 }
+
+const watchdogLine = `{"type":"marvel.watchdog","reason":"idle"}`
+
+// The wrapper's marker, as the stream's last line, ends the session: exit 124,
+// the reason, and the denial list so far. Open requests are not listed.
+func TestParseWatchdogLastLineEndsTheSessionWithTheDenialsSoFar(t *testing.T) {
+	t.Parallel()
+	req := func(id, name string) string {
+		return `{"type":"message","message":{"role":"assistant","content":[{"type":"toolRequest","id":"` + id + `","toolCall":{"status":"success","value":{"name":"` + name + `","arguments":{}}}}],"metadata":{}}}` + "\n"
+	}
+	resp := `{"type":"message","message":{"role":"user","content":[{"type":"toolResponse","id":"a","toolResult":{"status":"success","value":{"content":[{"type":"text","text":"no"}],"isError":true}}}],"metadata":{}}}` + "\n"
+	got := parseString(t, req("a", "shell")+resp+req("b", "write")+watchdogLine+"\n")
+	wantKinds(t, got, events.KindToolCall, events.KindToolResult, events.KindToolCall, events.KindSessionEnded)
+	end := ended(t, got[3])
+	if end.ExitCode != 124 || end.Reason != "watchdog: idle" {
+		t.Errorf("session.ended = %+v, want exit 124 and the watchdog reason", end)
+	}
+	if end.Metering == nil || len(end.Metering.PermissionDenials) != 1 || end.Metering.PermissionDenials[0].CallID != "a" {
+		t.Errorf("metering = %+v, want the one denial so far and not the open call b", end.Metering)
+	}
+}
+
+func TestParseWatchdogWallClockReason(t *testing.T) {
+	t.Parallel()
+	got := parseString(t, `{"type":"marvel.watchdog","reason":"wall-clock"}`+"\n")
+	wantKinds(t, got, events.KindSessionEnded)
+	if end := ended(t, got[0]); end.Reason != "watchdog: wall-clock" || end.Metering != nil {
+		t.Errorf("session.ended = %+v", end)
+	}
+}
+
+// A final marker with no trailing newline still counts.
+func TestParseWatchdogLastLineWithoutANewline(t *testing.T) {
+	t.Parallel()
+	wantKinds(t, parseString(t, watchdogLine), events.KindSessionEnded)
+}
+
+// goose output cannot end a session by imitating the marker: anywhere but last
+// it is an unmapped error, and the lines after it are still read.
+func TestParseWatchdogNotLastIsUnmapped(t *testing.T) {
+	t.Parallel()
+	got := parseString(t, watchdogLine+"\n"+completeLine+"\n")
+	wantKinds(t, got, events.KindError, events.KindSessionEnded)
+	if d := got[0].Data.(events.ErrorData); d.Kind != events.ErrKindUnmapped || len(got[0].Raw) == 0 {
+		t.Errorf("error = %+v raw %q", d, got[0].Raw)
+	}
+	if end := ended(t, got[1]); end.ExitCode != 0 {
+		t.Errorf("the complete line after it was not read: %+v", end)
+	}
+	// Two markers: the first is not last.
+	got = parseString(t, watchdogLine+"\n"+watchdogLine+"\n")
+	wantKinds(t, got, events.KindError, events.KindSessionEnded)
+}
+
+func TestParseWatchdogAfterCompleteIsUnmapped(t *testing.T) {
+	t.Parallel()
+	got := parseString(t, completeLine+"\n"+watchdogLine+"\n")
+	wantKinds(t, got, events.KindSessionEnded, events.KindError)
+	if d := got[1].Data.(events.ErrorData); d.Kind != events.ErrKindUnmapped {
+		t.Errorf("error = %+v", d)
+	}
+}
+
+func TestParseWatchdogWithAnUnknownReasonIsUnmapped(t *testing.T) {
+	t.Parallel()
+	for _, line := range []string{`{"type":"marvel.watchdog","reason":"oom"}`, `{"type":"marvel.watchdog"}`} {
+		got := parseString(t, line+"\n")
+		wantKinds(t, got, events.KindError)
+		if d := got[0].Data.(events.ErrorData); d.Kind != events.ErrKindUnmapped {
+			t.Errorf("%s: error = %+v", line, d)
+		}
+	}
+}
+
+// A line over the size limit does not stop the parse: it becomes a parse error
+// with a bounded prefix and no raw line, and the lines after it are read.
+func TestParseALineOverTheLimitDoesNotEndTheParse(t *testing.T) {
+	t.Parallel()
+	long := `{"type":"message","pad":"` + strings.Repeat("a", maxLine+1000) + `"}`
+	got := parseString(t, textMessage("before")+long+"\n"+completeLine+"\n")
+	wantKinds(t, got, events.KindMessageDelta, events.KindError, events.KindSessionEnded)
+	d := got[1].Data.(events.ErrorData)
+	if d.Kind != events.ErrKindParse || !strings.Contains(d.Message, "line over the size limit") {
+		t.Errorf("error = %+v", d)
+	}
+	if len(d.Message) > 1024 {
+		t.Errorf("message is %d bytes, not a bounded prefix", len(d.Message))
+	}
+	if len(got[1].Raw) != 0 {
+		t.Errorf("raw line of %d bytes kept", len(got[1].Raw))
+	}
+	if _, err := json.Marshal(got[1]); err != nil {
+		t.Errorf("the event does not marshal: %v", err)
+	}
+}
+
+// A line just inside the limit is read whole.
+func TestParseALineAtTheLimitIsRead(t *testing.T) {
+	t.Parallel()
+	pad := strings.Repeat("a", maxLine-200)
+	line := `{"type":"surprise","pad":"` + pad + `"}`
+	got := parseString(t, line+"\n")
+	wantKinds(t, got, events.KindError)
+	if d := got[0].Data.(events.ErrorData); d.Kind != events.ErrKindUnmapped {
+		t.Errorf("error = %+v, want unmapped (the line was read and decoded)", d)
+	}
+}
+
+func textMessage(text string) string {
+	return `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"` + text + `"}],"metadata":{}}}` + "\n"
+}
+
+// The wrapper also writes the marker when a signal sent to it (a pane kill) ends
+// the run. The session ends with exit 128 plus the signal, "stopped: <SIG>", and
+// the denials so far, and the same last-line-only rule applies.
+func TestParseSignalMarkerEndsTheSessionWithTheDenialsSoFar(t *testing.T) {
+	t.Parallel()
+	resp := `{"type":"message","message":{"role":"user","content":[{"type":"toolResponse","id":"a","toolResult":{"status":"success","value":{"content":[{"type":"text","text":"no"}],"isError":true}}}],"metadata":{}}}` + "\n"
+	for sig, exit := range map[string]int{"TERM": 143, "HUP": 129, "INT": 130} {
+		t.Run(sig, func(t *testing.T) {
+			t.Parallel()
+			got := parseString(t, resp+`{"type":"marvel.watchdog","reason":"signal","signal":"`+sig+`"}`+"\n")
+			wantKinds(t, got, events.KindToolResult, events.KindSessionEnded)
+			end := ended(t, got[1])
+			if end.ExitCode != exit || end.Reason != "stopped: "+sig {
+				t.Errorf("session.ended = %+v, want exit %d and stopped: %s", end, exit, sig)
+			}
+			if end.Metering == nil || len(end.Metering.PermissionDenials) != 1 {
+				t.Errorf("metering = %+v, want the denial so far", end.Metering)
+			}
+		})
+	}
+}
+
+func TestParseSignalMarkerNotLastOrMalformedIsUnmapped(t *testing.T) {
+	t.Parallel()
+	sigLine := `{"type":"marvel.watchdog","reason":"signal","signal":"TERM"}`
+	got := parseString(t, sigLine+"\n"+completeLine+"\n")
+	wantKinds(t, got, events.KindError, events.KindSessionEnded)
+	if d := got[0].Data.(events.ErrorData); d.Kind != events.ErrKindUnmapped {
+		t.Errorf("error = %+v", d)
+	}
+	for _, line := range []string{
+		`{"type":"marvel.watchdog","reason":"signal"}`,
+		`{"type":"marvel.watchdog","reason":"signal","signal":"KILL"}`,
+		`{"type":"marvel.watchdog","reason":"signal","signal":"term"}`,
+	} {
+		got := parseString(t, line+"\n")
+		wantKinds(t, got, events.KindError)
+		if d := got[0].Data.(events.ErrorData); d.Kind != events.ErrKindUnmapped {
+			t.Errorf("%s: error = %+v", line, d)
+		}
+	}
+	// After a complete line it is unmapped as well.
+	wantKinds(t, parseString(t, completeLine+"\n"+sigLine+"\n"), events.KindSessionEnded, events.KindError)
+}

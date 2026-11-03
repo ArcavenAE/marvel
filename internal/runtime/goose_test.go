@@ -108,11 +108,19 @@ func TestGooseRefusals(t *testing.T) {
 				tc.adjust(ctx)
 			}
 			if ctx.Session.Runtime.Mode == api.RuntimeModeHeadless {
-				// Every headless launch is stopped earlier by the build-phase
-				// refusal (TestGooseBuildPhase*), so the posture rules are read
-				// directly; they are what governs once that refusal is deleted.
+				// A headless launch the posture rules allow goes on to the wrapper
+				// (TestGooseHeadlessLaunchLine), so the rules are read directly.
 				if got := gooseRefusal(ctx); got != tc.want {
 					t.Errorf("gooseRefusal = %q, want %q", got, tc.want)
+				}
+				if tc.want != "" {
+					res, err := (&Goose{}).Prepare(ctx)
+					if err != nil {
+						t.Fatalf("Prepare: %v (an error would launch the raw command)", err)
+					}
+					if !strings.Contains(res.Command, "'goose-refuse' '"+tc.want+"'") {
+						t.Errorf("command %q is not the stub for %q", res.Command, tc.want)
+					}
 				}
 				return
 			}
@@ -136,47 +144,65 @@ func TestGooseAutoLaunchesOnlyWhereASandboxIsInForce(t *testing.T) {
 		headless(rt)
 		rt.Goose.Posture = api.GoosePostureAuto
 	}
-	for name, adjust := range map[string]func(*LaunchContext){
-		"container placement, no profile": func(c *LaunchContext) { c.Placement = api.PlacementContainer },
-		"profile path, no container":      func(c *LaunchContext) { c.SandboxProfile = "/etc/marvel/goose.sb" },
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			ctx := gooseContext(t, auto)
-			adjust(ctx)
-			res, err := (&Goose{headlessBuilt: true}).Prepare(ctx)
-			if err != nil {
-				t.Fatalf("Prepare: %v", err)
-			}
-			if got := res.Env["GOOSE_MODE"]; got != "auto" {
-				t.Errorf("GOOSE_MODE = %q, want auto", got)
-			}
-			if strings.Contains(res.Command, "goose-refuse") {
-				t.Errorf("command %q is the refusal stub", res.Command)
-			}
-		})
-	}
+	t.Run("profile path, no container", func(t *testing.T) {
+		t.Parallel()
+		ctx := gooseContext(t, auto)
+		ctx.SandboxProfile = "/etc/marvel/goose.sb"
+		res, err := (&Goose{}).Prepare(ctx)
+		if err != nil {
+			t.Fatalf("Prepare: %v", err)
+		}
+		if got := res.Env["GOOSE_MODE"]; got != "auto" {
+			t.Errorf("GOOSE_MODE = %q, want auto", got)
+		}
+		if strings.Contains(res.Command, "goose-refuse") || !strings.Contains(res.Command, "'goose-watch'") {
+			t.Errorf("command %q is not the watched goose launch", res.Command)
+		}
+	})
+	// The container case of v1.1 acceptance test 2, amended by L3: a container
+	// still counts as a sandbox, so the posture rules pass, but the wrapper is a
+	// subcommand of the marvel binary, which the image does not hold, so the
+	// launch is refused with watchdog-unavailable and never runs unbounded.
+	t.Run("container placement, no profile", func(t *testing.T) {
+		t.Parallel()
+		ctx := gooseContext(t, auto)
+		ctx.Placement = api.PlacementContainer
+		if got := gooseRefusal(ctx); got != "" {
+			t.Fatalf("gooseRefusal = %q: a container must still count as a sandbox", got)
+		}
+		res, err := (&Goose{}).Prepare(ctx)
+		if err != nil {
+			t.Fatalf("Prepare: %v", err)
+		}
+		if !strings.Contains(res.Command, "watchdog-unavailable") || strings.Contains(res.Command, "goose-watch") {
+			t.Errorf("command %q is not the watchdog-unavailable stub", res.Command)
+		}
+	})
 }
 
 // With a sink offered, stdout goes to it and the spec names the goose format;
-// stderr keeps its per-launch file, so the stream holds only goose's JSON lines.
+// stderr goes to the per-launch file through the wrapper, so the stream holds
+// only goose's JSON lines.
 func TestGooseHeadlessLaunchWiresTheStream(t *testing.T) {
 	t.Parallel()
 	ctx := gooseContext(t, func(rt *api.Runtime) {
 		headless(rt)
 		rt.Goose = &api.GooseRuntime{Posture: api.GoosePostureAuto}
 	})
-	ctx.Placement = api.PlacementContainer
+	ctx.SandboxProfile = "/etc/marvel/goose.sb"
 	ctx.StreamPath = "/run/marvel/goose.fifo"
-	res, err := (&Goose{headlessBuilt: true}).Prepare(ctx)
+	res, err := (&Goose{}).Prepare(ctx)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
 	if res.Stream == nil || res.Stream.Format != StreamFormatGooseJSON || res.Stream.Path != ctx.StreamPath {
 		t.Fatalf("stream = %+v, want goose/stream-json at %s", res.Stream, ctx.StreamPath)
 	}
-	if want := "< '/dev/null' > '/run/marvel/goose.fifo' 2> '" + ctx.HarnessHomePath + "/stderr-"; !strings.Contains(res.Command, want) {
-		t.Errorf("command %q lacks %q", res.Command, want)
+	if want := "< '/dev/null' > '/run/marvel/goose.fifo'"; !strings.HasSuffix(res.Command, want) {
+		t.Errorf("command %q does not end with %q", res.Command, want)
+	}
+	if strings.Contains(res.Command, " 2> ") {
+		t.Errorf("command %q redirects stderr in the shell; the wrapper holds it to the cap", res.Command)
 	}
 	// The format is registered, so the manager can read the sink.
 	if _, err := NewStreamParser(res.Stream.Format, StreamParserConfig{}); err != nil {
@@ -190,17 +216,22 @@ func TestGooseHeadlessLaunchLine(t *testing.T) {
 		headless(rt)
 		rt.Goose = &api.GooseRuntime{Posture: api.GoosePostureAuto, Extensions: []string{"developer", "memory"}}
 	})
-	ctx.Placement = api.PlacementContainer
-	res, err := (&Goose{headlessBuilt: true}).Prepare(ctx)
+	ctx.SandboxProfile = "/etc/marvel/goose.sb"
+	res, err := (&Goose{}).Prepare(ctx)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
 	for _, want := range []string{
-		"goose 'run' '--output-format' 'stream-json' '-q'", "'--no-profile' '--with-builtin' 'developer,memory'", "'-t' 'say ok'", "< '/dev/null'", " 2> '" + ctx.HarnessHomePath + "/stderr-",
+		"'goose-watch' '--wall' '45m0s' '--idle' '5m0s' '--grace' '10s' '--stderr-file' '" + ctx.HarnessHomePath + "/stderr-",
+		"'--stderr-cap' '65536' '--' 'goose' 'run' '--output-format' 'stream-json' '-q'",
+		"'--no-profile' '--with-builtin' 'developer,memory'", "'-t' 'say ok'", "< '/dev/null'",
 	} {
 		if !strings.Contains(res.Command, want) {
 			t.Errorf("command %q lacks %q", res.Command, want)
 		}
+	}
+	if strings.Contains(res.Command, " 2> ") {
+		t.Errorf("command %q redirects stderr in the shell", res.Command)
 	}
 	if strings.Contains(res.Command, "--resume") {
 		t.Errorf("command %q carries --resume: every launch is a new session", res.Command)
@@ -300,26 +331,20 @@ func TestGoosePrepareErrors(t *testing.T) {
 	}
 }
 
-// A headless role with no prompt is refused with its own slug, with the
-// build-phase refusal lifted too: the guard does not depend on it. The reason is
+// A headless role with no prompt is refused with its own slug. The reason is
 // never an error, because the manager would answer one with the raw command.
 func TestGooseHeadlessNoPromptIsRefusedWithItsOwnSlug(t *testing.T) {
 	t.Parallel()
-	for name, g := range map[string]*Goose{"production": {}, "build phase lifted": {headlessBuilt: true}} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			ctx := gooseContext(t, func(rt *api.Runtime) { rt.Mode = api.RuntimeModeHeadless })
-			res, err := g.Prepare(ctx)
-			if err != nil {
-				t.Fatalf("Prepare returned %v: the manager would launch the raw command", err)
-			}
-			if !strings.Contains(res.Command, "no-prompt") || strings.Contains(res.Command, "stream-not-built") {
-				t.Errorf("command %q does not name no-prompt alone", res.Command)
-			}
-			if strings.Contains(res.Command, "goose 'run'") {
-				t.Errorf("command %q starts goose", res.Command)
-			}
-		})
+	ctx := gooseContext(t, func(rt *api.Runtime) { rt.Mode = api.RuntimeModeHeadless })
+	res, err := (&Goose{}).Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare returned %v: the manager would launch the raw command", err)
+	}
+	if !strings.Contains(res.Command, "no-prompt") {
+		t.Errorf("command %q does not name no-prompt", res.Command)
+	}
+	if strings.Contains(res.Command, "'goose' 'run'") {
+		t.Errorf("command %q starts goose", res.Command)
 	}
 }
 
@@ -461,62 +486,27 @@ func readFile(t *testing.T, path string) []byte {
 	return b
 }
 
-// Until the watchdog lands, every headless goose launch
-// gets the stub with the build-phase slug, whatever its posture and placement,
-// and goose never starts. Interactive goose is unaffected.
-func TestGooseBuildPhaseRefusesEveryHeadlessLaunch(t *testing.T) {
-	t.Parallel()
-	for _, posture := range []string{api.GoosePostureApprove, api.GoosePostureSmartApprove, api.GoosePostureAuto, ""} {
-		for _, placement := range []api.Placement{api.PlacementLocalhost, api.PlacementContainer} {
-			t.Run(posture+"/"+string(placement), func(t *testing.T) {
-				t.Parallel()
-				ctx := gooseContext(t, func(rt *api.Runtime) {
-					headless(rt)
-					rt.Goose.Posture = posture
-				})
-				ctx.Placement = placement
-				res, err := (&Goose{}).Prepare(ctx)
-				if err != nil {
-					t.Fatalf("Prepare: %v", err)
-				}
-				if !strings.Contains(res.Command, "stream-not-built") {
-					t.Errorf("command %q does not name stream-not-built", res.Command)
-				}
-				if strings.Contains(res.Command, "goose 'run'") {
-					t.Errorf("command %q starts goose", res.Command)
-				}
-			})
-		}
-	}
-}
-
-func TestGooseBuildPhaseLeavesInteractiveAlone(t *testing.T) {
-	t.Parallel()
-	res, err := (&Goose{}).Prepare(gooseContext(t, nil))
-	if err != nil {
-		t.Fatalf("Prepare: %v", err)
-	}
-	if strings.Contains(res.Command, "stream-not-built") || strings.Contains(res.Command, "goose-refuse") {
-		t.Errorf("an interactive launch was refused: %q", res.Command)
-	}
-}
-
-// On a container placement the whole command runs in the image, where the marvel
-// binary is not, so the stub there is a plain sh line that names no marvel path
-// and ends in exit 78. The seam points the host stub at a sentinel path so a leak
-// of it into the container command shows.
-func TestGooseBuildPhaseStubInAContainerNeedsNoMarvelBinary(t *testing.T) {
+// A headless launch the watchdog cannot serve is refused and never launched
+// without it. On a container placement the whole command runs in the image,
+// where the marvel binary is not, so the stub there is a plain sh line that names
+// no marvel path and ends in exit 78 (v1.1 section 6 decision 2, as amended by
+// L3). The seam points the host stub at a sentinel path so a leak of it into the
+// container command shows.
+func TestGooseHeadlessInAContainerIsRefusedWithoutTheWatchdog(t *testing.T) {
 	old := gooseExecutable
 	gooseExecutable = func() (string, error) { return "/MARVEL-BIN/marvel", nil }
 	t.Cleanup(func() { gooseExecutable = old })
 
-	ctx := gooseContext(t, headless)
+	ctx := gooseContext(t, func(rt *api.Runtime) {
+		headless(rt)
+		rt.Goose.Posture = api.GoosePostureAuto
+	})
 	ctx.Placement = api.PlacementContainer
 	res, err := (&Goose{}).Prepare(ctx)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	for _, bad := range []string{"MARVEL-BIN", "goose-refuse", ctx.HarnessHomePath} {
+	for _, bad := range []string{"MARVEL-BIN", "goose-refuse", "goose-watch", ctx.HarnessHomePath} {
 		if strings.Contains(res.Command, bad) {
 			t.Errorf("container stub %q names %q", res.Command, bad)
 		}
@@ -524,14 +514,76 @@ func TestGooseBuildPhaseStubInAContainerNeedsNoMarvelBinary(t *testing.T) {
 	if !strings.HasPrefix(res.Command, "/bin/sh -c ") || !strings.HasSuffix(res.Command, "exit 78'") {
 		t.Errorf("container stub %q is not a plain sh line ending exit 78", res.Command)
 	}
-	// And it does what it says: run it.
 	out, runErr := exec.Command("sh", "-c", res.Command).CombinedOutput()
 	var ee *exec.ExitError
 	if !errors.As(runErr, &ee) || ee.ExitCode() != 78 {
 		t.Fatalf("exit = %v, want 78", runErr)
 	}
-	if string(out) != "marvel: goose launch refused: stream-not-built\n" {
+	if string(out) != "marvel: goose launch refused: watchdog-unavailable\n" {
 		t.Errorf("output = %q", out)
+	}
+	if res.Stream != nil {
+		t.Errorf("a refused launch wired a stream: %+v", res.Stream)
+	}
+}
+
+// When the marvel binary cannot be found the wrapper cannot run, so a headless
+// launch gets the same refusal, and an interactive launch is unaffected.
+func TestGooseHeadlessWithoutAMarvelBinaryIsRefusedWithoutTheWatchdog(t *testing.T) {
+	old := gooseExecutable
+	gooseExecutable = func() (string, error) { return "", errors.New("no executable") }
+	t.Cleanup(func() { gooseExecutable = old })
+
+	ctx := gooseContext(t, func(rt *api.Runtime) {
+		headless(rt)
+		rt.Goose.Posture = api.GoosePostureAuto
+	})
+	ctx.SandboxProfile = "/etc/marvel/goose.sb"
+	res, err := (&Goose{}).Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if !strings.HasPrefix(res.Command, "/bin/sh -c ") || !strings.Contains(res.Command, "watchdog-unavailable") || strings.Contains(res.Command, "goose-watch") {
+		t.Errorf("command %q is not the watchdog-unavailable stub", res.Command)
+	}
+
+	inter, err := (&Goose{}).Prepare(gooseContext(t, nil))
+	if err != nil {
+		t.Fatalf("interactive Prepare: %v", err)
+	}
+	if strings.Contains(inter.Command, "watchdog-unavailable") || strings.Contains(inter.Command, "goose-watch") {
+		t.Errorf("an interactive launch was refused or wrapped: %q", inter.Command)
+	}
+}
+
+// The wall-clock limit is the role's active_deadline for a scheduled role and
+// 45 minutes otherwise (v1.1 C3).
+func TestGooseWallLimitFollowsTheScheduleDeadline(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		sched *api.SchedulePolicy
+		want  string
+	}{
+		"unscheduled role":       {nil, "'--wall' '45m0s'"},
+		"scheduled, no deadline": {&api.SchedulePolicy{}, "'--wall' '45m0s'"},
+		"scheduled, a deadline":  {&api.SchedulePolicy{ActiveDeadline: 20 * time.Minute}, "'--wall' '20m0s'"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := gooseContext(t, func(rt *api.Runtime) {
+				headless(rt)
+				rt.Goose.Posture = api.GoosePostureAuto
+			})
+			ctx.SandboxProfile = "/etc/marvel/goose.sb"
+			ctx.Role.Schedule = tc.sched
+			res, err := (&Goose{}).Prepare(ctx)
+			if err != nil {
+				t.Fatalf("Prepare: %v", err)
+			}
+			if !strings.Contains(res.Command, tc.want) {
+				t.Errorf("command %q lacks %q", res.Command, tc.want)
+			}
+		})
 	}
 }
 
@@ -720,5 +772,27 @@ func TestGooseStderrTailReadsTheNewestLaunchAndRedacts(t *testing.T) {
 	}
 	if _, err := GooseStderrTail("relative/home"); err == nil {
 		t.Error("a relative home was read")
+	}
+}
+
+// The wrapper requires its stderr file, so a headless launch with no absolute
+// home to put one in is refused and not launched unwatched.
+func TestGooseHeadlessWithoutAnAbsoluteHomeIsRefused(t *testing.T) {
+	t.Parallel()
+	ctx := gooseContext(t, func(rt *api.Runtime) {
+		headless(rt)
+		rt.Goose.Posture = api.GoosePostureAuto
+	})
+	ctx.SandboxProfile = "/etc/marvel/goose.sb"
+	ctx.HarnessHomePath = "relative/home"
+	res, err := (&Goose{}).Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if strings.Contains(res.Command, "goose-watch") || strings.Contains(res.Command, "'goose' 'run'") {
+		t.Errorf("command %q launched goose without a stderr file", res.Command)
+	}
+	if !strings.Contains(res.Command, "'goose-refuse' 'relative-root'") {
+		t.Errorf("command %q is not the relative-root stub", res.Command)
 	}
 }
