@@ -2,12 +2,16 @@ package goosewatch
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/runtime/events"
+	"github.com/arcavenae/marvel/internal/runtime/goose"
 )
 
 const (
@@ -417,5 +421,76 @@ func TestALimitAfterAForwardedSignalChangesNothing(t *testing.T) {
 	}
 	if strings.Contains(r.stderr, "watchdog: wall-clock") {
 		t.Errorf("a limit after a forwarded signal was reported: %q", r.stderr)
+	}
+}
+
+// A goose killed mid-line leaves a partial line in the sink. The marker starts on
+// a line of its own, so the parser reports the partial line, reads the marker as
+// the last line, and ends the session with the marker's exit code and the
+// denials so far (the case rule 3 exists for).
+func TestKillMidLineStillEndsTheSessionInTheParser(t *testing.T) {
+	t.Parallel()
+	denied := `{"type":"message","message":{"role":"user","content":[{"type":"toolResponse","id":"c1","toolResult":{"status":"success","value":{"content":[{"type":"text","text":"no"}],"isError":true}}}]}}`
+	cases := map[string]struct {
+		mod      func(*Config)
+		script   string
+		wantExit int
+		wantText string
+	}{
+		"idle": {
+			script:   `printf '%s\n' '` + reqLine + `' '` + denied + `'; printf '%s' '{"type":"message","mess'; sleep 30`,
+			wantExit: ExitWatchdog, wantText: "watchdog: idle",
+		},
+		"signal": {
+			script:   `printf '%s\n' '` + reqLine + `' '` + denied + `'; printf '%s' '{"type":"message","mess'; sleep 30`,
+			wantExit: 143, wantText: "stopped: TERM",
+			mod: func(c *Config) {
+				sigs := make(chan os.Signal, 1)
+				go func() {
+					time.Sleep(500 * time.Millisecond)
+					sigs <- syscall.SIGTERM
+				}()
+				c.Signals = sigs
+			},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			r := runSh(t, tc.script, 10*time.Second, time.Second, tc.mod)
+			if r.code != tc.wantExit {
+				t.Fatalf("exit = %d, want %d", r.code, tc.wantExit)
+			}
+			// The marker is on a line of its own after the partial one.
+			if !strings.Contains(r.stdout, `{"type":"message","mess`+"\n"+`{"type":"marvel.watchdog"`) {
+				t.Fatalf("the marker is not on its own line: %q", r.stdout)
+			}
+			var got []events.Event
+			p := goose.NewParser(goose.Config{})
+			if err := p.Parse(context.Background(), strings.NewReader(r.stdout), func(e events.Event) { got = append(got, e) }); err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			last := got[len(got)-1]
+			end, ok := last.Data.(events.SessionEndedData)
+			if last.Event != events.KindSessionEnded || !ok {
+				t.Fatalf("last event = %s %+v, want session.ended (events %d)", last.Event, last.Data, len(got))
+			}
+			if end.ExitCode != tc.wantExit || end.Reason != tc.wantText {
+				t.Errorf("session.ended = %+v, want exit %d and %q", end, tc.wantExit, tc.wantText)
+			}
+			if end.Metering == nil || len(end.Metering.PermissionDenials) != 1 || end.Metering.PermissionDenials[0].CallID != "c1" {
+				t.Errorf("metering = %+v, want the denial so far", end.Metering)
+			}
+		})
+	}
+}
+
+// A run killed at a line boundary gets no extra blank line before the marker.
+func TestKillAtALineBoundaryAddsNoNewline(t *testing.T) {
+	t.Parallel()
+	r := runSh(t, `printf '%s\n' '`+textLine+`'; sleep 30`, 10*time.Second, time.Second, nil)
+	wantKilled(t, r, ReasonIdle)
+	if !strings.HasSuffix(r.stdout, textLine+"\n"+`{"type":"marvel.watchdog","reason":"idle"}`+"\n") {
+		t.Errorf("stdout = %q", r.stdout)
 	}
 }

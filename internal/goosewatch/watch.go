@@ -12,7 +12,8 @@
 // On either limit the wrapper sends TERM to the group, KILL after Grace, writes
 // "watchdog: idle" or "watchdog: wall-clock" as the last line of the stderr
 // file, writes one marvel-authored `{"type":"marvel.watchdog",...}` line as the
-// last line of stdout, and exits 124. goose never exits 124 (it exits 1 for
+// last line of stdout (on a line of its own: if goose was killed mid-line, a
+// newline comes first), and exits 124. goose never exits 124 (it exits 1 for
 // every failure), so the reap can tell a kill from a goose failure.
 //
 // A TERM, HUP or INT sent to the wrapper (a pane kill) is forwarded to goose's
@@ -268,12 +269,16 @@ func Run(cfg Config) int {
 		lastLine = "wrapper: forwarded " + sigName
 	}
 	errs.finish(tr, lastLine)
+	// A run killed mid-line leaves a partial line in the sink; the marker starts
+	// on a line of its own so the parser reads it as the last line and not as the
+	// tail of the partial one.
+	midLine := tr.endedMidLine()
 	switch {
 	case killedFor != "":
-		writeMarker(cfg.Stdout, killedFor, "")
+		writeMarker(cfg.Stdout, killedFor, "", midLine)
 		return ExitWatchdog
 	case sigName != "":
-		writeMarker(cfg.Stdout, ReasonSignal, sigName)
+		writeMarker(cfg.Stdout, ReasonSignal, sigName, midLine)
 		return 128 + int(sigNum)
 	}
 	return exitCode(cmd.ProcessState, waitErr)
@@ -282,7 +287,7 @@ func Run(cfg Config) int {
 // writeMarker writes the one marvel-authored line that ends the stream. It is
 // best effort: a sink that is already closed fails silently, and the run still
 // ends as it was going to.
-func writeMarker(w io.Writer, reason, sig string) {
+func writeMarker(w io.Writer, reason, sig string, midLine bool) {
 	line, err := json.Marshal(struct {
 		Type   string `json:"type"`
 		Reason string `json:"reason"`
@@ -290,6 +295,9 @@ func writeMarker(w io.Writer, reason, sig string) {
 	}{MarkerType, reason, sig})
 	if err != nil {
 		return
+	}
+	if midLine {
+		line = append([]byte{'\n'}, line...)
 	}
 	_, _ = w.Write(append(line, '\n'))
 }
@@ -343,17 +351,28 @@ type tracker struct {
 	lastLine  time.Time
 	maxGap    time.Duration
 	lines     int
+	// lastByte is the last byte forwarded to the sink, so a marker written after
+	// a run killed mid-line can start on a line of its own.
+	lastByte byte
 }
 
 func newTracker(start time.Time) *tracker {
 	return &tracker{open: map[string]struct{}{}, idleSince: start, lastLine: start}
 }
 
-// activity records that bytes arrived.
-func (t *tracker) activity(now time.Time) {
+// activity records that bytes arrived, the last of which is last.
+func (t *tracker) activity(now time.Time, last byte) {
 	t.mu.Lock()
 	t.idleSince = now
+	t.lastByte = last
 	t.mu.Unlock()
+}
+
+// endedMidLine reports whether the last byte forwarded was not a newline.
+func (t *tracker) endedMidLine() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lastByte != 0 && t.lastByte != '\n'
 }
 
 // line records a completed stream line. content is nil for a line too long to
@@ -418,7 +437,7 @@ func forward(r io.Reader, w io.Writer, t *tracker) {
 		n, err := r.Read(buf)
 		if n > 0 {
 			now := time.Now()
-			t.activity(now)
+			t.activity(now, buf[n-1])
 			chunk := buf[:n]
 			if sinkOK {
 				if _, werr := w.Write(chunk); werr != nil {
