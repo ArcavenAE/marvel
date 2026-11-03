@@ -31,9 +31,6 @@ type guardHandle struct {
 	once    sync.Once
 	prober  *childproof.Prober
 	started bool
-	// child is goose as childproof read it, set once Spawned has succeeded.
-	child    childproof.Child
-	hasChild bool
 }
 
 // startGuard starts the guard in its own session, so neither a SIGKILL of the
@@ -94,7 +91,6 @@ func (g *guardHandle) announce(cmd *exec.Cmd, pgid int) error {
 	if err != nil {
 		return err
 	}
-	g.child, g.hasChild = child, true
 	id := child.Identity()
 	if id.Pgid != pgid {
 		return fmt.Errorf("goose is not the leader of its own process group")
@@ -105,18 +101,26 @@ func (g *guardHandle) announce(cmd *exec.Cmd, pgid int) error {
 	return nil
 }
 
-// endUnannounced ends goose when the guard could not be told its group. It runs
-// before the wrapper's cmd.Wait on goose. Until goose is waited, the unreaped
-// child holds its pid, so the pid and its group cannot be reused, and the target
-// is the wrapper's own fresh child. With a childproof Child the kill goes
-// through Prober.Signal. When Spawned itself failed there is no Child to prove,
-// and the raw group kill below is the one exception to MS-9 (childproof is the
-// one way to signal a managed child), for exactly that reason.
+// endUnannounced ends goose when the guard could not be told its group, for any
+// reason: Spawned failed, the leader check failed, or the identity could not be
+// read again. It sends one raw KILL to -pgid, where pgid is the wrapper's own
+// child's pid, and it runs before the wrapper's cmd.Wait on goose.
+//
+// MS-9 makes childproof the one way to signal a managed child; this raw KILL is
+// the exception ruled in the review of #1259: a raw KILL only to the wrapper's
+// own started, unwaited child's group, and only from here. It is safe without a
+// proof because goose was started with Setpgid, so its group id is its pid, and
+// until it is waited for the kernel cannot reissue that pid, so no group with that
+// id can belong to anyone else, even while goose is a zombie. A proof would add
+// nothing, and a re-proof can refuse a process that is still ours (a shell that
+// execs after it was identified), which would leave goose running for its whole
+// life with no watchdog.
+//
+// The endUnannounced KILL and the watchdog's and forwarded signals are raw kills
+// on the wrapper's own child's group; the guard's go through childproof; a
+// post-reap window on the watchdog and forwarded paths is named in the package
+// doc and tracked by aae-orc-kwnq8.
 func (g *guardHandle) endUnannounced(pgid int) {
-	if g.hasChild {
-		_ = g.prober.Signal(g.child, syscall.SIGKILL, true)
-		return
-	}
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
 
