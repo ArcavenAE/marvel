@@ -204,6 +204,48 @@ adapter (claude, forestage, generic). They coexist in the same team.
 Claude Code, workers run forestage with personas, and a monitor runs
 a shell script for health scraping.
 
+### A first message for an interactive seat
+
+An interactive seat starts at an empty prompt and waits for someone to type.
+`runtime.prompt` fixes that: for an interactive claude role, marvel passes it
+as the harness's first message at launch, so the seat has a first turn without
+a person. Headless roles already carry `runtime.prompt` as their one request.
+
+```toml
+[team.role.runtime]
+image = "claude"
+command = "claude"
+prompt = "Read the queue and start on the first item."
+```
+
+A seat that replaces another, from a shift or a rotation, also gets a fixed
+first message that marvel writes from values it holds: it is a successor to the
+named seat, it should read that seat's handoff first (at the role's
+`shift.handoff` path when one is declared), and, when marvel attached it to a
+bus, it should then drain its inbox. The role's own `runtime.prompt` follows.
+To turn the successor message off, for a role whose `runtime.prompt` already
+covers succession:
+
+```toml
+[team.role.runtime]
+successor_prompt = false
+```
+
+marvel adds a first message only when `command` is the bare harness. A wrapper
+owns its own command line, so marvel exports the composed text as
+`MARVEL_FIRST_PROMPT` and the wrapper can pass it on.
+
+`apply` says what will not happen, and never refuses on it:
+
+- an interactive role declares `runtime.prompt` on a harness that cannot take
+  it as a first message yet (only claude does), so the prompt is not delivered;
+- an interactive role declares neither `runtime.prompt` nor `shift.handoff`, so
+  a fresh seat of it starts idle at an empty prompt.
+
+Each spawn records `session.first-prompt` with the source of its first message
+and its byte length, never the text. The event records what marvel passed, not
+what the harness took.
+
 ### With a team budget
 
 ```yaml
