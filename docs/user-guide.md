@@ -248,6 +248,72 @@ Each spawn records `session.first-prompt` with the source of its first message
 and its byte length, never the text. The event records what marvel passed, not
 what the harness took.
 
+### A periodic prompt for an interactive seat
+
+A role can declare a cadence: a prompt that is due on a schedule, kept by marvel
+and not by the seat. Declare one or more `[[team.role.cadence]]` entries on an
+interactive role:
+
+```toml
+[[team.role.cadence]]
+name = "sweep"
+schedule = "0 */2 * * *"
+timezone = "-06:00"
+prompt = "Sweep the board."
+starting_deadline = "10m"
+grace = "30m"
+```
+
+Every field is required. `name` is letters, digits, `-` and `_`, and unique on
+the role. `schedule` is a five-field cron expression, and `timezone` is an IANA
+zone or a fixed offset (`Local` is refused). `apply` refuses a cadence on a
+headless role, and one where `starting_deadline` is under 1 minute or above
+`grace`, or `grace` is not less than the shortest gap between two slots over the
+next 366 days, or the schedule has fewer than two slots in that year. At this
+build the slot clock records each due time: it writes an `open` slot, or a
+`skipped` one when a time was missed past `starting_deadline` or the team was
+withheld, and emits `cadence.slot-opened` or `cadence.slot-skipped`. It does not
+yet type the prompt into the seat, so a cadence today shows in `marvel events`
+and not in the pane.
+
+### The environment a seat starts with
+
+marvel sets `DIRECTOR_CLUSTER` at spawn to the name of the cluster entry the
+daemon serves, so a seat marvel launched can name its cluster on the bus without
+a launch script. It is left unset when the daemon has no entry name. marvel does
+not set `DIRECTOR_ROLE`: in director's shim that variable makes a session a
+holder of the role's inbox, so a role that wants role mail declares it in its
+own `runtime.env`.
+
+### A policy that reads a settings file
+
+A `[[policy]]` is a named Claude Code settings fragment that marvel projects into
+a per-session file and passes to the harness with `--settings`. A role names it
+with `policy = "<name>"`. A policy carries its settings inline, as `settings`, or
+in a JSON file, as `settings_file`, never both:
+
+```toml
+[[policy]]
+name = "readonly"
+settings_file = "~/policies/readonly.json"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "reviewer"
+  policy = "readonly"
+```
+
+`settings_file` must be an absolute path or start with `~/`, because a relative
+path would resolve against the daemon's working directory. marvel reads the file
+as one JSON object and copies it into the projection as written, with numbers
+kept and nothing interpreted. An empty file, a missing file, or anything that is
+not a single JSON object holds the spawn: the file carries the role's deny
+rules, so a seat is never launched without it, and the spawn is retried on each
+reconcile until the file reads. The failure is recorded once as
+`policy.projection-failed`.
+
 ### With a team budget
 
 ```yaml
@@ -729,6 +795,13 @@ emits, so it cannot describe kinds this binary does not have. When a
 `--kind` filter matches nothing and the name is not one marvel declares,
 the command says so on stderr.
 
+Each `session.created` event carries the host's free memory when the host can
+give a reading: its message reads `pane %<id>, host free memory N%`. On macOS
+that is the kernel's free-memory level, and on Linux it is `MemAvailable` over
+`MemTotal`, as a whole percentage. A host with no reading, or another OS, prints
+the message without the clause. It is a diagnostic only: marvel holds no cap,
+floor or gate on it.
+
 ## Scaling
 
 ```bash
@@ -820,6 +893,22 @@ symlink never completes. If the window (`handoff_window`, default 5m) ends with 
 marker, or the role declares no handoff path, marvel records
 `team.shift-handoff-missing` and leaves the seat running; the team's supervisor
 decides whether to call `marvel shift`.
+
+A seat that cannot write a file on the daemon host, such as one in a read-only
+sandbox, can hand off through the daemon instead. `marvel handoff put` reads the
+handoff text from stdin, and `marvel mcp handoff` serves the same call as an MCP
+tool named `submit_handoff(text)` for a harness that has no shell tool. Both
+send the text to the daemon with the seat's own heartbeat token, so a seat can
+write only its own handoff, and the daemon writes the role's declared handoff
+file, ending with the marker. The text is capped at 64 KiB, and the daemon takes
+it only while the seat holds a pending max-age handoff request and only on its
+local socket. The daemon's receipt, recorded as `handoff.put` (or
+`handoff.put-refused` with the reason), is what lets the shift start; the
+seat's own account of having written never counts. `marvel mcp handoff` is
+started by the seat's harness, dials only the `MARVEL_SOCKET` of its own
+environment, and refuses `--socket`, `--cluster` and `--identity`. At this build
+no role asks marvel to seed that tool into a harness, so a seat reaches it only
+through a configuration the operator wrote.
 
 ```toml
 [team.role.shift]
