@@ -114,6 +114,20 @@ func (g *GooseRuntime) equal(o *GooseRuntime) bool {
 		slices.Equal(a.Extensions, b.Extensions)
 }
 
+// validateGooseHeadlessPrompt refuses a headless role on the goose adapter that
+// has no prompt. Launch refuses the same role with the no-prompt stub; this is
+// the earlier refusal, so the operator hears it at apply and not from a seat that
+// never starts (ruling I-51:goose-empty-prompt-durable). It is scoped to goose:
+// the check for headless roles on other adapters is its own item. The adapter is
+// named the way GooseAdvisories names it, so a goose role whose command is a path
+// reads as not goose here.
+func (r ManifestRuntime) validateGooseHeadlessPrompt() error {
+	if r.AdapterName() != "goose" || r.Mode != RuntimeModeHeadless || r.Prompt != "" {
+		return nil
+	}
+	return fmt.Errorf("runtime.prompt is required for a headless goose role")
+}
+
 // GooseAdvisories lists every role that declares runtime.goose on a runtime
 // that is not goose. It is a note and never a refusal: an unhonoured
 // context_feed is advisory the same way, the adapter name matches the image and

@@ -16,7 +16,7 @@ This table is derived from the registry by a test, so it cannot drift. A new ada
 <!-- adapter-capabilities:begin -->
 | Capability | claude | codex | opencode | forestage | simulator | generic | goose |
 |---|---|---|---|---|---|---|---|
-| StreamCapable | yes | yes | yes | no | no | no | no |
+| StreamCapable | yes | yes | yes | no | no | no | yes |
 | SessionIDAssigner | yes | no | no | no | no | no | no |
 | SessionHomeAssigner | no | yes | no | no | no | no | yes |
 | StatuslineFeeder | yes | no | no | yes | no | no | no |
@@ -72,7 +72,7 @@ How each harness reports tokens (headless only; a seat with no token stream show
 | opencode | headless: yes. Interactive: no | per request, summed | alongside (additive) | `internal/runtime/opencode/parser.go:209`, `internal/usage/profiles.go:87-93` |
 | forestage | no | none, it is not stream-capable | n/a | `internal/usage/doc.go:79` |
 | simulator | no | its heartbeat carries no tokens | n/a | `internal/simulator/engine.go:117-119` |
-| goose | no, until its stream parser lands | none | n/a | `docs/design/goose-adapter-v1.md:48` |
+| goose | headless: parsed, not metered. The parser reads `complete` into `session.ended`, and the usage accountant has no goose profile | none in the stream; cumulative totals arrive once, on `complete` | n/a | `internal/runtime/goose/mapping.md:75` |
 | generic | no | none | n/a | `internal/runtime/generic.go:5-8` |
 
 Whether the codex total resets at a turn boundary or runs for the whole session is not settled, and the code treats both the same (`internal/usage/profiles.go:55-71`).
@@ -129,7 +129,7 @@ Evidence:
 - **prompt delivery.** claude: the identity line through `--append-system-prompt` on a bare claude, skipped when the role carries its own, read from args and from the command words (`internal/runtime/claude.go:152-164`, `internal/api/manifest.go:788`); the headless request is the positional argument (`internal/runtime/claude.go:204-207`). codex `partial`: headless request only, no system prompt (`internal/runtime/codex.go:19-23`, `internal/runtime/codex.go:122-130`). opencode `partial`: headless request only (`internal/runtime/opencode.go:57-64`). forestage: team context after `--` (`internal/runtime/forestage.go:104-112`). generic passes args only (`internal/runtime/generic.go:104-119`). There is no prompt-file feature: the code only recognises a role's own `--append-system-prompt-file`. An interactive first prompt is a proposal (`docs/design/interactive-first-prompt.md`), and prompt moderation is design only (`docs/design/prompt-moderation.md`). A manifest-supplied system prompt drops the identity line (finding-066).
 - **completion semantics.** The reap rule keys on `Runtime.Mode` and the pane exit status alone, with no harness branch: the window is kept on exit, the replica slot is held, and a non-zero or empty status becomes `crashed` (`internal/session/manager.go:1553-1648`, `internal/api/budget.go:252-257`). An exact status needs tmux 3.5; a lost status is retried (`internal/session/manager.go:1636-1640`, `docs/user-guide.md:374-380`). Headless launches exist for claude (`internal/runtime/claude.go:100-102`), codex (`internal/runtime/codex.go:114-148`) and opencode (`internal/runtime/opencode.go:50-80`). `partial` for forestage, simulator and generic: they have no headless branch in `Prepare`, so the reap rule applies only if the mode is set, and no test or finding exercises it. The ADR-010 text is not in this repository. Findings on headless completion: finding-015, finding-036, finding-038.
 
-**goose column.** This is the adapter core, with no stream parser: `StreamCapable` is `no` and every token and context cell waits on the parser and on the sessions-database reader (`docs/design/goose-adapter-v1.md:118-120`). Every headless goose seat is refused with the exit-78 stub until the parser and the watchdog land, because a headless run seen only through its exit status can report refused work as done (`docs/design/goose-adapter-v1.1.md:93-109`); interactive goose launches. `handoff put` and `max-age rotation` are `unknown` because no goose composer has been measured. `completion semantics` is `partial`: the pane exit status decides it, and an exit 0 with no `complete` line is not yet told apart.
+**goose column.** This is the adapter core and its stream parser: `StreamCapable` is `yes` for a headless launch, and every token and context cell still waits on a usage profile and on the sessions-database reader (`docs/design/goose-adapter-v1.md:118-120`). Every headless goose seat is refused with the exit-78 stub until the watchdog lands, because a headless run seen only through its exit status can report refused work as done (`docs/design/goose-adapter-v1.1.md:93-109`); interactive goose launches. `handoff put` and `max-age rotation` are `unknown` because no goose composer has been measured. `completion semantics` is `partial`: the pane exit status decides it, and an exit 0 with no `complete` line is not yet told apart.
 
 ## Not adapted
 

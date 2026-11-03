@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -271,5 +272,41 @@ func TestScheduleHistoryCap(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "schedule_history_max") {
 			t.Errorf("cap %d: error %v, want %q and the knob's name", tc.cap, err, tc.want)
 		}
+	}
+}
+
+func TestRunRecordStderrTailIsCappedOnARuneBoundary(t *testing.T) {
+	t.Parallel()
+	var r RunRecord
+	r.SetStderrTail("short")
+	if r.StderrTail != "short" {
+		t.Fatalf("short tail = %q", r.StderrTail)
+	}
+	// Three-byte runes, so the cut point is inside one for most lengths.
+	long := strings.Repeat("漢", 2000)
+	r.SetStderrTail(long)
+	if len(r.StderrTail) > maxRunStderrTailBytes || !utf8.ValidString(r.StderrTail) {
+		t.Fatalf("tail is %d bytes, valid %v", len(r.StderrTail), utf8.ValidString(r.StderrTail))
+	}
+	if !strings.HasSuffix(long, r.StderrTail) {
+		t.Error("the tail is not the end of the text")
+	}
+}
+
+func TestRunRecordStderrTailIsOmittedWhenEmpty(t *testing.T) {
+	t.Parallel()
+	b, err := json.Marshal(RunRecord{Session: "s"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), "stderr_tail") {
+		t.Errorf("record %s carries stderr_tail", b)
+	}
+	b, err = json.Marshal(RunRecord{Session: "s", StderrTail: "x"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"stderr_tail":"x"`) {
+		t.Errorf("record %s lacks stderr_tail", b)
 	}
 }

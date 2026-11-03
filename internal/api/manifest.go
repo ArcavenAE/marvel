@@ -486,6 +486,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			if err := r.Runtime.Goose.Validate(); err != nil {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].%w", i, j, err)
 			}
+			if err := r.Runtime.validateGooseHeadlessPrompt(); err != nil {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].%w", i, j, err)
+			}
 			// The role library's hash is carried, never read, so a malformed one
 			// is refused here rather than stamped. The value is not echoed.
 			if h := r.Runtime.PromptArtifactSha256; h != "" {

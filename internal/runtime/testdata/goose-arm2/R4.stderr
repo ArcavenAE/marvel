@@ -1,0 +1,3 @@
+Error: Ran into this error: Request failed: Resource not found (404) at http://127.0.0.1:11434/v1/chat/completions: model 'no-such-model-arm2:latest' not found. Available models for this provider: qwen2.5-coder:3b, qwen2.5-coder:7b, qwen3:0.6b, qwen3:8b.
+
+Please retry if you think this is a transient or recoverable error.
