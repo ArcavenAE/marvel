@@ -747,6 +747,61 @@ running long enough that their context is stale. A configuration
 change needs to propagate. You want fresh agents without losing
 the team structure.
 
+### Automatic shifts
+
+A role can also shift itself. Declare a `[team.role.shift]` table and marvel
+decides when a seat of that role is due, so nobody has to run `marvel shift`
+by hand. Two conditions exist, and the table takes one directly or a list under
+`any`, where the first condition that holds acts:
+
+- `on = "context-pressure"` with `headroom_tokens`: the seat's remaining
+  context has fallen to that many tokens. Declare `runtime.context_window` so
+  `apply` can check the number against the window.
+- `on = "max-age"` with `max_age`: the seat is older than that (at least 15
+  minutes). It is the backstop for a seat whose context marvel cannot meter, or
+  one stuck at a prompt that never fills its context. `quiet_for` (default 5m)
+  waits for the seat to go quiet first, and `max_defer` (default 30m) is how
+  long past `max_age` marvel waits for that before it asks anyway, however busy
+  the seat is.
+
+marvel never replaces a seat that has not written its handoff. When a condition
+holds it types a request into the pane, naming the handoff path, the marker and
+the window when the role declares them, and records
+`team.shift-handoff-requested`. It then watches the handoff file. When the last
+line is `handoff_marker`, the shift starts and the successor gets
+`MARVEL_PREDECESSOR`. If the window (`handoff_window`, default 5m) ends with no
+marker, or the role declares no handoff path, marvel records
+`team.shift-handoff-missing` and leaves the seat running; the team's supervisor
+decides whether to call `marvel shift`.
+
+```toml
+[team.role.shift]
+handoff = "/tmp/marvel-handoffs/{session}.md"
+handoff_marker = "END HANDOFF"
+handoff_window = "5m"
+any = [
+  { on = "context-pressure", headroom_tokens = 120000 },
+  { on = "max-age", max_age = "8h", quiet_for = "5m", max_defer = "30m" },
+]
+```
+
+`examples/auto-shift-max-age.toml` is this role as a runnable manifest, and
+`marvel events` shows each step.
+
+Two notices come from the reading side:
+
+- At `apply`, an interactive role with one replica and no max-age trigger gets
+  an advisory that a seat of it runs until something else ends it. A
+  context-pressure arm without `runtime.context_window` gets one too. Neither
+  refuses the manifest.
+- If a max-age request passes `max_defer` and the escalation never reached the
+  team's supervisor, marvel records `team.shift-request-stuck` once. The seat
+  may never have been asked and nobody was told. It only reports: marvel does
+  not retry or shift on it.
+
+A max-age condition on a headless role is refused at `apply`, as are keys this
+marvel does not know.
+
 ## Connecting to remote daemons
 
 ### Named clusters (recommended)
