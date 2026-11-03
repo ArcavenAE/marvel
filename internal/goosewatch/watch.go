@@ -33,6 +33,13 @@
 // probe, so the worst a stale answer does is word a line wrongly, never signal
 // the wrong process.
 //
+// A residual of the announce-failure path, named and not closed: a leader that
+// is still alive when the wrapper's group KILL goes out can exit normally before
+// its own copy of the signal lands, for example after its child dies of the
+// same KILL. The wait status then reads as a normal exit, and the run reports it
+// as goose's own although marvel did kill it. Telling the two apart needs a peek
+// at the status before the kill (waitid with WNOWAIT where the platform has it).
+//
 // A TERM, HUP or INT sent to the wrapper (a pane kill) is forwarded to goose's
 // group with the same grace and ends the run with exit 128 plus the signal. It is
 // not a watchdog kill, so its stderr line is "wrapper: forwarded <SIG>", never a
