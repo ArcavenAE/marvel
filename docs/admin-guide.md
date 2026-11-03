@@ -453,6 +453,82 @@ missing objects, or that authorization has not loaded and a reload is
 outstanding, or that the broker is down and which restart is waiting on
 backoff.
 
+### How long mail is kept
+
+`AGENT_INBOX` keeps a message for 7 days. It kept 24 hours until marvel#1146, so
+a seat that sat idle for a day lost its mail unread. A broker that already holds
+the stream with a shorter, finite age is raised to 7 days when the daemon next
+starts, and the daemon logs `bus: stream AGENT_INBOX max_age raised from <old>
+to <new>`. An age marvel finds longer is never lowered. `AGENT_AUDIT`, which
+holds the records `marvel bus audit` reads, keeps 30 days.
+
+### Capping the stores, and the warning before one fills
+
+A managed bus can cap the JetStream stores. Two optional keys sit beside
+`listen` on the bus entry:
+
+```yaml
+        max_file_store: 10GiB
+        max_memory_store: 512MiB
+```
+
+Each is a whole number of bytes or a count with a binary unit (`KiB`, `MiB`,
+`GiB`, `TiB`). A decimal unit such as `GB` is refused as ambiguous, and so is a
+cap on an adopted or external bus, because marvel renders no broker config for
+those. Both errors are raised when the config is read. With neither key set the
+rendered config is the same as before, and the broker keeps its own default.
+
+On each structural check (the thirty-second poll above) the daemon reads the
+broker's `/jsz` and the free space under the store directory, and records
+`bus.store.low` at warning severity, once per change in the set of low stores.
+A store is low at 80 percent of its cap, and the store's filesystem is low under
+10 percent or under 1 GiB free. Read it with `marvel events --kind
+bus.store.low`; the message names the low stores. It is a warning only: marvel
+does not restart the broker and does not hold spawns. JetStream refuses writes
+once a store is full, so free space or raise the cap. A read error leaves the
+last reading in place, and the daemon logs when the warning clears.
+
+### The write probe
+
+Every structural check above only reads, so a store that refuses writes passes
+all of them. On each check the daemon also writes and removes a canary in every
+declared stream and in the state bucket: a put, get and delete on the bucket,
+and a publish with ack to a subject inside each stream, followed by deleting
+that one message. A refused or timed-out write is a failure.
+
+A change in the failing set records `bus.store.write-failed` at error severity,
+once per change; read it with `marvel events --kind bus.store.write-failed`.
+Like the headroom warning it never restarts the broker and never holds spawns,
+and the next check re-reads once the store is freed. An unreachable broker is no
+reading, not a failure. An object that is absent is the structural check's miss
+and is skipped. Where a cap would make the canary evict a real message or be
+refused, the probe keeps one message of headroom below the cap and skips that
+object, and the daemon logs the skip.
+
+### Reading an audit record
+
+A send that is refused or fails on a cluster's bus leaves a numbered record in
+the broker's `AGENT_AUDIT` stream, and the sender is told the number. Read it
+by number:
+
+```sh
+marvel bus audit 42
+marvel bus audit 42 -o json
+marvel --cluster <name> bus audit 42
+```
+
+It prints `seq`, `time`, `subject`, `outcome` (`sent` or `refused`) and, for a
+refusal, `stage` and `refusal`, then `msg_id` and the `envelope`. `-o json`
+prints the same fields as one JSON object. Exit 0 is a record; exit 1 is a
+refusal or a number with no record. The number is a whole number of 1 or more.
+
+It reads through marvel's own admin login to the broker, so it works only on a
+cluster where marvel runs the broker, and `--cluster` reads another cluster's
+record because the command runs on that cluster's daemon. A record holds the
+full envelope of the send, text included, and any admin caller on that daemon
+can read any record by number. Text from the record is escaped, never printed
+raw: a character a terminal could act on prints as `\uXXXX`.
+
 ### Connecting to a shared hub
 
 A leaf link attaches a managed local broker to a shared hub:
@@ -557,6 +633,30 @@ duration is kept in the daemon's memory, so a restart or reexec starts it over;
 it is not stored with the record. The 30 minutes is one fleet value, set by the
 operator's ruling of 2026-10-06 on the repeat bound (design/wake-service.md
 Q1), and changes as one constant.
+
+### Publishing to peer supervisors on one cluster
+
+A role a team declares global has its own broker user (the per-role user). Since
+marvel#1133 that user may also publish to the role inbox of every global role of
+the other applied teams on the same cluster, whatever workspace they are in, at
+`agent.<workspace>.<team>.role.<role>.inbox`. Before it, a supervisor reached a
+peer on its cluster only through the cluster fan-out, which every supervisor
+receives.
+
+The grant is narrow on purpose:
+
+- publish only; nothing is added to any subscribe list;
+- on the per-role user, never the team user;
+- exact subjects, one per global role, so a team applied later, or a role the
+  cluster does not admit, is not reachable until it is rendered into the
+  declared global roles;
+- not a seat's own inbox, which would take a wildcard over every seat in the team;
+- not another cluster: a local `agent.` publish does not cross the hub, so the
+  reach ends at the cluster.
+
+It renders only on a cluster that has a hub, because with no hub no per-role
+user renders. A host picks it up on a daemon build that has it, at the next
+render, and the broker reloads on SIGHUP.
 
 ### Moving a cluster to another network
 
