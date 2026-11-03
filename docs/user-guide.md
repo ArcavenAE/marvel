@@ -218,9 +218,9 @@ command = "claude"
 prompt = "Read the queue and start on the first item."
 ```
 
-A seat that replaces another, from a shift or a rotation, also gets a fixed
-first message that marvel writes from values it holds: it is a successor to the
-named seat, it should read that seat's handoff first (at the role's
+A claude seat that replaces another, from a shift or a rotation, also gets a
+fixed first message that marvel writes from values it holds: it is a successor
+to the named seat, it should read that seat's handoff first (at the role's
 `shift.handoff` path when one is declared), and, when marvel attached it to a
 bus, it should then drain its inbox. The role's own `runtime.prompt` follows.
 To turn the successor message off, for a role whose `runtime.prompt` already
@@ -231,11 +231,13 @@ covers succession:
 successor_prompt = false
 ```
 
-marvel adds a first message only when `command` is the bare harness. A wrapper
+marvel adds a first message only when `command` is the bare `claude`. A wrapper
 owns its own command line, so marvel exports the composed text as
-`MARVEL_FIRST_PROMPT` and the wrapper can pass it on.
+`MARVEL_FIRST_PROMPT` and the wrapper can pass it on. Only the claude adapter
+does either today; a codex or opencode successor gets no first message.
 
-`apply` says what will not happen, and never refuses on it:
+`apply` refuses nothing on this. The daemon writes an advisory to its log, not
+to the output of `marvel apply`, for each of these:
 
 - an interactive role declares `runtime.prompt` on a harness that cannot take
   it as a first message yet (only claude does), so the prompt is not delivered;
