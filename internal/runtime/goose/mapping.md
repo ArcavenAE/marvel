@@ -82,10 +82,9 @@ matching `toolRequest` and the call id.
    never in the stream, so there is no `turn.completed`. `complete` carries
    cumulative totals: `input_tokens` and `output_tokens` go to `Usage`, the two
    cache counts to `Metering`, and `total_tokens` is read and not stamped
-   (`Usage` has no total). The recordings show `cache_read_input_tokens` above 0
-   (R1 3217, R5 3, R9 7) and `cache_write_input_tokens` 0 on every run, which the
-   fixture README's "cache token counts are 0" does not match. Neither the
-   recordings nor `complete` carry a cost.
+   (`Usage` has no total). `cache_write_input_tokens` is 0 on every run and
+   `cache_read_input_tokens` is not (R1 3217, R3 3211, R5 3, R9 7), so neither is
+   assumed zero. Neither the recordings nor `complete` carry a cost.
 6. **A run without `complete`.** R2 (a tool outside the permission list in
    `approve` mode) ends after a `toolRequest`, exits 1 and has its reason on
    stderr only. The parser emits `tool.call` and nothing else: no
