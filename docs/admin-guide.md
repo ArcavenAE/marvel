@@ -206,6 +206,103 @@ Detach relies on the state file. With `--state-bolt=""` there is no
 recorded intent to come back to, so the next start kills every
 `marvel-*` pane it finds.
 
+## A suspended cluster, and `marvel status`
+
+A suspended cluster is one whose tmux server and recorded seat processes are
+stopped in place, not killed, so each seat keeps its context and its in-flight
+turn. The daemon records a suspend before it signals anything: who asked, when,
+the tmux server, and every other process it stopped, each with the start time
+it was recorded with. A cluster with no record is running.
+
+This build can read and settle a suspend record; no marvel verb starts one. The
+freeze and resume mechanism is in the `internal/suspend` package, and the
+daemon calls it only at start, to settle a record that exists (below). Nothing
+in the CLI freezes a fleet yet, so a record can come only from a later binary.
+The rest of this section is what an operator can see and do about one.
+
+### Reading it: `marvel status`
+
+```sh
+marvel status
+marvel --cluster <name> status
+```
+
+It prints whether the cluster is running or suspended. A running cluster prints
+`cluster: running`. A suspended one prints, on stdout:
+
+- `cluster: <state> since <time> (<elapsed> ago) by <actor> via <source>`, where
+  the state is `suspended`, `suspending` or `resuming`;
+- how many seats were recorded at stop time, plus the tmux server;
+- a line saying bus presence lapses while suspended, so a presence reader shows
+  every seat as gone until resume;
+- the manual resume recipe (below).
+
+The daemon answers from its suspend record without taking its controller lock
+and without calling tmux, so `marvel status` answers while the fleet is frozen,
+which is when nothing else does. If the daemon does not answer, `status` reads
+the mirror the daemon keeps beside its socket, `<socket>.suspend.json`, and its
+first line says `daemon not answering; read from the suspend mirror beside its
+socket`. A TCP or `mrvl://` address has no mirror on the host that runs the
+command, so there `status` reports an error and exits 1. A daemon that predates
+the verb answers `unknown method`, and `status` says so and exits 1.
+
+If the daemon answers but its stored record could not be read or parsed,
+`status` prints `cluster: unknown`, with the reason, and says the mirror was
+left in place and that, if the fleet is frozen, the resume is by hand from it.
+`unknown` comes only from a daemon that answers. With the daemon down, a mirror
+that cannot be parsed, or no mirror at all, is an error and exit 1; a missing
+mirror is not read as `cluster: running`.
+
+Exit codes: 0 running; 3 suspended, partway through a suspend or resume, or
+unknown; 1 an error. This is not `marvel bus status`, which reports the message
+broker.
+
+### What a daemon does with a record at start
+
+The daemon reads the record before it adopts anything, because adopting under a
+stopped tmux would block the whole start.
+
+| Record at start | What the daemon does |
+|---|---|
+| `suspended`, and its tmux server is alive | Serves held: it does not adopt or call tmux, and refuses every request except the read methods that answer while starting, with `cluster suspended; run marvel resume`. That names a verb this build does not have, and nothing in this build ends the hold in a running daemon (see "Resuming by hand"). The log says it is serving without adopting. |
+| `suspended`, and its tmux server is gone (a reboot, or a server killed by hand) | Clears the record, records `cluster.suspend-cleared` at warning severity, and adopts as usual. |
+| `suspending` or `resuming`, left by a daemon that stopped partway | Resumes every recorded process that is still the one recorded, clears the record, and records `cluster.suspend-interrupted` at warning severity. It keeps serving held if a record remains. |
+| `suspended`, and the daemon cannot tell whether the server is alive | Keeps the record and serves suspended. |
+| A stored record that cannot be read or parsed | Keeps the mirror and serves held. `marvel status` reads `unknown`. |
+| A record whose state is none of the above | Keeps the record and serves suspended, with a log line naming the state. A later binary could write one. |
+
+Read the two events with `marvel events --kind cluster.suspend-cleared` and
+`marvel events --kind cluster.suspend-interrupted`. The log lines carry the same
+text.
+
+### Resuming by hand
+
+`marvel status` on a suspended cluster lists a recipe for the operator to run
+only if marvel cannot resume. It is one line per recorded process, the tmux
+server and then each seat:
+
+```
+kill -CONT <pid>   # tmux server, started <time>, pgid <pgid>
+kill -CONT <pid>   # seat, started <time>, pgid <pgid>
+```
+
+Each line carries the start time and process group recorded with the pid. Before
+you signal one, check that the pid still names that process, because a pid that
+now belongs to another process must not be signalled. Every recorded process
+needs its own `kill -CONT`. The resume is the operator's by hand, never a
+seat's and never a remote key's.
+
+In this build the recipe brings the processes back and not the daemon. A
+`kill -CONT` does not touch the record, and the held daemon has no verb that
+clears it, so after a hand resume the daemon keeps refusing work and `marvel status`
+still reads `suspended`. A restart finds the same record with a live server and
+holds again. What clears a `suspended` record is a daemon start that finds the
+recorded tmux server gone: it clears the record, records
+`cluster.suspend-cleared`, and adopts as usual. A `suspending` or `resuming`
+record is cleared at start by resuming its processes. The missing verb is
+tracked in
+[marvel#1254](https://github.com/ArcavenAE/marvel/issues/1254).
+
 ## SSH key management
 
 The mrvl:// listener authenticates clients using SSH public keys stored
