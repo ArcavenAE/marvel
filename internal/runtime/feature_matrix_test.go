@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,12 +20,25 @@ import (
 // there and is at least that long); whether a line still says what the matrix
 // claims is a review question, and the document says so.
 //
-// Regenerate the table with: MARVEL_UPDATE_MATRIX=1 go test ./internal/runtime -run TestFeatureMatrix
+// Regenerate the table with the command in matrixRegenerate. It is a test flag
+// and not an environment variable: the package's TestMain runs homeguard.Run,
+// which clears every MARVEL_* variable before a test reads it, so a switch in the
+// environment cannot reach this file. The flag is registered when the package
+// initializes and parsed inside m.Run, after the guard has run, and the guard
+// does not touch flags. The update test is not parallel, so its write finishes
+// before the parallel tests that read the same document resume.
+
+// matrixRegenerate is the one command that regenerates the table. The failure
+// text and both documents that name it are checked against this string.
+const matrixRegenerate = "go test ./internal/runtime -run TestFeatureMatrix -args -update-matrix"
+
+var updateMatrix = flag.Bool("update-matrix", false, "rewrite the adapter capability table in docs/feature-matrix.md when it differs from the registry")
 
 const (
-	matrixDoc   = "../../docs/feature-matrix.md"
-	matrixBegin = "<!-- adapter-capabilities:begin -->"
-	matrixEnd   = "<!-- adapter-capabilities:end -->"
+	matrixDoc          = "../../docs/feature-matrix.md"
+	matrixChecklistDoc = "../../docs/adapter-kit-checklist.md"
+	matrixBegin        = "<!-- adapter-capabilities:begin -->"
+	matrixEnd          = "<!-- adapter-capabilities:end -->"
 )
 
 // matrixAdapters is the column order of the document. A registered adapter that
@@ -100,23 +114,74 @@ func TestFeatureMatrixNamesEveryRegisteredAdapter(t *testing.T) {
 	}
 }
 
+// matrixRewrite returns doc with the block between the markers replaced by want.
+// It changes nothing else, and reports a document that lacks the markers.
+func matrixRewrite(doc, want string) (string, error) {
+	i, j := strings.Index(doc, matrixBegin), strings.Index(doc, matrixEnd)
+	if i < 0 || j < i {
+		return "", fmt.Errorf("%s lacks the %s ... %s block", matrixDoc, matrixBegin, matrixEnd)
+	}
+	return doc[:i+len(matrixBegin)+1] + want + doc[j:], nil
+}
+
 func TestFeatureMatrixAdapterTableMatchesTheCode(t *testing.T) {
 	want := capabilityTable(t)
 	doc := readMatrixDoc(t)
-	i, j := strings.Index(doc, matrixBegin), strings.Index(doc, matrixEnd)
-	if i < 0 || j < i {
-		t.Fatalf("%s lacks the %s ... %s block", matrixDoc, matrixBegin, matrixEnd)
+	updated, err := matrixRewrite(doc, want)
+	if err != nil {
+		t.Fatal(err)
 	}
-	got := doc[i+len(matrixBegin)+1 : j]
-	if os.Getenv("MARVEL_UPDATE_MATRIX") != "" && got != want {
-		updated := doc[:i+len(matrixBegin)+1] + want + doc[j:]
+	if updated == doc {
+		return
+	}
+	if *updateMatrix {
 		if err := os.WriteFile(matrixDoc, []byte(updated), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
-	if got != want {
-		t.Errorf("the adapter capability table in docs/feature-matrix.md is out of date.\nwant:\n%s\ngot:\n%s\nregenerate: MARVEL_UPDATE_MATRIX=1 go test ./internal/runtime -run TestFeatureMatrix", want, got)
+	i, j := strings.Index(doc, matrixBegin), strings.Index(doc, matrixEnd)
+	got := doc[i+len(matrixBegin)+1 : j]
+	t.Errorf("the adapter capability table in docs/feature-matrix.md is out of date.\nwant:\n%s\ngot:\n%s\nregenerate: %s", want, got, matrixRegenerate)
+}
+
+func TestMatrixRewriteReplacesOnlyTheBlock(t *testing.T) {
+	t.Parallel()
+	doc := "head\n" + matrixBegin + "\nold row\n" + matrixEnd + "\ntail\n"
+	got, err := matrixRewrite(doc, "new row\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "head\n" + matrixBegin + "\nnew row\n" + matrixEnd + "\ntail\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if same, _ := matrixRewrite(doc, "old row\n"); same != doc {
+		t.Errorf("an equal table changed the document: %q", same)
+	}
+	if _, err := matrixRewrite("no markers here", "x"); err == nil {
+		t.Error("a document without the markers was accepted")
+	}
+}
+
+// The switch is a flag the guard cannot clear, and every place that tells a
+// reader how to regenerate names it, and none still names the old variable.
+func TestMatrixRegenerateCommandIsTheSameEverywhere(t *testing.T) {
+	t.Parallel()
+	if flag.Lookup("update-matrix") == nil {
+		t.Fatal("the update-matrix flag is not registered")
+	}
+	for _, path := range []string{matrixDoc, matrixChecklistDoc} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		doc := string(raw)
+		if !strings.Contains(doc, matrixRegenerate) {
+			t.Errorf("%s does not name the regenerate command %q", path, matrixRegenerate)
+		}
+		if strings.Contains(doc, "MARVEL_UPDATE_MATRIX") {
+			t.Errorf("%s still names MARVEL_UPDATE_MATRIX, which the home guard clears", path)
+		}
 	}
 }
 

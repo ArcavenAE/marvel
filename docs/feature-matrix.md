@@ -11,7 +11,7 @@ Which marvel features work for which harness, and which of them need another ser
 
 ## Adapter capabilities (checked against the code)
 
-This table is derived from the registry by a test, so it cannot drift. A new adapter, or a changed capability, fails `TestFeatureMatrixAdapterTableMatchesTheCode` until it is regenerated with `MARVEL_UPDATE_MATRIX=1 go test ./internal/runtime -run TestFeatureMatrix`.
+This table is derived from the registry by a test, so it cannot drift. A new adapter, or a changed capability, fails `TestFeatureMatrixAdapterTableMatchesTheCode` until it is regenerated with `go test ./internal/runtime -run TestFeatureMatrix -args -update-matrix`.
 
 <!-- adapter-capabilities:begin -->
 | Capability | claude | codex | opencode | forestage | simulator | generic | goose |
