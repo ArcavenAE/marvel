@@ -47,6 +47,7 @@ still exercises the whole loop: manifest, reconcile, pane, session, teardown.
 | `context-feed` | The cooperative statusline feed that gives an interactive session a real CTX%. |
 | `context-feed-off` | The same team without the feed, so CTX% stays absent. The "before" half of the pair. |
 | `auto-shift` | Shifting a role automatically on context pressure, triggered on a token remainder rather than a percentage. |
+| `auto-shift-max-age` | Shifting on context pressure or on a seat's age, whichever holds first, with the handoff a seat is asked for before it is replaced. |
 | `shift-demo` | An operator-driven rolling shift with heartbeats. |
 
 Read `context-feed-off` and `context-feed` together. They are the same team and

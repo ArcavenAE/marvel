@@ -204,6 +204,50 @@ adapter (claude, forestage, generic). They coexist in the same team.
 Claude Code, workers run forestage with personas, and a monitor runs
 a shell script for health scraping.
 
+### A first message for an interactive seat
+
+An interactive seat starts at an empty prompt and waits for someone to type.
+`runtime.prompt` fixes that: for an interactive claude role, marvel passes it
+as the harness's first message at launch, so the seat has a first turn without
+a person. Headless roles already carry `runtime.prompt` as their one request.
+
+```toml
+[team.role.runtime]
+image = "claude"
+command = "claude"
+prompt = "Read the queue and start on the first item."
+```
+
+A claude seat that replaces another, from a shift or a rotation, also gets a
+fixed first message that marvel writes from values it holds: it is a successor
+to the named seat, it should read that seat's handoff first (at the role's
+`shift.handoff` path when one is declared), and, when marvel attached it to a
+bus, it should then drain its inbox. The role's own `runtime.prompt` follows.
+To turn the successor message off, for a role whose `runtime.prompt` already
+covers succession:
+
+```toml
+[team.role.runtime]
+successor_prompt = false
+```
+
+marvel adds a first message only when `command` is the bare `claude`. A wrapper
+owns its own command line, so marvel exports the composed text as
+`MARVEL_FIRST_PROMPT` and the wrapper can pass it on. Only the claude adapter
+does either today; a codex or opencode successor gets no first message.
+
+`apply` refuses nothing on this. The daemon writes an advisory to its log, not
+to the output of `marvel apply`, for each of these:
+
+- an interactive role declares `runtime.prompt` on a harness that cannot take
+  it as a first message yet (only claude does), so the prompt is not delivered;
+- an interactive role declares neither `runtime.prompt` nor `shift.handoff`, so
+  a fresh seat of it starts idle at an empty prompt.
+
+Each spawn records `session.first-prompt` with the source of its first message
+and its byte length, never the text. The event records what marvel passed, not
+what the harness took.
+
 ### With a team budget
 
 ```yaml
@@ -746,6 +790,71 @@ drain all the same.
 running long enough that their context is stale. A configuration
 change needs to propagate. You want fresh agents without losing
 the team structure.
+
+### Automatic shifts
+
+A role can also shift itself. Declare a `[team.role.shift]` table and marvel
+decides when a seat of that role is due, so nobody has to run `marvel shift`
+by hand. Two conditions exist, and the table takes one directly or a list under
+`any`, where the first condition that holds acts:
+
+- `on = "context-pressure"` with `headroom_tokens`: the seat's remaining
+  context has fallen to that many tokens. Declare `runtime.context_window`:
+  with it, `apply` refuses a `headroom_tokens` at or above the window. Without
+  it, a headroom at or above the window that marvel resolves at runtime makes
+  the condition hold on the first fresh reading.
+- `on = "max-age"` with `max_age`: the seat is older than that (at least 15
+  minutes). It is the backstop for a seat whose context marvel cannot meter, or
+  one stuck at a prompt that never fills its context. `quiet_for` (default 5m)
+  waits for the seat to go quiet first, and `max_defer` (default 30m) is how
+  long past `max_age` marvel waits for that before it asks anyway, however busy
+  the seat is.
+
+marvel never replaces a seat that has not written its handoff. When a condition
+holds it types a request into the pane, naming the handoff path, the marker and
+the window when the role declares them, and records
+`team.shift-handoff-requested`. It then watches the handoff file. When the last
+non-empty line is `handoff_marker`, the shift starts and the successor gets
+`MARVEL_PREDECESSOR`. Only a regular file counts: a handoff path that is a
+symlink never completes. If the window (`handoff_window`, default 5m) ends with no
+marker, or the role declares no handoff path, marvel records
+`team.shift-handoff-missing` and leaves the seat running; the team's supervisor
+decides whether to call `marvel shift`.
+
+```toml
+[team.role.shift]
+handoff = "/tmp/marvel-handoffs/{session}.md"
+handoff_marker = "END HANDOFF"
+handoff_window = "5m"
+any = [
+  { on = "context-pressure", headroom_tokens = 120000 },
+  { on = "max-age", max_age = "8h", quiet_for = "5m", max_defer = "30m" },
+]
+```
+
+`examples/auto-shift-max-age.toml` is this role as a runnable manifest, and
+`marvel events` shows each step.
+
+Two notices come from the reading side:
+
+- `apply` writes two advisories to the daemon's log, not to its own output. An
+  interactive role with one replica and no max-age trigger gets one saying that
+  a seat of it runs until something else ends it. A context-pressure arm
+  without `runtime.context_window` gets the other. Neither refuses the
+  manifest.
+- If a max-age request passes `max_defer` and the escalation never reached the
+  team's supervisor, marvel records `team.shift-request-stuck` once. The seat
+  may never have been asked and nobody was told. It only reports: marvel does
+  not retry or shift on it.
+
+`apply` refuses:
+
+- a max-age condition on a headless role, or on a role with more than one
+  replica;
+- a context-pressure condition on a role that declares no `handoff` and
+  `handoff_marker`;
+- `handoff` without `handoff_marker`, or the reverse;
+- keys this marvel does not know.
 
 ## Connecting to remote daemons
 
