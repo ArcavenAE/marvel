@@ -855,10 +855,13 @@ stderr with its outcome (`answered`, `unreachable`, `no_answer_in_time`,
 `auth_refused` and so on). A cluster that fails shows its line and leaves the
 other rows alone.
 
-Two config entries can reach one daemon. When marvel can show that from the
-same address, the same socket or the same verified host key, it reads the
-daemon once. The second entry prints a `same_daemon` line that names the first
-and adds no rows.
+Two config entries can reach one daemon. When they have the same address,
+marvel dials once, and the second entry reads `same_daemon` and adds no rows.
+When they reach the same socket or the same verified host key, both are read.
+If the daemon reports the same pid and start time to each, the second entry
+reads `same_daemon`, names the first, and shows only the rows the first did
+not. If the two readings do not agree, or the timer ran out, both entries stay
+separate and both sets of rows show.
 
 With `-o json` or `-o yaml` the output is one object,
 `{"clusters": [...], "sessions": [...]}`: one record per cluster with its
@@ -866,9 +869,10 @@ outcome, and the rows of the clusters that answered, each with a `cluster`
 field; the status lines are not printed. `-o` and `-w` cannot be combined.
 
 The exit code is 0 when every cluster answered, 10 when some did and some did
-not, and the failure's own code when none answered for one reason (6
-unreachable, 7 no answer in time, 8 auth refused, 9 host key). It is 11 when
-none answered and the reasons differ. `--cluster` with a list and
+not, and the failure's own code when none answered for one reason (5 an
+unusable answer, 6 unreachable, 7 no answer in time, 8 auth refused, 9 host
+key). It is 11 when none answered and the reasons differ. A cluster that is
+still starting also gives 10, even when every cluster returned rows. `--cluster` with a list and
 `--all-clusters` apply to `get sessions` only, cannot be combined with each
 other or with `--socket` or `--identity`, and are refused inside a marvel seat.
 
