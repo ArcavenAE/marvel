@@ -774,3 +774,25 @@ func TestGooseStderrTailReadsTheNewestLaunchAndRedacts(t *testing.T) {
 		t.Error("a relative home was read")
 	}
 }
+
+// The wrapper requires its stderr file, so a headless launch with no absolute
+// home to put one in is refused and not launched unwatched.
+func TestGooseHeadlessWithoutAnAbsoluteHomeIsRefused(t *testing.T) {
+	t.Parallel()
+	ctx := gooseContext(t, func(rt *api.Runtime) {
+		headless(rt)
+		rt.Goose.Posture = api.GoosePostureAuto
+	})
+	ctx.SandboxProfile = "/etc/marvel/goose.sb"
+	ctx.HarnessHomePath = "relative/home"
+	res, err := (&Goose{}).Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if strings.Contains(res.Command, "goose-watch") || strings.Contains(res.Command, "'goose' 'run'") {
+		t.Errorf("command %q launched goose without a stderr file", res.Command)
+	}
+	if !strings.Contains(res.Command, "'goose-refuse' 'relative-root'") {
+		t.Errorf("command %q is not the relative-root stub", res.Command)
+	}
+}

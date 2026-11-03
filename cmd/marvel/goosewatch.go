@@ -22,12 +22,16 @@ func newGooseWatchCmd() *cobra.Command {
 		stderrCap         int
 	)
 	cmd := &cobra.Command{
-		Use:           "goose-watch --wall D --idle D --grace D [--stderr-file F] [--stderr-cap N] -- <command> [args...]",
+		Use:           "goose-watch --wall D --idle D --grace D --stderr-file F [--stderr-cap N] -- <command> [args...]",
 		Short:         "Run a goose command under the watchdog (internal)",
 		Hidden:        true,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if stderrFile == "" {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "usage: goose-watch --wall D --idle D --grace D --stderr-file F [--stderr-cap N] -- <command> [args...]")
+				return &exitError{Code: goosewatch.ExitUsage, Msg: "goose-watch: --stderr-file is required; the command was not started"}
+			}
 			if cmd.ArgsLenAtDash() != 0 || len(args) == 0 {
 				return &exitError{Code: goosewatch.ExitCannotRun, Msg: "goose-watch: the command to run goes after --"}
 			}
@@ -52,7 +56,7 @@ func newGooseWatchCmd() *cobra.Command {
 	f.DurationVar(&wall, "wall", 0, "wall-clock limit for the run")
 	f.DurationVar(&idle, "idle", 0, "idle limit: no stream line for this long, paused while a tool call is open")
 	f.DurationVar(&grace, "grace", 0, "how long the command has after TERM before KILL")
-	f.StringVar(&stderrFile, "stderr-file", "", "file that receives the command's stderr, held to --stderr-cap")
+	f.StringVar(&stderrFile, "stderr-file", "", "file that receives the command's stderr, held to --stderr-cap (required)")
 	f.IntVar(&stderrCap, "stderr-cap", 0, "size limit of the stderr file in bytes (default 65536)")
 	return cmd
 }

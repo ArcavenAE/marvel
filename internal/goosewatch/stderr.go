@@ -28,9 +28,6 @@ type stderrSink struct {
 func newStderrSink(cfg Config) *stderrSink { return &stderrSink{cfg: cfg} }
 
 func (s *stderrSink) open() error {
-	if s.cfg.StderrFile == "" {
-		return nil
-	}
 	limit := s.cfg.StderrCap
 	if limit <= 0 {
 		limit = defaultStderrCap
@@ -66,15 +63,10 @@ func (s *stderrSink) copyFrom(r io.Reader) {
 	}
 }
 
-// write sends p to the file under the cap, or straight to the wrapper's stderr
-// when there is no file.
+// write sends p to the file under the cap.
 func (s *stderrSink) write(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.f == nil {
-		_, _ = s.cfg.Stderr.Write(p)
-		return
-	}
 	if s.headLeft > 0 {
 		n := min(s.headLeft, len(p))
 		_, _ = s.f.Write(p[:n])
@@ -98,8 +90,9 @@ func (s *stderrSink) own(format string, args ...any) {
 }
 
 // finish writes the end of the file: the max-gap line, the drop marker and the
-// tail, then on a kill the watchdog line, so a kill's line is the last one.
-func (s *stderrSink) finish(tr *tracker, killedFor string) {
+// tail, then lastLine if there is one (the watchdog line on a kill, the
+// forwarded-signal line on a pane kill), so that line is the last one.
+func (s *stderrSink) finish(tr *tracker, lastLine string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []byte
@@ -121,12 +114,9 @@ func (s *stderrSink) finish(tr *tracker, killedFor string) {
 		out = append(out, s.tail...)
 		startLine(s.tail[len(s.tail)-1])
 	}
-	if killedFor != "" {
-		out = fmt.Appendf(out, "watchdog: %s\n", killedFor)
-	}
-	if s.f == nil {
-		_, _ = s.cfg.Stderr.Write(out)
-		return
+	if lastLine != "" {
+		out = append(out, lastLine...)
+		out = append(out, '\n')
 	}
 	_, _ = s.f.Write(out)
 }

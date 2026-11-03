@@ -631,3 +631,48 @@ func TestParseALineAtTheLimitIsRead(t *testing.T) {
 func textMessage(text string) string {
 	return `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"` + text + `"}],"metadata":{}}}` + "\n"
 }
+
+// The wrapper also writes the marker when a signal sent to it (a pane kill) ends
+// the run. The session ends with exit 128 plus the signal, "stopped: <SIG>", and
+// the denials so far, and the same last-line-only rule applies.
+func TestParseSignalMarkerEndsTheSessionWithTheDenialsSoFar(t *testing.T) {
+	t.Parallel()
+	resp := `{"type":"message","message":{"role":"user","content":[{"type":"toolResponse","id":"a","toolResult":{"status":"success","value":{"content":[{"type":"text","text":"no"}],"isError":true}}}],"metadata":{}}}` + "\n"
+	for sig, exit := range map[string]int{"TERM": 143, "HUP": 129, "INT": 130} {
+		t.Run(sig, func(t *testing.T) {
+			t.Parallel()
+			got := parseString(t, resp+`{"type":"marvel.watchdog","reason":"signal","signal":"`+sig+`"}`+"\n")
+			wantKinds(t, got, events.KindToolResult, events.KindSessionEnded)
+			end := ended(t, got[1])
+			if end.ExitCode != exit || end.Reason != "stopped: "+sig {
+				t.Errorf("session.ended = %+v, want exit %d and stopped: %s", end, exit, sig)
+			}
+			if end.Metering == nil || len(end.Metering.PermissionDenials) != 1 {
+				t.Errorf("metering = %+v, want the denial so far", end.Metering)
+			}
+		})
+	}
+}
+
+func TestParseSignalMarkerNotLastOrMalformedIsUnmapped(t *testing.T) {
+	t.Parallel()
+	sigLine := `{"type":"marvel.watchdog","reason":"signal","signal":"TERM"}`
+	got := parseString(t, sigLine+"\n"+completeLine+"\n")
+	wantKinds(t, got, events.KindError, events.KindSessionEnded)
+	if d := got[0].Data.(events.ErrorData); d.Kind != events.ErrKindUnmapped {
+		t.Errorf("error = %+v", d)
+	}
+	for _, line := range []string{
+		`{"type":"marvel.watchdog","reason":"signal"}`,
+		`{"type":"marvel.watchdog","reason":"signal","signal":"KILL"}`,
+		`{"type":"marvel.watchdog","reason":"signal","signal":"term"}`,
+	} {
+		got := parseString(t, line+"\n")
+		wantKinds(t, got, events.KindError)
+		if d := got[0].Data.(events.ErrorData); d.Kind != events.ErrKindUnmapped {
+			t.Errorf("%s: error = %+v", line, d)
+		}
+	}
+	// After a complete line it is unmapped as well.
+	wantKinds(t, parseString(t, completeLine+"\n"+sigLine+"\n"), events.KindSessionEnded, events.KindError)
+}

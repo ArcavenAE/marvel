@@ -50,7 +50,11 @@ func runSh(t *testing.T, script string, wall, idle time.Duration, mod func(*Conf
 	if err != nil {
 		t.Fatalf("read stderr file: %v", err)
 	}
-	return result{code: code, stdout: cfg.Stdout.(*bytes.Buffer).String(), stderr: string(b), elapsed: elapsed}
+	out := ""
+	if buf, ok := cfg.Stdout.(*bytes.Buffer); ok {
+		out = buf.String()
+	}
+	return result{code: code, stdout: out, stderr: string(b), elapsed: elapsed}
 }
 
 func lastLine(s string) string {
@@ -237,34 +241,95 @@ func TestBadConfigExits126(t *testing.T) {
 	}
 }
 
-// With no stderr file, goose's stderr passes through to the wrapper's own.
-func TestNoStderrFilePassesStderrThrough(t *testing.T) {
+// The stderr file is required: without it the wrapper exits 2 and goose is never
+// started, so there is no uncapped path for goose's stderr.
+func TestNoStderrFileIsAUsageErrorAndGooseNeverStarts(t *testing.T) {
 	t.Parallel()
+	started := filepath.Join(t.TempDir(), "started")
 	var errBuf bytes.Buffer
 	code := Run(Config{
-		Argv: []string{"/bin/sh", "-c", "echo oops >&2"}, Wall: 5 * time.Second, Idle: 5 * time.Second, Grace: time.Second,
+		Argv: []string{"/bin/sh", "-c", "touch " + started}, Wall: 5 * time.Second, Idle: 5 * time.Second, Grace: time.Second,
 		Stdout: &bytes.Buffer{}, Stderr: &errBuf, Signals: make(chan os.Signal),
 	})
-	if code != 0 || !strings.HasPrefix(errBuf.String(), "oops\n") {
-		t.Errorf("exit %d, stderr %q", code, errBuf.String())
+	if code != ExitUsage {
+		t.Errorf("exit = %d, want %d", code, ExitUsage)
+	}
+	if !strings.Contains(errBuf.String(), "--stderr-file is required") {
+		t.Errorf("stderr = %q", errBuf.String())
+	}
+	if _, err := os.Stat(started); err == nil {
+		t.Error("goose was started without a stderr file")
 	}
 }
 
 // A signal sent to the wrapper (a pane kill) is forwarded to goose's group and
-// the run ends as goose ends, with no watchdog marker.
-func TestSignalsAreForwardedWithoutAMarker(t *testing.T) {
+// ends the run with 128 plus the signal. It is not a watchdog kill: the marker
+// carries reason "signal" and the signal's name, and the last stderr line says
+// the wrapper forwarded it, so the reap never reads it as a watchdog kill.
+func TestSignalsAreForwardedWithTheirOwnMarker(t *testing.T) {
+	t.Parallel()
+	for sig, name := range map[syscall.Signal]string{syscall.SIGTERM: "TERM", syscall.SIGHUP: "HUP", syscall.SIGINT: "INT"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			sigs := make(chan os.Signal, 1)
+			go func() {
+				time.Sleep(300 * time.Millisecond)
+				sigs <- sig
+			}()
+			r := runSh(t, `sleep 30`, 10*time.Second, 5*time.Second, func(c *Config) { c.Signals = sigs })
+			if r.code != 128+int(sig) {
+				t.Errorf("exit = %d, want %d", r.code, 128+int(sig))
+			}
+			want := `{"type":"marvel.watchdog","reason":"signal","signal":"` + name + `"}`
+			if got := lastLine(r.stdout); got != want {
+				t.Errorf("last stdout line = %q, want %q", got, want)
+			}
+			if got := lastLine(r.stderr); got != "wrapper: forwarded "+name {
+				t.Errorf("last stderr line = %q, want %q", got, "wrapper: forwarded "+name)
+			}
+			if strings.Contains(r.stderr, "watchdog: idle") || strings.Contains(r.stderr, "watchdog: wall-clock") {
+				t.Errorf("a forwarded signal was reported as a watchdog kill: %q", r.stderr)
+			}
+			if r.elapsed > 3*time.Second {
+				t.Errorf("ended after %v", r.elapsed)
+			}
+		})
+	}
+}
+
+// failWriter is a sink the reader has already closed.
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, syscall.EPIPE }
+
+// The marker write is best effort: with the sink already closed it fails
+// silently and the run still ends as it was going to, a forwarded signal with
+// 128 plus the signal, and a watchdog kill with 124.
+func TestMarkerWriteToAClosedSinkIsBestEffort(t *testing.T) {
 	t.Parallel()
 	sigs := make(chan os.Signal, 1)
 	go func() {
 		time.Sleep(300 * time.Millisecond)
 		sigs <- syscall.SIGTERM
 	}()
-	r := runSh(t, `sleep 30`, 10*time.Second, 5*time.Second, func(c *Config) { c.Signals = sigs })
+	r := runSh(t, `printf '%s\n' '`+textLine+`'; sleep 30`, 10*time.Second, 5*time.Second, func(c *Config) {
+		c.Stdout = failWriter{}
+		c.Signals = sigs
+	})
+	// Result stdout is read from a *bytes.Buffer by runSh, so it is empty here.
 	if r.code != 128+int(syscall.SIGTERM) {
-		t.Errorf("exit = %d, want %d", r.code, 128+int(syscall.SIGTERM))
+		t.Errorf("signal: exit = %d, want %d", r.code, 128+int(syscall.SIGTERM))
 	}
-	if strings.Contains(r.stdout, "marvel.watchdog") || strings.Contains(r.stderr, "watchdog: wall") || strings.Contains(r.stderr, "watchdog: idle") {
-		t.Errorf("a forwarded signal was reported as a watchdog kill: %q %q", r.stdout, r.stderr)
+	if got := lastLine(r.stderr); got != "wrapper: forwarded TERM" {
+		t.Errorf("signal: last stderr line = %q", got)
+	}
+
+	r = runSh(t, `printf '%s\n' '`+textLine+`'; sleep 30`, 10*time.Second, time.Second, func(c *Config) { c.Stdout = failWriter{} })
+	if r.code != ExitWatchdog {
+		t.Errorf("watchdog: exit = %d, want %d", r.code, ExitWatchdog)
+	}
+	if got := lastLine(r.stderr); got != "watchdog: idle" {
+		t.Errorf("watchdog: last stderr line = %q", got)
 	}
 }
 

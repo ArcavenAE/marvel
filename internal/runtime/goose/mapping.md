@@ -28,6 +28,7 @@ After the first object, a line that does not start with `{` is
 | `complete` | totals | `session.ended{exit_code:0,usage,metering}` |
 | `error` | `{error:"..."}` | `error{kind:"vendor",message}` |
 | `marvel.watchdog` | `{reason:"idle"\|"wall-clock"}` | `session.ended{exit_code:124,reason:"watchdog: <reason>"}` with the denials so far, only as the last line (divergence 8) |
+| `marvel.watchdog` | `{reason:"signal",signal:"TERM"\|"HUP"\|"INT"}` | `session.ended{exit_code:143\|129\|130,reason:"stopped: <SIG>"}` with the denials so far, only as the last line (divergence 8) |
 
 One `message` line can carry many content items (R9: nine parallel
 `toolRequest` items on one line, nine `toolResponse` items on the next). Items
@@ -105,12 +106,22 @@ matching `toolRequest` and the call id.
    `harness_session_id` is empty.
 8. **`marvel.watchdog` is not a goose line.** The watchdog wrapper
    (`marvel goose-watch`, `internal/goosewatch`, v1.1 C3) writes this one line
-   to the stream when it ends a run on the wall-clock or idle limit, because the
-   parser cannot see an exit code and a killed run has no `complete` line. The
-   parser accepts it only as the stream's last line: it is held until the next
-   line or EOF, and any later line, a `complete` before it, or a reason other
-   than `idle` or `wall-clock` makes it `error{kind:"unmapped"}`, so goose output
-   cannot end a session by imitating it. It maps to `session.ended` with exit
-   code 124, `Reason` "watchdog: idle" or "watchdog: wall-clock", and the denial
-   list so far. Requests still open at the kill are not listed: C4 counts
-   responses only, and an open request is not-ran.
+   to the stream when it ends a run, because the parser cannot see an exit code
+   and a killed run has no `complete` line. It has two forms:
+   - On the wall-clock or idle limit: `{"reason":"idle"}` or
+     `{"reason":"wall-clock"}`. It maps to `session.ended` with exit code 124 and
+     `Reason` "watchdog: idle" or "watchdog: wall-clock".
+   - When a TERM, HUP or INT sent to the wrapper (a pane kill) is forwarded to
+     goose: `{"reason":"signal","signal":"TERM"}` and so on. It maps to
+     `session.ended` with exit code 143, 129 or 130 and `Reason` "stopped: TERM",
+     "stopped: HUP" or "stopped: INT". It is not a watchdog kill, and the
+     wrapper's last stderr line for it is `wrapper: forwarded <SIG>`, never a
+     `watchdog:` line. The write is best effort and fails silently if the sink is
+     already closed.
+
+   Both carry the denial list so far. The parser accepts the line only as the
+   stream's last line: it is held until the next line or EOF, and any later
+   line, a `complete` before it, or an unknown reason or signal makes it
+   `error{kind:"unmapped"}`, so goose output cannot end a session by imitating
+   it. Requests still open at the end are not listed: C4 counts responses only,
+   and an open request is not-ran.

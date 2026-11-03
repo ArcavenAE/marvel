@@ -15,6 +15,13 @@
 // last line of stdout, and exits 124. goose never exits 124 (it exits 1 for
 // every failure), so the reap can tell a kill from a goose failure.
 //
+// A TERM, HUP or INT sent to the wrapper (a pane kill) is forwarded to goose's
+// group with the same grace and ends the run with exit 128 plus the signal. It is
+// not a watchdog kill, so its stderr line is "wrapper: forwarded <SIG>", never a
+// "watchdog:" line, and its marker line carries reason "signal" and the signal's
+// name so the parser still ends the session with the denials so far. The marker
+// write is best effort: if the sink is already closed it fails silently.
+//
 // Tool tracking reads each stream line of up to maxTrackedLine bytes. A longer
 // line is forwarded whole and counts as activity, but a toolRequest inside it is
 // not tracked, so the idle timer does not pause for that tool, and a tool that
@@ -57,9 +64,23 @@ const (
 	ReasonIdle      = "idle"
 )
 
+// ReasonSignal is the marker reason for a run ended by a signal sent to the
+// wrapper, which is not a watchdog kill.
+const ReasonSignal = "signal"
+
 // MarkerType is the type of the one line the wrapper writes to the stream when
 // it ends a run. It is namespaced so it cannot collide with a goose type.
 const MarkerType = "marvel.watchdog"
+
+// ExitUsage is the exit code for a missing required option.
+const ExitUsage = 2
+
+// signalNames are the signals the wrapper forwards and reports.
+var signalNames = map[syscall.Signal]string{
+	syscall.SIGTERM: "TERM",
+	syscall.SIGHUP:  "HUP",
+	syscall.SIGINT:  "INT",
+}
 
 // maxTrackedLine is the longest stream line whose content is read for tool ids.
 const maxTrackedLine = 4 << 20
@@ -76,8 +97,8 @@ type Config struct {
 	Idle time.Duration
 	// Grace is how long goose has after TERM before the group is killed.
 	Grace time.Duration
-	// StderrFile receives goose's stderr, held to StderrCap bytes. Empty means
-	// goose's stderr is copied to Stderr uncapped.
+	// StderrFile receives goose's stderr, held to StderrCap bytes. It is
+	// required: the wrapper has no uncapped path for goose's stderr.
 	StderrFile string
 	StderrCap  int
 
@@ -85,8 +106,7 @@ type Config struct {
 	Stdin io.Reader
 	// Stdout is the stream sink.
 	Stdout io.Writer
-	// Stderr is the wrapper's own stderr, used for its own errors and, with no
-	// StderrFile, for goose's.
+	// Stderr is the wrapper's own stderr, used for its usage errors.
 	Stderr io.Writer
 	// Signals delivers the signals to forward to goose; nil subscribes to TERM,
 	// HUP and INT.
@@ -99,6 +119,10 @@ func Run(cfg Config) int {
 	if len(cfg.Argv) == 0 || cfg.Wall <= 0 || cfg.Idle <= 0 || cfg.Grace <= 0 {
 		_, _ = fmt.Fprintln(cfg.Stderr, "goose-watch: a command and positive --wall, --idle and --grace are required")
 		return ExitCannotRun
+	}
+	if cfg.StderrFile == "" {
+		_, _ = fmt.Fprintln(cfg.Stderr, "goose-watch: --stderr-file is required; goose was not started")
+		return ExitUsage
 	}
 	errs := newStderrSink(cfg)
 	if err := errs.open(); err != nil {
@@ -161,7 +185,8 @@ func Run(cfg Config) int {
 	}()
 
 	exited := make(chan struct{})
-	var reason string
+	var reason, forwarded string
+	var forwardedNum syscall.Signal
 	var reasonMu sync.Mutex
 	endRun := func(r string) {
 		reasonMu.Lock()
@@ -191,9 +216,14 @@ func Run(cfg Config) int {
 			case <-monitorDone:
 				return
 			case sig := <-sigs:
-				// A forwarded signal is not a watchdog kill: the run ends as
-				// goose ends, with no marker.
+				// A forwarded signal is not a watchdog kill: it has its own
+				// marker reason and its own last stderr line.
 				if s, ok := sig.(syscall.Signal); ok {
+					reasonMu.Lock()
+					if name, known := signalNames[s]; known && forwarded == "" {
+						forwarded, forwardedNum = name, s
+					}
+					reasonMu.Unlock()
 					_ = syscall.Kill(-pgid, s)
 					go killAfter(pgid, cfg.Grace, exited)
 				}
@@ -224,19 +254,41 @@ func Run(cfg Config) int {
 	_ = errR.Close()
 
 	reasonMu.Lock()
-	killedFor := reason
+	killedFor, sigName, sigNum := reason, forwarded, forwardedNum
 	reasonMu.Unlock()
 
-	errs.finish(tr, killedFor)
-	if killedFor != "" {
-		line, _ := json.Marshal(struct {
-			Type   string `json:"type"`
-			Reason string `json:"reason"`
-		}{MarkerType, killedFor})
-		_, _ = cfg.Stdout.Write(append(line, '\n'))
+	lastLine := ""
+	switch {
+	case killedFor != "":
+		lastLine = "watchdog: " + killedFor
+	case sigName != "":
+		lastLine = "wrapper: forwarded " + sigName
+	}
+	errs.finish(tr, lastLine)
+	switch {
+	case killedFor != "":
+		writeMarker(cfg.Stdout, killedFor, "")
 		return ExitWatchdog
+	case sigName != "":
+		writeMarker(cfg.Stdout, ReasonSignal, sigName)
+		return 128 + int(sigNum)
 	}
 	return exitCode(cmd.ProcessState, waitErr)
+}
+
+// writeMarker writes the one marvel-authored line that ends the stream. It is
+// best effort: a sink that is already closed fails silently, and the run still
+// ends as it was going to.
+func writeMarker(w io.Writer, reason, sig string) {
+	line, err := json.Marshal(struct {
+		Type   string `json:"type"`
+		Reason string `json:"reason"`
+		Signal string `json:"signal,omitempty"`
+	}{MarkerType, reason, sig})
+	if err != nil {
+		return
+	}
+	_, _ = w.Write(append(line, '\n'))
 }
 
 // exitCode is goose's exit status, or 128 plus the signal that ended it.

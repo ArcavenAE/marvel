@@ -38,8 +38,15 @@ const WatchdogType = "marvel.watchdog"
 // watchdogExit is the exit code the wrapper ends a killed run with.
 const watchdogExit = 124
 
+// stopSignals are the signals the wrapper reports when it forwards one to goose,
+// with the exit code it then ends with (128 plus the signal).
+var stopSignals = map[string]int{"TERM": 143, "HUP": 129, "INT": 130}
+
+// heldWatchdog is the wrapper's marker line, held until it is known to be last.
+// reason is the text for session.ended and exit its exit code.
 type heldWatchdog struct {
 	reason string
+	exit   int
 	raw    json.RawMessage
 }
 
@@ -223,8 +230,8 @@ func (p *Parser) finishWatchdog(emit func(events.Event)) {
 		return
 	}
 	data := events.SessionEndedData{
-		Reason:   "watchdog: " + w.reason,
-		ExitCode: watchdogExit,
+		Reason:   w.reason,
+		ExitCode: w.exit,
 	}
 	if len(p.denied) > 0 {
 		data.Metering = &events.Metering{PermissionDenials: append([]events.PermissionDenial(nil), p.denied...)}
@@ -295,13 +302,19 @@ func (p *Parser) handleLine(line []byte, emit func(events.Event)) {
 	case WatchdogType:
 		var w struct {
 			Reason string `json:"reason"`
+			Signal string `json:"signal"`
 		}
 		_ = json.Unmarshal(raw, &w)
-		if w.Reason != "idle" && w.Reason != "wall-clock" {
+		switch {
+		case w.Reason == "idle" || w.Reason == "wall-clock":
+			p.watchdog = &heldWatchdog{reason: "watchdog: " + w.Reason, exit: watchdogExit, raw: raw}
+		case w.Reason == "signal" && stopSignals[w.Signal] != 0:
+			// A pane kill the wrapper forwarded: not a watchdog kill, but the
+			// session still ends with the denials so far.
+			p.watchdog = &heldWatchdog{reason: "stopped: " + w.Signal, exit: stopSignals[w.Signal], raw: raw}
+		default:
 			emit(p.unmapped("marvel.watchdog line without a known reason", raw))
-			return
 		}
-		p.watchdog = &heldWatchdog{reason: w.Reason, raw: raw}
 	case "message":
 		p.handleMessage(head.Message, raw, emit)
 	case "complete":

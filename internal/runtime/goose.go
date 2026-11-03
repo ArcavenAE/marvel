@@ -99,6 +99,11 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// marvel binary, which is not in a container image, and it needs the binary
 	// to be found.
 	var watchExe string
+	if headless && stderrFile == "" {
+		// The wrapper requires its stderr file, so a launch with no absolute home
+		// to put one in has no bound to run under.
+		return gooseRefusalResult(ctx, env, stderrFile, gooseRefuseRelativeRoot), nil
+	}
 	if headless {
 		exe, err := gooseExecutable()
 		if ctx.Placement == api.PlacementContainer || err != nil {
@@ -186,9 +191,7 @@ func gooseWatchCommand(ctx *LaunchContext, exe, binary string, gooseArgs []strin
 		"--idle", gooseIdleLimit.String(),
 		"--grace", gooseGrace.String(),
 	}
-	if stderrFile != "" {
-		args = append(args, "--stderr-file", stderrFile, "--stderr-cap", fmt.Sprint(gooseStderrCap))
-	}
+	args = append(args, "--stderr-file", stderrFile, "--stderr-cap", fmt.Sprint(gooseStderrCap))
 	// The command may carry arguments of its own; each field is quoted apart.
 	args = append(args, "--")
 	args = append(args, strings.Fields(binary)...)
