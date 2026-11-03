@@ -716,7 +716,11 @@ type Role struct {
 	// ContainerImage is the image a seat of this role runs in when its placement
 	// resolves to container. Empty means none: such a seat is refused, and no
 	// default image is ever substituted.
-	ContainerImage string        `toml:"container_image,omitempty"`
+	ContainerImage string `toml:"container_image,omitempty"`
+	// SandboxProfile is the absolute path of the sandbox-exec profile a seat of
+	// this role runs under (darwin only). Empty means none. The key name awaits
+	// the operator's ratification.
+	SandboxProfile string        `toml:"sandbox_profile,omitempty"`
 	Runtime        Runtime       `toml:"runtime"`
 	RestartPolicy  RestartPolicy `toml:"restart_policy,omitempty"`
 	Permissions    string        `toml:"permissions,omitempty"`

@@ -77,7 +77,7 @@ func TestSpawnEventCarriesTheFreeMemoryReading(t *testing.T) {
 	t.Parallel()
 	mgr, ring := firstPromptManager(t)
 	mgr.freeMemory = func() (int, bool) { return 42, true }
-	mgr.announceSpawn(reviewerSpawn(""), "%1", runtime.FirstPrompt{Source: runtime.FirstPromptRole, Bytes: 5})
+	mgr.announceSpawn(reviewerSpawn(""), "%1", runtime.FirstPrompt{Source: runtime.FirstPromptRole, Bytes: 5}, nil)
 	if got, want := createdMessage(t, ring), "pane %1, host free memory 42%"; got != want {
 		t.Errorf("session.created message = %q, want %q", got, want)
 	}
@@ -87,7 +87,7 @@ func TestSpawnEventWithoutAReadingKeepsItsOldMessage(t *testing.T) {
 	t.Parallel()
 	mgr, ring := firstPromptManager(t)
 	mgr.freeMemory = func() (int, bool) { return 0, false }
-	mgr.announceSpawn(reviewerSpawn(""), "%1", runtime.FirstPrompt{Source: runtime.FirstPromptRole, Bytes: 5})
+	mgr.announceSpawn(reviewerSpawn(""), "%1", runtime.FirstPrompt{Source: runtime.FirstPromptRole, Bytes: 5}, nil)
 	if got, want := createdMessage(t, ring), "pane %1"; got != want {
 		t.Errorf("session.created message = %q, want %q", got, want)
 	}
@@ -99,7 +99,7 @@ func TestSpawnEventRecordsAZeroReading(t *testing.T) {
 	t.Parallel()
 	mgr, ring := firstPromptManager(t)
 	mgr.freeMemory = func() (int, bool) { return 0, true }
-	mgr.announceSpawn(reviewerSpawn(""), "%1", runtime.FirstPrompt{Source: runtime.FirstPromptRole, Bytes: 5})
+	mgr.announceSpawn(reviewerSpawn(""), "%1", runtime.FirstPrompt{Source: runtime.FirstPromptRole, Bytes: 5}, nil)
 	if got, want := createdMessage(t, ring), "pane %1, host free memory 0%"; got != want {
 		t.Errorf("session.created message = %q, want %q", got, want)
 	}
@@ -110,7 +110,7 @@ func TestSpawnEventRecordsAZeroReading(t *testing.T) {
 func TestSpawnEventWithTheRealReaderStillAnnounces(t *testing.T) {
 	t.Parallel()
 	mgr, ring := firstPromptManager(t)
-	mgr.announceSpawn(reviewerSpawn(""), "%1", runtime.FirstPrompt{Source: runtime.FirstPromptRole, Bytes: 5})
+	mgr.announceSpawn(reviewerSpawn(""), "%1", runtime.FirstPrompt{Source: runtime.FirstPromptRole, Bytes: 5}, nil)
 	if got := createdMessage(t, ring); len(got) < len("pane %1") || got[:7] != "pane %1" {
 		t.Errorf("session.created message = %q, want it to start with %q", got, "pane %1")
 	}

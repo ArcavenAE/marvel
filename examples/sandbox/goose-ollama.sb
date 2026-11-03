@@ -1,0 +1,62 @@
+(version 1)
+; An example sandbox-exec profile for a headless goose seat that talks to a model
+; server on localhost. Point a role at a copy of it with sandbox_profile (an
+; absolute path). The key name awaits ratification.
+;
+; marvel starts the seat as
+;   /usr/bin/sandbox-exec -f <per-launch copy> -D K=V ... <command>
+; and fills exactly five parameters:
+;   SESSION_DIR  the seat's private harness home
+;   WORKDIR       the role's working directory
+;   MARVEL_BIN    marvel's own binary (goose-watch, goose-guard and the refusal
+;                 stub are subcommands of it)
+;   HARNESS_BIN   the harness binary, symlinks resolved
+;   REALHOME      the home of the user marvel runs as
+; SBPL applies the last matching rule, so a deny must come before the allows
+; that carve a path back out of it.
+
+(deny default)
+
+; exec: the harness and marvel's own binary. Nothing else, so a tool that slips
+; its permission gate cannot start a shell.
+(allow process-exec (literal (param "HARNESS_BIN")) (literal (param "MARVEL_BIN")))
+; the harness starts its extensions as child processes of itself, and the guard
+; process signals the harness's process group.
+(allow process-fork)
+(allow signal (target same-sandbox))
+; the runtime reads cpu count and os version, and marvel's process proof reads
+; the kernel's process table entries.
+(allow sysctl-read)
+
+; reads: stat anywhere, for path resolution; contents only where listed.
+(allow file-read-metadata)
+; the real home is unreadable. This rule comes before every allow that follows,
+; because workdirs and session homes usually sit under it.
+(deny file-read* (subpath (param "REALHOME")))
+; dyld, system frameworks, resolver and time zone data.
+(allow file-read* (literal "/") (subpath "/usr/lib") (subpath "/usr/share") (subpath "/System")
+  (subpath "/private/etc") (subpath "/private/var/db/timezone") (subpath "/dev"))
+; system trust roots and Security caches, for TLS.
+(allow file-read* (subpath "/Library/Keychains") (subpath "/Library/Security") (subpath "/private/var/db/mds"))
+; the two binaries must be readable to be exec'd.
+(allow file-read* (literal (param "HARNESS_BIN")) (literal (param "MARVEL_BIN")))
+; the seat's own trees.
+(allow file-read* (subpath (param "SESSION_DIR")) (subpath (param "WORKDIR")))
+
+; writes: the seat's own trees and /dev only.
+(allow file-write* (subpath (param "SESSION_DIR")) (subpath (param "WORKDIR")) (subpath "/dev"))
+
+; mach and shared memory: the system services the Security framework and the
+; resolver reach.
+(allow mach-lookup)
+(allow ipc-posix-shm)
+
+; network: the model server on localhost only.
+(allow network-outbound (remote ip "localhost:11434"))
+
+; explicit denies, last, as belts over deny default: ports of local services.
+(deny network-outbound (remote ip "localhost:4222"))
+(deny network-outbound (remote ip "localhost:4242"))
+(deny network-outbound (remote ip "localhost:7422"))
+(deny network-outbound (remote ip "localhost:7442"))
+(deny network-outbound (remote ip "localhost:3307"))
