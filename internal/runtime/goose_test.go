@@ -42,14 +42,21 @@ func headless(rt *api.Runtime) {
 	rt.Prompt = "say ok"
 }
 
-func TestGooseIsRegisteredAndHasNoStream(t *testing.T) {
+func TestGooseIsRegisteredAndHasAStream(t *testing.T) {
 	t.Parallel()
 	a := NewRegistry().Resolve("goose")
 	if a.Name() != "goose" {
 		t.Fatalf("Resolve(goose) = %q", a.Name())
 	}
-	if _, ok := a.(StreamCapable); ok {
-		t.Error("the adapter core reads no stream, so it must not claim StreamCapable")
+	sc, ok := a.(StreamCapable)
+	if !ok {
+		t.Fatal("goose writes stream-json headless, so it must be StreamCapable")
+	}
+	if !sc.SupportsStream(gooseContext(t, headless)) {
+		t.Error("a headless goose launch must support a stream")
+	}
+	if sc.SupportsStream(gooseContext(t, nil)) {
+		t.Error("an interactive goose launch draws a terminal UI and has no stream")
 	}
 	if _, ok := a.(SessionHomeAssigner); !ok {
 		t.Error("goose must give each seat a private root")
@@ -151,6 +158,32 @@ func TestGooseAutoLaunchesOnlyWhereASandboxIsInForce(t *testing.T) {
 	}
 }
 
+// With a sink offered, stdout goes to it and the spec names the goose format;
+// stderr keeps its per-launch file, so the stream holds only goose's JSON lines.
+func TestGooseHeadlessLaunchWiresTheStream(t *testing.T) {
+	t.Parallel()
+	ctx := gooseContext(t, func(rt *api.Runtime) {
+		headless(rt)
+		rt.Goose = &api.GooseRuntime{Posture: api.GoosePostureAuto}
+	})
+	ctx.Placement = api.PlacementContainer
+	ctx.StreamPath = "/run/marvel/goose.fifo"
+	res, err := (&Goose{headlessBuilt: true}).Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if res.Stream == nil || res.Stream.Format != StreamFormatGooseJSON || res.Stream.Path != ctx.StreamPath {
+		t.Fatalf("stream = %+v, want goose/stream-json at %s", res.Stream, ctx.StreamPath)
+	}
+	if want := "< '/dev/null' > '/run/marvel/goose.fifo' 2> '" + ctx.HarnessHomePath + "/stderr-"; !strings.Contains(res.Command, want) {
+		t.Errorf("command %q lacks %q", res.Command, want)
+	}
+	// The format is registered, so the manager can read the sink.
+	if _, err := NewStreamParser(res.Stream.Format, StreamParserConfig{}); err != nil {
+		t.Errorf("NewStreamParser(%s): %v", res.Stream.Format, err)
+	}
+}
+
 func TestGooseHeadlessLaunchLine(t *testing.T) {
 	t.Parallel()
 	ctx := gooseContext(t, func(rt *api.Runtime) {
@@ -163,19 +196,17 @@ func TestGooseHeadlessLaunchLine(t *testing.T) {
 		t.Fatalf("Prepare: %v", err)
 	}
 	for _, want := range []string{
-		"goose 'run' '-q'", "'--no-profile' '--with-builtin' 'developer,memory'", "'-t' 'say ok'", "< '/dev/null'", " 2> '" + ctx.HarnessHomePath + "/stderr-",
+		"goose 'run' '--output-format' 'stream-json' '-q'", "'--no-profile' '--with-builtin' 'developer,memory'", "'-t' 'say ok'", "< '/dev/null'", " 2> '" + ctx.HarnessHomePath + "/stderr-",
 	} {
 		if !strings.Contains(res.Command, want) {
 			t.Errorf("command %q lacks %q", res.Command, want)
 		}
 	}
-	for _, bad := range []string{"--resume", "stream-json"} {
-		if strings.Contains(res.Command, bad) {
-			t.Errorf("command %q carries %q: every launch is a new session, and nothing reads a stream yet", res.Command, bad)
-		}
+	if strings.Contains(res.Command, "--resume") {
+		t.Errorf("command %q carries --resume: every launch is a new session", res.Command)
 	}
-	if res.Stream != nil {
-		t.Error("the adapter core wires no stream")
+	if res.Stream != nil || strings.Contains(res.Command, "' > '") {
+		t.Errorf("no StreamPath was offered, yet stream = %+v and command = %q", res.Stream, res.Command)
 	}
 	if res.FirstPrompt.Source != FirstPromptRole {
 		t.Errorf("first prompt source = %q, want role", res.FirstPrompt.Source)
@@ -267,9 +298,28 @@ func TestGoosePrepareErrors(t *testing.T) {
 	if _, err := (&Goose{}).Prepare(ctx); !errors.Is(err, ErrNoCommand) {
 		t.Errorf("no command: err = %v, want ErrNoCommand", err)
 	}
-	ctx = gooseContext(t, func(rt *api.Runtime) { rt.Mode = api.RuntimeModeHeadless })
-	if _, err := (&Goose{headlessBuilt: true}).Prepare(ctx); !errors.Is(err, ErrNoPrompt) {
-		t.Errorf("headless, no prompt: err = %v, want ErrNoPrompt", err)
+}
+
+// A headless role with no prompt is refused with its own slug, with the
+// build-phase refusal lifted too: the guard does not depend on it. The reason is
+// never an error, because the manager would answer one with the raw command.
+func TestGooseHeadlessNoPromptIsRefusedWithItsOwnSlug(t *testing.T) {
+	t.Parallel()
+	for name, g := range map[string]*Goose{"production": {}, "build phase lifted": {headlessBuilt: true}} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := gooseContext(t, func(rt *api.Runtime) { rt.Mode = api.RuntimeModeHeadless })
+			res, err := g.Prepare(ctx)
+			if err != nil {
+				t.Fatalf("Prepare returned %v: the manager would launch the raw command", err)
+			}
+			if !strings.Contains(res.Command, "no-prompt") || strings.Contains(res.Command, "stream-not-built") {
+				t.Errorf("command %q does not name no-prompt alone", res.Command)
+			}
+			if strings.Contains(res.Command, "goose 'run'") {
+				t.Errorf("command %q starts goose", res.Command)
+			}
+		})
 	}
 }
 
@@ -411,7 +461,7 @@ func readFile(t *testing.T, path string) []byte {
 	return b
 }
 
-// Until the stream parser and the watchdog land, every headless goose launch
+// Until the watchdog lands, every headless goose launch
 // gets the stub with the build-phase slug, whatever its posture and placement,
 // and goose never starts. Interactive goose is unaffected.
 func TestGooseBuildPhaseRefusesEveryHeadlessLaunch(t *testing.T) {
@@ -589,8 +639,8 @@ func TestReadGooseStderrTailRefusesANonRegularFile(t *testing.T) {
 
 // The production setting is `&Goose{}`. A Prepare error is answered by the
 // manager with the raw command, so a headless role with an empty prompt must get
-// the stub and not ErrNoPrompt (the manager's fallback would start goose at the
-// host's GOOSE_MODE, with none of the seeded files).
+// the stub, named no-prompt, and not ErrNoPrompt (the manager's fallback would
+// start goose at the host's GOOSE_MODE, with none of the seeded files).
 func TestGooseHeadlessEmptyPromptIsRefused(t *testing.T) {
 	t.Parallel()
 	for _, placement := range []api.Placement{api.PlacementLocalhost, api.PlacementContainer, ""} {
@@ -602,8 +652,8 @@ func TestGooseHeadlessEmptyPromptIsRefused(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Prepare returned %v: the manager would launch the raw command", err)
 			}
-			if !strings.Contains(res.Command, "stream-not-built") {
-				t.Errorf("command %q does not name stream-not-built", res.Command)
+			if !strings.Contains(res.Command, "no-prompt") {
+				t.Errorf("command %q does not name no-prompt", res.Command)
 			}
 			if strings.Contains(res.Command, "goose 'run'") {
 				t.Errorf("command %q starts goose", res.Command)
@@ -640,5 +690,35 @@ func TestGooseRefusalWithoutAMarvelBinaryUsesTheShellStub(t *testing.T) {
 	}
 	if got := string(readFile(t, files[0])); got != "marvel: goose launch refused: auto-with-deny-list\n" {
 		t.Errorf("stderr file = %q", got)
+	}
+}
+
+// GooseStderrTail reads the newest per-launch file of a session home: the stamp
+// in the name sorts in launch order. A home with no file, or a relative home, is
+// not a read of anything.
+func TestGooseStderrTailReadsTheNewestLaunchAndRedacts(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	for name, body := range map[string]string{
+		"stderr-20261103T040000.000000000Z.log": "older launch\n",
+		"stderr-20261103T050000.000000000Z.log": "newest launch\ntoken=abcdef0123456789\n",
+		"other.log":                             "not a launch file\n",
+	} {
+		if err := os.WriteFile(filepath.Join(home, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	got, err := GooseStderrTail(home)
+	if err != nil {
+		t.Fatalf("GooseStderrTail: %v", err)
+	}
+	if !strings.Contains(got, "newest launch") || strings.Contains(got, "older") || strings.Contains(got, "abcdef0123456789") {
+		t.Errorf("tail = %q, want the newest launch with the token replaced", got)
+	}
+	if empty, err := GooseStderrTail(t.TempDir()); err != nil || empty != "" {
+		t.Errorf("empty home: tail %q, err %v, want neither", empty, err)
+	}
+	if _, err := GooseStderrTail("relative/home"); err == nil {
+		t.Error("a relative home was read")
 	}
 }

@@ -44,6 +44,13 @@ type RunRecord struct {
 	// section 5).
 	Result          string `json:"result,omitempty"`
 	ResultTruncated bool   `json:"result_truncated"`
+	// StderrTail is the last 4 KiB of a goose run's per-launch stderr file,
+	// read by the goose reap after a scan that replaces credential shapes
+	// (goose#12413 is open). It is the failure reason when the stream gave none:
+	// a run that ends with exit 1 and no `complete` line leaves its reason only
+	// there (docs/design/goose-adapter-v1.md section 3). No other harness fills
+	// it. It is not shown by describe team, and events never carry it.
+	StderrTail string `json:"stderr_tail,omitempty"`
 }
 
 // RunTokens is a run's spend as the usage accountant metered it. Metered
@@ -70,6 +77,23 @@ func (r *RunRecord) SetResult(text string) {
 		cut--
 	}
 	r.Result = text[:cut]
+}
+
+// maxRunStderrTailBytes is the cap on StderrTail.
+const maxRunStderrTailBytes = 4096
+
+// SetStderrTail stores text as the run's stderr tail, keeping its last
+// maxRunStderrTailBytes on a rune boundary so the record never holds half a
+// character. The reader already bounds the text; this is the record's own cap.
+func (r *RunRecord) SetStderrTail(text string) {
+	if len(text) > maxRunStderrTailBytes {
+		cut := len(text) - maxRunStderrTailBytes
+		for cut < len(text) && !utf8.RuneStart(text[cut]) {
+			cut++
+		}
+		text = text[cut:]
+	}
+	r.StderrTail = text
 }
 
 // Duration is how long the run took, zero when its start is unknown.

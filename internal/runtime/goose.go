@@ -17,15 +17,16 @@ const gooseHomeEnv = "GOOSE_PATH_ROOT"
 // Goose is the adapter for the goose CLI (docs/design/goose-adapter-v1.md and
 // v1.1). It is the core of the adapter: the posture rules and their refusals,
 // the private home with its seeded config and permission files, the projected
-// env, and the launch line. It is not stream-capable yet: the stream parser and
-// its wiring are a later change, and nothing here reads a stream.
+// env, and the launch line. A headless launch writes its stream-json to the
+// sink marvel hands it, and internal/runtime/goose reads it (v1.1 C4).
 //
 // Interactive: goose launches plain, with the mode, the private home and the
-// seeded files. Headless: every launch is refused for now (goose_buildphase.go),
-// because nothing yet reads the stream or bounds the run. The headless posture
-// rules and the headless launch line are written and tested behind that refusal:
-// `auto` inside a sandbox will launch `goose run -q -t <prompt>`, and `approve`
-// and `smart_approve` stay refused because both fail there (v1.1 L5).
+// seeded files. Headless: every launch is still refused (goose_buildphase.go),
+// because the run has no bound until the watchdog wrapper lands (v1.1 C3, L4).
+// The headless posture rules, the stream and the headless launch line are
+// written and tested behind that refusal: `auto` inside a sandbox will launch
+// `goose run --output-format stream-json -q -t <prompt>`, and `approve` and
+// `smart_approve` stay refused because both fail there (v1.1 L5).
 type Goose struct {
 	// headlessBuilt lifts the build-phase refusal of headless launches. Only
 	// tests set it; see goose_buildphase.go.
@@ -33,6 +34,12 @@ type Goose struct {
 }
 
 func (g *Goose) Name() string { return "goose" }
+
+// SupportsStream reports whether this launch produces a parseable stream. Only
+// headless launches do: an interactive goose draws a terminal UI.
+func (g *Goose) SupportsStream(ctx *LaunchContext) bool {
+	return ctx.Session.Runtime.Mode == api.RuntimeModeHeadless
+}
 
 // ProjectionFor reports no projection surface: goose takes no settings-path
 // flag, and its config is seeded into the private home instead.
@@ -45,6 +52,10 @@ func (g *Goose) ProjectionFor(_ *LaunchContext, _ string) ProjectionTarget {
 func (g *Goose) SessionHome(ctx *LaunchContext) (SessionHomeSpec, bool) {
 	return SessionHomeSpec{EnvVar: gooseHomeEnv, Seed: gooseSeeder(ctx)}, true
 }
+
+// gooseRefuseNoPrompt is the slug of the refusal of a headless role that has no
+// prompt. It stands apart from the build-phase refusal and survives its removal.
+const gooseRefuseNoPrompt = "no-prompt"
 
 // gooseNow is the clock the per-launch stderr file name reads, a seam for tests.
 var gooseNow = func() time.Time { return time.Now().UTC() }
@@ -74,15 +85,18 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		stderrFile = filepath.Join(ctx.HarnessHomePath, gooseStderrName())
 	}
 
-	// Build phase, before everything else that can refuse: a Prepare error is
-	// answered by the manager with the raw command, so an error return here
-	// would launch goose at the host's GOOSE_MODE. That includes the empty
-	// prompt check below. See goose_buildphase.go.
+	// A headless role with no prompt gets the refusal stub, never ErrNoPrompt: a
+	// Prepare error is answered by the manager with the raw command, which would
+	// launch goose at the host's GOOSE_MODE with none of the seeded files. This
+	// guard stands on its own, so it outlives the build-phase refusal below
+	// (ruling I-51:goose-empty-prompt-durable). Apply refuses the same role
+	// earlier (api.ManifestRuntime, runtime.prompt).
+	if headless && ctx.Session.Runtime.Prompt == "" {
+		return gooseRefusalResult(ctx, env, stderrFile, gooseRefuseNoPrompt), nil
+	}
+	// Build phase, before the posture rules. See goose_buildphase.go.
 	if reason := gooseBuildPhaseRefusal(headless, g.headlessBuilt); reason != "" {
 		return gooseRefusalResult(ctx, env, stderrFile, reason), nil
-	}
-	if headless && ctx.Session.Runtime.Prompt == "" {
-		return nil, ErrNoPrompt
 	}
 	if reason := gooseRefusal(ctx); reason != "" {
 		return gooseRefusalResult(ctx, env, stderrFile, reason), nil
@@ -108,20 +122,26 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		return &LaunchResult{Command: withStderr(cmd, stderrFile), Env: env}, nil
 	}
 
-	// No `--resume`: every launch is a new goose session (v1.1 C2). No
-	// `--output-format stream-json` yet, since nothing here reads the stream.
-	full := []string{"run", "-q"}
+	// No `--resume`: every launch is a new goose session (v1.1 C2).
+	full := []string{"run", "--output-format", "stream-json", "-q"}
 	if b := gooseBuiltins(ctx.Session.Runtime.Goose); b != "" {
 		full = append(full, "--no-profile", "--with-builtin", b)
 	}
 	full = append(full, args...)
 	full = append(full, "-t", ctx.Session.Runtime.Prompt)
 	cmd := redirectStdin(buildCommand(binary, full), os.DevNull)
-	return &LaunchResult{
-		Command:     withStderr(cmd, stderrFile),
+	result := &LaunchResult{
 		Env:         env,
 		FirstPrompt: newFirstPrompt(FirstPromptRole, ctx.Session.Runtime.Prompt),
-	}, nil
+	}
+	// stdout is the stream sink; stderr stays in the per-launch file, so the
+	// stream holds only goose's JSON lines.
+	if ctx.StreamPath != "" {
+		cmd = redirectStdout(cmd, ctx.StreamPath)
+		result.Stream = &StreamSpec{Format: StreamFormatGooseJSON, Path: ctx.StreamPath}
+	}
+	result.Command = withStderr(cmd, stderrFile)
+	return result, nil
 }
 
 // withStderr sends the command's stderr to file, or leaves it in the pane when
@@ -172,4 +192,5 @@ func gooseShellStub(reason string) string {
 func init() {
 	var _ Adapter = (*Goose)(nil)
 	var _ SessionHomeAssigner = (*Goose)(nil)
+	var _ StreamCapable = (*Goose)(nil)
 }

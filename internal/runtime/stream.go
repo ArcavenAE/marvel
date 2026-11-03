@@ -9,6 +9,7 @@ import (
 	"github.com/arcavenae/marvel/internal/runtime/claudecode"
 	"github.com/arcavenae/marvel/internal/runtime/codex"
 	"github.com/arcavenae/marvel/internal/runtime/events"
+	"github.com/arcavenae/marvel/internal/runtime/goose"
 	"github.com/arcavenae/marvel/internal/runtime/opencode"
 )
 
@@ -31,6 +32,10 @@ const StreamFormatCodexJSON StreamFormat = "codex/jsonl"
 // StreamFormatOpenCodeJSON is the line-delimited JSON stream OpenCode
 // writes under `opencode run --format json`.
 const StreamFormatOpenCodeJSON StreamFormat = "opencode/json"
+
+// StreamFormatGooseJSON is the line-delimited JSON stream goose writes under
+// `goose run --output-format stream-json`.
+const StreamFormatGooseJSON StreamFormat = "goose/stream-json"
 
 // StreamSpec is an adapter's report that it wired its harness's
 // structured output to Path. The adapter fills this in only when the
@@ -87,6 +92,12 @@ func NewStreamParser(format StreamFormat, cfg StreamParserConfig) (StreamParser,
 		}), nil
 	case StreamFormatOpenCodeJSON:
 		return opencode.NewParser(opencode.Config{
+			AgentID:   cfg.AgentID,
+			Workspace: cfg.Workspace,
+			Clock:     cfg.Clock,
+		}), nil
+	case StreamFormatGooseJSON:
+		return goose.NewParser(goose.Config{
 			AgentID:   cfg.AgentID,
 			Workspace: cfg.Workspace,
 			Clock:     cfg.Clock,

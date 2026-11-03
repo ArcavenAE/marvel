@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -30,6 +32,27 @@ var gooseCredentialShapes = []*regexp.Regexp{
 }
 
 const gooseRedacted = "[redacted]"
+
+// GooseStderrTail returns the credential-scanned tail of the newest per-launch
+// stderr file under a goose session home, for the run record. The file name
+// carries a UTC stamp that sorts in launch order, so the newest name is the last
+// launch. A home with no such file returns "" and no error: a run that never got
+// as far as goose has nothing to read.
+func GooseStderrTail(home string) (string, error) {
+	if !filepath.IsAbs(home) {
+		return "", fmt.Errorf("goose session home is not absolute")
+	}
+	names, err := filepath.Glob(filepath.Join(home, "stderr-*.log"))
+	if err != nil {
+		return "", fmt.Errorf("find goose stderr file: %w", err)
+	}
+	if len(names) == 0 {
+		return "", nil
+	}
+	sort.Strings(names)
+	tail, _, err := readGooseStderrTail(names[len(names)-1])
+	return tail, err
+}
 
 // readGooseStderrTail returns the last gooseStderrTailBytes of the stderr file at
 // path, cut to start at a line boundary when the file was longer, with every
