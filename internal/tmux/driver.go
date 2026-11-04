@@ -48,6 +48,12 @@ var ErrTmuxTimeout = errors.New("tmux did not answer in time")
 type Driver struct {
 	binary string
 
+	// gate reports whether the cluster is suspended; while it does, every tmux
+	// invocation fails with ErrClusterSuspended before a process is started.
+	// Nil means never. ungated marks a view made by Unguarded, which skips it.
+	gate    func() bool
+	ungated bool
+
 	// execTimeout bounds each tmux invocation; zero means DefaultExecTimeout.
 	execTimeout time.Duration
 
@@ -199,7 +205,11 @@ func (d *Driver) cmd(args ...string) *tmuxCmd {
 	// A killed tmux client can leave a child holding its output pipe open;
 	// without a wait delay the read would outlive the kill.
 	c.WaitDelay = time.Second
-	return &tmuxCmd{Cmd: c, ctx: ctx, cancel: cancel, name: firstArg(args), bound: d.timeout()}
+	tc := &tmuxCmd{Cmd: c, ctx: ctx, cancel: cancel, name: firstArg(args), bound: d.timeout()}
+	if !d.ungated {
+		tc.gate = d.gate
+	}
+	return tc
 }
 
 // sessionTarget names a session for a command whose -t is a session
@@ -222,6 +232,40 @@ func firstArg(args []string) string {
 	return args[0]
 }
 
+// ErrClusterSuspended is what a tmux call returns while the cluster is
+// suspended: the server is stopped, so a call would wait on it. It satisfies
+// errors.Is for ErrTmuxTimeout as well, so every caller that treats "tmux did
+// not answer" as an outage, and never as "the pane is gone", treats a suspend
+// the same way and feeds nothing to health or failure counts. Its text says what
+// to do and never says timeout.
+var ErrClusterSuspended error = clusterSuspendedError{}
+
+type clusterSuspendedError struct{}
+
+func (clusterSuspendedError) Error() string { return "cluster suspended; run marvel resume" }
+
+// Is makes the sentinel a member of the ErrTmuxTimeout family.
+func (clusterSuspendedError) Is(target error) bool { return target == ErrTmuxTimeout }
+
+// SetSuspendGate sets the func that says whether the cluster is suspended. The
+// daemon wires it once at construction.
+func (d *Driver) SetSuspendGate(gate func() bool) { d.gate = gate }
+
+// Unguarded returns a view of the driver that skips the suspend gate. It is the
+// one bypass: the suspend and resume procedure and the collector's reads take it
+// explicitly, because the hold is already up while they run. The view shares the
+// socket and binary and nothing else, so it is for read-only calls; a source test
+// lists every call site.
+func (d *Driver) Unguarded() *Driver {
+	return &Driver{
+		binary:      d.binary,
+		execTimeout: d.execTimeout,
+		procs:       d.procs,
+		socket:      d.socket,
+		ungated:     true,
+	}
+}
+
 // tmuxCmd is one bounded tmux invocation. It runs through Run, Output or
 // CombinedOutput like an exec.Cmd, and an invocation that outlives the
 // driver's bound is killed and fails with ErrTmuxTimeout, so a caller can
@@ -232,6 +276,19 @@ type tmuxCmd struct {
 	cancel context.CancelFunc
 	name   string
 	bound  time.Duration
+	// gate, when it reports suspended at run time, fails the call before a
+	// process is started.
+	gate func() bool
+}
+
+// blocked reports whether the suspend gate stops this call, and releases the
+// deadline if it does.
+func (c *tmuxCmd) blocked() bool {
+	if c.gate != nil && c.gate() {
+		c.cancel()
+		return true
+	}
+	return false
 }
 
 // finish releases the deadline and maps a failure that came from the
@@ -246,10 +303,18 @@ func (c *tmuxCmd) finish(err error) error {
 }
 
 // Run runs the command under the driver's bound.
-func (c *tmuxCmd) Run() error { return c.finish(c.Cmd.Run()) }
+func (c *tmuxCmd) Run() error {
+	if c.blocked() {
+		return ErrClusterSuspended
+	}
+	return c.finish(c.Cmd.Run())
+}
 
 // Output runs the command under the driver's bound and returns its stdout.
 func (c *tmuxCmd) Output() ([]byte, error) {
+	if c.blocked() {
+		return nil, ErrClusterSuspended
+	}
 	out, err := c.Cmd.Output()
 	return out, c.finish(err)
 }
@@ -258,6 +323,9 @@ func (c *tmuxCmd) Output() ([]byte, error) {
 // stdout and stderr. After a timeout the output is whatever the killed client
 // had written, so a caller checks the error before it reads the text.
 func (c *tmuxCmd) CombinedOutput() ([]byte, error) {
+	if c.blocked() {
+		return nil, ErrClusterSuspended
+	}
 	out, err := c.Cmd.CombinedOutput()
 	return out, c.finish(err)
 }

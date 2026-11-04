@@ -458,6 +458,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		leafLossCause: leafLossCause,
 	}
 	teamCtrl.Suspended = d.clusterSuspended
+	driver.SetSuspendGate(d.clusterSuspended)
 
 	// The build is fixed for this process image, so its stamp is encoded once.
 	// A Build is plain strings and a bool, so this cannot fail in practice; if

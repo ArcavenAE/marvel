@@ -246,12 +246,14 @@ func suspendActor() string {
 }
 
 // productionCollector wires the collector to the tmux driver, ps and the
-// platform identity reader.
+// platform identity reader. The hold is already up while it runs, so its two
+// tmux reads go through the driver's unguarded view.
 func (d *Daemon) productionCollector(cliPid int) *suspend.Collector {
 	prober := childproof.New()
+	drv := d.driver.Unguarded()
 	return &suspend.Collector{
-		Server:   d.driver.ServerPID,
-		Panes:    d.driver.PanePIDs,
+		Server:   drv.ServerPID,
+		Panes:    drv.PanePIDs,
 		Table:    suspend.PSTable,
 		Identify: prober.Identify,
 		Daemon:   os.Getpid(),

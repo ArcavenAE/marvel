@@ -355,8 +355,10 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.newLimitAction d.driver.CapturePaneJoined":          true,
 		"*Daemon.paneMenuSource d.driver.CapturePaneJoined":          true,
 		"*Daemon.paneMenuSource d.driver.PaneForeground":             true,
-		"*Daemon.productionCollector d.driver.ServerPID":             true, // suspend: the server's pid, read-only
-		"*Daemon.productionCollector d.driver.PanePIDs":              true, // suspend: every pane's pid, read-only
+		"*Daemon.productionCollector d.driver.Unguarded":             true, // suspend: the two read-only pid calls, past the gate (tmux's unguarded-site test lists the calls)
+		"NewWithOptions driver.SetSuspendGate":                       true, // wires the suspend gate once, at construction
+		"*Daemon.productionCollector drv.ServerPID":                  true, // read-only, through the unguarded view
+		"*Daemon.productionCollector drv.PanePIDs":                   true, // read-only, through the unguarded view
 	}
 	wantValue := map[string]bool{
 		"*Daemon.handleInjectAs": true, // preflightRefusal(d.driver, ...), bareDigitRefusal(d.driver, ...), sendInject(d.driver, ...)
