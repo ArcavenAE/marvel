@@ -43,6 +43,21 @@ type Manager struct {
 	Clock func() time.Time
 	// LookPath finds the container runtime CLI; nil means exec.LookPath.
 	LookPath func(string) (string, error)
+	// GOOS is the host OS a sandbox profile is checked against; empty means the
+	// running one. SandboxExec is the sandbox-exec path; empty means
+	// /usr/bin/sandbox-exec. SandboxDir holds the per-launch profile copies;
+	// empty means a directory under marvel's own run directory. RealHome is the
+	// home of the user marvel runs as; empty means read it from the user
+	// database. All four are seams for tests.
+	GOOS        string
+	SandboxExec string
+	SandboxDir  string
+	RealHome    string
+
+	// roleReader replaces the store read that answers which role a session is
+	// and whether it names a sandbox profile; nil means the store. A seam for
+	// tests, so a second read can answer differently from the first.
+	roleReader func(*api.Session) (api.Role, bool)
 
 	store      *api.Store
 	driver     *tmux.Driver
@@ -895,6 +910,12 @@ func (m *Manager) Create(sess *api.Session) error {
 	if err != nil {
 		return err
 	}
+	// Decided once, here: a seat that names a profile now is never started
+	// from a plan that carries no sandbox (see unwrappedProfiledLaunch).
+	profiled := m.roleNamesSandbox(sess)
+	if err := m.checkSandbox(sess); err != nil {
+		return err
+	}
 	sess.State = api.SessionPending
 	sess.CreatedAt = time.Now().UTC()
 
@@ -919,6 +940,11 @@ func (m *Manager) Create(sess *api.Session) error {
 	}
 
 	plan := m.planLaunch(sess)
+	if plan.sandboxFail != nil {
+		_ = m.store.DeleteSession(sess.Key())
+		m.teardownViews(sess.Key())
+		return m.refuseSandbox(sess, plan.sandboxFail)
+	}
 	if plan.hold != nil {
 		_ = m.store.DeleteSession(sess.Key())
 		m.teardownViews(sess.Key())
@@ -970,6 +996,30 @@ func (m *Manager) Create(sess *api.Session) error {
 	// see. Recorded for every session, overlay or not, so a default-mode
 	// session reads as ambient rather than as unclassified.
 	sess.BackendCredentialSource = api.ResolveBackendCredentialSource(backendOverlayFor(sess))
+
+	// A seat that was profiled when it was checked, and whose plan carries
+	// neither a staged sandbox nor a failure, is the bare command from one of
+	// planLaunch's lookup fallbacks. It is refused, never started.
+	if fail := m.unwrappedProfiledLaunch(sess, profiled, plan); fail != nil {
+		_ = m.store.DeleteSession(sess.Key())
+		m.sweepBackendOverlay(*sess)
+		m.teardownViews(sess.Key())
+		return m.refuseSandbox(sess, fail)
+	}
+
+	// A seat whose role names a sandbox-exec profile runs its prepared command
+	// under it. This wraps whatever planLaunch built, the direct fallbacks
+	// included, so no branch of it can start a profiled seat unsandboxed. A
+	// profile and a container placement are refused together before this point.
+	if plan.sandbox != nil {
+		if fail := m.wrapInSandbox(sess, &plan); fail != nil {
+			_ = m.store.DeleteSession(sess.Key())
+			m.sweepBackendOverlay(*sess)
+			m.teardownViews(sess.Key())
+			_ = os.Remove(plan.sandbox.copyPath)
+			return m.refuseSandbox(sess, fail)
+		}
+	}
 
 	// A seat placed in a container runs its prepared command under the runtime.
 	// This wraps whatever planLaunch built, the direct fallbacks included, so no
@@ -1057,20 +1107,26 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.PID = pid
 	sess.State = api.SessionRunning
 	log.Printf("session %s running in pane %s", sess.Key(), paneID)
-	m.announceSpawn(sess, paneID, plan.firstPrompt)
+	m.announceSpawn(sess, paneID, plan.firstPrompt, plan.sandbox)
 	return nil
 }
 
 // announceSpawn emits the events that say a spawn happened: session.created,
 // then the session.first-prompt that describes it.
-func (m *Manager) announceSpawn(sess *api.Session, paneID string, fp runtime.FirstPrompt) {
+func (m *Manager) announceSpawn(sess *api.Session, paneID string, fp runtime.FirstPrompt, sb *sandboxPlan) {
+	msg := fmt.Sprintf("pane %s", paneID) + m.hostMemoryNote()
+	if sb != nil {
+		// What was in force for this launch: marvel's own per-launch copy of the
+		// profile and its hash, so a reader can tell which bytes sandbox-exec read.
+		msg += sandboxEventSuffix(sb.copyPath, sb.sha)
+	}
 	events.Emit(m.Events, events.Event{
 		Kind:      events.KindSessionCreated,
 		Workspace: sess.Workspace,
 		Team:      sess.Team,
 		Role:      sess.Role,
 		Session:   sess.Key(),
-		Message:   fmt.Sprintf("pane %s", paneID) + m.hostMemoryNote(),
+		Message:   msg,
 	})
 	m.emitFirstPrompt(sess, fp)
 }
@@ -1177,6 +1233,11 @@ type launchPlan struct {
 	command string
 	env     map[string]string
 	stream  *runtime.StreamSource
+	// sandbox is the staged profile of a role that names one; wrapInSandbox puts
+	// it in front of the command. sandboxFail is set when it could not be staged
+	// or the adapter failed to prepare a profiled launch; the spawn is not made.
+	sandbox     *sandboxPlan
+	sandboxFail *sandboxFailure
 	// hold is set when the role's settings file could not be read at launch; the
 	// spawn is not made.
 	hold *settingsFileError
@@ -1435,10 +1496,27 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	}
 	// The resolved placement, for an adapter whose rules depend on containment.
 	// A resolution error leaves it empty, which such an adapter reads as
-	// unsandboxed. No manager path yet starts a launch under a sandbox-exec
-	// profile, so SandboxProfile stays empty.
+	// unsandboxed.
 	if placement, perr := api.ResolvePlacement(ws.Placement, m.adapters.RecommendedPlacement(sess.Runtime.Name)); perr == nil {
 		lctx.Placement = placement
+	}
+	// A role that names a sandbox-exec profile has it staged here, before the
+	// adapter prepares the launch, because its posture rule reads what is in
+	// force. SandboxProfile is the staged copy sandbox-exec will read. The checks
+	// ran at site 1 already; a failure now (the file changed or vanished since)
+	// holds the launch rather than starting it unsandboxed.
+	var sbPlan *sandboxPlan
+	if role.SandboxProfile != "" {
+		launch, fail := m.resolveSandbox(sess)
+		if fail == nil && launch != nil {
+			sbPlan, fail = m.stageSandboxProfile(sess, launch)
+		}
+		if fail != nil {
+			return launchPlan{sandboxFail: fail}
+		}
+		if sbPlan != nil {
+			lctx.SandboxProfile = sbPlan.copyPath
+		}
 	}
 	lctx.CredentialHelper = m.CredentialHelper
 	if m.Bus != nil {
@@ -1484,10 +1562,17 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	if err != nil {
 		log.Printf("adapter %s prepare failed for %s, falling back: %v", adapter.Name(), sess.Key(), err)
 		discardSink(fifo)
+		if sbPlan != nil {
+			// The raw command drops every rule the adapter would apply (for goose,
+			// the watchdog and the posture refusal), and the profile alone does not
+			// replace them: a profiled role is refused, never given the fallback.
+			_ = os.Remove(sbPlan.copyPath)
+			return launchPlan{sandboxFail: &sandboxFailure{reason: RefusalSandboxPrepare, msg: fmt.Sprintf("not started: %s/%s names a sandbox profile and the %s adapter failed to prepare the launch: %v; the raw command is not used for a profiled role", sess.Team, sess.Role, adapter.Name(), err)}}
+		}
 		return m.directPlan(sess)
 	}
 
-	plan := launchPlan{command: result.Command, env: result.Env, firstPrompt: result.FirstPrompt}
+	plan := launchPlan{command: result.Command, env: result.Env, firstPrompt: result.FirstPrompt, sandbox: sbPlan}
 	if byFile && tokenFile == "" {
 		delete(plan.env, api.HeartbeatTokenEnv)
 	}
@@ -2370,6 +2455,14 @@ const (
 	RefusalContainerImage   = "container image"
 	RefusalContainerRuntime = "container runtime"
 	RefusalHarnessHome      = "harness home"
+	// The reasons a profiled spawn is refused; all key under #sandbox.
+	RefusalSandboxHost      = "sandbox host"
+	RefusalSandboxProfile   = "sandbox profile"
+	RefusalSandboxContainer = "sandbox with container"
+	RefusalSandboxHarness   = "sandbox harness"
+	RefusalSandboxShape     = "sandbox shape"
+	RefusalSandboxPrepare   = "sandbox prepare"
+	RefusalSandboxChanged   = "sandbox changed"
 )
 
 // refusal is the standing record of one refused role, with when it was last
@@ -2412,6 +2505,7 @@ func (m *Manager) ClearPlacementRefusal(workspace, team, role string) {
 	key := workspace + "/" + team + "/" + role
 	delete(m.refused, key)
 	delete(m.refused, key+containerRefusalSuffix)
+	delete(m.refused, key+sandboxRefusalSuffix)
 	delete(m.refused, key+harnessHomeRefusalSuffix)
 }
 

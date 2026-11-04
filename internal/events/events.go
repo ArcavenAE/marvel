@@ -42,6 +42,14 @@ const (
 	// podman) is on PATH. Nothing starts on the host instead.
 	// Emitted once per change, not once per reconcile tick.
 	KindSessionContainerRefused Kind = "session.container-refused"
+	// KindSessionSandboxRefused records a spawn marvel refused because the role
+	// names a sandbox-exec profile and the launch cannot run under it: the host
+	// is not darwin or has no /usr/bin/sandbox-exec, the profile is not a
+	// readable regular file, the placement is also container, the harness or
+	// marvel binary cannot be resolved, the command text is not one simple
+	// command, or the adapter failed to prepare it. Nothing starts without the
+	// profile instead. Emitted once per change, not once per reconcile tick.
+	KindSessionSandboxRefused Kind = "session.sandbox-refused"
 	// KindSessionInjectRefused records an inject the daemon would not type:
 	// the composer reader found the pane in a state where a keystroke is
 	// dangerous, or a clear was asked for where none is safe. Nothing was sent.
@@ -479,6 +487,7 @@ var allKinds = []Kind{
 	KindSessionInjected,
 	KindSessionPlacementRefused,
 	KindSessionContainerRefused,
+	KindSessionSandboxRefused,
 	KindSessionInjectRefused,
 	KindSessionInjectUnconfirmed,
 	KindSessionCreated,
