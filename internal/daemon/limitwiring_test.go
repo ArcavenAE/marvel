@@ -355,6 +355,8 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.newLimitAction d.driver.CapturePaneJoined":          true,
 		"*Daemon.paneMenuSource d.driver.CapturePaneJoined":          true,
 		"*Daemon.paneMenuSource d.driver.PaneForeground":             true,
+		"*Daemon.productionCollector d.driver.ServerPID":             true, // suspend: the server's pid, read-only
+		"*Daemon.productionCollector d.driver.PanePIDs":              true, // suspend: every pane's pid, read-only
 	}
 	wantValue := map[string]bool{
 		"*Daemon.handleInjectAs": true, // preflightRefusal(d.driver, ...), bareDigitRefusal(d.driver, ...), sendInject(d.driver, ...)
