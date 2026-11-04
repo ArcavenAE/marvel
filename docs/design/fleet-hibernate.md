@@ -31,7 +31,7 @@ Suspend and hibernate stay two verbs. Suspend freezes processes for minutes or h
 
 Both verbs follow suspend's surface: a `[y/N]` confirm on a TTY, a refusal without a TTY unless `--yes`, and exit codes 0 for done, 3 for partial (a seat reported without a handoff, or a resume that fell back) and 1 for error. That is `marvel resume`'s set; `marvel suspend` itself exits 0 or 1. The verb names are the operator's to change (section 10).
 
-**Refused together.** Hibernate refuses while a suspend record exists, and suspend refuses while a hibernate is in progress. Hibernate also refuses a team already mid-shift, as `marvel shift` does.
+**Refused together.** Hibernate refuses while a suspend record exists, and suspend refuses while a hibernate is in progress. Hibernate also refuses a team already mid-shift, as `marvel shift` does. In the other direction, a shift is refused for a role the hibernated mark covers.
 
 ## 4. Sign-off, in order
 

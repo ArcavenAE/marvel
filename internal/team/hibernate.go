@@ -85,7 +85,13 @@ func (c *Controller) Hibernate(teamKey string, opt HibernateOptions) (HibernateR
 	if err := c.store.UpdateTeam(teamKey, func(live *api.Team) error {
 		roles := api.HibernateRolesAfter(live.Hibernate, opt.Roles)
 		if live.Hibernate == nil || live.Hibernate.State != api.HibernateHibernated {
-			live.Hibernate = &api.HibernateMark{State: api.HibernateHibernated, Since: now, Actor: opt.Actor, Source: opt.Source, Mode: api.HibernateModeHandoff}
+			// A hibernate that starts over a waking mark keeps the seats the
+			// earlier one ended: roles the wake has not started yet still need them.
+			var seats []string
+			if live.Hibernate != nil {
+				seats = slices.Clone(live.Hibernate.Seats)
+			}
+			live.Hibernate = &api.HibernateMark{State: api.HibernateHibernated, Since: now, Actor: opt.Actor, Source: opt.Source, Mode: api.HibernateModeHandoff, Seats: seats}
 		}
 		live.Hibernate.Roles = roles
 		return nil
@@ -657,8 +663,19 @@ func (c *Controller) wakePredecessors(t *api.Team, role string) []string {
 	for _, e := range entries {
 		byKey[e.Session] = e
 	}
+	// A key a live seat of the role already names is spent: a wake that starts
+	// the seats over several ticks must not hand the same one out twice.
+	named := map[string]bool{}
+	for _, s := range c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role) {
+		if s.State.CountsAsAlive() && s.Predecessor != "" {
+			named[s.Predecessor] = true
+		}
+	}
 	var out []string
 	for _, key := range t.Hibernate.Seats {
+		if named[key] {
+			continue
+		}
 		e, ok := byKey[key]
 		if !ok || e.Workspace != t.Workspace || e.Team != t.Name || e.Role != role {
 			continue

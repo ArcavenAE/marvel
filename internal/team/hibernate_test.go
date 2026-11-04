@@ -312,6 +312,33 @@ func TestSubsetHibernateAddsRolesAndAWholeTeamEmptiesThem(t *testing.T) {
 	}
 }
 
+// Seats only grows: a second subset hibernate keeps the seats the first ended,
+// and so does a hibernate that starts over a waking mark.
+func TestSecondHibernateKeepsTheSeatsTheFirstEnded(t *testing.T) {
+	dir := realTempDir(t)
+	f := newRetireFixture(t, "test-hib-seats", hibernateRole("a", dir, 1), hibernateRole("b", dir, 1))
+	f.hibernate(HibernateOptions{Actor: "op", Source: "cli", Roles: []string{"a"}})
+	tm := f.team()
+	f.ctrl.mu.Lock()
+	f.ctrl.recordHibernatedSeat(&tm, "test-hib-seats/squad-a-g1-0")
+	f.ctrl.mu.Unlock()
+	f.hibernate(HibernateOptions{Actor: "op", Source: "cli", Roles: []string{"b"}})
+	if got := f.team().Hibernate.Seats; len(got) != 1 || got[0] != "test-hib-seats/squad-a-g1-0" {
+		t.Fatalf("seats after a second subset hibernate = %v, want the first one kept", got)
+	}
+	if err := f.store.UpdateTeam(f.teamKey, func(live *api.Team) error {
+		live.Hibernate.State = api.HibernateWaking
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.hibernate(HibernateOptions{Actor: "op", Source: "cli", Roles: []string{"b"}})
+	m := f.team().Hibernate
+	if m.State != api.HibernateHibernated || len(m.Seats) != 1 {
+		t.Fatalf("mark over a waking one = %+v, want hibernated with the seat kept", m)
+	}
+}
+
 // The by-role shift loops must never read the per-session hibernate map: its
 // keys are session keys, and a loop that took them for role names would act on
 // the wrong thing.

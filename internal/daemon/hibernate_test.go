@@ -214,3 +214,17 @@ func TestHarnessCheckReadsTheBinaryOfACommandWithArguments(t *testing.T) {
 		t.Fatalf("harness check = %+v, want a command with arguments judged by its first field", c)
 	}
 }
+
+func TestScaleOnAWakingTeamDoesNotPrintTheHoldLine(t *testing.T) {
+	d := hibernateDaemon(t, roleOn("worker", "sleep", ""))
+	if err := d.store.UpdateTeam("acme/squad", func(live *api.Team) error {
+		live.Hibernate = &api.HibernateMark{State: api.HibernateWaking, Since: time.Now().UTC()}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp := d.handleScale(json.RawMessage(`{"team_key":"acme/squad","role":"worker","replicas":2}`))
+	if resp.Error != "" || strings.Contains(string(resp.Result), "held") {
+		t.Fatalf("scale on a waking team: err %q result %s, want no hold line", resp.Error, resp.Result)
+	}
+}

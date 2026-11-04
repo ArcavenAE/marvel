@@ -335,3 +335,45 @@ func TestWakeReportsAFiringPastTheStartingDeadlineAsMissed(t *testing.T) {
 		t.Fatalf("%d runs started for a firing past starting_deadline, want none", n)
 	}
 }
+
+// A wake that starts a role's seats over more than one tick names each ended
+// seat once: the second tick must not hand out the predecessor a live seat
+// already names.
+func TestWakeNamesEachPredecessorOnceAcrossTicks(t *testing.T) {
+	store, ctrl, cleanup := setupWithBolt(t, filepath.Join(t.TempDir(), "marvel.db"))
+	t.Cleanup(cleanup)
+	ws := "test-wake-twice"
+	ctrl.now = newTestClock(listEpoch).Now
+	rt := api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}
+	createTeamFixture(t, store, ws, "squad", []api.Role{{Name: "worker", Replicas: 2, Runtime: rt}})
+	a, b := ws+"/squad-worker-g1-0", ws+"/squad-worker-g1-1"
+	if err := store.UpdateTeam(ws+"/squad", func(live *api.Team) error {
+		live.ConvergencePosture = api.PostureConverge
+		live.Hibernate = &api.HibernateMark{State: api.HibernateWaking, Since: listEpoch, Mode: api.HibernateModeHandoff, Seats: []string{a, b}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i, k := range []string{a, b} {
+		if err := store.RecordResume(api.ResumeEntry{Session: k, Workspace: ws, Team: "squad", Role: "worker", LaunchedAt: listEpoch.Add(time.Duration(i) * time.Minute)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tm, _ := store.GetTeam(ws + "/squad")
+	ctrl.mu.Lock()
+	first := ctrl.wakePredecessors(&tm, "worker")
+	ctrl.mu.Unlock()
+	if len(first) != 2 {
+		t.Fatalf("predecessors = %v, want both ended seats", first)
+	}
+	// One seat starts from the first of them; a later tick must offer the other.
+	if err := store.CreateSession(&api.Session{Name: "squad-worker-g1-2", Workspace: ws, Team: "squad", Role: "worker", Generation: 1, State: api.SessionRunning, Predecessor: first[0]}); err != nil {
+		t.Fatal(err)
+	}
+	ctrl.mu.Lock()
+	second := ctrl.wakePredecessors(&tm, "worker")
+	ctrl.mu.Unlock()
+	if len(second) != 1 || second[0] != first[1] {
+		t.Fatalf("predecessors on the next tick = %v, want only %s", second, first[1])
+	}
+}

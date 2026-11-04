@@ -1706,7 +1706,7 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	}
 	var held []string
 	for _, mt := range m.Teams {
-		if live, err := d.store.GetTeam(m.Workspace.Name + "/" + mt.Name); err == nil && live.Hibernating() {
+		if live, err := d.store.GetTeam(m.Workspace.Name + "/" + mt.Name); err == nil && live.Hibernate != nil && live.Hibernate.State == api.HibernateHibernated {
 			held = append(held, live.Key())
 		}
 	}
@@ -2036,7 +2036,7 @@ func (d *Daemon) handleScale(params json.RawMessage) daemonrpc.Response {
 	}
 	// The change is recorded and a wake honours it, but nothing starts while the
 	// mark covers the role, so the reply says the success spawned nothing.
-	if live, err := d.store.GetTeam(p.TeamKey); err == nil && live.HibernateCovers(p.Role) {
+	if live, err := d.store.GetTeam(p.TeamKey); err == nil && live.Hibernate != nil && live.Hibernate.State == api.HibernateHibernated && live.HibernateCovers(p.Role) {
 		out["held"] = api.HibernateHeldLine
 	}
 	return respond(out)
