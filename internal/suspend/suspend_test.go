@@ -484,3 +484,51 @@ func TestServerGoneWhenAReusedPidCannotBeReadButItsStartDiffers(t *testing.T) {
 		t.Errorf("reused unreadable pid: gone %v err %v, want true and nil", gone, err)
 	}
 }
+
+// After the server stops, a re-walk finds a child forked since the snapshot:
+// it is written to the record (still suspending) before it is signalled, and
+// it is stopped with the other seats.
+func TestFreezeStopsAProcessTheRewalkFinds(t *testing.T) {
+	o := newFakeOS(100, 200, 300)
+	st := &memStore{os: o}
+	var sawServerStopped bool
+	rewalk := func(rec Record) ([]Proc, error) {
+		sawServerStopped = o.procs[100].stopped && !o.procs[200].stopped
+		return []Proc{{Pid: 300, Identity: ident(300)}}, nil
+	}
+	rec, _, err := o.freezer(t).FreezeWith(record(100, 200), st, rewalk)
+	if err != nil {
+		t.Fatalf("FreezeWith: %v", err)
+	}
+	if !sawServerStopped {
+		t.Error("the re-walk ran before the server was stopped, or after the seats")
+	}
+	if want := []string{"STOP 100", "STOP 200", "STOP 300"}; !slices.Equal(o.log, want) {
+		t.Errorf("signals = %v, want %v", o.log, want)
+	}
+	// The new pid reached bolt before it was signalled: a save with three
+	// recorded processes sits between STOP 100 and STOP 300.
+	if len(st.saves) != 3 || st.saves[1] != StateSuspending || st.atSave[1] != 1 {
+		t.Errorf("saves %v at signal counts %v, want a suspending save after the server stop and before the next signal", st.saves, st.atSave)
+	}
+	if len(rec.Seats) != 2 || rec.Seats[1].Pid != 300 || rec.State != StateSuspended {
+		t.Errorf("record = %+v", rec)
+	}
+}
+
+// A re-walk that fails rolls the suspend back: an unrecorded process would
+// otherwise be left running beside a stopped server.
+func TestFreezeRollsBackWhenTheRewalkFails(t *testing.T) {
+	o := newFakeOS(100, 200)
+	st := &memStore{os: o}
+	rewalk := func(Record) ([]Proc, error) { return nil, errors.New("ps failed") }
+	if _, _, err := o.freezer(t).FreezeWith(record(100, 200), st, rewalk); err == nil {
+		t.Fatal("FreezeWith succeeded although the re-walk failed")
+	}
+	if !st.cleared {
+		t.Error("the record was not cleared")
+	}
+	if o.procs[100].stopped {
+		t.Error("the server is still stopped after the rollback")
+	}
+}

@@ -1200,3 +1200,50 @@ func (d *Driver) paneStillAt(paneID, ttyPath string) error {
 	}
 	return nil
 }
+
+// ServerPID returns the pid of the tmux server this driver talks to. It asks
+// the server, so it fails when the server is stopped or absent: a suspend
+// reads it while the server still answers.
+func (d *Driver) ServerPID() (int, error) {
+	out, err := d.cmd("display-message", "-p", "#{pid}").Output()
+	if err != nil {
+		return 0, fmt.Errorf("server-pid: %w", err)
+	}
+	pid, perr := strconv.Atoi(strings.TrimSpace(string(out)))
+	if perr != nil || pid <= 1 {
+		return 0, fmt.Errorf("server-pid: unreadable %q", strings.TrimSpace(string(out)))
+	}
+	return pid, nil
+}
+
+// PanePIDs returns the pid of the process in every pane on the server, across
+// every session and window. No server running is no panes and no error, the
+// same reading ListSessions gives it.
+func (d *Driver) PanePIDs() ([]int, error) {
+	out, _, absent, err := d.whileStarting(time.Time{}, func() ([]byte, string, error) {
+		out, err := d.cmd("list-panes", "-a", "-F", "#{pane_pid}").Output()
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return out, string(ee.Stderr), err
+		}
+		return out, "", err
+	})
+	if err != nil {
+		if absent {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list-panes -a: %w", err)
+	}
+	var pids []int
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		pid, perr := strconv.Atoi(strings.TrimSpace(line))
+		if perr != nil || pid <= 1 {
+			return nil, fmt.Errorf("list-panes -a: unreadable pane pid %q", line)
+		}
+		pids = append(pids, pid)
+	}
+	return pids, nil
+}
