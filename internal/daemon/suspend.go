@@ -174,7 +174,7 @@ func (d *Daemon) resolveSuspendAtStart() bool {
 		log.Printf("%s: %s", events.KindClusterSuspendCleared, msg)
 		return false
 	case suspend.StateSuspending, suspend.StateResuming:
-		res, err := f.Thaw(*rec, suspendStore{d})
+		res, err := f.ThawWith(*rec, suspendStore{d}, func(r suspend.Record) error { return d.applyPause(r, d.suspendClock()) })
 		msg := fmt.Sprintf("a daemon stopped with the cluster %s; resumed the recorded processes (gone %v, still stopped %v)", rec.State, res.Gone, res.StillStopped)
 		if err != nil {
 			msg += fmt.Sprintf("; %v", err)
@@ -349,13 +349,12 @@ func (d *Daemon) handleResume() daemonrpc.Response {
 		return daemonrpc.Response{Error: "resume: the cluster is not suspended"}
 	}
 	was := *rec
-	res, err := d.suspendFreezer().Thaw(was, suspendStore{d})
+	res, err := d.suspendFreezer().ThawWith(was, suspendStore{d}, func(r suspend.Record) error { return d.applyPause(r, d.suspendClock()) })
 	if err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("%v; the record stays as resuming and the cluster stays held, so resume can be run again", err)}
 	}
 
 	now := d.suspendClock()
-	d.shiftHeartbeats(was, now)
 
 	if d.loopsStarted.Load() {
 		d.suspendHeld.Store(false)
@@ -378,18 +377,29 @@ func (d *Daemon) handleResume() daemonrpc.Response {
 	return respond(resumeResult{Resumed: true, Gone: res.Gone, StillStopped: res.StillStopped})
 }
 
-// shiftHeartbeats moves LastHeartbeat forward by the pause for every session
-// that is running, and clears its failure count. It goes by session, not by
+// applyPause moves every timer a pause would otherwise trip, by the length of
+// the pause (docs/design/fleet-suspend-resume.md, SR-F). It runs as the thaw
+// hook, after the processes are resumed and before the record is cleared, so a
+// daemon that stops in between finds the record still there and runs it again.
+//
+// Per running session: LastHeartbeat and ContextAt move forward, capped at now;
+// FailureCount clears; PausedTotal grows by the pause, once per suspend record
+// (PauseAppliedSince holds the Since already counted), so a repeat counts
+// nothing twice. CreatedAt is never written. It goes by session, not by
 // recorded pid: no session could heartbeat while the cluster was held, the
 // caller's own seat included, and a process the collector missed is no less
 // frozen. The cost is that a seat that really died during the pause is noticed
-// one HealthCheck.Timeout after resume instead of at once. The pause is read
-// once (now minus the record's Since), applied to every session alike and
-// capped at now; a zero stamp stays zero and a negative pause shifts nothing.
-// The rest of SR-F (activity stamps, backoff, grace for a seat with no
-// heartbeat yet) is a later change.
-func (d *Daemon) shiftHeartbeats(rec suspend.Record, now time.Time) {
+// one HealthCheck.Timeout after resume instead of at once. The controller then
+// moves the tick rings and each role's backoff and healthy streak; a repeat
+// there moves a deadline further out, which is the safe direction. The pause is
+// read once (now minus the record's Since), applied to every session alike; a
+// negative pause shifts nothing.
+//
+// Any session that cannot be updated makes the hook fail, so the record stays
+// and the resume can be repeated.
+func (d *Daemon) applyPause(rec suspend.Record, now time.Time) error {
 	pause := suspend.PauseOf(rec, now)
+	var errs []error
 	for _, sess := range d.store.ListSessions() {
 		if sess.State != api.SessionRunning {
 			continue
@@ -397,11 +407,20 @@ func (d *Daemon) shiftHeartbeats(rec suspend.Record, now time.Time) {
 		key := sess.Key()
 		err := d.store.UpdateSession(key, func(s *api.Session) error {
 			s.LastHeartbeat = suspend.ShiftedHeartbeat(s.LastHeartbeat, pause, now)
+			s.ContextAt = suspend.ShiftedHeartbeat(s.ContextAt, pause, now)
 			s.FailureCount = 0
+			if pause > 0 && !s.PauseAppliedSince.Equal(rec.Since) {
+				s.PausedTotal += pause
+				s.PauseAppliedSince = rec.Since
+			}
 			return nil
 		})
 		if err != nil {
-			log.Printf("suspend: shift the heartbeat of %s: %v", key, err)
+			errs = append(errs, fmt.Errorf("shift the timers of %s: %w", key, err))
 		}
 	}
+	if d.teamCtrl != nil {
+		d.teamCtrl.ShiftForPause(pause, rec.Since, now)
+	}
+	return errors.Join(errs...)
 }

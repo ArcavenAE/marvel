@@ -1641,7 +1641,7 @@ func (c *Controller) evaluateHealth() {
 
 			if live.LastHeartbeat.IsZero() {
 				// Grace period: allow timeout from creation for first heartbeat.
-				if now.Sub(live.CreatedAt) < role.HealthCheck.Timeout {
+				if live.AgeAt(now) < role.HealthCheck.Timeout {
 					live.HealthState = api.HealthUnknown
 					updated = *live
 					return nil
@@ -1774,7 +1774,7 @@ func evaluateActivity(s *api.Session, role *api.Role, now time.Time) api.Activit
 	// Startup grace, measured from creation and sized to the same window, so
 	// a session that has not yet had time to emit its first signal is not
 	// flagged. Mirrors the first-heartbeat grace in evaluateHealth.
-	if now.Sub(s.CreatedAt) > role.ActivityTimeout {
+	if s.AgeAt(now) > role.ActivityTimeout {
 		return api.ActivityStalled
 	}
 	return api.ActivityUnknown
