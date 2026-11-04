@@ -157,6 +157,10 @@ type ManifestRole struct {
 	// placement resolves to container. Required then: a container seat with no
 	// image is refused, never given a default.
 	ContainerImage string `toml:"container_image,omitempty" yaml:"container_image,omitempty"`
+	// SandboxProfile is the absolute path of a sandbox-exec profile this role's
+	// seats run under, on darwin. Empty means none. The key name was ratified
+	// by the operator on 2026-11-03.
+	SandboxProfile string `toml:"sandbox_profile,omitempty" yaml:"sandbox_profile,omitempty"`
 	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
 	// shift key this marvel does not understand, and whether the table wrote
 	// an any key at all.
@@ -499,6 +503,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			}
 			if r.ContainerImage != "" && !ValidContainerImage(r.ContainerImage) {
 				return nil, fmt.Errorf("parse manifest: team %q role %q: container_image %q is not a plain image reference", t.Name, r.Name, r.ContainerImage)
+			}
+			if r.SandboxProfile != "" && !ValidSandboxProfile(r.SandboxProfile) {
+				return nil, fmt.Errorf("parse manifest: team %q role %q: sandbox_profile %q is not a clean absolute path", t.Name, r.Name, r.SandboxProfile)
 			}
 			if r.Policy != "" && !policyNames[r.Policy] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
@@ -1142,6 +1149,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				Policy:               mr.Policy,
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
 				ContainerImage:       mr.ContainerImage,
+				SandboxProfile:       mr.SandboxProfile,
 				SettingsSources:      mr.SettingsSources,
 				Writes:               normalizeWrites(mr.Writes),
 			}

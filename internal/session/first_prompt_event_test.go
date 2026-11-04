@@ -145,7 +145,7 @@ func TestCreateEmitsExactlyOneFirstPromptEvent(t *testing.T) {
 func TestAnnounceSpawnEmitsCreatedBeforeFirstPrompt(t *testing.T) {
 	t.Parallel()
 	mgr, ring := firstPromptManager(t)
-	mgr.announceSpawn(reviewerSpawn(""), "%1", runtime.FirstPrompt{Source: runtime.FirstPromptRole, Bytes: 5})
+	mgr.announceSpawn(reviewerSpawn(""), "%1", runtime.FirstPrompt{Source: runtime.FirstPromptRole, Bytes: 5}, nil)
 	got := ring.Snapshot(events.Filter{}, 0)
 	var kinds []string
 	for _, ev := range got {
