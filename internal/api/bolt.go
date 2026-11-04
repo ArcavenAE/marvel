@@ -92,6 +92,7 @@ var allBuckets = [][]byte{
 	bucketExposure,
 	bucketExposureSeal,
 	bucketSuspend,
+	bucketResumeJournal,
 	bucketMeta,
 }
 

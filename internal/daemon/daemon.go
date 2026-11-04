@@ -103,6 +103,12 @@ type Daemon struct {
 	// TCP listener.
 	suspendRec    atomic.Pointer[suspend.Record]
 	suspendMirror string
+	// resumeMirror is the resume journal's JSON mirror beside the socket, ""
+	// for a TCP listener; see resume_journal.go.
+	resumeMirror string
+	// resumeMu serializes the journal read and mirror write in
+	// rewriteResumeMirror.
+	resumeMu sync.Mutex
 	// suspendHeld is set when Start found a suspended record and served
 	// without adopting: every tmux call waits for resume, and only the
 	// methods that answer while starting are served (SR-E).
@@ -601,6 +607,7 @@ func (d *Daemon) Start(socketPath string) error {
 	d.loadScheduleHistoryMax(socketPath)
 	d.identifyCluster(socketPath)
 	d.loadSuspendRecord(socketPath)
+	d.loadResumeJournal(socketPath)
 	held := d.resolveSuspendAtStart()
 	if err := d.attachServices(socketPath); err != nil {
 		_ = ln.Close()

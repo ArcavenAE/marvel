@@ -1107,8 +1107,34 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.PID = pid
 	sess.State = api.SessionRunning
 	log.Printf("session %s running in pane %s", sess.Key(), paneID)
+	m.recordResume(sess)
 	m.announceSpawn(sess, paneID, plan.firstPrompt, plan.sandbox)
 	return nil
+}
+
+// recordResume writes sess's entry in the resume journal
+// (docs/design/fleet-hibernate.md section 5). It runs on every launch, and each
+// launch of a Claude Code seat re-mints the resume id, so a launch is also the
+// moment an id changes. A journal write that fails is logged and never fails the
+// launch: the seat is already running, and refusing it would leave a live
+// process marvel does not track.
+func (m *Manager) recordResume(sess *api.Session) {
+	handoff := ""
+	if team, err := m.store.GetTeam(sess.Workspace + "/" + sess.Team); err == nil {
+		for i := range team.Roles {
+			r := &team.Roles[i]
+			if r.Name != sess.Role || r.Shift == nil || r.Shift.Handoff == "" {
+				continue
+			}
+			if p, perr := api.ExpandHandoffPath(r.Shift.Handoff, sess.Name); perr == nil {
+				handoff = p
+			}
+			break
+		}
+	}
+	if err := m.store.RecordResume(api.ResumeEntryOf(sess, handoff, m.now())); err != nil {
+		log.Printf("session %s: resume journal not written: %v", sess.Key(), err)
+	}
 }
 
 // announceSpawn emits the events that say a spawn happened: session.created,
