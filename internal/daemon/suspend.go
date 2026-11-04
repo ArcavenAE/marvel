@@ -420,7 +420,7 @@ func (d *Daemon) applyPause(rec suspend.Record, now time.Time) error {
 		}
 	}
 	if d.teamCtrl != nil {
-		d.teamCtrl.ShiftForPause(pause, now)
+		d.teamCtrl.ShiftForPause(pause, rec.Since, now)
 	}
 	return errors.Join(errs...)
 }

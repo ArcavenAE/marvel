@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -180,4 +181,62 @@ func TestApplyPauseWithoutAControllerShiftsSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.check(t)
+}
+
+// An applyPause that fails keeps the record as resuming and the daemon held,
+// and the next resume finishes the job: the record clears, the daemon serves,
+// and the pause is counted once on every session, the one that failed included.
+func TestResumeWhoseTimersFailKeepsTheRecordAndCompletesOnRepeat(t *testing.T) {
+	r := newTimersRig(t)
+	mk := func(name string) {
+		s := &api.Session{Name: name, Workspace: "ws", Team: "t", Role: "r", State: api.SessionRunning, PID: 201}
+		if err := r.d.store.CreateSession(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("b")
+	mk("c")
+	// A NaN cannot be encoded, so persisting this session fails; the store
+	// applies the change in memory before it writes, as it does for any error.
+	if err := r.d.store.UpdateSession("ws/b", func(s *api.Session) error {
+		s.ContextPercent = math.NaN()
+		return nil
+	}); err == nil {
+		t.Fatal("control: a NaN session persisted")
+	}
+
+	resp := r.call("resume", map[string]any{})
+	if resp.Error == "" {
+		t.Fatal("resume succeeded although a session could not be updated")
+	}
+	rec := r.d.suspendRec.Load()
+	if rec == nil || rec.State != suspend.StateResuming {
+		t.Fatalf("record after a failed resume = %+v, want it left resuming", rec)
+	}
+	if !r.d.suspendHeld.Load() {
+		t.Error("the daemon was released although the timers were not shifted")
+	}
+
+	if err := r.d.store.UpdateSession("ws/b", func(s *api.Session) error {
+		s.ContextPercent = 0
+		return nil
+	}); err != nil {
+		t.Fatalf("repair: %v", err)
+	}
+	if resp := r.call("resume", map[string]any{}); resp.Error != "" {
+		t.Fatalf("second resume: %s", resp.Error)
+	}
+	if r.d.suspendRec.Load() != nil {
+		t.Error("the record was not cleared by the second resume")
+	}
+	if r.d.suspendHeld.Load() {
+		t.Error("the daemon is still held after the second resume")
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		got := hb(t, r.d, name)
+		if got.PausedTotal != pauseOfRig || !got.PauseAppliedSince.Equal(r.since) {
+			t.Errorf("%s: PausedTotal %v, PauseAppliedSince %v; want %v counted once, since %v",
+				name, got.PausedTotal, got.PauseAppliedSince, pauseOfRig, r.since)
+		}
+	}
 }

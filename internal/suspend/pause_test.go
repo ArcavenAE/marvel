@@ -12,20 +12,24 @@ import (
 // left when it resumes.
 func TestShiftedDeadline(t *testing.T) {
 	at := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	since := at.Add(-time.Hour)
 	cases := map[string]struct {
 		d     time.Time
 		pause time.Duration
 		want  time.Time
 	}{
 		"moved by the pause, past now": {at.Add(10 * time.Minute), time.Hour, at.Add(70 * time.Minute)},
-		"expired stays behind now":     {at.Add(-5 * time.Minute), time.Hour, at.Add(55 * time.Minute)},
-		"zero stays zero":              {time.Time{}, time.Hour, time.Time{}},
-		"negative shifts none":         {at.Add(time.Minute), -time.Hour, at.Add(time.Minute)},
-		"zero pause shifts none":       {at.Add(time.Minute), 0, at.Add(time.Minute)},
+		"ahead at since, now behind":   {at.Add(-5 * time.Minute), time.Hour, at.Add(55 * time.Minute)},
+		// A backoff that had expired before the suspend began stays as it was.
+		"before since stays":     {since.Add(-90 * time.Minute), 2 * time.Hour, since.Add(-90 * time.Minute)},
+		"exactly at since stays": {since, time.Hour, since},
+		"zero stays zero":        {time.Time{}, time.Hour, time.Time{}},
+		"negative shifts none":   {at.Add(time.Minute), -time.Hour, at.Add(time.Minute)},
+		"zero pause shifts none": {at.Add(time.Minute), 0, at.Add(time.Minute)},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got := ShiftedDeadline(c.d, c.pause); !got.Equal(c.want) {
+			if got := ShiftedDeadline(c.d, since, c.pause); !got.Equal(c.want) {
 				t.Errorf("ShiftedDeadline = %v, want %v", got, c.want)
 			}
 		})

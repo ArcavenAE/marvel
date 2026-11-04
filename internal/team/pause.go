@@ -9,13 +9,14 @@ import (
 )
 
 // ShiftForPause moves the controller's timers forward by pause after a fleet
-// suspend (docs/design/fleet-suspend-resume.md, SR-F): the tick rings, and each
-// role's backoff deadline and healthy streak. The saturation freeze keeps its
-// sentinel and zero values stay zero. A role's persisted record is rewritten
+// suspend that began at since (docs/design/fleet-suspend-resume.md, SR-F): the
+// tick rings, and each role's backoff deadline and healthy streak. A backoff
+// that had already expired at since stays as it was. The saturation freeze
+// keeps its sentinel and zero values stay zero. A role's persisted record is rewritten
 // with the shifted deadline. Applying the same pause twice moves a deadline
 // and a streak further out, which only lengthens a backoff and delays a decay;
 // the sessions' own counters are guarded separately by the daemon.
-func (c *Controller) ShiftForPause(pause time.Duration, now time.Time) {
+func (c *Controller) ShiftForPause(pause time.Duration, since, now time.Time) {
 	if pause <= 0 {
 		return
 	}
@@ -29,7 +30,7 @@ func (c *Controller) ShiftForPause(pause time.Duration, now time.Time) {
 	defer c.mu.Unlock()
 	for key, rh := range c.roleHealth {
 		if !rh.BackoffUntil.Equal(saturationFreezeUntil) {
-			rh.BackoffUntil = suspend.ShiftedDeadline(rh.BackoffUntil, pause)
+			rh.BackoffUntil = suspend.ShiftedDeadline(rh.BackoffUntil, since, pause)
 		}
 		rh.HealthySince = suspend.ShiftedHeartbeat(rh.HealthySince, pause, now)
 		c.persistRoleHealth(key, rh)

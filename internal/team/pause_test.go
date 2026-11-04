@@ -62,9 +62,13 @@ func TestShiftForPauseMovesBackoffAndHealthySince(t *testing.T) {
 	}
 	ctrl.roleHealth["ws/t/frozen"] = &RoleHealth{RestartCount: 9, BackoffUntil: saturationFreezeUntil}
 	ctrl.roleHealth["ws/t/clean"] = &RoleHealth{}
+	// A backoff that ended before the suspend began (3 hours ago, against a
+	// suspend that began 2 hours ago) stays as it was.
+	expired := now.Add(-3 * time.Hour)
+	ctrl.roleHealth["ws/t/expired"] = &RoleHealth{RestartCount: 1, BackoffUntil: expired}
 	ctrl.mu.Unlock()
 
-	ctrl.ShiftForPause(2*time.Hour, now)
+	ctrl.ShiftForPause(2*time.Hour, now.Add(-2*time.Hour), now)
 
 	got, _ := ctrl.RoleHealthSnapshot("ws", "t", "backoff")
 	if want := now.Add(10 * time.Minute); !got.BackoffUntil.Equal(want) {
@@ -79,6 +83,10 @@ func TestShiftForPauseMovesBackoffAndHealthySince(t *testing.T) {
 	frozen, _ := ctrl.RoleHealthSnapshot("ws", "t", "frozen")
 	if !frozen.BackoffUntil.Equal(saturationFreezeUntil) {
 		t.Errorf("the saturation freeze moved to %v", frozen.BackoffUntil)
+	}
+	gone, _ := ctrl.RoleHealthSnapshot("ws", "t", "expired")
+	if !gone.BackoffUntil.Equal(expired) {
+		t.Errorf("an expired BackoffUntil moved to %v, want it unchanged at %v", gone.BackoffUntil, expired)
 	}
 	clean, _ := ctrl.RoleHealthSnapshot("ws", "t", "clean")
 	if !clean.BackoffUntil.IsZero() || !clean.HealthySince.IsZero() {
@@ -97,7 +105,7 @@ func TestShiftForPauseMovesTheTickRings(t *testing.T) {
 	ctrl.rings = map[string]*TickRing{"ws/a": r}
 	ctrl.ringMu.Unlock()
 
-	ctrl.ShiftForPause(2*time.Hour, now)
+	ctrl.ShiftForPause(2*time.Hour, now.Add(-2*time.Hour), now)
 
 	ctrl.ringMu.Lock()
 	defer ctrl.ringMu.Unlock()
