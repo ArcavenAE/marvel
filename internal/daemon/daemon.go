@@ -106,6 +106,9 @@ type Daemon struct {
 	// resumeMirror is the resume journal's JSON mirror beside the socket, ""
 	// for a TCP listener; see resume_journal.go.
 	resumeMirror string
+	// resumeMu serializes the journal read and mirror write in
+	// rewriteResumeMirror.
+	resumeMu sync.Mutex
 	// suspendHeld is set when Start found a suspended record and served
 	// without adopting: every tmux call waits for resume, and only the
 	// methods that answer while starting are served (SR-E).

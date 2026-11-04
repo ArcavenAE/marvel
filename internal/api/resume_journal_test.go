@@ -19,6 +19,22 @@ func journalStore(t *testing.T) (*Store, string) {
 	return s, path
 }
 
+func mustRecord(t *testing.T, s *Store, e ResumeEntry) {
+	t.Helper()
+	if err := s.RecordResume(e); err != nil {
+		t.Fatalf("RecordResume %s: %v", e.Session, err)
+	}
+}
+
+func mustJournal(t *testing.T, s *Store) []ResumeEntry {
+	t.Helper()
+	got, err := s.ResumeJournal()
+	if err != nil {
+		t.Fatalf("ResumeJournal: %v", err)
+	}
+	return got
+}
+
 func entryFor(session, id string) ResumeEntry {
 	return ResumeEntry{
 		Session: session, Workspace: "acme", Team: "squad", Role: "worker",
@@ -29,16 +45,9 @@ func entryFor(session, id string) ResumeEntry {
 
 func TestRecordResumeStoresOneEntryPerSession(t *testing.T) {
 	s, _ := journalStore(t)
-	if err := s.RecordResume(entryFor("acme/squad/a", "id-1")); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RecordResume(entryFor("acme/squad/b", "id-2")); err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.ResumeJournal()
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustRecord(t, s, entryFor("acme/squad/a", "id-1"))
+	mustRecord(t, s, entryFor("acme/squad/b", "id-2"))
+	got := mustJournal(t, s)
 	if len(got) != 2 || got[0].Session != "acme/squad/a" || got[1].ResumeID != "id-2" {
 		t.Fatalf("journal = %+v, want entries a and b in key order", got)
 	}
@@ -48,9 +57,9 @@ func TestRecordResumeStoresOneEntryPerSession(t *testing.T) {
 // id replaces the old one: a crash must find the id of the launch that ran.
 func TestRecordResumeReplacesTheEntryOnAnIDChange(t *testing.T) {
 	s, _ := journalStore(t)
-	_ = s.RecordResume(entryFor("acme/squad/a", "old-id"))
-	_ = s.RecordResume(entryFor("acme/squad/a", "new-id"))
-	got, _ := s.ResumeJournal()
+	mustRecord(t, s, entryFor("acme/squad/a", "old-id"))
+	mustRecord(t, s, entryFor("acme/squad/a", "new-id"))
+	got := mustJournal(t, s)
 	if len(got) != 1 || got[0].ResumeID != "new-id" {
 		t.Fatalf("journal = %+v, want one entry holding new-id", got)
 	}
@@ -69,29 +78,23 @@ func TestRecordResumeSurvivesReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = s2.CloseBolt() }()
-	got, _ := s2.ResumeJournal()
+	got := mustJournal(t, s2)
 	if len(got) != 1 || got[0].ResumeID != "id-1" {
 		t.Fatalf("journal after reopen = %+v, want the entry", got)
 	}
 }
 
-func TestRecordResumeTellsTheHookTheWholeJournal(t *testing.T) {
+// The hook runs once per entry written, after the entry is committed: reading
+// the journal from inside it already sees that entry.
+func TestRecordResumeCallsTheHookAfterTheEntryIsCommitted(t *testing.T) {
 	s, _ := journalStore(t)
-	var seen [][]ResumeEntry
-	s.SetResumeJournalHook(func(e []ResumeEntry) { seen = append(seen, e) })
-	_ = s.RecordResume(entryFor("acme/squad/a", "id-1"))
-	_ = s.RecordResume(entryFor("acme/squad/b", "id-2"))
-	if len(seen) != 2 || len(seen[0]) != 1 || len(seen[1]) != 2 {
-		t.Fatalf("hook saw %d calls with sizes %v, want 2 calls of 1 then 2 entries", len(seen), sizes(seen))
+	var sizes []int
+	s.SetResumeJournalHook(func() { sizes = append(sizes, len(mustJournal(t, s))) })
+	mustRecord(t, s, entryFor("acme/squad/a", "id-1"))
+	mustRecord(t, s, entryFor("acme/squad/b", "id-2"))
+	if len(sizes) != 2 || sizes[0] != 1 || sizes[1] != 2 {
+		t.Fatalf("hook saw journal sizes %v, want [1 2]", sizes)
 	}
-}
-
-func sizes(v [][]ResumeEntry) []int {
-	var out []int
-	for _, e := range v {
-		out = append(out, len(e))
-	}
-	return out
 }
 
 func TestRecordResumeRefusesAnEmptyKey(t *testing.T) {
@@ -106,8 +109,8 @@ func TestRecordResumeWithoutBoltIsHarmless(t *testing.T) {
 	if err := s.RecordResume(entryFor("acme/squad/a", "id-1")); err != nil {
 		t.Fatalf("RecordResume with no bolt: %v", err)
 	}
-	if got, err := s.ResumeJournal(); err != nil || len(got) != 0 {
-		t.Fatalf("journal with no bolt = %v, %v; want empty", got, err)
+	if got := mustJournal(t, s); len(got) != 0 {
+		t.Fatalf("journal with no bolt = %v; want empty", got)
 	}
 }
 
@@ -133,7 +136,9 @@ func TestResumeEntryOfCarriesNoSecretEnvOrPrompt(t *testing.T) {
 		t.Fatalf("entry carries a secret field: %s", raw)
 	}
 	var e ResumeEntry
-	_ = json.Unmarshal(raw, &e)
+	if err := json.Unmarshal(raw, &e); err != nil {
+		t.Fatal(err)
+	}
 	if e.Session != sess.Key() || e.ResumeID != "resume-id" || e.HandoffPath != "/h/a.md" ||
 		e.Predecessor != "acme/squad/old" || e.Runtime != "claude" || e.WorkDir != "/work/x" {
 		t.Fatalf("entry = %+v, missing a named field", e)

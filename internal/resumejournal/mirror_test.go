@@ -10,6 +10,15 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 )
 
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 func sample(n int) []api.ResumeEntry {
 	var out []api.ResumeEntry
 	for i := 0; i < n; i++ {
@@ -63,7 +72,7 @@ func TestMirrorWithoutTheMarkerReadsAsIncomplete(t *testing.T) {
 	if err := WriteMirror(path, sample(3)); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(path)
+	data := readFile(t, path)
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	// Cut on a line boundary: two entries and no marker.
 	cut := strings.Join(lines[:2], "\n") + "\n"
@@ -87,7 +96,7 @@ func TestMirrorCutMidLineReadsAsIncomplete(t *testing.T) {
 	if err := WriteMirror(path, sample(3)); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(path)
+	data := readFile(t, path)
 	if err := os.WriteFile(path, data[:len(data)/2], 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +113,7 @@ func TestMarkerWithAWrongCountReadsAsIncomplete(t *testing.T) {
 	if err := WriteMirror(path, sample(3)); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(path)
+	data := readFile(t, path)
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	lost := append([]string{lines[0], lines[2]}, lines[3:]...)
 	if err := os.WriteFile(path, []byte(strings.Join(lost, "\n")+"\n"), 0o600); err != nil {
@@ -126,13 +135,22 @@ func TestReadMirrorMissingFileIsNotFound(t *testing.T) {
 func TestWriteMirrorLeavesNoTempFileAndReplacesInPlace(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "m.resume.jsonl")
-	_ = WriteMirror(path, sample(2))
-	_ = WriteMirror(path, sample(1))
-	ents, _ := os.ReadDir(dir)
+	for _, n := range []int{2, 1} {
+		if err := WriteMirror(path, sample(n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(ents) != 1 {
 		t.Fatalf("directory holds %d files, want only the mirror", len(ents))
 	}
-	m, _, _ := ReadMirror(path)
+	m, _, err := ReadMirror(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !m.Complete || len(m.Entries) != 1 {
 		t.Fatalf("mirror = %+v, want the second write", m)
 	}

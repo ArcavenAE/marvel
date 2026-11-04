@@ -3,7 +3,6 @@ package daemon
 import (
 	"log"
 
-	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/resumejournal"
 )
 
@@ -21,21 +20,29 @@ func (d *Daemon) loadResumeJournal(socketPath string) {
 	if d.resumeMirror == "" {
 		return
 	}
-	path := d.resumeMirror
-	d.store.SetResumeJournalHook(func(entries []api.ResumeEntry) {
-		if err := resumejournal.WriteMirror(path, entries); err != nil {
-			log.Printf("resume journal: %v", err)
-		}
-	})
+	d.store.SetResumeJournalHook(d.rewriteResumeMirror)
 	if d.store.BoltPath() == "" {
 		return
 	}
+	d.rewriteResumeMirror()
+}
+
+// rewriteResumeMirror reads the journal and writes the mirror from it, under
+// one lock. Launches run concurrently (the controller and the RPC path both
+// create sessions), so the read and the write must not interleave with another
+// call's: with a snapshot taken outside the lock, a launch that read {A} could
+// write after one that read {A,B}, and the mirror would read as complete with B
+// missing until the next launch. Read inside the lock, the last write holds
+// every entry committed before it.
+func (d *Daemon) rewriteResumeMirror() {
+	d.resumeMu.Lock()
+	defer d.resumeMu.Unlock()
 	entries, err := d.store.ResumeJournal()
 	if err != nil {
 		log.Printf("resume journal: read the stored journal: %v; the mirror is left as it was", err)
 		return
 	}
-	if err := resumejournal.WriteMirror(path, entries); err != nil {
+	if err := resumejournal.WriteMirror(d.resumeMirror, entries); err != nil {
 		log.Printf("resume journal: %v", err)
 	}
 }

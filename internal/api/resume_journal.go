@@ -58,10 +58,14 @@ func ResumeEntryOf(sess *Session, handoffPath string, launchedAt time.Time) Resu
 	}
 }
 
-// SetResumeJournalHook installs fn, called with the whole journal after every
-// RecordResume that wrote. The daemon uses it to keep the JSON mirror current.
-// It runs on the caller's goroutine with no store lock held. nil removes it.
-func (s *Store) SetResumeJournalHook(fn func([]ResumeEntry)) {
+// SetResumeJournalHook installs fn, called after every RecordResume that wrote,
+// once that entry is committed. The daemon uses it to keep the JSON mirror
+// current. fn runs on the caller's goroutine with no store lock held, and
+// launches run concurrently, so two calls can overlap: fn must read the journal
+// itself, under a lock of its own, so that the last write it makes holds every
+// entry committed before it (a snapshot passed in would let a stale one land
+// last). nil removes the hook.
+func (s *Store) SetResumeJournalHook(fn func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.resumeHook = fn
@@ -87,11 +91,7 @@ func (s *Store) RecordResume(e ResumeEntry) error {
 		return err
 	}
 	if hook != nil {
-		entries, rerr := s.ResumeJournal()
-		if rerr != nil {
-			return rerr
-		}
-		hook(entries)
+		hook()
 	}
 	return nil
 }

@@ -62,9 +62,9 @@ type Store struct {
 	// OpenBolt; cleared by CloseBolt. See bolt.go for the WAL discipline.
 	bolt     *bolt.DB
 	boltPath string
-	// resumeHook is told the whole resume journal after each entry written
+	// resumeHook is called after each resume journal entry is written
 	// (resume_journal.go). Set by the daemon; nil in tests that do not mirror.
-	resumeHook func([]ResumeEntry)
+	resumeHook func()
 	// boltUpdates counts the runtime bolt.Update transactions this Store has
 	// started (see boltUpdate). It exists so a test or a scratch daemon can
 	// measure the write rate without root; nothing in the daemon reads it.
