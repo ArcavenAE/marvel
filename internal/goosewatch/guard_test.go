@@ -401,23 +401,37 @@ func TestAnnounceFailureIsEndedByTheRawGroupKill(t *testing.T) {
 // fails, and every later read errors, as it does when the identity changed or the
 // process is gone. A re-proof would refuse and goose would run for its whole life;
 // the raw KILL sends nothing through a re-proof, so goose ends at once.
+//
+// The fixture departs from the review's repro wording, which used `exec sleep 3`
+// and asked for a run "well under 3s". Under load the wrapper can take longer
+// than that to reach the group KILL, and a goose that has run out by itself reads
+// as a failure of a different kind (exit 0 and no KILL), so goose here is
+// `exec sleep 30` with a 15s bound, as in
+// TestAnnounceFailureIsEndedByTheRawGroupKill: a goose left running holds the
+// run for 30s, and the group-gone check and the reason assertion are what prove
+// the KILL landed.
 func TestAnnounceFailureWithARefusedReproofStillEndsGoose(t *testing.T) {
 	t.Parallel()
 	bystander := startOwn(t)
 	var mu sync.Mutex
-	reads := 0
+	succeeded := 0
 	prober, err := childproof.NewForTest(
 		func(pid int) (childproof.Identity, error) {
 			mu.Lock()
-			reads++
-			n := reads
-			mu.Unlock()
-			if n > 1 {
+			defer mu.Unlock()
+			if succeeded > 0 {
 				return childproof.Identity{}, errors.New("identity changed")
 			}
+			// Only a successful read counts, so a read that fails under load before
+			// the first success is retried, as it is in production, and does not
+			// move the run into the Spawned-failed case.
 			id, err := childproof.ReadIdentityForTest(pid)
+			if err != nil {
+				return id, err
+			}
+			succeeded++
 			id.Pgid = pid + 1
-			return id, err
+			return id, nil
 		},
 		syscall.Kill,
 	)
@@ -428,7 +442,7 @@ func TestAnnounceFailureWithARefusedReproofStillEndsGoose(t *testing.T) {
 	// The clock starts when goose has written its pid, so wrapper start-up under
 	// load does not count against the bound.
 	var gooseUp time.Time
-	r := runSh(t, fmt.Sprintf("echo $$ > %s; exec sleep 3", pidFile), time.Minute, time.Minute, func(c *Config) {
+	r := runSh(t, fmt.Sprintf("echo $$ > %s; exec sleep 30", pidFile), time.Minute, time.Minute, func(c *Config) {
 		c.prober = prober
 		c.afterStart = func(f *os.File) {
 			waitForPidFile(t, pidFile)(f)
@@ -439,9 +453,13 @@ func TestAnnounceFailureWithARefusedReproofStillEndsGoose(t *testing.T) {
 	if r.code != ExitCannotRun {
 		t.Errorf("exit = %d, want %d", r.code, ExitCannotRun)
 	}
-	// goose is `exec sleep 3`: a goose left running would hold the run for 3s.
-	if sinceUp > 2500*time.Millisecond {
+	if sinceUp > 15*time.Second {
 		t.Errorf("the run lasted %v after goose wrote its pid: goose was left running", sinceUp)
+	}
+	// The run must be in the leader-check case this test is named for, not the
+	// case where the identity read itself failed.
+	if !strings.Contains(r.stderr, "not the leader of its own process group") {
+		t.Errorf("stderr file = %q, want the leader-check reason", r.stderr)
 	}
 	wantReasonThenStatus(t, r.stderr)
 	if pgid := readPid(t, pidFile); !groupGone(pgid) {
