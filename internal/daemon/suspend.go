@@ -2,9 +2,16 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"os"
+	"os/user"
+	"strconv"
+	"time"
 
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/childproof"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/suspend"
@@ -188,4 +195,200 @@ func (d *Daemon) resolveSuspendAtStart() bool {
 // one answer decides whether anything may touch tmux.
 func (d *Daemon) clusterSuspended() bool {
 	return d.suspendHeld.Load() || d.suspendRec.Load() != nil
+}
+
+// suspendParams is what the CLI sends with suspend: its own pid, so the
+// collector leaves it and its ancestors out.
+type suspendParams struct {
+	CLIPid int `json:"cli_pid"`
+}
+
+// suspendResult is the answer to a suspend that held.
+type suspendResult struct {
+	Suspended bool  `json:"suspended"`
+	Seats     int   `json:"seats"`
+	Gone      []int `json:"gone,omitempty"`
+}
+
+// resumeResult is the answer to a resume that sent every SIGCONT. Gone are
+// recorded pids whose process had exited or been replaced; StillStopped are
+// pids that read stopped after their SIGCONT. Either makes the CLI exit
+// partial, and neither keeps the record (design section 6: a seat that fails
+// after resume is reported, never restarted).
+type resumeResult struct {
+	Resumed      bool  `json:"resumed"`
+	Gone         []int `json:"gone,omitempty"`
+	StillStopped []int `json:"still_stopped,omitempty"`
+}
+
+func (d *Daemon) suspendClock() time.Time {
+	if d.suspendNow != nil {
+		return d.suspendNow().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func (d *Daemon) suspendFreezer() *suspend.Freezer {
+	if d.freezer != nil {
+		return d.freezer
+	}
+	return suspend.New()
+}
+
+// suspendActor names who asked: the local user that owns the daemon's socket,
+// or the numeric uid when the lookup fails. There is no principal on the local
+// socket yet.
+func suspendActor() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return u.Username
+	}
+	return strconv.Itoa(os.Getuid())
+}
+
+// productionCollector wires the collector to the tmux driver, ps and the
+// platform identity reader.
+func (d *Daemon) productionCollector(cliPid int) *suspend.Collector {
+	prober := childproof.New()
+	return &suspend.Collector{
+		Server:   d.driver.ServerPID,
+		Panes:    d.driver.PanePIDs,
+		Table:    suspend.PSTable,
+		Identify: prober.Identify,
+		Daemon:   os.Getpid(),
+		CLI:      cliPid,
+	}
+}
+
+// handleSuspend freezes the cluster: it raises the hold first, so no method
+// can add a pane while the pids are collected, then collects, records and
+// stops. A failure before the record is saved, or a rollback, drops the hold
+// again and leaves nothing frozen.
+func (d *Daemon) handleSuspend(params json.RawMessage) daemonrpc.Response {
+	var p suspendParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return daemonrpc.Response{Error: fmt.Sprintf("suspend: bad params: %v", err)}
+		}
+	}
+	d.suspendMu.Lock()
+	defer d.suspendMu.Unlock()
+	if rec := d.suspendRec.Load(); rec != nil || d.suspendHeld.Load() {
+		state := suspend.StateSuspended
+		if rec != nil {
+			state = rec.State
+		}
+		return daemonrpc.Response{Error: fmt.Sprintf("%v: the cluster is already %s; run marvel resume", suspend.ErrState, state)}
+	}
+	if why := d.suspendUnsettled.Load(); why != nil {
+		return daemonrpc.Response{Error: fmt.Sprintf("suspend: the stored record could not be read (%s); status says what is known", *why)}
+	}
+	d.suspendHeld.Store(true)
+	lifted := false
+	liftHold := func() {
+		if !lifted {
+			lifted = true
+			d.suspendHeld.Store(false)
+		}
+	}
+	defer func() {
+		if d.suspendRec.Load() == nil {
+			liftHold()
+		}
+	}()
+
+	newCollector := d.collectorFor
+	if newCollector == nil {
+		newCollector = d.productionCollector
+	}
+	c := newCollector(p.CLIPid)
+	rec, err := c.Collect()
+	if err != nil {
+		return daemonrpc.Response{Error: err.Error()}
+	}
+	rec.Actor, rec.Source, rec.Since = suspendActor(), "cli", d.suspendClock()
+	rec, res, err := d.suspendFreezer().FreezeWith(rec, suspendStore{d}, c.Rewalk)
+	if err != nil {
+		return daemonrpc.Response{Error: err.Error()}
+	}
+	return respond(suspendResult{Suspended: true, Seats: len(rec.Seats), Gone: res.Gone})
+}
+
+// handleResume sends SIGCONT to the recorded processes and ends the hold. The
+// heartbeats of the resumed seats are shifted by the pause before the hold
+// lifts, so the first tick cannot read a seat that was frozen as one that
+// stopped heartbeating. A daemon that started held has no loops yet, so
+// adoption and the loops start in the background, behind the starting gate;
+// one that suspended while running already has them.
+func (d *Daemon) handleResume() daemonrpc.Response {
+	d.suspendMu.Lock()
+	defer d.suspendMu.Unlock()
+	if d.adoptingSince.Load() != 0 {
+		return daemonrpc.Response{Error: "resume: the daemon is still adopting after an earlier resume"}
+	}
+	rec := d.suspendRec.Load()
+	if rec == nil {
+		if why := d.suspendUnsettled.Load(); why != nil {
+			return daemonrpc.Response{Error: fmt.Sprintf("resume: the stored record could not be read (%s); use the manual recipe in marvel status", *why)}
+		}
+		return daemonrpc.Response{Error: "resume: the cluster is not suspended"}
+	}
+	was := *rec
+	res, err := d.suspendFreezer().Thaw(was, suspendStore{d})
+	if err != nil {
+		return daemonrpc.Response{Error: fmt.Sprintf("%v; the record stays as resuming and the cluster stays held, so resume can be run again", err)}
+	}
+
+	now := d.suspendClock()
+	d.shiftHeartbeats(was, res, now)
+
+	if d.loopsStarted.Load() {
+		d.suspendHeld.Store(false)
+	} else {
+		d.adoptingSince.Store(now.UnixNano())
+		d.suspendHeld.Store(false)
+		adopt := d.adopt
+		if adopt == nil {
+			d.adoptingSince.Store(0)
+			return daemonrpc.Response{Error: "resume: the processes were resumed, but this daemon has no adoption to run; restart it"}
+		}
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			if err := adopt(); err != nil && !errors.Is(err, errStoppedWhileStarting) {
+				log.Printf("suspend: adoption after resume: %v", err)
+			}
+		}()
+	}
+	return respond(resumeResult{Resumed: true, Gone: res.Gone, StillStopped: res.StillStopped})
+}
+
+// shiftHeartbeats moves LastHeartbeat forward by the pause for each session
+// whose pane process was resumed, and clears its failure count. The pause is
+// read once (now minus the record's Since), applied to every session alike and
+// capped at now; a zero stamp stays zero and a negative pause shifts nothing.
+// The rest of SR-F (activity stamps, backoff, grace for a seat with no
+// heartbeat yet) is a later change.
+func (d *Daemon) shiftHeartbeats(rec suspend.Record, res suspend.Result, now time.Time) {
+	resumed := map[int]bool{}
+	for _, s := range rec.Seats {
+		resumed[s.Pid] = true
+	}
+	for _, pid := range res.Gone {
+		delete(resumed, pid)
+	}
+	pause := suspend.PauseOf(rec, now)
+	for _, sess := range d.store.ListSessions() {
+		if sess.PID <= 1 || !resumed[sess.PID] {
+			continue
+		}
+		key := sess.Key()
+		err := d.store.UpdateSession(key, func(s *api.Session) error {
+			s.LastHeartbeat = suspend.ShiftedHeartbeat(s.LastHeartbeat, pause, now)
+			s.FailureCount = 0
+			return nil
+		})
+		if err != nil {
+			log.Printf("suspend: shift the heartbeat of %s: %v", key, err)
+		}
+	}
 }

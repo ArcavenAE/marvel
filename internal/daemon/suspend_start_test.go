@@ -32,6 +32,10 @@ type procTable struct {
 	contFail map[int]error
 	// afterCont runs after a SIGCONT to pid is logged.
 	afterCont func(pid int)
+	// stopped is the stop state the fake keeps: a SIGSTOP sets it and a SIGCONT
+	// clears it. stayRunning names pids that ignore a SIGSTOP.
+	stopped     map[int]bool
+	stayRunning map[int]bool
 }
 
 func (p *procTable) freezer(t *testing.T) *suspend.Freezer {
@@ -61,6 +65,10 @@ func (p *procTable) freezer(t *testing.T) *suspend.Freezer {
 			if sig == syscall.SIGSTOP {
 				name = "STOP"
 			}
+			if p.stopped == nil {
+				p.stopped = map[int]bool{}
+			}
+			p.stopped[pid] = name == "STOP" && !p.stayRunning[pid]
 			p.log = append(p.log, fmt.Sprintf("%s %d", name, pid))
 			if name == "CONT" && p.afterCont != nil {
 				p.afterCont(pid)
@@ -70,7 +78,7 @@ func (p *procTable) freezer(t *testing.T) *suspend.Freezer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return suspend.NewForTest(pr, func(int) (bool, error) { return false, nil })
+	return suspend.NewForTest(pr, func(pid int) (bool, error) { return p.stopped[pid], nil })
 }
 
 // startDaemon is suspendDaemon with an event ring, a fake process table that
