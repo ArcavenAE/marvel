@@ -162,6 +162,15 @@ func (e *FreezeError) Error() string {
 // rolls the suspend back: every process already stopped is resumed, the seats
 // first and the server last, and the record is cleared.
 func (f *Freezer) Freeze(rec Record, store Store) (Record, Result, error) {
+	return f.FreezeWith(rec, store, nil)
+}
+
+// FreezeWith is Freeze with a re-walk. After the server has stopped and before
+// any seat is stopped, rewalk returns the processes rec does not hold yet (a
+// child forked since the snapshot); each is proved, added to the record, saved
+// while the record still reads suspending, and then stopped with the seats. A
+// nil rewalk is Freeze, and a rewalk that fails rolls the suspend back.
+func (f *Freezer) FreezeWith(rec Record, store Store, rewalk func(Record) ([]Proc, error)) (Record, Result, error) {
 	var res Result
 	if rec.State != "" {
 		return rec, res, fmt.Errorf("%w: freeze needs a new record, this one is %s", ErrState, rec.State)
@@ -194,6 +203,31 @@ func (f *Freezer) Freeze(rec Record, store Store) (Record, Result, error) {
 	var signalled []childproof.Child
 	if err := f.prober.Signal(server, syscall.SIGSTOP, false); err != nil {
 		return rec, res, f.rollback(store, server, signalled, &FreezeError{Pid: server.Pid(), Reason: err.Error()})
+	}
+	if rewalk != nil {
+		fresh, err := rewalk(rec)
+		if err != nil {
+			return rec, res, f.rollback(store, server, signalled, fmt.Errorf("suspend: re-walk after the server stopped: %w", err))
+		}
+		var added bool
+		for _, p := range fresh {
+			if err := childproof.CheckPid(p.Pid); err != nil {
+				return rec, res, f.rollback(store, server, signalled, fmt.Errorf("suspend: re-walk: %w", err))
+			}
+			c, err := f.prober.Prove(p.Pid, p.Identity)
+			if err != nil {
+				res.Gone = append(res.Gone, p.Pid)
+				continue
+			}
+			seats = append(seats, c)
+			rec.Seats = append(rec.Seats, p)
+			added = true
+		}
+		if added {
+			if err := store.Save(rec); err != nil {
+				return rec, res, f.rollback(store, server, signalled, fmt.Errorf("suspend: save the re-walked processes before signalling them: %w", err))
+			}
+		}
 	}
 	live := make([]childproof.Child, 0, len(seats))
 	for _, c := range seats {

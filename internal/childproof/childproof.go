@@ -163,6 +163,19 @@ func ReadIdentityForTest(pid int) (Identity, error) {
 	return readIdentity(pid)
 }
 
+// Identify reads pid's live identity, for a caller that records a process
+// before it signals it. It refuses a pid CheckPid refuses and a Prober without
+// seams.
+func (p *Prober) Identify(pid int) (Identity, error) {
+	if !p.wired() {
+		return Identity{}, errNoSeams
+	}
+	if err := CheckPid(pid); err != nil {
+		return Identity{}, err
+	}
+	return p.read(pid)
+}
+
 // Prove reads pid's live identity and returns a Child when it equals want:
 // the same start time, executable and arguments (design section 4.1, rules 2
 // to 5). A pid of 1 or below, an empty want and a Prober without seams are

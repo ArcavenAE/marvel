@@ -128,6 +128,11 @@ var localOnlyMethods = map[string]bool{
 	// the local socket, so this is the narrowest grant: not the tunnel, and not
 	// a credential-push key (docs/design/read-only-seat-handoff.md, section 2).
 	"handoff.put": true,
+	// suspend and resume freeze and wake the whole fleet. Until the suspend
+	// scope exists (docs/design/fleet-suspend-resume.md section 6), neither is
+	// served through the tunnel.
+	"suspend": true,
+	"resume":  true,
 }
 
 // methodRequiresLocal reports whether method may be called only from the local

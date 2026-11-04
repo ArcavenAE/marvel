@@ -27,7 +27,11 @@ type Controller struct {
 	SocketPath string
 	// Events receives structured state-transition events. Nil is safe.
 	Events events.Emitter
-	mu     sync.Mutex
+	// Suspended reports whether the cluster is suspended. While it is true
+	// the reconcile tick returns before it reaps, judges health or spawns:
+	// tmux is stopped, so every pane would read dead. Nil means never.
+	Suspended func() bool
+	mu        sync.Mutex
 
 	// rings holds each running session's evaluation tick ring, guarded by
 	// ringMu (not mu: the readers must not wait for a reconcile pass).
@@ -558,6 +562,9 @@ func (c *Controller) ReconcileOnce() {
 func (c *Controller) reconcileOnceLocked() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.Suspended != nil && c.Suspended() {
+		return nil
+	}
 	c.prunedThisTick = nil
 
 	// The reap path converges with the health path on the crash-loop

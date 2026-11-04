@@ -401,6 +401,7 @@ func TestWatchdogFieldTypesArePinned(t *testing.T) {
 		"window":      "time.Duration",
 		"reg":         "*runtime.Registry",
 		"now":         "func() time.Time",
+		"suspended":   "func() bool",
 		"readPane":    "func(string) (string, int, error)",
 		"capture":     "func(string) (string, error)",
 		"sample":      "func(panestate.Pattern) (string, error)",
@@ -546,5 +547,26 @@ func TestWatchdogParkedSeatsNeverRollUpAsLoggedOut(t *testing.T) {
 	r.w.Once()
 	if got := len(r.kinds(events.KindAccountLoggedOut)); got != 0 {
 		t.Fatalf("three parked seats rolled up as logged-out: %d events", got)
+	}
+}
+
+// While the cluster is suspended the watchdog reads no pane: tmux is stopped,
+// so a read would wait on it (docs/design/fleet-suspend-resume.md section 3).
+func TestWatchdogReadsNothingWhileSuspended(t *testing.T) {
+	r := newWDRig(t)
+	p := r.seat("a", "claude", "2.1.283", 11*time.Minute, 0)
+	suspended := true
+	r.w.suspended = func() bool { return suspended }
+	r.w.Once()
+	if p.caps != 0 {
+		t.Fatalf("a suspended pass captured %d pane(s), want none", p.caps)
+	}
+	if hs := r.get("a").HarnessState; hs != nil {
+		t.Fatalf("a suspended pass set a harness state: %+v", hs)
+	}
+	suspended = false
+	r.w.Once()
+	if p.caps == 0 {
+		t.Fatal("after the guard lifts the pass captured nothing")
 	}
 }

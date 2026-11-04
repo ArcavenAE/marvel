@@ -109,6 +109,17 @@ type Daemon struct {
 	suspendHeld atomic.Bool
 	// freezer stops and resumes recorded processes; nil means suspend.New().
 	freezer *suspend.Freezer
+	// suspendMu serializes suspend and resume. collectorFor builds the pid
+	// collector for a suspend asked by the CLI process cliPid; nil means the
+	// production one. adopt runs the adoption and loop start that a held start
+	// skipped; Start sets it. loopsStarted is set once the loops run, so a
+	// resume on a daemon that suspended while running does not start them
+	// again. suspendNow is the clock for the pause; nil means time.Now.
+	suspendMu    sync.Mutex
+	collectorFor func(cliPid int) *suspend.Collector
+	adopt        func() error
+	loopsStarted atomic.Bool
+	suspendNow   func() time.Time
 	// suspendUnsettled is why the stored record could not be read or parsed at
 	// start, nil when it could. While set, the record is neither running nor
 	// suspended: the mirror stays and a start that adopts must hold.
@@ -446,6 +457,8 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 
 		leafLossCause: leafLossCause,
 	}
+	teamCtrl.Suspended = d.clusterSuspended
+
 	// The build is fixed for this process image, so its stamp is encoded once.
 	// A Build is plain strings and a bool, so this cannot fail in practice; if
 	// it did, replies would go out unstamped, as from an older daemon.
@@ -603,6 +616,7 @@ func (d *Daemon) Start(socketPath string) error {
 	// so nothing spawns against a store that has not been reconciled.
 	ctx, cancel := context.WithCancel(context.Background())
 	d.ctx, d.cancel = ctx, cancel
+	d.adopt = func() error { return d.adoptAndRun(ctx, socketPath, network) }
 	if held {
 		d.suspendHeld.Store(true)
 	} else {
@@ -636,6 +650,14 @@ func (d *Daemon) Start(socketPath string) error {
 		return nil
 	}
 
+	return d.adoptAndRun(ctx, socketPath, network)
+}
+
+// adoptAndRun is the part of Start that follows serving: adopt the live tmux
+// state, settle the convergence posture, re-project policies, and start the
+// loops. A held start skips it, and resume runs it once the recorded
+// processes have been resumed, so the same code answers both.
+func (d *Daemon) adoptAndRun(ctx context.Context, socketPath, network string) error {
 	// Reconcile marvel-* tmux state against recorded intent. Panes that
 	// match the rehydrated intent are adopted; anything else is LEFT
 	// RUNNING and reported, unless the operator asked to reclaim.
@@ -739,6 +761,7 @@ func (d *Daemon) Start(socketPath string) error {
 		d.startViews(ctx)
 	}
 
+	d.loopsStarted.Store(true)
 	log.Printf("marvel daemon listening on %s (%s)", socketPath, network)
 	return nil
 }
@@ -1174,7 +1197,9 @@ func startingAllows(req daemonrpc.Request) bool {
 		// tear anything down.
 		return err != nil || !teardown
 	}
-	return startingMethods[req.Method]
+	// resume is how a held daemon, or one that suspended while running, ends
+	// the hold, so it must be served while held.
+	return startingMethods[req.Method] || req.Method == "resume"
 }
 
 // dispatchAs enforces the caller's scope, then routes the request. A method
@@ -1241,6 +1266,10 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return d.handleDaemonStatus()
 	case "suspend.status":
 		return d.handleSuspendStatus()
+	case "suspend":
+		return d.handleSuspend(req.Params)
+	case "resume":
+		return d.handleResume()
 	case "view.refresh":
 		return d.handleViewRefresh(req.Params)
 	case "bus.leaf.connect":
