@@ -68,6 +68,11 @@ func WriteMirror(path string, entries []api.ResumeEntry) error {
 		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("write resume mirror: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return fmt.Errorf("write resume mirror: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("write resume mirror: %w", err)

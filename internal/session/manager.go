@@ -1112,8 +1112,6 @@ func (m *Manager) Create(sess *api.Session) error {
 	return nil
 }
 
-// announceSpawn emits the events that say a spawn happened: session.created,
-// then the session.first-prompt that describes it.
 // recordResume writes sess's entry in the resume journal
 // (docs/design/fleet-hibernate.md section 5). It runs on every launch, and each
 // launch of a Claude Code seat re-mints the resume id, so a launch is also the
@@ -1139,6 +1137,8 @@ func (m *Manager) recordResume(sess *api.Session) {
 	}
 }
 
+// announceSpawn emits the events that say a spawn happened: session.created,
+// then the session.first-prompt that describes it.
 func (m *Manager) announceSpawn(sess *api.Session, paneID string, fp runtime.FirstPrompt, sb *sandboxPlan) {
 	msg := fmt.Sprintf("pane %s", paneID) + m.hostMemoryNote()
 	if sb != nil {
