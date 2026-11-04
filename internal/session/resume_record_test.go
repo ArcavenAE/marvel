@@ -8,6 +8,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/runtime"
+	"github.com/arcavenae/marvel/internal/tmux"
 )
 
 const resumeManifest = `
@@ -140,5 +141,47 @@ func TestLaunchWithNoResumeIDStillRecordsTheSeat(t *testing.T) {
 	e, ok := journalOf(t, mgr)[sess.Key()]
 	if !ok || e.ResumeID != "" || e.HandoffPath != "" {
 		t.Fatalf("entry = %+v ok=%v, want an entry with no resume id and no handoff path", e, ok)
+	}
+}
+
+// "Written on every launch" is the journal's headline, so this goes through
+// Create, the one launch path, and fails if Create stops recording. The tests
+// above call recordResume directly and would stay green without that call.
+func TestCreateWritesTheResumeJournal(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	if err := store.OpenBolt(filepath.Join(t.TempDir(), "marvel.bolt")); err != nil {
+		t.Fatalf("OpenBolt: %v", err)
+	}
+	t.Cleanup(func() { _ = store.CloseBolt() })
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+
+	ws := "test-resume-create"
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+
+	sess := &api.Session{
+		Name:      "agent-0",
+		Workspace: ws,
+		Team:      "agents",
+		Role:      "worker",
+		WorkDir:   t.TempDir(),
+		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+	}
+	if err := mgr.Create(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	list, err := store.ResumeJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Session != sess.Key() || list[0].Role != "worker" ||
+		list[0].Runtime != "sleep" || list[0].WorkDir != sess.WorkDir || list[0].LaunchedAt.IsZero() {
+		t.Fatalf("journal after Create = %+v, want one entry for %s", list, sess.Key())
 	}
 }
