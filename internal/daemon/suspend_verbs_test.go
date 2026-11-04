@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -501,5 +502,23 @@ func TestLimitsPassRunsNothingWhileSuspended(t *testing.T) {
 	d.limitsPass(time.Now(), pass("limits"))
 	if len(ran) != 0 {
 		t.Errorf("a pass ran with a suspend record: %v", ran)
+	}
+}
+
+// The seat set the collector checks the caller against is the pane pid of each
+// session in the daemon's own store: no tmux read, and a session with no pid
+// recorded adds nothing.
+func TestSessionPanePidsAreTheStoreSessionsPids(t *testing.T) {
+	d, _ := suspendDaemon(t)
+	for name, pid := range map[string]int{"a": 4242, "b": 4343, "nopid": 0} {
+		s := &api.Session{Name: name, Workspace: "ws", Team: "t", Role: "r", State: api.SessionRunning, PID: pid}
+		if err := d.store.CreateSession(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := d.sessionPanePids()
+	sort.Ints(got)
+	if len(got) != 2 || got[0] != 4242 || got[1] != 4343 {
+		t.Errorf("sessionPanePids = %v, want [4242 4343]", got)
 	}
 }

@@ -258,7 +258,21 @@ func (d *Daemon) productionCollector(cliPid int) *suspend.Collector {
 		Identify: prober.Identify,
 		Daemon:   os.Getpid(),
 		CLI:      cliPid,
+		// The pane pid of every session the daemon holds, so a caller that runs
+		// inside a seat is refused. No tmux read: this is the store's own record.
+		SeatPids: d.sessionPanePids(),
 	}
+}
+
+// sessionPanePids is the pane pid of each session in the store.
+func (d *Daemon) sessionPanePids() []int {
+	var pids []int
+	for _, s := range d.store.ListSessions() {
+		if s.PID > 1 {
+			pids = append(pids, s.PID)
+		}
+	}
+	return pids
 }
 
 // handleSuspend freezes the cluster: it raises the hold first, so no method

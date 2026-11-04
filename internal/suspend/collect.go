@@ -37,6 +37,12 @@ type Collector struct {
 	// the process that must answer resume. Zero means none.
 	Daemon, CLI int
 
+	// SeatPids is the pane pid of each session the daemon holds. Collect
+	// refuses when an ancestor of the CLI is one of them: a seat that suspends
+	// the fleet from its own pane keeps its process chain running while the rest
+	// are frozen. Empty turns the check off.
+	SeatPids []int
+
 	// roots are the pane processes Collect found. Rewalk starts from them,
 	// because tmux cannot answer once its server is stopped.
 	roots []int
@@ -44,6 +50,12 @@ type Collector struct {
 
 // ErrNoServer is returned when the tmux server pid cannot be read.
 var ErrNoServer = errors.New("suspend: the tmux server pid cannot be read")
+
+// ErrCallerIsASeat is returned when an ancestor of the invoking CLI is the pane
+// process of a session: a seat is calling suspend from its own pane. It is
+// refused before anything is signalled. A seat whose pane pid was never recorded
+// is not caught.
+var ErrCallerIsASeat = errors.New("suspend: the caller runs inside a seat's pane; suspend from a terminal that is not a seat")
 
 // ErrSeatInDaemonSubtree is returned when the tmux server or a pane process
 // lies inside the daemon's own subtree. The daemon's children are managed
@@ -63,7 +75,7 @@ func (c *Collector) Collect() (Record, error) {
 	if err != nil {
 		return Record{}, fmt.Errorf("suspend: list the pane processes: %w", err)
 	}
-	server, seats, err := c.walk(serverPid, panes)
+	server, seats, err := c.walk(serverPid, panes, true)
 	if err != nil {
 		return Record{}, err
 	}
@@ -79,7 +91,7 @@ func (c *Collector) Rewalk(rec Record) ([]Proc, error) {
 	if c.roots == nil {
 		return nil, errors.New("suspend: re-walk before a collect: there are no panes to walk from")
 	}
-	_, seats, err := c.walk(rec.Server.Pid, c.roots)
+	_, seats, err := c.walk(rec.Server.Pid, c.roots, false)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +110,7 @@ func (c *Collector) Rewalk(rec Record) ([]Proc, error) {
 
 // walk reads the table and returns the server and every pane process with its
 // descendants, minus the exclusions.
-func (c *Collector) walk(serverPid int, panes []int) (Proc, []Proc, error) {
+func (c *Collector) walk(serverPid int, panes []int, checkCaller bool) (Proc, []Proc, error) {
 	rows, err := c.Table()
 	if err != nil {
 		return Proc{}, nil, fmt.Errorf("suspend: read the process table: %w", err)
@@ -135,6 +147,19 @@ func (c *Collector) walk(serverPid int, panes []int) (Proc, []Proc, error) {
 		}
 	}
 	if c.CLI > 1 {
+		if checkCaller && len(c.SeatPids) > 0 {
+			seatPane := make(map[int]bool, len(c.SeatPids))
+			for _, p := range c.SeatPids {
+				seatPane[p] = true
+			}
+			pid := c.CLI
+			for seen := 0; pid > 1 && seen < len(rows)+1; seen++ {
+				if seatPane[pid] {
+					return Proc{}, nil, ErrCallerIsASeat
+				}
+				pid = parent[pid]
+			}
+		}
 		ancestors(c.CLI)
 	}
 	// Fail closed: the daemon's children have no pane, so none may be the tmux

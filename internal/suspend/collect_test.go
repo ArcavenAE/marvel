@@ -227,3 +227,57 @@ func TestRewalkWithoutACollectIsAnError(t *testing.T) {
 		t.Error("Rewalk with no earlier Collect succeeded")
 	}
 }
+
+// A seat that runs suspend from its own pane would keep its process chain
+// running while the rest are frozen. Collect refuses before anything is
+// signalled when an ancestor of the CLI is the pane pid of a session the daemon
+// holds. The set is the daemon's own (the PID of each session in its store); no
+// environment variable, flag or identity is read.
+func TestCollectRefusesACallerThatIsUnderASeatPane(t *testing.T) {
+	// 200 is a seat's pane shell and 300 an operator's own pane of the same
+	// server; the daemon (210) runs in pane 400.
+	h := &fakeHost{
+		server: 100, panes: []int{200, 300, 400},
+		parent: map[int]int{
+			100: 1, 200: 100, 300: 100, 400: 100,
+			201: 200, 202: 201, // a seat's tool shell and the CLI under it
+			301: 300, 302: 301, // the operator's shell and the CLI under it
+			210: 400,         // the daemon, in its own pane
+			900: 1, 901: 900, // a CLI under no pane at all
+		},
+	}
+	cases := map[string]struct {
+		cli     int
+		wantErr bool
+	}{
+		"under a seat pane":                {202, true},
+		"under a pane that is no session":  {302, false},
+		"under no pane":                    {901, false},
+		"the daemon's own pane is no seat": {210, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			col := h.collector()
+			col.Daemon, col.CLI = 210, c.cli
+			col.SeatPids = []int{200}
+			_, err := col.Collect()
+			if got := errors.Is(err, ErrCallerIsASeat); got != c.wantErr {
+				t.Errorf("Collect = %v, ErrCallerIsASeat = %v, want %v", err, got, c.wantErr)
+			}
+			if !c.wantErr && err != nil {
+				t.Errorf("Collect refused a caller that is not a seat: %v", err)
+			}
+		})
+	}
+}
+
+// With no seat set the check is off, as for a collector built by a caller that
+// holds no sessions; the re-walk never runs it, since the CLI cannot have moved.
+func TestCollectWithNoSeatSetDoesNotRefuse(t *testing.T) {
+	h := &fakeHost{server: 100, panes: []int{200}, parent: map[int]int{100: 1, 200: 100, 201: 200}}
+	col := h.collector()
+	col.CLI = 201
+	if _, err := col.Collect(); err != nil {
+		t.Errorf("Collect = %v with no seat set", err)
+	}
+}
