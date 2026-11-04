@@ -240,3 +240,32 @@ func TestResumeWhoseTimersFailKeepsTheRecordAndCompletesOnRepeat(t *testing.T) {
 		}
 	}
 }
+
+// A resume also keeps the pause out of every schedule's freshness: the count
+// lands on the status once, and a repeated hook adds nothing.
+func TestResumeKeepsThePauseOutOfScheduleFreshness(t *testing.T) {
+	r := newTimersRig(t)
+	const key = "ws/t/r"
+	if _, err := r.d.store.UpdateScheduleStatus(key, func(st *api.ScheduleStatus) bool {
+		st.Since = r.now.Add(-48 * time.Hour)
+		st.LastSucceededAt = r.now.Add(-47 * time.Hour)
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := r.d.store.GetScheduleStatus(key)
+	if resp := r.call("resume", map[string]any{}); resp.Error != "" {
+		t.Fatalf("resume: %s", resp.Error)
+	}
+	rec := suspend.Record{Since: r.since}
+	if err := r.d.applyPause(rec, r.now); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := r.d.store.GetScheduleStatus(key)
+	if got.PausedSinceAnchor != pauseOfRig || !got.PauseAppliedSince.Equal(r.since) {
+		t.Errorf("status = %v since %v, want %v counted once for %v", got.PausedSinceAnchor, got.PauseAppliedSince, pauseOfRig, r.since)
+	}
+	if !got.LastSucceededAt.Equal(before.LastSucceededAt) || !got.Since.Equal(before.Since) {
+		t.Errorf("a recorded stamp moved: before %+v after %+v", before, got)
+	}
+}

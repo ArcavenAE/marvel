@@ -68,7 +68,9 @@ func TestShiftForPauseMovesBackoffAndHealthySince(t *testing.T) {
 	ctrl.roleHealth["ws/t/expired"] = &RoleHealth{RestartCount: 1, BackoffUntil: expired}
 	ctrl.mu.Unlock()
 
-	ctrl.ShiftForPause(2*time.Hour, now.Add(-2*time.Hour), now)
+	if err := ctrl.ShiftForPause(2*time.Hour, now.Add(-2*time.Hour), now); err != nil {
+		t.Fatal(err)
+	}
 
 	got, _ := ctrl.RoleHealthSnapshot("ws", "t", "backoff")
 	if want := now.Add(10 * time.Minute); !got.BackoffUntil.Equal(want) {
@@ -105,7 +107,9 @@ func TestShiftForPauseMovesTheTickRings(t *testing.T) {
 	ctrl.rings = map[string]*TickRing{"ws/a": r}
 	ctrl.ringMu.Unlock()
 
-	ctrl.ShiftForPause(2*time.Hour, now.Add(-2*time.Hour), now)
+	if err := ctrl.ShiftForPause(2*time.Hour, now.Add(-2*time.Hour), now); err != nil {
+		t.Fatal(err)
+	}
 
 	ctrl.ringMu.Lock()
 	defer ctrl.ringMu.Unlock()

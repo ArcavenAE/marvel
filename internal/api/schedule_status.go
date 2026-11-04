@@ -138,6 +138,16 @@ type ScheduleStatus struct {
 	// Frozen is on_failure = freeze having fired; reset-health clears it.
 	Frozen    bool `json:"frozen,omitempty"`
 	Suspended bool `json:"suspended,omitempty"`
+
+	// PausedSinceAnchor is how long a fleet suspend held the cluster since the
+	// freshness anchor (the last success, or Since when none has succeeded).
+	// EvaluateFreshness leaves it out of the time since the anchor, so a pause
+	// does not raise the stale alarm. No recorded stamp moves. A success
+	// resets it, so a pause before the last success never counts again.
+	PausedSinceAnchor time.Duration `json:"paused_since_anchor,omitempty"`
+	// PauseAppliedSince is the Since of the suspend record whose pause is
+	// already in PausedSinceAnchor, so a repeated resume counts it once.
+	PauseAppliedSince time.Time `json:"pause_applied_since,omitzero"`
 }
 
 // AddRun records a finished run, then drops the oldest runs of the run's
@@ -151,6 +161,7 @@ func (st *ScheduleStatus) AddRun(r RunRecord, h ScheduleHistory) {
 	}
 	if r.Outcome == RunSucceeded && r.EndedAt.After(st.LastSucceededAt) {
 		st.LastSucceededAt = r.EndedAt
+		st.PausedSinceAnchor = 0
 	}
 	st.History = append(st.History, r)
 
@@ -191,7 +202,7 @@ func (st *ScheduleStatus) EvaluateFreshness(now time.Time, staleAfter time.Durat
 	if anchor.IsZero() {
 		anchor = st.Since
 	}
-	stale := now.Sub(anchor) > staleAfter
+	stale := now.Sub(anchor)-max(st.PausedSinceAnchor, 0) > staleAfter
 	if stale == st.Stale {
 		return false
 	}
