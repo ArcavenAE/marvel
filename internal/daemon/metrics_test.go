@@ -105,3 +105,49 @@ func TestSampleMetricsOnceDeadPID(t *testing.T) {
 			got.CPUPercent, got.RSSBytes)
 	}
 }
+
+// While the cluster is suspended the sampler writes nothing: the processes are
+// stopped, so every reading would be 0% CPU. The first pass after the hold lifts
+// only seeds the sampler's baseline and publishes nothing, because the CPU
+// delta it would compute spans the whole pause; the pass after that publishes.
+func TestMetricsPassIsHeldWhileSuspendedAndReseedsAfter(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := New()
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	s := &api.Session{
+		Name: "agent-0", Workspace: "metrics-held", Team: "squad", Role: "worker",
+		Runtime: api.Runtime{Name: "sleep", Command: "sleep"}, State: api.SessionRunning, PID: os.Getpid(),
+	}
+	if err := d.store.CreateSession(s); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.store.DeleteSession(s.Key()) })
+	metricsAt := func() bool {
+		got, err := d.store.GetSession(s.Key())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return !got.MetricsAt.IsZero()
+	}
+
+	sampler := procstat.NewSampler()
+	var held metricsHold
+	d.suspendHeld.Store(true)
+	d.metricsPass(sampler, &held)
+	d.metricsPass(sampler, &held)
+	if metricsAt() {
+		t.Fatal("a pass wrote metrics while the cluster was suspended")
+	}
+
+	d.suspendHeld.Store(false)
+	d.metricsPass(sampler, &held)
+	if metricsAt() {
+		t.Fatal("the first pass after the hold lifted published a reading across the pause")
+	}
+	d.metricsPass(sampler, &held)
+	if !metricsAt() {
+		t.Fatal("the second pass after the hold lifted did not publish")
+	}
+}

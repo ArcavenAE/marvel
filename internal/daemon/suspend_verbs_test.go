@@ -473,3 +473,33 @@ func TestASecondResumeDuringAdoptionIsRefusedWithoutAnotherThaw(t *testing.T) {
 	close(release)
 	r.d.wg.Wait()
 }
+
+// While the cluster is suspended the limits tick runs none of its passes, which
+// press keys and read panes through a stopped tmux; once the hold lifts it runs
+// all of them, in order.
+func TestLimitsPassRunsNothingWhileSuspended(t *testing.T) {
+	d, _ := suspendDaemon(t)
+	var ran []string
+	pass := func(name string) func(time.Time) {
+		return func(time.Time) { ran = append(ran, name) }
+	}
+	d.suspendHeld.Store(true)
+	d.limitsPass(time.Now(), pass("limits"), pass("menus"), pass("reads"))
+	if len(ran) != 0 {
+		t.Fatalf("passes ran while suspended: %v", ran)
+	}
+	d.suspendHeld.Store(false)
+	d.limitsPass(time.Now(), pass("limits"), pass("menus"), pass("reads"))
+	if got := strings.Join(ran, ","); got != "limits,menus,reads" {
+		t.Errorf("passes = %q, want all three in order", got)
+	}
+	// A record with no hold is a suspend too.
+	ran = nil
+	if err := (suspendStore{d}).Save(suspendedRecord()); err != nil {
+		t.Fatal(err)
+	}
+	d.limitsPass(time.Now(), pass("limits"))
+	if len(ran) != 0 {
+		t.Errorf("a pass ran with a suspend record: %v", ran)
+	}
+}

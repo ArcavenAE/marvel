@@ -21,16 +21,52 @@ func (d *Daemon) RunMetrics(ctx context.Context, interval time.Duration) {
 	// A first pass right away so `marvel get sessions` has numbers
 	// before the first tick. On platforms whose CPU reading is a delta
 	// between passes it also seeds the baseline.
-	d.SampleMetricsOnce(sampler)
+	var held metricsHold
+	d.metricsPass(sampler, &held)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			d.SampleMetricsOnce(sampler)
+			d.metricsPass(sampler, &held)
 		}
 	}
+}
+
+// metricsHold remembers that the last pass was skipped for a suspend, so the
+// pass after the hold lifts can reseed the sampler instead of publishing.
+type metricsHold struct{ skipped bool }
+
+// metricsPass is one tick of RunMetrics. While the cluster is suspended it
+// writes nothing: the processes are stopped, so every sample would read 0% CPU.
+// The first pass after the hold lifts only reads the sampler, to move its
+// baseline, and publishes nothing, because its CPU delta would span the whole
+// pause; the next pass publishes.
+func (d *Daemon) metricsPass(sampler *procstat.Sampler, h *metricsHold) {
+	if d.clusterSuspended() {
+		h.skipped = true
+		return
+	}
+	if h.skipped {
+		h.skipped = false
+		if pids := d.sampledPids(); len(pids) > 0 {
+			_, _ = sampler.Sample(pids)
+		}
+		return
+	}
+	d.SampleMetricsOnce(sampler)
+}
+
+// sampledPids is the pane pid of every session the sampler reads.
+func (d *Daemon) sampledPids() []int {
+	var pids []int
+	for _, s := range d.store.ListSessions() {
+		if s.PID > 0 && s.State.CountsAsAlive() {
+			pids = append(pids, s.PID)
+		}
+	}
+	return pids
 }
 
 // SampleMetricsOnce runs one sampler pass and writes the results into the

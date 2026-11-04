@@ -86,11 +86,20 @@ func (d *Daemon) RunLimits(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			now := time.Now().UTC()
-			d.evaluateLimits(now)
-			d.evaluatePaneMenus(now)
-			d.refreshPaneReads(now)
+			d.limitsPass(time.Now().UTC(), d.evaluateLimits, d.evaluatePaneMenus, d.refreshPaneReads)
 		}
+	}
+}
+
+// limitsPass runs one tick's passes in order. While the cluster is suspended it
+// runs none of them: the limit action presses a key and the menu and pane reads
+// capture a pane, and tmux is stopped.
+func (d *Daemon) limitsPass(now time.Time, passes ...func(time.Time)) {
+	if d.clusterSuspended() {
+		return
+	}
+	for _, pass := range passes {
+		pass(now)
 	}
 }
 
