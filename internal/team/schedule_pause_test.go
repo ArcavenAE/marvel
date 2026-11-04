@@ -293,23 +293,16 @@ func TestRetryAfterMovesOnlyWhenItWasAheadOfTheSuspend(t *testing.T) {
 	r := newStaleRig(t, "test-pause-retry", 41*time.Hour, 10*time.Hour)
 	ahead := r.since.Add(5 * time.Minute)
 	passed := r.since.Add(-5 * time.Minute)
-	for _, c := range []struct {
-		name string
-		at   time.Time
-		want time.Time
-	}{
-		{"test-pause-retry", ahead, ahead.Add(10 * time.Hour)},
-	} {
-		if _, err := r.store.UpdateScheduleStatus(r.key, func(st *api.ScheduleStatus) bool {
-			st.RetryAfter = c.at
-			return true
-		}); err != nil {
-			t.Fatal(err)
-		}
-		r.shift(t)
-		if got := r.status().RetryAfter; !got.Equal(c.want) {
-			t.Errorf("%s: RetryAfter = %v, want %v", c.name, got, c.want)
-		}
+	if _, err := r.store.UpdateScheduleStatus(r.key, func(st *api.ScheduleStatus) bool {
+		st.RetryAfter = ahead
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r.shift(t)
+	want := ahead.Add(10 * time.Hour)
+	if got := r.status().RetryAfter; !got.Equal(want) {
+		t.Errorf("test-pause-retry: RetryAfter = %v, want %v", got, want)
 	}
 
 	r2 := newStaleRig(t, "test-pause-retry-passed", 41*time.Hour, 10*time.Hour)
