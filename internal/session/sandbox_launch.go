@@ -94,6 +94,9 @@ type sandboxPlan struct {
 
 // roleOf finds the role a session belongs to.
 func (m *Manager) roleOf(sess *api.Session) (api.Role, bool) {
+	if m.roleReader != nil {
+		return m.roleReader(sess)
+	}
 	team, err := m.store.GetTeam(sess.Workspace + "/" + sess.Team)
 	if err != nil {
 		return api.Role{}, false
@@ -130,6 +133,32 @@ func (m *Manager) sandboxDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(layout.RunDir(), "sandbox"), nil
+}
+
+// roleNamesSandbox reports whether sess's role names a sandbox profile. Create
+// asks it once, at site 1, and keeps the answer for unwrappedProfiledLaunch: a
+// seat that was profiled when it was checked is never started from a plan that
+// carries no sandbox.
+func (m *Manager) roleNamesSandbox(sess *api.Session) bool {
+	role, ok := m.roleOf(sess)
+	return ok && role.SandboxProfile != ""
+}
+
+// unwrappedProfiledLaunch is the fail-closed check after planLaunch. A seat
+// that was profiled at site 1 must reach the wrap with a staged sandbox, or
+// leave planLaunch with its own failure; a plan with neither is the bare
+// command, which planLaunch returns when its team, role or workspace lookup
+// misses, and when its role read and resolveSandbox's read disagree about the
+// profile. It returns the refusal for such a plan, and nil for every other.
+func (m *Manager) unwrappedProfiledLaunch(sess *api.Session, profiled bool, plan launchPlan) *sandboxFailure {
+	if !profiled || plan.sandbox != nil || plan.sandboxFail != nil {
+		return nil
+	}
+	return &sandboxFailure{
+		reason: RefusalSandboxChanged,
+		msg: fmt.Sprintf("not started: %s/%s named a sandbox profile when it was checked, and the planned launch carries none (its team, role or workspace changed before the launch was planned); nothing is started unsandboxed",
+			sess.Team, sess.Role),
+	}
 }
 
 // resolveSandbox runs every check for a profiled role and records nothing. It

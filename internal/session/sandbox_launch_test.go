@@ -571,3 +571,145 @@ func TestExampleProfileOrderAndContent(t *testing.T) {
 		}
 	}
 }
+
+// Create decides at site 1 whether a seat is profiled and keeps that answer for
+// the check after planLaunch. planLaunch's team, role and workspace lookups can
+// miss after site 1 passed, and it then returns the bare harness command with
+// neither a staged profile nor a failure; a profiled seat must not start from
+// that plan (every branch of planLaunch is wrapped, or refused).
+func TestAProfiledSeatWhosePlanFallsBackToTheDirectCommandIsRefused(t *testing.T) {
+	t.Parallel()
+	cases := map[string]func(t *testing.T, r *sandboxRig){
+		"workspace missing": func(t *testing.T, r *sandboxRig) {
+			if err := r.store.DeleteWorkspace("w"); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"team missing": func(t *testing.T, r *sandboxRig) {
+			if err := r.store.DeleteTeam("w/squad"); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"role missing from its team": func(t *testing.T, r *sandboxRig) {
+			team, err := r.store.GetTeam("w/squad")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := r.store.DeleteTeam("w/squad"); err != nil {
+				t.Fatal(err)
+			}
+			team.Roles[0].Name = "other"
+			if err := r.store.CreateTeam(&team); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			r := newSandboxRig(t, api.Role{}, api.PlacementLocalhost)
+			sess := r.session()
+			profiled := r.mgr.roleNamesSandbox(sess)
+			if !profiled {
+				t.Fatal("the role names a profile and roleNamesSandbox says it does not")
+			}
+			if err := r.mgr.checkSandbox(sess); err != nil {
+				t.Fatalf("site 1 = %v, want a pass", err)
+			}
+			change(t, r)
+			plan := r.mgr.planLaunch(sess)
+			if plan.sandbox != nil || plan.sandboxFail != nil {
+				t.Fatalf("plan = %+v; the premise of this test is a plan with neither", plan)
+			}
+			fail := r.mgr.unwrappedProfiledLaunch(sess, profiled, plan)
+			if fail == nil || fail.reason != RefusalSandboxChanged {
+				t.Fatalf("unwrappedProfiledLaunch = %+v, want a %q refusal", fail, RefusalSandboxChanged)
+			}
+			want := "not started: squad/seat named a sandbox profile when it was checked, and the planned launch carries none (its team, role or workspace changed before the launch was planned); nothing is started unsandboxed"
+			if fail.msg != want {
+				t.Errorf("message = %q, want %q", fail.msg, want)
+			}
+		})
+	}
+}
+
+// A second way to the same plan: planLaunch's own read of the role names the
+// profile, and resolveSandbox's read, a moment later, finds none, so it
+// returns no launch and no failure and the plan carries neither. The role
+// reader is the seam that answers the second read differently.
+func TestAProfiledSeatWhoseRoleLosesItsProfileBetweenReadsIsRefused(t *testing.T) {
+	t.Parallel()
+	r := newSandboxRig(t, api.Role{}, api.PlacementLocalhost)
+	sess := r.session()
+	profiled := r.mgr.roleNamesSandbox(sess)
+	if !profiled {
+		t.Fatal("the role names a profile and roleNamesSandbox says it does not")
+	}
+	r.mgr.roleReader = func(s *api.Session) (api.Role, bool) {
+		team, err := r.store.GetTeam(s.Workspace + "/" + s.Team)
+		if err != nil {
+			return api.Role{}, false
+		}
+		for _, role := range team.Roles {
+			if role.Name == s.Role {
+				role.SandboxProfile = ""
+				return role, true
+			}
+		}
+		return api.Role{}, false
+	}
+	plan := r.mgr.planLaunch(sess)
+	if plan.sandbox != nil || plan.sandboxFail != nil || plan.command == "" {
+		t.Fatalf("plan = %+v; the premise is a launchable plan with neither a sandbox nor a failure", plan)
+	}
+	if fail := r.mgr.unwrappedProfiledLaunch(sess, profiled, plan); fail == nil || fail.reason != RefusalSandboxChanged {
+		t.Fatalf("unwrappedProfiledLaunch = %+v, want a %q refusal", fail, RefusalSandboxChanged)
+	}
+}
+
+// A seat whose role never named a profile and takes a direct plan still
+// launches: the guard asks only about a seat that was profiled at site 1.
+func TestAnUnprofiledSeatOnADirectPlanStillLaunches(t *testing.T) {
+	t.Parallel()
+	r := newSandboxRig(t, api.Role{}, api.PlacementLocalhost)
+	team, err := r.store.GetTeam("w/squad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.store.DeleteTeam("w/squad"); err != nil {
+		t.Fatal(err)
+	}
+	team.Roles[0].SandboxProfile = ""
+	if err := r.store.CreateTeam(&team); err != nil {
+		t.Fatal(err)
+	}
+	sess := r.session()
+	profiled := r.mgr.roleNamesSandbox(sess)
+	if profiled {
+		t.Fatal("roleNamesSandbox says an unprofiled role is profiled")
+	}
+	if err := r.store.DeleteWorkspace("w"); err != nil {
+		t.Fatal(err)
+	}
+	plan := r.mgr.planLaunch(sess)
+	if plan.command == "" || plan.sandbox != nil || plan.sandboxFail != nil {
+		t.Fatalf("plan = %+v, want the direct command", plan)
+	}
+	if fail := r.mgr.unwrappedProfiledLaunch(sess, profiled, plan); fail != nil {
+		t.Errorf("an unprofiled seat was refused: %+v", fail)
+	}
+}
+
+// A profiled seat whose plan carries its sandbox, or its own failure, is not
+// the guard's business.
+func TestTheUnwrappedGuardLetsAPlanWithASandboxOrAFailureThrough(t *testing.T) {
+	t.Parallel()
+	r := newSandboxRig(t, api.Role{}, api.PlacementLocalhost)
+	sess := r.session()
+	if fail := r.mgr.unwrappedProfiledLaunch(sess, true, launchPlan{sandbox: &sandboxPlan{}}); fail != nil {
+		t.Errorf("a profiled seat with its sandbox was refused: %+v", fail)
+	}
+	if fail := r.mgr.unwrappedProfiledLaunch(sess, true, launchPlan{sandboxFail: &sandboxFailure{reason: RefusalSandboxPrepare}}); fail != nil {
+		t.Errorf("a profiled seat with its own failure was double-refused: %+v", fail)
+	}
+}

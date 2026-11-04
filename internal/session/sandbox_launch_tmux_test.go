@@ -145,3 +145,55 @@ func TestProfiledRoleRefusedAtSpawnStartsNothing(t *testing.T) {
 		t.Errorf("%d standing refusals after the controller cleared the role", n)
 	}
 }
+
+// Create refuses a profiled seat whose workspace vanishes after site 1: the
+// bare harness command planLaunch falls back to never reaches a pane, the
+// session record is gone, and the refusal is recorded under the #sandbox key.
+func TestCreateRefusesAProfiledSeatWhoseWorkspaceVanishesAfterTheCheck(t *testing.T) {
+	r := newSandboxSpawnRig(t)
+	reads := 0
+	r.mgr.roleReader = func(s *api.Session) (api.Role, bool) {
+		reads++
+		team, err := r.store.GetTeam(s.Workspace + "/" + s.Team)
+		if err != nil {
+			return api.Role{}, false
+		}
+		// The first read is Create's own, the second is site 1's. The workspace
+		// goes right after it, so planLaunch finds it missing.
+		if reads == 2 {
+			defer func() { _ = r.store.DeleteWorkspace(s.Workspace) }()
+		}
+		for _, role := range team.Roles {
+			if role.Name == s.Role {
+				return role, true
+			}
+		}
+		return api.Role{}, false
+	}
+	sess := r.session()
+	err := r.mgr.Create(sess)
+	if !errors.Is(err, ErrPlacementRefused) || !strings.Contains(err.Error(), RefusalSandboxChanged) {
+		t.Fatalf("Create = %v, want a placement refusal with reason %q", err, RefusalSandboxChanged)
+	}
+	if r.waitRanBriefly() {
+		t.Error("the seat's command ran although Create refused")
+	}
+	if _, gerr := r.store.GetSession(sess.Key()); gerr == nil {
+		t.Error("the session record was kept")
+	}
+	evs := r.refusedEvents()
+	if len(evs) != 1 {
+		t.Fatalf("session.sandbox-refused events = %d, want 1", len(evs))
+	}
+}
+
+func (r *sandboxSpawnRig) waitRanBriefly() bool {
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(filepath.Join(r.out, "ran")); err == nil {
+			return true
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return false
+}

@@ -54,6 +54,11 @@ type Manager struct {
 	SandboxDir  string
 	RealHome    string
 
+	// roleReader replaces the store read that answers which role a session is
+	// and whether it names a sandbox profile; nil means the store. A seam for
+	// tests, so a second read can answer differently from the first.
+	roleReader func(*api.Session) (api.Role, bool)
+
 	store      *api.Store
 	driver     *tmux.Driver
 	adapters   *runtime.Registry
@@ -905,6 +910,9 @@ func (m *Manager) Create(sess *api.Session) error {
 	if err != nil {
 		return err
 	}
+	// Decided once, here: a seat that names a profile now is never started
+	// from a plan that carries no sandbox (see unwrappedProfiledLaunch).
+	profiled := m.roleNamesSandbox(sess)
 	if err := m.checkSandbox(sess); err != nil {
 		return err
 	}
@@ -988,6 +996,15 @@ func (m *Manager) Create(sess *api.Session) error {
 	// see. Recorded for every session, overlay or not, so a default-mode
 	// session reads as ambient rather than as unclassified.
 	sess.BackendCredentialSource = api.ResolveBackendCredentialSource(backendOverlayFor(sess))
+
+	// A seat that was profiled when it was checked, and whose plan carries
+	// neither a staged sandbox nor a failure, is the bare command from one of
+	// planLaunch's lookup fallbacks. It is refused, never started.
+	if fail := m.unwrappedProfiledLaunch(sess, profiled, plan); fail != nil {
+		_ = m.store.DeleteSession(sess.Key())
+		m.teardownViews(sess.Key())
+		return m.refuseSandbox(sess, fail)
+	}
 
 	// A seat whose role names a sandbox-exec profile runs its prepared command
 	// under it. This wraps whatever planLaunch built, the direct fallbacks
@@ -2444,6 +2461,7 @@ const (
 	RefusalSandboxHarness   = "sandbox harness"
 	RefusalSandboxShape     = "sandbox shape"
 	RefusalSandboxPrepare   = "sandbox prepare"
+	RefusalSandboxChanged   = "sandbox changed"
 )
 
 // refusal is the standing record of one refused role, with when it was last
