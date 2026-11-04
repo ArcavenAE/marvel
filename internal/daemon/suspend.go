@@ -314,7 +314,7 @@ func (d *Daemon) handleSuspend(params json.RawMessage) daemonrpc.Response {
 }
 
 // handleResume sends SIGCONT to the recorded processes and ends the hold. The
-// heartbeats of the resumed seats are shifted by the pause before the hold
+// heartbeat of every running session is shifted by the pause before the hold
 // lifts, so the first tick cannot read a seat that was frozen as one that
 // stopped heartbeating. A daemon that started held has no loops yet, so
 // adoption and the loops start in the background, behind the starting gate;
@@ -339,7 +339,7 @@ func (d *Daemon) handleResume() daemonrpc.Response {
 	}
 
 	now := d.suspendClock()
-	d.shiftHeartbeats(was, res, now)
+	d.shiftHeartbeats(was, now)
 
 	if d.loopsStarted.Load() {
 		d.suspendHeld.Store(false)
@@ -362,23 +362,20 @@ func (d *Daemon) handleResume() daemonrpc.Response {
 	return respond(resumeResult{Resumed: true, Gone: res.Gone, StillStopped: res.StillStopped})
 }
 
-// shiftHeartbeats moves LastHeartbeat forward by the pause for each session
-// whose pane process was resumed, and clears its failure count. The pause is
-// read once (now minus the record's Since), applied to every session alike and
+// shiftHeartbeats moves LastHeartbeat forward by the pause for every session
+// that is running, and clears its failure count. It goes by session, not by
+// recorded pid: no session could heartbeat while the cluster was held, the
+// caller's own seat included, and a process the collector missed is no less
+// frozen. The cost is that a seat that really died during the pause is noticed
+// one HealthCheck.Timeout after resume instead of at once. The pause is read
+// once (now minus the record's Since), applied to every session alike and
 // capped at now; a zero stamp stays zero and a negative pause shifts nothing.
 // The rest of SR-F (activity stamps, backoff, grace for a seat with no
 // heartbeat yet) is a later change.
-func (d *Daemon) shiftHeartbeats(rec suspend.Record, res suspend.Result, now time.Time) {
-	resumed := map[int]bool{}
-	for _, s := range rec.Seats {
-		resumed[s.Pid] = true
-	}
-	for _, pid := range res.Gone {
-		delete(resumed, pid)
-	}
+func (d *Daemon) shiftHeartbeats(rec suspend.Record, now time.Time) {
 	pause := suspend.PauseOf(rec, now)
 	for _, sess := range d.store.ListSessions() {
-		if sess.PID <= 1 || !resumed[sess.PID] {
+		if sess.State != api.SessionRunning {
 			continue
 		}
 		key := sess.Key()

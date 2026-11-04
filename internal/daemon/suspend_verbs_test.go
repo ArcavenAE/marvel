@@ -360,6 +360,10 @@ func TestResumeShiftsTheHeartbeatsOfResumedSeats(t *testing.T) {
 	mk("recent", 201, now.Add(-10*time.Minute), 1)
 	mk("never", 202, time.Time{}, 0)
 	mk("other", 999, now.Add(-2*time.Hour), 2)
+	mk("notrunning", 998, now.Add(-2*time.Hour), 2)
+	if err := r.d.store.UpdateSession("ws/notrunning", func(s *api.Session) error { s.State = api.SessionFailed; return nil }); err != nil {
+		t.Fatal(err)
+	}
 	// A seat that heartbeated a minute before the suspend began and was frozen
 	// for 90 minutes: against a 5-minute timeout it must read as one minute
 	// stale after resume, not 91.
@@ -398,9 +402,17 @@ func TestResumeShiftsTheHeartbeatsOfResumedSeats(t *testing.T) {
 			t.Errorf("%s FailureCount = %d, want 0", n, got)
 		}
 	}
+	// The shift is by session, not by recorded pid: no session could heartbeat
+	// while held, so one whose pane pid the collector did not record (the
+	// caller's own seat, or a process it missed) is shifted like the rest.
 	other := hb(t, r.d, "other")
-	if !other.LastHeartbeat.Equal(now.Add(-2*time.Hour)) || other.FailureCount != 2 {
-		t.Errorf("a session whose process was not recorded was changed: %+v", other)
+	if !other.LastHeartbeat.Equal(now.Add(-30*time.Minute)) || other.FailureCount != 0 {
+		t.Errorf("a running session whose pid was not recorded was not shifted: %+v", other)
+	}
+	// A session that was not running is left alone.
+	stopped := hb(t, r.d, "notrunning")
+	if !stopped.LastHeartbeat.Equal(now.Add(-2*time.Hour)) || stopped.FailureCount != 2 {
+		t.Errorf("a session that was not running was changed: %+v", stopped)
 	}
 }
 
