@@ -446,6 +446,8 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 
 		leafLossCause: leafLossCause,
 	}
+	teamCtrl.Suspended = d.clusterSuspended
+
 	// The build is fixed for this process image, so its stamp is encoded once.
 	// A Build is plain strings and a bool, so this cannot fail in practice; if
 	// it did, replies would go out unstamped, as from an older daemon.
@@ -636,6 +638,14 @@ func (d *Daemon) Start(socketPath string) error {
 		return nil
 	}
 
+	return d.adoptAndRun(ctx, socketPath, network)
+}
+
+// adoptAndRun is the part of Start that follows serving: adopt the live tmux
+// state, settle the convergence posture, re-project policies, and start the
+// loops. A held start skips it, and resume runs it once the recorded
+// processes have been resumed, so the same code answers both.
+func (d *Daemon) adoptAndRun(ctx context.Context, socketPath, network string) error {
 	// Reconcile marvel-* tmux state against recorded intent. Panes that
 	// match the rehydrated intent are adopted; anything else is LEFT
 	// RUNNING and reported, unless the operator asked to reclaim.

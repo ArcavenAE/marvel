@@ -182,3 +182,10 @@ func (d *Daemon) resolveSuspendAtStart() bool {
 	log.Printf("suspend: the record is in an unknown state %q; serving suspended", rec.State)
 	return true
 }
+
+// clusterSuspended reports whether a suspend record exists or the daemon is
+// held. The reconcile tick, the watchdog and the dispatch gate all ask it, so
+// one answer decides whether anything may touch tmux.
+func (d *Daemon) clusterSuspended() bool {
+	return d.suspendHeld.Load() || d.suspendRec.Load() != nil
+}

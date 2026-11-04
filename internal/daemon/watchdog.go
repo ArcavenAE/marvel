@@ -44,6 +44,10 @@ type watchdog struct {
 	reg    *runtime.Registry
 	now    func() time.Time
 
+	// suspended reports whether the cluster is suspended; a pass returns
+	// before it reads any pane while it is. Nil means never.
+	suspended func() bool
+
 	// readPane returns the pane's foreground command and width; capture
 	// returns its visible screen with wrapped rows joined. Both are injected
 	// so tests need no tmux server.
@@ -223,6 +227,9 @@ func (w *watchdog) Run(ctx context.Context) {
 
 // Once runs one pass over every session.
 func (w *watchdog) Once() {
+	if w.suspended != nil && w.suspended() {
+		return
+	}
 	if len(w.sets) == 0 && len(w.failed) == 0 {
 		// No pattern set, nothing can match, so nothing is read: no pane is
 		// queried and none is captured. The loop guard in startWatchdog says the
@@ -525,6 +532,7 @@ func (d *Daemon) startWatchdog(ctx context.Context) {
 	if w == nil {
 		return
 	}
+	w.suspended = d.clusterSuspended
 	w.readPane = d.driver.PaneForeground
 	w.capture = d.driver.CapturePaneJoined
 	d.wg.Add(1)
