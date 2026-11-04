@@ -374,3 +374,30 @@ func TestHibernatingSeatHandsOffThroughThePut(t *testing.T) {
 		t.Fatal("the seat survived the handoff it put")
 	}
 }
+
+// A shift launches its successors outside the planner, so the mark has to stop
+// it where it starts: an operator shift of a hibernated role is refused, and a
+// role the mark does not cover can still shift.
+func TestShiftIsRefusedForAHibernatedRole(t *testing.T) {
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	rt := api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}
+	createTeamFixture(t, store, "test-hib-shift", "squad", []api.Role{
+		{Name: "a", Replicas: 1, Runtime: rt}, {Name: "b", Replicas: 1, Runtime: rt},
+	})
+	if err := store.UpdateTeam("test-hib-shift/squad", func(live *api.Team) error {
+		live.Hibernate = &api.HibernateMark{State: api.HibernateHibernated, Since: time.Now().UTC(), Roles: []string{"a"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.InitiateShift("test-hib-shift/squad", "a"); err == nil || !strings.Contains(err.Error(), "hibernated") {
+		t.Fatalf("shift of a hibernated role: err = %v, want a refusal naming the hibernate", err)
+	}
+	if err := ctrl.InitiateShift("test-hib-shift/squad", ""); err == nil || !strings.Contains(err.Error(), "hibernated") {
+		t.Fatalf("whole-team shift over a hibernated role: err = %v, want a refusal", err)
+	}
+	if err := ctrl.InitiateShift("test-hib-shift/squad", "b"); err != nil {
+		t.Fatalf("shift of an uncovered role: %v", err)
+	}
+}

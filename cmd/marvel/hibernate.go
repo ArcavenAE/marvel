@@ -240,7 +240,7 @@ func runHibernate(out io.Writer, in io.Reader, interactive, yes, noWait bool, en
 		settled, reported := true, []string{}
 		for _, t := range st.Teams {
 			reported = append(reported, t.Reported...)
-			if !t.Done && !(len(t.Pending) == 0 && t.Running <= len(t.Reported)) {
+			if !t.Done && (len(t.Pending) != 0 || t.Running > len(t.Reported)) {
 				settled = false
 			}
 		}

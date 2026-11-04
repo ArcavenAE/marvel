@@ -2106,6 +2106,14 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 	} else {
 		roles = shiftOrder(t.Roles)
 	}
+	// A shift launches its successors itself, outside planRole, so the hibernate
+	// mark's spawn gate would not reach it: refuse while the mark covers any
+	// role the shift would drain.
+	for _, name := range roles {
+		if t.Hibernate.Covers(name) {
+			return fmt.Errorf("team %s: role %s is hibernated; run marvel wake before a shift", teamKey, name)
+		}
+	}
 
 	// Admission, before any shift state is written. See admitShift for why
 	// the gate is here and not in shiftLaunch.

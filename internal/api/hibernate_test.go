@@ -42,9 +42,11 @@ func TestHibernateMarkCovers(t *testing.T) {
 }
 
 func TestCloneTeamSharesNoHibernateState(t *testing.T) {
-	team := &Team{Name: "t", Workspace: "w",
+	team := &Team{
+		Name: "t", Workspace: "w",
 		Hibernate:         &HibernateMark{State: HibernateHibernated, Roles: []string{"a"}},
-		HibernateRequests: map[string]ShiftRequest{"w/s1": {Session: "w/s1"}}}
+		HibernateRequests: map[string]ShiftRequest{"w/s1": {Session: "w/s1"}},
+	}
 	c := cloneTeam(team)
 	c.Hibernate.Roles[0] = "z"
 	delete(c.HibernateRequests, "w/s1")

@@ -178,3 +178,39 @@ func TestDescribeShowsOpenHibernateRequestsPerSession(t *testing.T) {
 		t.Fatalf("shift rows = %+v, want none", desc.PendingShiftRequests)
 	}
 }
+
+func TestScaleOnAHibernatedTeamHoldsAndSaysSo(t *testing.T) {
+	d := hibernateDaemon(t, roleOn("worker", "sleep", ""))
+	if err := d.store.UpdateTeam("acme/squad", func(live *api.Team) error {
+		live.Hibernate = &api.HibernateMark{State: api.HibernateHibernated, Since: time.Now().UTC()}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp := d.handleScale(json.RawMessage(`{"team_key":"acme/squad","role":"worker","replicas":2}`))
+	if resp.Error != "" {
+		t.Fatalf("scale refused: %s", resp.Error)
+	}
+	var out struct {
+		Held string `json:"held"`
+	}
+	if err := json.Unmarshal(resp.Result, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Held != "held: hibernated; run marvel wake" {
+		t.Fatalf("scale held = %q, want the hold line", out.Held)
+	}
+	tm, _ := d.store.GetTeam("acme/squad")
+	if tm.Roles[0].Replicas != 2 {
+		t.Fatalf("replicas = %d, want the new intent recorded", tm.Roles[0].Replicas)
+	}
+}
+
+func TestHarnessCheckReadsTheBinaryOfACommandWithArguments(t *testing.T) {
+	d := hibernateDaemon(t, roleOn("worker", "sleep 300", ""))
+	tm, _ := d.store.GetTeam("acme/squad")
+	tm.Hibernate = &api.HibernateMark{State: api.HibernateHibernated}
+	if c := d.harnessCheck([]api.Team{tm}); c.Result != "passed" {
+		t.Fatalf("harness check = %+v, want a command with arguments judged by its first field", c)
+	}
+}

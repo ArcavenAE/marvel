@@ -45,6 +45,12 @@ type clockStep struct {
 }
 
 func (c *Controller) stepScheduleClock(t *api.Team, role *api.Role, now time.Time) {
+	// While a covered role is hibernated its clock stands still, so the due time
+	// stays where it was and the wake finds it: at most one catch-up inside
+	// starting_deadline, otherwise schedule.missed, as after any other absence.
+	if m := t.Hibernate; m != nil && m.State == api.HibernateHibernated && m.Covers(role.Name) {
+		return
+	}
 	key := t.Workspace + "/" + t.Name + "/" + role.Name
 	var live []string
 	for _, s := range c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name) {

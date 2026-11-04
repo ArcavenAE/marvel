@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -91,7 +92,10 @@ func (c *Controller) Hibernate(teamKey string, opt HibernateOptions) (HibernateR
 	}); err != nil {
 		return HibernateReport{}, fmt.Errorf("mark %s hibernated: %w", teamKey, err)
 	}
-	t, _ = c.store.GetTeam(teamKey)
+	t, err = c.store.GetTeam(teamKey)
+	if err != nil {
+		return HibernateReport{}, fmt.Errorf("read %s after marking it: %w", teamKey, err)
+	}
 	rep := HibernateReport{Team: teamKey}
 	for i := range t.Roles {
 		role := &t.Roles[i]
@@ -114,7 +118,7 @@ func (c *Controller) advanceHibernate(t *api.Team, now time.Time) {
 	case t.Hibernate == nil:
 		return
 	case t.Hibernate.State == api.HibernateWaking:
-		c.advanceWake(t, now)
+		c.advanceWake(t)
 	default:
 		c.advanceSignOff(t, now)
 	}
@@ -185,7 +189,7 @@ func (c *Controller) advanceSignOff(t *api.Team, now time.Time) {
 			c.askHibernate(t, role, s, now, extra)
 		}
 	}
-	c.noteHibernated(t, now)
+	c.noteHibernated(t)
 }
 
 // workersSettled reports whether every running worker seat of the covered roles
@@ -235,8 +239,10 @@ func (c *Controller) askHibernate(t *api.Team, role *api.Role, sess api.Session,
 	} else if err := c.Notify(sess, prep.text, NoticeHibernate); err != nil {
 		undelivered = err.Error()
 	}
-	req := api.ShiftRequest{Session: sess.Key(), Cause: api.HandoffCauseHibernate, RequestedAt: now,
-		NoticeUndelivered: undelivered, DirError: prep.dirError, DirDev: prep.dirDev, DirIno: prep.dirIno}
+	req := api.ShiftRequest{
+		Session: sess.Key(), Cause: api.HandoffCauseHibernate, RequestedAt: now,
+		NoticeUndelivered: undelivered, DirError: prep.dirError, DirDev: prep.dirDev, DirIno: prep.dirIno,
+	}
 	if err := c.putHibernateRequest(t, req); err != nil {
 		log.Printf("hibernate: %s: record request for %s: %v", t.Key(), sess.Key(), err)
 		return
@@ -250,6 +256,17 @@ func (c *Controller) askHibernate(t *api.Team, role *api.Role, sess api.Session,
 		Workspace: t.Workspace, Team: t.Name, Role: role.Name, Session: sess.Key(), Generation: t.Generation,
 		Message: fmt.Sprintf("cause=%s: hibernate by %s; notice %s; handoff window %s", api.HandoffCauseHibernate, t.Hibernate.Actor, delivery, rr.Shift.HandoffWindowOrDefault()),
 	})
+}
+
+// recordHibernateRequest is the callback the shared escalation helpers use to
+// save a request after they count a delivery; a failed write is logged, since
+// the count would otherwise be lost without a trace.
+func (c *Controller) recordHibernateRequest(t *api.Team) func(api.ShiftRequest) {
+	return func(r api.ShiftRequest) {
+		if err := c.putHibernateRequest(t, r); err != nil {
+			log.Printf("hibernate: %s: record delivery for %s: %v", t.Key(), r.Session, err)
+		}
+	}
 }
 
 func (c *Controller) putHibernateRequest(t *api.Team, req api.ShiftRequest) error {
@@ -303,7 +320,7 @@ func (c *Controller) advanceHibernateRequest(t *api.Team, req api.ShiftRequest, 
 	rr := withShift(role)
 	c.noteStuckRequest(t, rr, req, sess, now)
 	if req.Escalated {
-		c.deliverMissingFor(t, rr, sess, req, now, func(r api.ShiftRequest) { _ = c.putHibernateRequest(t, r) })
+		c.deliverMissingFor(t, rr, sess, req, now, c.recordHibernateRequest(t))
 		c.repeatHandoffMissing(t, rr, sess, t.HibernateRequests[req.Session], now)
 		return
 	}
@@ -332,7 +349,7 @@ func (c *Controller) advanceHibernateRequest(t *api.Team, req api.ShiftRequest, 
 		log.Printf("hibernate: %s: record escalation for %s: %v", t.Key(), sess.Key(), err)
 		return
 	}
-	c.deliverMissingFor(t, rr, sess, req, now, func(r api.ShiftRequest) { _ = c.putHibernateRequest(t, r) })
+	c.deliverMissingFor(t, rr, sess, req, now, c.recordHibernateRequest(t))
 	c.emitHandoffMissing(t, rr, sess, t.HibernateRequests[req.Session], now, false, false)
 }
 
@@ -348,6 +365,25 @@ func (c *Controller) endHibernated(t *api.Team, sess api.Session, outcome, reaso
 		log.Printf("hibernate: delete session %s: %v", sess.Key(), err)
 	}
 	c.dropHibernateRequest(t, sess.Key())
+	c.recordHibernatedSeat(t, sess.Key())
+}
+
+// recordHibernatedSeat keeps the key of a seat the hibernate ended in the mark,
+// so a wake can find the seat each new one replaces by that key.
+func (c *Controller) recordHibernatedSeat(t *api.Team, key string) {
+	add := func(m *api.HibernateMark) {
+		if m != nil && !slices.Contains(m.Seats, key) {
+			m.Seats = append(m.Seats, key)
+		}
+	}
+	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+		add(live.Hibernate)
+		return nil
+	}); err != nil && !errors.Is(err, api.ErrNotFound) {
+		log.Printf("hibernate: %s: record ended seat %s: %v", t.Key(), key, err)
+		return
+	}
+	add(t.Hibernate)
 }
 
 // HibernateEnd ends sess without a handoff, the one explicit act that loses a
@@ -376,7 +412,7 @@ func (c *Controller) HibernateEnd(teamKey, session string) error {
 // noteHibernated says the team is hibernated once nothing is left running and
 // no request is open. The record of having said so is in memory, so a daemon
 // restart says it again.
-func (c *Controller) noteHibernated(t *api.Team, now time.Time) {
+func (c *Controller) noteHibernated(t *api.Team) {
 	if len(t.HibernateRequests) > 0 {
 		return
 	}
@@ -473,6 +509,7 @@ func (c *Controller) Wake(teamKey string, opt WakeOptions) error {
 		return fmt.Errorf("%w: %s is not hibernated", ErrHibernateRefused, teamKey)
 	}
 	now := c.nowUTC()
+	hibernatedSince, rerun := t.Hibernate.Since, t.Hibernate.State == api.HibernateWaking
 	if err := c.store.UpdateTeam(teamKey, func(live *api.Team) error {
 		live.ConvergencePosture = api.PostureConverge
 		live.Hibernate.State = api.HibernateWaking
@@ -483,11 +520,19 @@ func (c *Controller) Wake(teamKey string, opt WakeOptions) error {
 	}); err != nil {
 		return fmt.Errorf("wake %s: %w", teamKey, err)
 	}
-	t, _ = c.store.GetTeam(teamKey)
+	t, err = c.store.GetTeam(teamKey)
+	if err != nil {
+		return fmt.Errorf("read %s after waking it: %w", teamKey, err)
+	}
 	for session := range t.HibernateRequests {
 		c.dropHibernateRequest(&t, session)
 	}
 	msg := fmt.Sprintf("wake by %s via %s: posture converge, supervisor roles may start", opt.Actor, opt.Source)
+	if rerun {
+		msg += "; run again on a waking team"
+	} else {
+		msg += "; hibernated since " + hibernatedSince.Format(time.RFC3339)
+	}
 	if len(opt.SkippedChecks) > 0 {
 		msg += "; skipped checks: " + strings.Join(opt.SkippedChecks, ", ")
 	}
@@ -500,7 +545,7 @@ func (c *Controller) Wake(teamKey string, opt WakeOptions) error {
 
 // advanceWake clears the mark once every covered role has its replicas started,
 // and says what the wake did. Caller holds c.mu.
-func (c *Controller) advanceWake(t *api.Team, now time.Time) {
+func (c *Controller) advanceWake(t *api.Team) {
 	var notUp []string
 	for i := range t.Roles {
 		role := &t.Roles[i]
@@ -593,13 +638,14 @@ func (c *Controller) recheckHibernatePut(token string, t *api.Team, plan handoff
 	return err
 }
 
-// wakePredecessors returns, newest first, the keys of the seats of role that a
-// wake in progress replaces: the resume journal's entries for the role whose
-// seat is not alive now. A new seat takes one as its predecessor, so the first
-// prompt names the handoff the hibernated seat wrote. Nil unless the team is
-// waking.
+// wakePredecessors returns the keys of the seats of role that a wake in
+// progress replaces, in the order the hibernate ended them. Each comes from the
+// mark's own record of the seat it ended, looked up by that key in the resume
+// journal; an older journal entry of the same role is never picked. A new seat
+// takes one as its predecessor, so its first prompt names the handoff the
+// hibernated seat wrote. Nil unless the team is waking.
 func (c *Controller) wakePredecessors(t *api.Team, role string) []string {
-	if t.Hibernate == nil || t.Hibernate.State != api.HibernateWaking {
+	if t.Hibernate == nil || t.Hibernate.State != api.HibernateWaking || len(t.Hibernate.Seats) == 0 {
 		return nil
 	}
 	entries, err := c.store.ResumeJournal()
@@ -607,20 +653,20 @@ func (c *Controller) wakePredecessors(t *api.Team, role string) []string {
 		log.Printf("wake: %s: read the resume journal: %v", t.Key(), err)
 		return nil
 	}
-	var picked []api.ResumeEntry
+	byKey := make(map[string]api.ResumeEntry, len(entries))
 	for _, e := range entries {
-		if e.Workspace != t.Workspace || e.Team != t.Name || e.Role != role {
-			continue
-		}
-		if s, err := c.store.GetSession(e.Session); err == nil && s.State.CountsAsAlive() {
-			continue
-		}
-		picked = append(picked, e)
+		byKey[e.Session] = e
 	}
-	sort.SliceStable(picked, func(i, j int) bool { return picked[i].LaunchedAt.After(picked[j].LaunchedAt) })
-	out := make([]string, len(picked))
-	for i, e := range picked {
-		out[i] = e.Session
+	var out []string
+	for _, key := range t.Hibernate.Seats {
+		e, ok := byKey[key]
+		if !ok || e.Workspace != t.Workspace || e.Team != t.Name || e.Role != role {
+			continue
+		}
+		if s, err := c.store.GetSession(key); err == nil && s.State.CountsAsAlive() {
+			continue
+		}
+		out = append(out, key)
 	}
 	return out
 }

@@ -200,10 +200,12 @@ func (d *Daemon) handleHibernate(params json.RawMessage) daemonrpc.Response {
 	if p.DryRun {
 		return respond(res)
 	}
+	var changed []string
 	for _, pk := range picks {
 		if _, err := d.teamCtrl.Hibernate(pk.key, teamHibernateOptions(pk.roles)); err != nil {
-			return daemonrpc.Response{Error: err.Error()}
+			return daemonrpc.Response{Error: partialError(err, "already marked", changed)}
 		}
+		changed = append(changed, pk.key)
 	}
 	d.teamCtrl.ReconcileOnce()
 	for _, pk := range picks {
@@ -290,10 +292,12 @@ func (d *Daemon) handleWake(params json.RawMessage) daemonrpc.Response {
 		}
 		targets = sorted
 	}
+	var changed []string
 	for _, t := range targets {
 		if err := d.teamCtrl.Wake(t.Key(), teamWakeOptions(p.SkipChecks)); err != nil {
-			return daemonrpc.Response{Error: err.Error()}
+			return daemonrpc.Response{Error: partialError(err, "already waking", changed)}
 		}
+		changed = append(changed, t.Key())
 	}
 	d.teamCtrl.ReconcileOnce()
 	for _, t := range targets {
@@ -302,6 +306,15 @@ func (d *Daemon) handleWake(params json.RawMessage) daemonrpc.Response {
 		}
 	}
 	return respond(res)
+}
+
+// partialError is err with the teams a multi-team call had already changed, so a
+// refusal on a later team does not read as if nothing happened.
+func partialError(err error, what string, changed []string) string {
+	if len(changed) == 0 {
+		return err.Error()
+	}
+	return fmt.Sprintf("%v (%s before this: %s)", err, what, strings.Join(changed, ", "))
 }
 
 // wakeRefusal is the reply to a wake the preflight stopped, naming each failed
@@ -361,11 +374,13 @@ func (d *Daemon) harnessCheck(targets []api.Team) preflightCheck {
 	missing := map[string]bool{}
 	for _, t := range targets {
 		for _, role := range t.Roles {
-			if !t.Hibernate.Covers(role.Name) || role.Runtime.Command == "" {
+			// The command may carry arguments; the binary is its first field.
+			fields := strings.Fields(role.Runtime.Command)
+			if !t.Hibernate.Covers(role.Name) || len(fields) == 0 {
 				continue
 			}
-			if !onPath(role.Runtime.Command) {
-				missing[role.Runtime.Command] = true
+			if !onPath(fields[0]) {
+				missing[fields[0]] = true
 			}
 		}
 	}

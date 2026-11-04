@@ -2,6 +2,7 @@ package team
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,8 +193,10 @@ func TestTheMarkStopsATopUpThatTheHoldWouldAllow(t *testing.T) {
 }
 
 // A woken seat is a successor of the seat it replaces: MARVEL_PREDECESSOR names
-// the hibernated session the resume journal recorded, so its first prompt points
-// at the handoff that seat wrote.
+// the hibernated session the mark recorded, so its first prompt points at the
+// handoff that seat wrote. The role has two journal entries, and the newer one
+// belongs to a seat the hibernate never ended; the lookup is by the hibernated
+// seat's own key, so the older entry is the one picked.
 func TestWakeStartsEachSeatAsASuccessorOfItsHibernatedSeat(t *testing.T) {
 	store, ctrl, cleanup := setupWithBolt(t, filepath.Join(t.TempDir(), "marvel.db"))
 	t.Cleanup(cleanup)
@@ -201,26 +204,134 @@ func TestWakeStartsEachSeatAsASuccessorOfItsHibernatedSeat(t *testing.T) {
 	ctrl.now = f.clock.Now
 	ctrl.Events = f.ring
 	createTeamFixture(t, store, f.ws, "squad", wakeRoles())
+	hibernated, newer := f.ws+"/squad-supervisor-before", f.ws+"/squad-supervisor-later"
 	if err := store.UpdateTeam(f.ws+"/squad", func(live *api.Team) error {
 		live.ConvergencePosture = api.PostureHold
-		live.Hibernate = &api.HibernateMark{State: api.HibernateHibernated, Since: f.clock.Now(), Mode: api.HibernateModeHandoff}
+		live.Hibernate = &api.HibernateMark{State: api.HibernateHibernated, Since: f.clock.Now(), Mode: api.HibernateModeHandoff, Seats: []string{hibernated}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	old := "squad-supervisor-before"
-	if err := store.RecordResume(api.ResumeEntry{Session: f.ws + "/" + old, Workspace: f.ws, Team: "squad", Role: "supervisor", LaunchedAt: listEpoch.Add(-time.Hour)}); err != nil {
-		t.Fatal(err)
+	for _, e := range []api.ResumeEntry{
+		{Session: hibernated, Workspace: f.ws, Team: "squad", Role: "supervisor", LaunchedAt: listEpoch.Add(-2 * time.Hour)},
+		{Session: newer, Workspace: f.ws, Team: "squad", Role: "supervisor", LaunchedAt: listEpoch.Add(-time.Hour)},
+	} {
+		if err := store.RecordResume(e); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	f.wake()
 	f.ctrl.ReconcileOnce()
 
-	var got []api.Session
-	for _, s := range store.ListSessionsByTeamRole(f.ws, "squad", "supervisor") {
-		got = append(got, s)
+	got := store.ListSessionsByTeamRole(f.ws, "squad", "supervisor")
+	if len(got) != 1 || got[0].Predecessor != hibernated {
+		t.Fatalf("supervisor seats = %+v, want one whose predecessor is %s, not %s", got, hibernated, newer)
 	}
-	if len(got) != 1 || got[0].Predecessor != f.ws+"/"+old {
-		t.Fatalf("supervisor seats = %+v, want one whose predecessor is %s/%s", got, f.ws, old)
+}
+
+// A seat the hibernate ended is recorded in the mark by its key, and an --end
+// records it too, so the wake has the key whichever way the seat ended.
+func TestHibernateRecordsEachEndedSeatInTheMark(t *testing.T) {
+	f := newWakeFixture(t, "test-wake-seats")
+	f.ctrl.mu.Lock()
+	tm, _ := f.store.GetTeam(f.ws + "/squad")
+	f.ctrl.recordHibernatedSeat(&tm, f.ws+"/squad-worker-a")
+	f.ctrl.recordHibernatedSeat(&tm, f.ws+"/squad-worker-a")
+	f.ctrl.mu.Unlock()
+	live, _ := f.store.GetTeam(f.ws + "/squad")
+	if got := live.Hibernate.Seats; len(got) != 1 || got[0] != f.ws+"/squad-worker-a" {
+		t.Fatalf("mark seats = %v, want the one key once", got)
+	}
+}
+
+// The waking message keeps the time the team was hibernated, because the mark's
+// Since is reset to the wake time.
+func TestWakingMessageRecordsWhenTheTeamWasHibernated(t *testing.T) {
+	f := newWakeFixture(t, "test-wake-since")
+	hibernatedAt := f.clock.Now()
+	f.clock.Advance(3 * time.Hour)
+	f.wake()
+	var msg string
+	for _, ev := range f.ring.Snapshot(events.Filter{}, 0) {
+		if ev.Kind == events.KindTeamWaking {
+			msg = ev.Message
+		}
+	}
+	want := "hibernated since " + hibernatedAt.Format(time.RFC3339)
+	if !strings.Contains(msg, want) {
+		t.Fatalf("team.waking message = %q, want it to contain %q", msg, want)
+	}
+}
+
+// A scheduled role's firing does not run while the team is hibernated: the
+// clock stands still for a covered role, so nothing is recorded and nothing
+// spawns.
+func TestHibernatedMarkHoldsANewFiringOfACoveredRole(t *testing.T) {
+	r := newClockRig(t, "test-hib-firing", time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC),
+		clockRole("Etc/UTC", shRuntime("exit 0"), nil))
+	r.ctrl.ReconcileOnce()
+	hibernateRig(t, r)
+	r.clock.Advance(20 * time.Minute)
+	r.ctrl.ReconcileOnce()
+	r.ctrl.ReconcileOnce()
+	if n := len(r.sessions()); n != 0 {
+		t.Fatalf("a hibernated team started %d runs of a scheduled role, want none", n)
+	}
+	if st := r.status(); st.Firing != "" {
+		t.Fatalf("schedule status records firing %q on a hibernated team, want none", st.Firing)
+	}
+}
+
+func hibernateRig(t *testing.T, r *clockRig) {
+	t.Helper()
+	if err := r.store.UpdateTeam(r.ws+"/timers", func(tm *api.Team) error {
+		tm.ConvergencePosture = api.PostureHold
+		tm.Hibernate = &api.HibernateMark{State: api.HibernateHibernated, Since: r.clock.Now(), Mode: api.HibernateModeHandoff}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A firing due while the team was hibernated gets one catch-up at wake when it
+// is still inside starting_deadline.
+func TestWakeCatchesUpAFiringInsideTheStartingDeadlineOnce(t *testing.T) {
+	r := newClockRig(t, "test-hib-catchup", time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC),
+		clockRole("Etc/UTC", shRuntime("exit 0"), func(p *api.SchedulePolicy) { p.StartingDeadline = time.Hour }))
+	r.ctrl.ReconcileOnce()
+	hibernateRig(t, r)
+	r.clock.Advance(40 * time.Minute) // due 06:17, now 06:40
+	r.ctrl.ReconcileOnce()
+	if err := r.ctrl.Wake(r.ws+"/timers", WakeOptions{Actor: "op", Source: "cli"}); err != nil {
+		t.Fatal(err)
+	}
+	r.settle(t, "one catch-up run", func() bool { return len(r.sessions()) == 1 })
+	if m := r.kind(events.KindScheduleMissed); len(m) != 0 {
+		t.Fatalf("schedule.missed = %+v, want none inside starting_deadline", m)
+	}
+}
+
+// A firing later than starting_deadline at wake is reported schedule.missed and
+// runs nothing.
+func TestWakeReportsAFiringPastTheStartingDeadlineAsMissed(t *testing.T) {
+	r := newClockRig(t, "test-hib-missed", time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC),
+		clockRole("Etc/UTC", shRuntime("exit 0"), func(p *api.SchedulePolicy) { p.StartingDeadline = time.Hour }))
+	r.ctrl.ReconcileOnce()
+	hibernateRig(t, r)
+	r.clock.Advance(60 * time.Hour)
+	r.ctrl.ReconcileOnce()
+	if m := r.kind(events.KindScheduleMissed); len(m) != 0 {
+		t.Fatalf("schedule.missed %+v while hibernated, want it only at wake", m)
+	}
+	if err := r.ctrl.Wake(r.ws+"/timers", WakeOptions{Actor: "op", Source: "cli"}); err != nil {
+		t.Fatal(err)
+	}
+	r.ctrl.ReconcileOnce()
+	if m := r.kind(events.KindScheduleMissed); len(m) != 1 {
+		t.Fatalf("schedule.missed = %+v, want one at wake", m)
+	}
+	if n := len(r.sessions()); n != 0 {
+		t.Fatalf("%d runs started for a firing past starting_deadline, want none", n)
 	}
 }

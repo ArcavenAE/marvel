@@ -12,12 +12,11 @@ import (
 
 // fakeHibernate answers the verbs' RPCs in order and records every call.
 type fakeHibernate struct {
-	t       *testing.T
-	calls   []string
-	started bool
-	status  []hibernateReply // successive status replies; the last repeats
-	wake    wakeReply
-	errs    map[string]string
+	t      *testing.T
+	calls  []string
+	status []hibernateReply // successive status replies; the last repeats
+	wake   wakeReply
+	errs   map[string]string
 }
 
 func (f *fakeHibernate) call(req daemonrpc.Request) (*daemonrpc.Response, error) {
@@ -96,7 +95,8 @@ func TestHibernateExitCodes(t *testing.T) {
 	quick(t)
 	done := hibernateReply{Teams: []hibernateTeamReply{{Team: "acme/squad", Done: true}}}
 	f := &fakeHibernate{t: t, status: []hibernateReply{
-		{Teams: []hibernateTeamReply{{Team: "acme/squad", Running: 1, Pending: []string{"acme/a"}}}}, done}}
+		{Teams: []hibernateTeamReply{{Team: "acme/squad", Running: 1, Pending: []string{"acme/a"}}}}, done,
+	}}
 	var out bytes.Buffer
 	if code, err := runHibernate(&out, strings.NewReader(""), false, true, false, "", map[string]any{"all": true}, f.call); code != 0 || err != nil {
 		t.Fatalf("settled: code %d err %v out %q", code, err, out.String())
@@ -178,5 +178,18 @@ func TestStatusListsHibernatedTeamsAndIgnoresAnOldDaemon(t *testing.T) {
 	reportHibernated(&out, old.call)
 	if out.Len() != 0 {
 		t.Fatalf("an old daemon added status lines: %q", out.String())
+	}
+}
+
+func TestScaleAndApplyPrintTheHoldLineOnAHibernatedTeam(t *testing.T) {
+	got := scaledLines("acme/squad", "worker", 2, json.RawMessage(`{"held":"held: hibernated; run marvel wake"}`))
+	if !strings.Contains(got, "scaled to 2 replicas\nheld: hibernated; run marvel wake\n") {
+		t.Fatalf("scale output = %q, want the hold line after the change", got)
+	}
+	if got := scaledLines("acme/squad", "worker", 2, json.RawMessage(`{}`)); strings.Contains(got, "held") {
+		t.Fatalf("scale output on a running team = %q, want no hold line", got)
+	}
+	if got := heldLines([]string{"acme/squad"}, "held: hibernated; run marvel wake"); got != "team/acme/squad held: hibernated; run marvel wake\n" {
+		t.Fatalf("apply output = %q", got)
 	}
 }

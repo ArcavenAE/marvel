@@ -23,6 +23,10 @@ const (
 // mean two things.
 const BackendNone = "none"
 
+// HibernateHeldLine is what scale and apply print when the team they changed is
+// hibernated: the change is recorded, a wake honours it, and nothing started.
+const HibernateHeldLine = "held: hibernated; run marvel wake"
+
 // HibernateModeHandoff is the one mode phase 2 has: every seat comes back as a
 // fresh successor reading its handoff.
 const HibernateModeHandoff = "handoff"
@@ -38,6 +42,11 @@ type HibernateMark struct {
 	Source string
 	Mode   string
 	Roles  []string `json:",omitempty"`
+	// Seats are the session keys of the seats this hibernate ended on their
+	// handoff, in the order they ended. A wake looks each one up by its key in
+	// the resume journal, so a new seat's predecessor is the seat that wrote the
+	// handoff and never another entry of the same role.
+	Seats []string `json:",omitempty"`
 }
 
 // Covers reports whether the mark covers role.
@@ -55,6 +64,7 @@ func (m *HibernateMark) Clone() *HibernateMark {
 	}
 	c := *m
 	c.Roles = slices.Clone(m.Roles)
+	c.Seats = slices.Clone(m.Seats)
 	return &c
 }
 
