@@ -114,6 +114,10 @@ func (c *Controller) PutHandoff(token, text string) (HandoffPut, error) {
 	}
 	now := c.nowUTC()
 	if err := c.store.UpdateTeam(plan.teamKey, func(live *api.Team) error {
+		if plan.hibernate {
+			recordHibernatePut(live, plan.sess.Key(), now)
+			return nil
+		}
 		if plan.retire {
 			if r, ok := live.Retiring[plan.sess.Key()]; ok {
 				r.PutAt = now
@@ -157,8 +161,8 @@ type handoffPutPlan struct {
 	// for a request restored after a restart.
 	held os.FileInfo
 	// retire says the request is the seat's pending retirement, not its
-	// role's shift request.
-	retire bool
+	// role's shift request. hibernate says it is the seat's hibernate request.
+	retire, hibernate bool
 }
 
 // liveSessionForPut is the gate's liveness rule: the session the token was
@@ -215,6 +219,10 @@ func (c *Controller) planHandoffPutLocked(token, text string) (handoffPutPlan, e
 		}
 		return plan, nil
 	}
+	// A seat of a hibernating team answers its hibernate request the same way.
+	if hr, ok := hibernateRequestFor(&t, sess.Key()); ok && !hr.Escalated {
+		return c.planHibernatePut(token, text, &t, sess, hr, plan)
+	}
 	var role *api.Role
 	for i := range t.Roles {
 		if t.Roles[i].Name == sess.Role {
@@ -254,6 +262,9 @@ func (c *Controller) recheckHandoffPutLocked(token string, plan handoffPutPlan) 
 	t, err := c.store.GetTeam(plan.teamKey)
 	if err != nil {
 		return fmt.Errorf("%w: team %s: %v", ErrHandoffNotRequested, plan.teamKey, err)
+	}
+	if plan.hibernate {
+		return c.recheckHibernatePut(token, &t, plan)
 	}
 	if plan.retire {
 		rr, ok := t.Retiring[plan.sess.Key()]

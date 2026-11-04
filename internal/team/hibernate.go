@@ -542,3 +542,83 @@ func (c *Controller) advanceWake(t *api.Team, now time.Time) {
 	})
 	t.Hibernate = nil
 }
+
+// hibernateRequestFor is the open hibernate request of session, if any.
+func hibernateRequestFor(t *api.Team, session string) (api.ShiftRequest, bool) {
+	req, ok := t.HibernateRequests[session]
+	return req, ok
+}
+
+// recordHibernatePut stamps the receipt of a handoff.put on session's request.
+func recordHibernatePut(live *api.Team, session string, now time.Time) {
+	if r, ok := live.HibernateRequests[session]; ok {
+		r.PutAt = now
+		live.HibernateRequests[session] = r
+	}
+}
+
+// planHibernatePut is planHandoffPutLocked for a seat holding a hibernate
+// request: a seat that cannot write its own file answers the notice through the
+// daemon, to the file the notice named.
+func (c *Controller) planHibernatePut(token, text string, t *api.Team, sess api.Session, req api.ShiftRequest, plan handoffPutPlan) (handoffPutPlan, error) {
+	if _, err := c.liveSessionForPut(token, &req); err != nil {
+		return plan, err
+	}
+	role := roleOf(t, sess.Role)
+	if role == nil {
+		return plan, fmt.Errorf("%w: role %s is not in team %s", ErrHandoffNotRequested, sess.Role, t.Key())
+	}
+	if role.Shift == nil || role.Shift.Handoff == "" || role.Shift.HandoffMarker == "" {
+		return plan, fmt.Errorf("%w: role %s", ErrHandoffNoPath, role.Name)
+	}
+	path, err := handoffPath(role.Shift.Handoff, sess)
+	if err != nil {
+		return plan, fmt.Errorf("%w: %v", ErrHandoffNoPath, err)
+	}
+	plan.teamKey, plan.role, plan.generation, plan.req, plan.hibernate = t.Key(), role.Name, t.Generation, req, true
+	plan.path, plan.body = path, handoffBody(text, role.Shift.HandoffMarker)
+	return plan, nil
+}
+
+// recheckHibernatePut confirms, after the write, that the same hibernate
+// request still stands and its seat is still the live one.
+func (c *Controller) recheckHibernatePut(token string, t *api.Team, plan handoffPutPlan) error {
+	req, ok := t.HibernateRequests[plan.sess.Key()]
+	if !ok || !req.RequestedAt.Equal(plan.req.RequestedAt) || req.Escalated {
+		return fmt.Errorf("%w: the hibernate request for %s changed while the handoff was written", ErrHandoffNotRequested, plan.sess.Key())
+	}
+	_, err := c.liveSessionForPut(token, &req)
+	return err
+}
+
+// wakePredecessors returns, newest first, the keys of the seats of role that a
+// wake in progress replaces: the resume journal's entries for the role whose
+// seat is not alive now. A new seat takes one as its predecessor, so the first
+// prompt names the handoff the hibernated seat wrote. Nil unless the team is
+// waking.
+func (c *Controller) wakePredecessors(t *api.Team, role string) []string {
+	if t.Hibernate == nil || t.Hibernate.State != api.HibernateWaking {
+		return nil
+	}
+	entries, err := c.store.ResumeJournal()
+	if err != nil {
+		log.Printf("wake: %s: read the resume journal: %v", t.Key(), err)
+		return nil
+	}
+	var picked []api.ResumeEntry
+	for _, e := range entries {
+		if e.Workspace != t.Workspace || e.Team != t.Name || e.Role != role {
+			continue
+		}
+		if s, err := c.store.GetSession(e.Session); err == nil && s.State.CountsAsAlive() {
+			continue
+		}
+		picked = append(picked, e)
+	}
+	sort.SliceStable(picked, func(i, j int) bool { return picked[i].LaunchedAt.After(picked[j].LaunchedAt) })
+	out := make([]string, len(picked))
+	for i, e := range picked {
+		out[i] = e.Session
+	}
+	return out
+}

@@ -153,3 +153,28 @@ func TestConvergeRefusesAHibernatedTeam(t *testing.T) {
 		t.Fatalf("converge err = %q, want the wake pointer", resp.Error)
 	}
 }
+
+func TestDescribeShowsOpenHibernateRequestsPerSession(t *testing.T) {
+	d := hibernateDaemon(t, roleOn("worker", "sleep", ""))
+	if err := d.store.UpdateTeam("acme/squad", func(live *api.Team) error {
+		live.Hibernate = &api.HibernateMark{State: api.HibernateHibernated, Since: time.Now().UTC()}
+		live.HibernateRequests = map[string]api.ShiftRequest{
+			"acme/b": {Session: "acme/b", Cause: api.HandoffCauseHibernate, RequestedAt: time.Now().UTC().Add(-time.Minute)},
+			"acme/a": {Session: "acme/a", Cause: api.HandoffCauseHibernate, RequestedAt: time.Now().UTC().Add(-time.Minute), Escalated: true},
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	desc, err := d.describeTeam("acme/squad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := desc.PendingHibernateRequests
+	if len(rows) != 2 || rows[0].Session != "acme/a" || !rows[0].Escalated || rows[1].Session != "acme/b" || rows[0].Cause != "hibernate" {
+		t.Fatalf("rows = %+v, want one per session, in session order, with the cause", rows)
+	}
+	if len(desc.PendingShiftRequests) != 0 {
+		t.Fatalf("shift rows = %+v, want none", desc.PendingShiftRequests)
+	}
+}

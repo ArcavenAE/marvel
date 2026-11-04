@@ -333,3 +333,44 @@ func TestOnlyHibernateCodeReadsHibernateRequests(t *testing.T) {
 		}
 	}
 }
+
+// A read-only seat answers its hibernate notice through the daemon: the put
+// writes the file the notice named, and the seat is then ended on its marker.
+func TestHibernatingSeatHandsOffThroughThePut(t *testing.T) {
+	f := newRetireFixture(t, "test-hib-put", hibernateRole("worker", realTempDir(t), 1))
+	tok, hash, err := api.NewHeartbeatToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := f.seat("worker", 0)
+	if err := f.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.HeartbeatToken, live.HeartbeatTokenHash = tok, hash
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ctrl.PutHandoff(tok, "early"); err == nil {
+		t.Fatal("a put before any request was accepted")
+	}
+	f.hibernate(HibernateOptions{Actor: "op", Source: "cli"})
+	f.tick()
+
+	put, err := f.ctrl.PutHandoff(tok, "what I was doing")
+	if err != nil {
+		t.Fatalf("handoff.put from a hibernating seat: %v", err)
+	}
+	body, err := os.ReadFile(put.Path)
+	if err != nil || !strings.HasSuffix(string(body), putMarker+"\n") {
+		t.Fatalf("handoff file %q: %v; want it to end in the marker", body, err)
+	}
+	if f.team().HibernateRequests[sess.Key()].PutAt.IsZero() {
+		t.Error("the put was not recorded on the request")
+	}
+	f.clock.Advance(time.Second)
+	f.tick()
+	f.clock.Advance(time.Second)
+	f.tick()
+	if !f.gone(sess) {
+		t.Fatal("the seat survived the handoff it put")
+	}
+}

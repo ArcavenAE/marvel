@@ -1,6 +1,7 @@
 package team
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -187,5 +188,39 @@ func TestTheMarkStopsATopUpThatTheHoldWouldAllow(t *testing.T) {
 	}
 	if plan.Action != RoleHold || plan.Hold != HoldHibernated {
 		t.Fatalf("plan = %+v, want the mark to hold the worker", plan)
+	}
+}
+
+// A woken seat is a successor of the seat it replaces: MARVEL_PREDECESSOR names
+// the hibernated session the resume journal recorded, so its first prompt points
+// at the handoff that seat wrote.
+func TestWakeStartsEachSeatAsASuccessorOfItsHibernatedSeat(t *testing.T) {
+	store, ctrl, cleanup := setupWithBolt(t, filepath.Join(t.TempDir(), "marvel.db"))
+	t.Cleanup(cleanup)
+	f := &wakeFixture{t: t, store: store, ctrl: ctrl, clock: newTestClock(listEpoch), ring: events.NewRing(0), ws: "test-wake-pred"}
+	ctrl.now = f.clock.Now
+	ctrl.Events = f.ring
+	createTeamFixture(t, store, f.ws, "squad", wakeRoles())
+	if err := store.UpdateTeam(f.ws+"/squad", func(live *api.Team) error {
+		live.ConvergencePosture = api.PostureHold
+		live.Hibernate = &api.HibernateMark{State: api.HibernateHibernated, Since: f.clock.Now(), Mode: api.HibernateModeHandoff}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	old := "squad-supervisor-g1-9"
+	if err := store.RecordResume(api.ResumeEntry{Session: f.ws + "/" + old, Workspace: f.ws, Team: "squad", Role: "supervisor", LaunchedAt: listEpoch.Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+
+	f.wake()
+	f.ctrl.ReconcileOnce()
+
+	var got []api.Session
+	for _, s := range store.ListSessionsByTeamRole(f.ws, "squad", "supervisor") {
+		got = append(got, s)
+	}
+	if len(got) != 1 || got[0].Predecessor != f.ws+"/"+old {
+		t.Fatalf("supervisor seats = %+v, want one whose predecessor is %s/%s", got, f.ws, old)
 	}
 }

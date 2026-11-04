@@ -1506,6 +1506,9 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				}
 			}
 		}
+		// A wake starts each seat as a successor of the seat it replaces, with
+		// MARVEL_PREDECESSOR naming it, as a shift does (design section 6).
+		preds := c.wakePredecessors(t, plan.Role)
 		for i := 0; i < plan.Spawn; i++ {
 			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, plan.Role, plan.Generation, c.nextIndex(t, role, plan.Generation))
 			sess := &api.Session{
@@ -1517,6 +1520,9 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				Runtime:    role.Runtime,
 				WorkDir:    c.placement(t, role),
 				Firing:     plan.Firing,
+			}
+			if i < len(preds) {
+				sess.Predecessor = preds[i]
 			}
 			// A seat whose views are still building waits for a later tick: the
 			// build runs in the background, never under this lock.
