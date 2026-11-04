@@ -334,6 +334,15 @@ type Session struct {
 	RestartCount    int           `toml:"-"`
 	LastHealthCheck time.Time     `toml:"-"`
 	CreatedAt       time.Time     `toml:"-"`
+	// PausedTotal is how long a fleet suspend held this session still. An age
+	// check of the form now.Sub(CreatedAt) reads AgeAt instead, so a seat that
+	// was frozen does not age while it did no work (docs/design/
+	// fleet-suspend-resume.md, SR-F). CreatedAt is never rewritten.
+	PausedTotal time.Duration `toml:"-"`
+	// PauseAppliedSince is the Since of the suspend record whose pause is
+	// already in PausedTotal. A resume repeated after a crash adds the same
+	// pause only once.
+	PauseAppliedSince time.Time `toml:"-"`
 
 	// RingClaim is the last ring written through `marvel inject --ring`
 	// (docs/design/marvel-watcher.md, section 11.2). It persists with the
@@ -1287,8 +1296,19 @@ type Credential struct {
 }
 
 // Key returns the namespaced key for a resource.
-func (w *Workspace) Key() string  { return w.Name }
-func (s *Session) Key() string    { return fmt.Sprintf("%s/%s", s.Workspace, s.Name) }
+func (w *Workspace) Key() string { return w.Name }
+func (s *Session) Key() string   { return fmt.Sprintf("%s/%s", s.Workspace, s.Name) }
+
+// AgeAt is the session's age at now with the time a fleet suspend held it
+// still taken out. A negative PausedTotal counts as none, and the age is never
+// below zero.
+func (s *Session) AgeAt(now time.Time) time.Duration {
+	age := now.Sub(s.CreatedAt)
+	if s.PausedTotal > 0 {
+		age -= s.PausedTotal
+	}
+	return max(age, 0)
+}
 func (t *Team) Key() string       { return fmt.Sprintf("%s/%s", t.Workspace, t.Name) }
 func (e *Endpoint) Key() string   { return fmt.Sprintf("%s/%s", e.Workspace, e.Name) }
 func (p *Policy) Key() string     { return fmt.Sprintf("%s/%s", p.Workspace, p.Name) }

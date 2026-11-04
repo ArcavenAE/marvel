@@ -316,6 +316,16 @@ func (f *Freezer) rollback(store Store, server childproof.Child, seats []childpr
 // changed process, the record stays, as resuming, and the error is returned, so
 // a second Thaw can retry: a resume is safe to repeat.
 func (f *Freezer) Thaw(rec Record, store Store) (Result, error) {
+	return f.ThawWith(rec, store, nil)
+}
+
+// ThawWith is Thaw with a hook. After every SIGCONT has been sent and read, and
+// before the record is cleared, it runs hook with the record as it was. A hook
+// that fails leaves the record as resuming and returns its error, so the next
+// resume runs the hook again; the hook must therefore be safe to repeat. The
+// daemon uses it to shift every timer by the pause with the record cleared
+// last. A nil hook is Thaw.
+func (f *Freezer) ThawWith(rec Record, store Store, hook func(Record) error) (Result, error) {
 	var res Result
 	if rec.State != StateSuspended && rec.State != StateSuspending && rec.State != StateResuming {
 		return res, fmt.Errorf("%w: thaw needs a suspended, suspending or resuming record, this one is %q", ErrState, rec.State)
@@ -366,6 +376,11 @@ func (f *Freezer) Thaw(rec Record, store Store) (Result, error) {
 	}
 	if len(errs) > 0 {
 		return res, errors.Join(errs...)
+	}
+	if hook != nil {
+		if err := hook(rec); err != nil {
+			return res, fmt.Errorf("suspend: apply the pause after resuming: %w", err)
+		}
 	}
 	if err := store.Clear(); err != nil {
 		return res, fmt.Errorf("suspend: clear the record after resuming: %w", err)

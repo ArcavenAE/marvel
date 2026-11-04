@@ -27,3 +27,15 @@ func ShiftedHeartbeat(last time.Time, pause time.Duration, now time.Time) time.T
 	}
 	return shifted
 }
+
+// ShiftedDeadline returns d moved forward by pause. Unlike a last-seen stamp it
+// is not capped at now: a deadline lies ahead, and a backoff that had ten
+// minutes left when the cluster stopped has ten minutes left when it resumes.
+// A zero deadline stays zero, and a pause that is not positive shifts nothing.
+// A sentinel that means "never" (a frozen role) is the caller's to skip.
+func ShiftedDeadline(d time.Time, pause time.Duration) time.Time {
+	if d.IsZero() || pause <= 0 {
+		return d
+	}
+	return d.Add(pause)
+}

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/suspend"
 )
 
 // TickRingWindow is how much evaluation history a session's ring holds
@@ -141,4 +142,17 @@ func (c *Controller) ActivityOf(sess api.Session, now time.Time) api.ActiveTicks
 		}
 	}
 	return out
+}
+
+// Shift moves every stamp the ring holds forward by pause, capped at now, after
+// a fleet suspend: a ring that watched a seat for ten minutes before the stop
+// reads the same ten minutes after the resume. A zero contextAt (never
+// observed) stays zero, and a pause that is not positive moves nothing. A
+// ring is not safe for concurrent use; the controller guards its rings.
+func (r *TickRing) Shift(pause time.Duration, now time.Time) {
+	r.since = suspend.ShiftedHeartbeat(r.since, pause, now)
+	for i := range r.samples {
+		r.samples[i].at = suspend.ShiftedHeartbeat(r.samples[i].at, pause, now)
+		r.samples[i].contextAt = suspend.ShiftedHeartbeat(r.samples[i].contextAt, pause, now)
+	}
 }

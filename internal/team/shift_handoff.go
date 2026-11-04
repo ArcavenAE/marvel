@@ -74,7 +74,9 @@ func (c *Controller) firstSessionOverAge(t *api.Team, role *api.Role, cond api.S
 		if s.State != api.SessionRunning || s.CreatedAt.IsZero() || isRetiring(t, s.Key()) {
 			continue
 		}
-		age := now.Sub(s.CreatedAt)
+		// Age leaves out the time a fleet suspend held the seat still: a design
+		// default (fleet-suspend-resume.md, SR-F) that the operator can change.
+		age := s.AgeAt(now)
 		if age < cond.MaxAge {
 			continue
 		}
@@ -373,8 +375,8 @@ func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Se
 		Role:       role.Name,
 		Session:    sess.Key(),
 		Generation: t.Generation,
-		Message: fmt.Sprintf("cause=%s: session %s, age %s, asked %s, window %s expired: %s; the seat keeps running and the team's supervisor decides whether to call the shift (marvel shift %s --role %s)%s",
-			req.Cause, sess.Key(), now.Sub(sess.CreatedAt).Round(time.Second), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, req, present), t.Key(), role.Name, again) + c.publishedClause(sess.Key()),
+		Message: fmt.Sprintf("cause=%s: session %s, age %s%s, asked %s, window %s expired: %s; the seat keeps running and the team's supervisor decides whether to call the shift (marvel shift %s --role %s)%s",
+			req.Cause, sess.Key(), sess.AgeAt(now).Round(time.Second), pausedNote(sess), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, req, present), t.Key(), role.Name, again) + c.publishedClause(sess.Key()),
 	})
 }
 
