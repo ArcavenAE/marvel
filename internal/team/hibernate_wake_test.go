@@ -208,7 +208,7 @@ func TestWakeStartsEachSeatAsASuccessorOfItsHibernatedSeat(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	old := "squad-supervisor-g1-9"
+	old := "squad-supervisor-before"
 	if err := store.RecordResume(api.ResumeEntry{Session: f.ws + "/" + old, Workspace: f.ws, Team: "squad", Role: "supervisor", LaunchedAt: listEpoch.Add(-time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
