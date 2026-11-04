@@ -165,6 +165,19 @@ const (
 	// leaves the seat running and the team's supervisor decides whether to
 	// call the shift. marvel never shifts unwatched (design D5 step 3).
 	KindShiftHandoffMissing Kind = "team.shift-handoff-missing"
+	// KindTeamHibernated records that a hibernate has ended every seat it
+	// covers, or that none was running (docs/design/fleet-hibernate.md
+	// section 4). Message names the roles and any seat that was ended without
+	// a handoff.
+	KindTeamHibernated Kind = "team.hibernated"
+	// KindTeamWaking records that a wake began: the posture is converge and the
+	// team's supervisor roles may spawn (section 6, step 1). Message carries
+	// the checks that were skipped, if any.
+	KindTeamWaking Kind = "team.waking"
+	// KindTeamWoken records that a woken team's last seat started and the
+	// hibernate mark cleared (section 6, step 4). Message names the seats
+	// started fresh, and the supervisors not up by their health timeout.
+	KindTeamWoken Kind = "team.woken"
 	// KindShiftHandoffUndelivered records, once per transition from delivered
 	// to undelivered, that the escalation could not be published to the team's
 	// supervisor. Message carries the error (handoff-missing-delivery.md, H5).
@@ -528,6 +541,9 @@ var allKinds = []Kind{
 	KindShiftAutoTriggered,
 	KindShiftHandoffRequested,
 	KindShiftHandoffMissing,
+	KindTeamHibernated,
+	KindTeamWaking,
+	KindTeamWoken,
 	KindShiftHandoffUndelivered,
 	KindShiftRequestStuck,
 	KindHandoffPut,

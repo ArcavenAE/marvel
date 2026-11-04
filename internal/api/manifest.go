@@ -274,6 +274,7 @@ type ManifestRuntime struct {
 	Env map[string]string `toml:"env,omitempty" yaml:"env,omitempty"`
 	// Backend is the per-role INTENDED backend label, compared against the
 	// resolved backend at spawn for loud failure. See api.Runtime.Backend.
+	// "none" is reserved (BackendNone).
 	Backend string `toml:"backend,omitempty" yaml:"backend,omitempty"`
 	// Goose is the runtime.goose table for a role on the goose adapter. See
 	// api.GooseRuntime.
@@ -484,6 +485,12 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			}
 			// Like permissions: empty means unset, but a non-empty typo
 			// would silently project nothing, so reject it here.
+			// "none" is how the hibernate selector names a role with no backend
+			// label, so a role may not declare it (docs/design/fleet-hibernate.md
+			// section 7): it would read as unlabeled.
+			if r.Runtime.Backend == BackendNone {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.backend %q is reserved: it names a role with no backend label in a hibernate selector", i, j, BackendNone)
+			}
 			if r.Runtime.ContextFeed != "" && r.Runtime.ContextFeed != ContextFeedStatusline {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.context_feed %q is not valid (valid: %q)", i, j, r.Runtime.ContextFeed, ContextFeedStatusline)
 			}

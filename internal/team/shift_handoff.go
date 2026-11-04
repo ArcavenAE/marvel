@@ -220,7 +220,7 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		// the event ring is in memory, so one emission can be lost to a
 		// restart or a wrap, and the escalation is sticky (marvel#453).
 		c.deliverHandoffMissing(t, role, sess, now)
-		c.repeatHandoffMissing(t, role, sess, now)
+		c.repeatHandoffMissing(t, role, sess, req, now)
 		return false
 	}
 	path, pathErr := "", error(nil)
@@ -274,6 +274,10 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 // this cause, and whether there is one. Only a max-age request has a max_defer
 // to pass; a zero value means api.DefaultShiftMaxDefer.
 func maxDeferFor(role *api.Role, cause string) (time.Duration, bool) {
+	// A hibernate request has no max_defer; its stuck bound is its window.
+	if cause == api.HandoffCauseHibernate {
+		return role.Shift.HandoffWindowOrDefault(), true
+	}
 	if cause != api.ShiftTriggerMaxAge {
 		return 0, false
 	}
@@ -367,6 +371,10 @@ func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Se
 	if repeat {
 		again = " (repeated: the request is still escalated)"
 	}
+	decision := fmt.Sprintf("the seat keeps running and the team's supervisor decides whether to call the shift (marvel shift %s --role %s)", t.Key(), role.Name)
+	if req.Cause == api.HandoffCauseHibernate {
+		decision = fmt.Sprintf("the seat keeps running, and the hibernate waits for it unless the operator ends it (marvel hibernate --end %s)", sess.Key())
+	}
 	events.Emit(c.Events, events.Event{
 		Kind:       events.KindShiftHandoffMissing,
 		Severity:   events.SeverityWarning,
@@ -375,8 +383,8 @@ func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Se
 		Role:       role.Name,
 		Session:    sess.Key(),
 		Generation: t.Generation,
-		Message: fmt.Sprintf("cause=%s: session %s, age %s%s, asked %s, window %s expired: %s; the seat keeps running and the team's supervisor decides whether to call the shift (marvel shift %s --role %s)%s",
-			req.Cause, sess.Key(), sess.AgeAt(now).Round(time.Second), pausedNote(sess), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, req, present), t.Key(), role.Name, again) + c.publishedClause(sess.Key()),
+		Message: fmt.Sprintf("cause=%s: session %s, age %s%s, asked %s, window %s expired: %s; %s%s",
+			req.Cause, sess.Key(), sess.AgeAt(now).Round(time.Second), pausedNote(sess), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, req, present), decision, again) + c.publishedClause(sess.Key()),
 	})
 }
 
@@ -388,7 +396,7 @@ func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Se
 // emission. It never clears the escalation or shifts: the supervisor decides.
 // The clock is in memory, so a daemon restart says it on the first tick with a
 // finished read.
-func (c *Controller) repeatHandoffMissing(t *api.Team, role *api.Role, sess api.Session, now time.Time) {
+func (c *Controller) repeatHandoffMissing(t *api.Team, role *api.Role, sess api.Session, req api.ShiftRequest, now time.Time) {
 	last, emitted := c.missingEmitted[sess.Key()]
 	due := !emitted || now.Sub(last) >= role.Shift.HandoffWindowOrDefault()
 	present := false
@@ -405,7 +413,7 @@ func (c *Controller) repeatHandoffMissing(t *api.Team, role *api.Role, sess api.
 	if !due {
 		return
 	}
-	c.emitHandoffMissing(t, role, sess, t.ShiftRequests[role.Name], now, true, present)
+	c.emitHandoffMissing(t, role, sess, req, now, true, present)
 }
 
 func (c *Controller) dropShiftRequest(t *api.Team, role string) {

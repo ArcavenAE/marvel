@@ -59,6 +59,27 @@ type publishRecord struct {
 // what happened for the event. It never blocks longer than publishTimeout, never
 // types into a pane, and never falls back to anything but the bus.
 func (c *Controller) deliverHandoffMissing(t *api.Team, role *api.Role, sess api.Session, now time.Time) {
+	c.deliverMissingFor(t, role, sess, t.ShiftRequests[role.Name], now, func(req api.ShiftRequest) {
+		if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
+			if live.ShiftRequests != nil {
+				if cur, ok := live.ShiftRequests[role.Name]; ok && cur.Session == req.Session {
+					cur.DeliveredCount, cur.LastDeliveredAt, cur.LastDeliveryQueued = req.DeliveredCount, req.LastDeliveredAt, req.LastDeliveryQueued
+					live.ShiftRequests[role.Name] = cur
+				}
+			}
+			return nil
+		}); err != nil {
+			log.Printf("shift: %s role %s: record handoff-missing send: %v", t.Key(), role.Name, err)
+		}
+		t.ShiftRequests[role.Name] = req
+	})
+}
+
+// deliverMissingFor is deliverHandoffMissing for a request held anywhere: req
+// is the request, and record stores its updated delivery counts where it lives.
+// A shift's request lives on the team by role; a hibernate's lives on it by
+// session, in its own map.
+func (c *Controller) deliverMissingFor(t *api.Team, role *api.Role, sess api.Session, req api.ShiftRequest, now time.Time, record func(api.ShiftRequest)) {
 	if c.publishRecords == nil {
 		c.publishRecords = make(map[string]*publishRecord)
 	}
@@ -67,8 +88,6 @@ func (c *Controller) deliverHandoffMissing(t *api.Team, role *api.Role, sess api
 		rec = &publishRecord{}
 		c.publishRecords[sess.Key()] = rec
 	}
-	req := t.ShiftRequests[role.Name]
-
 	switch {
 	case c.Publisher == nil:
 		rec.outcome = "none, no managed bus"
@@ -157,18 +176,7 @@ func (c *Controller) deliverHandoffMissing(t *api.Team, role *api.Role, sess api
 	req.DeliveredCount++
 	req.LastDeliveredAt = now
 	req.LastDeliveryQueued = queued
-	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
-		if live.ShiftRequests != nil {
-			if cur, ok := live.ShiftRequests[role.Name]; ok && cur.Session == req.Session {
-				cur.DeliveredCount, cur.LastDeliveredAt, cur.LastDeliveryQueued = req.DeliveredCount, req.LastDeliveredAt, req.LastDeliveryQueued
-				live.ShiftRequests[role.Name] = cur
-			}
-		}
-		return nil
-	}); err != nil {
-		log.Printf("shift: %s role %s: record handoff-missing send: %v", t.Key(), role.Name, err)
-	}
-	t.ShiftRequests[role.Name] = req
+	record(req)
 	rec.outcome = persistedOutcome(req)
 }
 
@@ -197,6 +205,9 @@ func causeClause(role *api.Role, req api.ShiftRequest) string {
 	if req.Cause == api.ShiftTriggerContextPressure {
 		return "had a context nearly full"
 	}
+	if req.Cause == api.HandoffCauseHibernate {
+		return "was asked to write its handoff for a hibernate"
+	}
 	for _, cond := range role.Shift.Conditions() {
 		if cond.On == api.ShiftTriggerMaxAge {
 			return fmt.Sprintf("passed max age %s", cond.MaxAge)
@@ -214,9 +225,13 @@ func handoffMissingEnvelope(t *api.Team, role *api.Role, sess api.Session, req a
 	corr := fmt.Sprintf("handoff-missing/%s/%s/%s/%d", t.Workspace, t.Name, sess.Name, req.RequestedAt.Unix())
 	replyBy := now.Add(window)
 	expires := replyBy.Add(window)
-	text := fmt.Sprintf("handoff-missing: seat %s in %s role %s %s, asked %s; no handoff by %s. Decide: marvel shift %s --role %s, or leave it running.",
+	decide := fmt.Sprintf("marvel shift %s --role %s", t.Key(), role.Name)
+	if req.Cause == api.HandoffCauseHibernate {
+		decide = fmt.Sprintf("marvel hibernate --end %s", sess.Key())
+	}
+	text := fmt.Sprintf("handoff-missing: seat %s in %s role %s %s, asked %s; no handoff by %s. Decide: %s, or leave it running.",
 		sess.Key(), t.Key(), role.Name, causeClause(role, req), req.RequestedAt.UTC().Format(time.RFC3339),
-		req.RequestedAt.Add(window).UTC().Format(time.RFC3339), t.Key(), role.Name)
+		req.RequestedAt.Add(window).UTC().Format(time.RFC3339), decide)
 	env := envelope.Envelope{
 		SchemaVersion: 1,
 		MessageID:     newULID(now),

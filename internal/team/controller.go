@@ -22,9 +22,12 @@ import (
 
 // Controller reconciles desired team state with actual running sessions.
 type Controller struct {
-	store      *api.Store
-	sessMgr    *session.Manager
-	SocketPath string
+	// hibernateSaid is the Since of the hibernate mark team.hibernated was last
+	// emitted for, per team, so it is said once. In memory: a restart says it again.
+	hibernateSaid map[string]time.Time
+	store         *api.Store
+	sessMgr       *session.Manager
+	SocketPath    string
 	// Events receives structured state-transition events. Nil is safe.
 	Events events.Emitter
 	// Suspended reports whether the cluster is suspended. While it is true
@@ -963,6 +966,10 @@ func (c *Controller) reconcileTeam(t *api.Team) {
 	c.resumeRetireDirs(t)
 	c.advanceRetirements(t, c.nowUTC())
 
+	// A hibernate or a wake in progress moves on beside the retirements, a shift
+	// included: the sign-off asks seats for handoffs and ends the ones that wrote.
+	c.advanceHibernate(t, c.nowUTC())
+
 	// Drain sessions whose role no longer exists in the manifest before
 	// anything else. Manifest.Apply replaces live.Roles wholesale, so a
 	// role removed from a re-applied manifest leaves its sessions running:
@@ -1157,6 +1164,10 @@ const (
 	// failed run would be refilled at once, under a restart policy that
 	// does not apply to a scheduled role (ADR-010 Amendment 1).
 	HoldSchedule HoldReason = "schedule"
+	// HoldHibernated means the team's hibernate mark covers the role: nothing
+	// spawns for it, top-ups and crash-loop restarts included, until a wake
+	// (docs/design/fleet-hibernate.md sections 4 and 6).
+	HoldHibernated HoldReason = "hibernated"
 )
 
 // RolePlan is the convergence decision for one role at one generation: what the
@@ -1293,6 +1304,17 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 	case actual < desired && role.Schedule != nil && c.holdForFiring(sched, &plan):
 		return plan
 	case actual < desired:
+		// The hibernate mark runs before every other gate and is stronger than
+		// the convergence hold: the hold stops only a cold start, but a seat a
+		// hibernate just ended must not be topped up or restarted, or its
+		// drain would read as a crash and the team would refill (design
+		// section 4, step 5).
+		if blocked, why := c.hibernateBlocks(t, role); blocked {
+			plan.Action = RoleHold
+			plan.Hold = HoldHibernated
+			plan.HoldDetail = why
+			return plan
+		}
 		// The exposure gate runs before every other: a role that writes a
 		// function its slot has read must not start, whatever else holds or
 		// admits it, and the record it reads survives the row deletes that a
@@ -2160,7 +2182,7 @@ func shiftOrder(roles []api.Role) []string {
 	last := make(map[string]bool, len(roles))
 	for _, r := range roles {
 		names = append(names, r.Name)
-		last[r.Name] = r.GlobalRole == api.GlobalRoleSupervisor || (r.GlobalRole == "" && r.Name == "supervisor")
+		last[r.Name] = api.IsSupervisorRole(r)
 	}
 	sort.SliceStable(names, func(i, j int) bool {
 		return !last[names[i]] && last[names[j]]
@@ -2198,6 +2220,11 @@ func (c *Controller) evaluateShiftTriggers(t *api.Team) {
 roles:
 	for i := range t.Roles {
 		role := &t.Roles[i]
+		// A hibernating or hibernated role gets no shift trigger: the hibernate
+		// request supersedes a max-age one, and nothing new opens beside it.
+		if t.Hibernate.Covers(role.Name) {
+			continue
+		}
 		conds := role.Shift.Conditions()
 		req, pending := t.ShiftRequests[role.Name]
 		if pending && !hasCondition(conds, req.Cause) {
