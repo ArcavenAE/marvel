@@ -86,6 +86,10 @@ func (c *Controller) drawJitter(limit time.Duration) time.Duration {
 // reports whether it changed the status.
 func (c *Controller) advanceFiring(t *api.Team, role *api.Role, st *api.ScheduleStatus, now time.Time, live []string, withheld bool, step *clockStep) bool {
 	p := *role.Schedule
+	// A schedule's first step after a resume may blame a miss on the suspend.
+	// Taken here, before any early return, so a step that finds nothing due
+	// still uses the window up.
+	susSince, susEnd, inSuspend := c.suspended.take(t.Workspace + "/" + t.Name + "/" + role.Name)
 	event := func(kind events.Kind, sev events.Severity, format string, args ...any) {
 		step.events = append(step.events, events.Event{
 			Kind: kind, Severity: sev,
@@ -159,8 +163,8 @@ func (c *Controller) advanceFiring(t *api.Team, role *api.Role, st *api.Schedule
 		// A due time that fell inside a fleet suspend names it, so the miss is
 		// not read as a daemon that was down.
 		during := ""
-		if since, ok := c.suspended.contains(newest); ok {
-			during = " during a fleet suspend from " + since.Format(time.RFC3339)
+		if inSuspend && !newest.Before(susSince) && !newest.After(susEnd) {
+			during = " during a fleet suspend from " + susSince.Format(time.RFC3339)
 		}
 		event(events.KindScheduleMissed, events.SeverityWarning,
 			"missed %d firing(s)%s; the newest, due %s, is %s late, past starting_deadline %s",

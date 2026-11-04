@@ -350,3 +350,47 @@ func TestCadenceStatusIsUnchangedAcrossAResume(t *testing.T) {
 		t.Errorf("a cadence status changed across a resume:\nbefore %+v\nafter  %+v", before, after)
 	}
 }
+
+// Each schedule reads the suspend window once, at its first clock step after
+// the resume, whether or not that step found anything due. A miss that comes
+// after it, even one whose due time lies inside the old window, is not blamed
+// on the suspend.
+func TestSuspendWindowIsUsedUpByAScheduleFirstStep(t *testing.T) {
+	_, _, c, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	since := time.Date(2026, 11, 4, 6, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 11, 4, 7, 30, 0, 0, time.UTC)
+	if err := c.ShiftForPause(end.Sub(since), since, end); err != nil {
+		t.Fatal(err)
+	}
+	role := pauseClockRole()
+	team := &api.Team{Workspace: "ws", Name: "timers"}
+	due := time.Date(2026, 11, 4, 6, 17, 0, 0, time.UTC)
+	st := api.ScheduleStatus{Key: "ws/timers/refresh", SpecKey: "17 6 * * *|UTC", NextDueAt: due, NextFireAt: due}
+
+	// The first step finds nothing due (the clock reads 06:10), and uses it up.
+	var first clockStep
+	if c.advanceFiring(team, &role, &st, time.Date(2026, 11, 4, 6, 10, 0, 0, time.UTC), nil, false, &first) {
+		t.Fatal("the first step changed a status that was not due")
+	}
+	var second clockStep
+	if !c.advanceFiring(team, &role, &st, end, nil, false, &second) {
+		t.Fatal("the second step changed nothing at a due time")
+	}
+	ev := onlyEvent(t, second, events.KindScheduleMissed)
+	if strings.Contains(ev.Message, "suspend") {
+		t.Errorf("message %q still names the suspend after the schedule's first step", ev.Message)
+	}
+
+	// Another schedule has not looked yet, so it still gets the clause.
+	other := api.Role{Name: "other", Replicas: 1, Schedule: role.Schedule}
+	st2 := api.ScheduleStatus{Key: "ws/timers/other", SpecKey: "17 6 * * *|UTC", NextDueAt: due, NextFireAt: due}
+	var third clockStep
+	if !c.advanceFiring(team, &other, &st2, end, nil, false, &third) {
+		t.Fatal("the other schedule's step changed nothing at a due time")
+	}
+	ev = onlyEvent(t, third, events.KindScheduleMissed)
+	if !strings.Contains(ev.Message, "during a fleet suspend from "+since.Format(time.RFC3339)) {
+		t.Errorf("message %q lost the clause for a schedule that had not stepped yet", ev.Message)
+	}
+}

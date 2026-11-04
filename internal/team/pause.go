@@ -3,7 +3,7 @@ package team
 import (
 	"errors"
 	"fmt"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -83,20 +83,33 @@ func pausedExcluded(d time.Duration) string {
 // suspendWindow is the span of the last fleet suspend a resume applied: from the
 // moment it began to the moment it ended. The schedule clock reads it to say
 // that a firing was missed during a suspend and not while the daemon was down.
-// It lives in memory, so a daemon that restarts after the resume has forgotten
-// it and the message falls back to the plain one.
-type suspendWindow struct{ w atomic.Pointer[[2]time.Time] }
-
-func (s *suspendWindow) set(since, end time.Time) {
-	s.w.Store(&[2]time.Time{since, end})
+// Each schedule reads it at its first clock step after the resume and never
+// again, so an unrelated miss days later does not carry the clause. It lives in
+// memory, so a daemon that restarts before that step has forgotten it and the
+// message falls back to the plain one, which is true and less specific.
+type suspendWindow struct {
+	mu       sync.Mutex
+	since    time.Time
+	end      time.Time
+	consumed map[string]bool
 }
 
-// contains reports the start of the suspend when at fell inside it, from the
-// moment it began to the moment it ended.
-func (s *suspendWindow) contains(at time.Time) (since time.Time, ok bool) {
-	w := s.w.Load()
-	if w == nil || at.Before(w[0]) || at.After(w[1]) {
-		return time.Time{}, false
+func (s *suspendWindow) set(since, end time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.since, s.end = since, end
+	s.consumed = make(map[string]bool)
+}
+
+// take is a schedule's first look at the window after a resume. It returns the
+// window while key has not looked yet and marks it looked, so every later step
+// of that schedule sees none.
+func (s *suspendWindow) take(key string) (since, end time.Time, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.since.IsZero() || s.consumed[key] {
+		return time.Time{}, time.Time{}, false
 	}
-	return w[0], true
+	s.consumed[key] = true
+	return s.since, s.end, true
 }
