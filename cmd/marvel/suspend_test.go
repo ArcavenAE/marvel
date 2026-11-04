@@ -40,7 +40,10 @@ func (f *verbDaemon) call(req daemonrpc.Request) (*daemonrpc.Response, error) {
 // On a terminal, suspend states what it freezes and how many seats, asks, and
 // sends nothing on anything but a yes.
 func TestSuspendAsksOnATerminal(t *testing.T) {
-	for answer, wantSent := range map[string]bool{"y\n": true, "Y\n": true, "yes\n": true, "\n": false, "n\n": false, "": false} {
+	for answer, wantSent := range map[string]bool{
+		"y\n": true, "Y\n": true, "yes\n": true, "YES\n": true, "Yes\n": true, " y \n": true,
+		"\n": false, "n\n": false, "": false, "yep\n": false, "ye\n": false, "no\n": false, "y n\n": false,
+	} {
 		f := &verbDaemon{seats: 3}
 		var out bytes.Buffer
 		code, err := runSuspend(&out, strings.NewReader(answer), true, false, f.call)

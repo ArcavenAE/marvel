@@ -431,3 +431,33 @@ func TestResumeWithANegativePauseShiftsNothing(t *testing.T) {
 		t.Errorf("LastHeartbeat = %v, want it unchanged at %v", got, last)
 	}
 }
+
+// A second resume while the first one's adoption is still running is refused,
+// and sends no second SIGCONT.
+func TestASecondResumeDuringAdoptionIsRefusedWithoutAnotherThaw(t *testing.T) {
+	r := newVerbRig(t)
+	r.holdAsStart(t)
+	release := make(chan struct{})
+	started := make(chan struct{})
+	r.d.adopt = func() error {
+		close(started)
+		<-release
+		r.d.adoptingSince.Store(0)
+		r.d.loopsStarted.Store(true)
+		return nil
+	}
+	if resp := r.call("resume", map[string]any{}); resp.Error != "" {
+		t.Fatalf("first resume: %s", resp.Error)
+	}
+	<-started
+	signals := len(r.p.log)
+	resp := r.call("resume", map[string]any{})
+	if resp.Error == "" || !strings.Contains(resp.Error, "adopting") {
+		t.Errorf("second resume during adoption: %q, want an adopting refusal", resp.Error)
+	}
+	if len(r.p.log) != signals {
+		t.Errorf("signals went from %d to %d: the second resume thawed again", signals, len(r.p.log))
+	}
+	close(release)
+	r.d.wg.Wait()
+}

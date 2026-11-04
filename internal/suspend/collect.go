@@ -36,25 +36,50 @@ type Collector struct {
 	// CLI and its ancestors, are never recorded: stopping the daemon would stop
 	// the process that must answer resume. Zero means none.
 	Daemon, CLI int
+
+	// roots are the pane processes Collect found. Rewalk starts from them,
+	// because tmux cannot answer once its server is stopped.
+	roots []int
 }
 
 // ErrNoServer is returned when the tmux server pid cannot be read.
 var ErrNoServer = errors.New("suspend: the tmux server pid cannot be read")
 
+// ErrSeatInDaemonSubtree is returned when the tmux server or a pane process
+// lies inside the daemon's own subtree. The daemon's children are managed
+// workloads, which have no pane, so a seat found there means the exclusion is
+// wrong for this host; the suspend refuses before it signals anything.
+var ErrSeatInDaemonSubtree = errors.New("suspend: the tmux server or a pane process is inside the daemon's own process subtree, so the exclusion cannot be applied safely")
+
 // Collect returns a Record with Server and Seats set and every other field
-// zero: the caller adds the actor, source and time and hands it to Freeze.
+// zero: the caller adds the actor, source and time and hands it to Freeze. It
+// is the only place tmux is asked, so it runs before the server stops.
 func (c *Collector) Collect() (Record, error) {
-	server, seats, err := c.walk()
+	serverPid, err := c.Server()
+	if err != nil {
+		return Record{}, fmt.Errorf("%w: %v", ErrNoServer, err)
+	}
+	panes, err := c.Panes()
+	if err != nil {
+		return Record{}, fmt.Errorf("suspend: list the pane processes: %w", err)
+	}
+	server, seats, err := c.walk(serverPid, panes)
 	if err != nil {
 		return Record{}, err
 	}
+	c.roots = panes
 	return Record{Server: server, Seats: seats}, nil
 }
 
 // Rewalk walks again, after the server has stopped, and returns the processes
 // rec does not hold: a child forked between the first snapshot and the stop.
+// It reads the process table and identities only, from the panes Collect
+// recorded; tmux cannot answer now.
 func (c *Collector) Rewalk(rec Record) ([]Proc, error) {
-	_, seats, err := c.walk()
+	if c.roots == nil {
+		return nil, errors.New("suspend: re-walk before a collect: there are no panes to walk from")
+	}
+	_, seats, err := c.walk(rec.Server.Pid, c.roots)
 	if err != nil {
 		return nil, err
 	}
@@ -71,17 +96,9 @@ func (c *Collector) Rewalk(rec Record) ([]Proc, error) {
 	return fresh, nil
 }
 
-// walk reads the server, the panes and the table and returns the server and
-// every pane process with its descendants, minus the exclusions.
-func (c *Collector) walk() (Proc, []Proc, error) {
-	serverPid, err := c.Server()
-	if err != nil {
-		return Proc{}, nil, fmt.Errorf("%w: %v", ErrNoServer, err)
-	}
-	panes, err := c.Panes()
-	if err != nil {
-		return Proc{}, nil, fmt.Errorf("suspend: list the pane processes: %w", err)
-	}
+// walk reads the table and returns the server and every pane process with its
+// descendants, minus the exclusions.
+func (c *Collector) walk(serverPid int, panes []int) (Proc, []Proc, error) {
 	rows, err := c.Table()
 	if err != nil {
 		return Proc{}, nil, fmt.Errorf("suspend: read the process table: %w", err)
@@ -100,18 +117,35 @@ func (c *Collector) walk() (Proc, []Proc, error) {
 			pid = parent[pid]
 		}
 	}
+	// The daemon's subtree: what it started, the managed workloads. Kept apart
+	// from the ancestors, which are ordinary pane shells.
+	subtree := map[int]bool{}
 	if c.Daemon > 1 {
 		ancestors(c.Daemon)
 		stack := []int{c.Daemon}
 		for len(stack) > 0 {
 			p := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
+			if subtree[p] {
+				continue
+			}
+			subtree[p] = true
 			skip[p] = true
 			stack = append(stack, kids[p]...)
 		}
 	}
 	if c.CLI > 1 {
 		ancestors(c.CLI)
+	}
+	// Fail closed: the daemon's children have no pane, so none may be the tmux
+	// server or a pane process.
+	if subtree[serverPid] {
+		return Proc{}, nil, ErrSeatInDaemonSubtree
+	}
+	for _, p := range panes {
+		if subtree[p] {
+			return Proc{}, nil, ErrSeatInDaemonSubtree
+		}
 	}
 
 	// An excluded process is not recorded, but its children still are: the

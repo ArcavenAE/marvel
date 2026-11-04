@@ -156,3 +156,74 @@ func TestParseTable(t *testing.T) {
 		t.Error("ParseTable accepted a non-numeric ppid")
 	}
 }
+
+// The server and every pane process must lie outside the daemon's subtree: the
+// daemon's children are managed workloads, never seats, so a seat found inside
+// means the exclusion would drop a seat that should freeze, or the daemon sits
+// where it must not. Suspend refuses and signals nothing.
+func TestCollectRefusesWhenAPaneProcessIsInsideTheDaemonsSubtree(t *testing.T) {
+	cases := map[string]*fakeHost{
+		"pane under the daemon": {
+			server: 100, panes: []int{200, 211},
+			parent: map[int]int{100: 1, 200: 100, 210: 200, 211: 210},
+		},
+		"server under the daemon": {
+			server: 211, panes: []int{200},
+			parent: map[int]int{200: 1, 210: 200, 211: 210},
+		},
+	}
+	for name, h := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := h.collector()
+			c.Daemon = 210
+			if _, err := c.Collect(); !errors.Is(err, ErrSeatInDaemonSubtree) {
+				t.Fatalf("Collect = %v, want ErrSeatInDaemonSubtree", err)
+			}
+		})
+	}
+	// The daemon's own pane shell is its ancestor, not its subtree: that is the
+	// ordinary case of a daemon started inside a pane, and it still collects.
+	h := &fakeHost{server: 100, panes: []int{200}, parent: map[int]int{100: 1, 200: 100, 210: 200}}
+	c := h.collector()
+	c.Daemon = 210
+	if _, err := c.Collect(); err != nil {
+		t.Errorf("a daemon inside a pane refused the suspend: %v", err)
+	}
+}
+
+// After the server stops, tmux cannot answer: the re-walk reads the process
+// table and identities only, from the panes the first walk recorded.
+func TestRewalkNeverAsksTmux(t *testing.T) {
+	h := &fakeHost{
+		server: 100, panes: []int{200},
+		parent: map[int]int{100: 1, 200: 100, 201: 200},
+	}
+	c := h.collector()
+	rec, err := c.Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	asked := 0
+	c.Server = func() (int, error) { asked++; return 0, errors.New("tmux is stopped") }
+	c.Panes = func() ([]int, error) { asked++; return nil, errors.New("tmux is stopped") }
+	h.parent[202] = 201
+	got, err := c.Rewalk(rec)
+	if err != nil {
+		t.Fatalf("Rewalk: %v", err)
+	}
+	if asked != 0 {
+		t.Errorf("Rewalk asked tmux %d time(s), want none", asked)
+	}
+	if len(got) != 1 || got[0].Pid != 202 {
+		t.Errorf("Rewalk = %+v, want pid 202", got)
+	}
+}
+
+// A Rewalk with no Collect before it has no panes to walk from and says so
+// instead of walking from nothing.
+func TestRewalkWithoutACollectIsAnError(t *testing.T) {
+	c := (&fakeHost{server: 100}).collector()
+	if _, err := c.Rewalk(Record{Server: Proc{Pid: 100}}); err == nil {
+		t.Error("Rewalk with no earlier Collect succeeded")
+	}
+}
