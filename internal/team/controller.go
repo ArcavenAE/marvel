@@ -737,11 +737,19 @@ func (c *Controller) SetConvergencePosture(teamKey string, posture api.Convergen
 		if err != nil {
 			return nil, err
 		}
+		if t.Hibernate != nil && t.Hibernate.State == api.HibernateHibernated {
+			return nil, fmt.Errorf("%s is hibernated; run marvel wake", teamKey)
+		}
 		targets = []api.Team{t}
 	}
 
 	var plans []RolePlan
 	for i := range targets {
+		// A converge of every team leaves a hibernated one alone: only a wake
+		// lifts its mark.
+		if targets[i].Hibernate != nil && targets[i].Hibernate.State == api.HibernateHibernated {
+			continue
+		}
 		key := targets[i].Key()
 		if err := c.store.UpdateTeam(key, func(live *api.Team) error {
 			live.ConvergencePosture = posture

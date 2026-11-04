@@ -133,6 +133,11 @@ var localOnlyMethods = map[string]bool{
 	// served through the tunnel.
 	"suspend": true,
 	"resume":  true,
+	// team.hibernate and team.wake are local only until the suspend scope
+	// exists, like suspend and resume (docs/design/fleet-hibernate.md section
+	// 10 holds the remote-scope decision).
+	"team.hibernate": true,
+	"team.wake":      true,
 }
 
 // methodRequiresLocal reports whether method may be called only from the local

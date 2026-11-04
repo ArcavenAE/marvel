@@ -1278,6 +1278,10 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return d.handleSuspend(req.Params)
 	case "resume":
 		return d.handleResume()
+	case "team.hibernate":
+		return d.handleHibernate(req.Params)
+	case "team.wake":
+		return d.handleWake(req.Params)
 	case "view.refresh":
 		return d.handleViewRefresh(req.Params)
 	case "bus.leaf.connect":

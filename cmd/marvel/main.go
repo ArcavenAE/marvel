@@ -275,6 +275,8 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(statusCmd())
 	root.AddCommand(suspendCmd())
 	root.AddCommand(resumeCmd())
+	root.AddCommand(hibernateCmd())
+	root.AddCommand(wakeCmd())
 	root.AddCommand(doctorCmd())
 	root.AddCommand(credentialCmd())
 	root.AddCommand(busCmd())
