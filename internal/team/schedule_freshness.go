@@ -73,7 +73,7 @@ func (c *Controller) evaluateScheduleFreshness(t *api.Team, role *api.Role, key 
 		if !st.LastSucceededAt.IsZero() {
 			last = "last succeeded " + st.LastSucceededAt.Format(time.RFC3339)
 		}
-		ev.Message = fmt.Sprintf("stale: no succeeded run within stale_after %s; %s", staleAfter, last)
+		ev.Message = fmt.Sprintf("stale: no succeeded run within stale_after %s; %s%s", staleAfter, last, pausedExcluded(st.PausedSinceAnchor))
 	} else {
 		ev.Kind = events.KindScheduleFresh
 		ev.Severity = events.SeverityInfo
@@ -83,6 +83,7 @@ func (c *Controller) evaluateScheduleFreshness(t *api.Team, role *api.Role, key 
 		if st.LastSucceededAt.IsZero() {
 			ev.Message = fmt.Sprintf("recovered: stale_after raised to %s", staleAfter)
 		}
+		ev.Message += pausedExcluded(st.PausedSinceAnchor)
 	}
 	events.Emit(c.Events, ev)
 }
