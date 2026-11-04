@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"sort"
 	"strings"
 	"syscall"
@@ -12,6 +13,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/childproof"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
+	"github.com/arcavenae/marvel/internal/procstat"
 	"github.com/arcavenae/marvel/internal/suspend"
 )
 
@@ -520,5 +522,63 @@ func TestSessionPanePidsAreTheStoreSessionsPids(t *testing.T) {
 	sort.Ints(got)
 	if len(got) != 2 || got[0] != 4242 || got[1] != 4343 {
 		t.Errorf("sessionPanePids = %v, want [4242 4343]", got)
+	}
+}
+
+// While suspended, a reconcile pass, a limits pass and a metrics pass change
+// nothing about a seat: its state, health and failure count stay as they were,
+// and no crash is charged against its role. A pane that reads dead because tmux
+// is stopped would otherwise be reaped and respawned.
+func TestHeldPassesLeaveSeatsAndRoleHealthAlone(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := New()
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	ws := "held-passes"
+	if err := d.store.CreateWorkspace(&api.Workspace{Name: ws, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.sessMgr.CleanupWorkspace(ws) })
+	role := api.Role{
+		Name: "worker", Replicas: 1,
+		Runtime:     api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+		HealthCheck: &api.HealthCheck{Type: api.HealthCheckHeartbeat, Timeout: time.Minute, FailureThreshold: 1},
+	}
+	if err := d.store.CreateTeam(&api.Team{Name: "squad", Workspace: ws, Generation: 1, Roles: []api.Role{role}, ConvergencePosture: api.PostureConverge, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	// A running seat whose pane does not exist and whose heartbeat is old: both
+	// would be acted on by a live reconcile pass.
+	s := &api.Session{
+		Name: "squad-worker-g1-0", Workspace: ws, Team: "squad", Role: "worker", Generation: 1,
+		Runtime: role.Runtime, State: api.SessionRunning, PaneID: "%999999", PID: os.Getpid(),
+		LastHeartbeat: time.Now().UTC().Add(-time.Hour), CreatedAt: time.Now().UTC().Add(-2 * time.Hour),
+	}
+	if err := d.store.CreateSession(s); err != nil {
+		t.Fatal(err)
+	}
+	before, err := d.store.GetSession(s.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d.suspendHeld.Store(true)
+	d.teamCtrl.ReconcileOnce()
+	d.limitsPass(time.Now(), d.evaluateLimits, d.evaluatePaneMenus, d.refreshPaneReads)
+	var held metricsHold
+	d.metricsPass(procstat.NewSampler(), &held)
+
+	after, err := d.store.GetSession(s.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.State != before.State || after.HealthState != before.HealthState || after.FailureCount != before.FailureCount || after.PaneID != before.PaneID {
+		t.Errorf("a held pass changed the seat: before %s/%s/%d/%s, after %s/%s/%d/%s",
+			before.State, before.HealthState, before.FailureCount, before.PaneID,
+			after.State, after.HealthState, after.FailureCount, after.PaneID)
+	}
+	if rh, ok := d.teamCtrl.RoleHealthSnapshot(ws, "squad", "worker"); ok && (rh.RestartCount != 0 || !rh.BackoffUntil.IsZero()) {
+		t.Errorf("a crash was charged against the role while held: %+v", rh)
 	}
 }
