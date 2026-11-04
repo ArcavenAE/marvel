@@ -337,12 +337,14 @@ func (c *Controller) advanceHibernateRequest(t *api.Team, req api.ShiftRequest, 
 }
 
 // endHibernated saves the seat's screen, records the outcome and ends the seat
-// with the same delete a retirement uses: no successor is launched, and the
-// hibernate mark stops the replica slot from being refilled.
+// with the plain delete the shift drain uses: no successor is launched, and the
+// hibernate mark stops the replica slot from being refilled. It does not reap
+// the seat's harness home: the same key reuses it on wake, and a later resume
+// needs the transcript there.
 func (c *Controller) endHibernated(t *api.Team, sess api.Session, outcome, reason string) {
 	saved := c.saveRetiredScreen(sess)
 	c.emitRetired(t, sess, outcome, reason, saved)
-	if err := c.sessMgr.DeleteAndReap(sess.Key()); err != nil {
+	if err := c.sessMgr.Delete(sess.Key()); err != nil {
 		log.Printf("hibernate: delete session %s: %v", sess.Key(), err)
 	}
 	c.dropHibernateRequest(t, sess.Key())

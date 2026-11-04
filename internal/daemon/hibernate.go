@@ -3,7 +3,8 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -363,7 +364,7 @@ func (d *Daemon) harnessCheck(targets []api.Team) preflightCheck {
 			if !t.Hibernate.Covers(role.Name) || role.Runtime.Command == "" {
 				continue
 			}
-			if _, err := exec.LookPath(role.Runtime.Command); err != nil {
+			if !onPath(role.Runtime.Command) {
 				missing[role.Runtime.Command] = true
 			}
 		}
@@ -392,4 +393,26 @@ func (d *Daemon) hibernateInProgress() (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// onPath reports whether command names an executable file: a path as written,
+// or a name found in a directory of PATH. It reads the file system only, so the
+// daemon package keeps its one os/exec import.
+func onPath(command string) bool {
+	isExec := func(p string) bool {
+		info, err := os.Stat(p)
+		return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
+	}
+	if strings.ContainsRune(command, filepath.Separator) {
+		return isExec(command)
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			dir = "."
+		}
+		if isExec(filepath.Join(dir, command)) {
+			return true
+		}
+	}
+	return false
 }

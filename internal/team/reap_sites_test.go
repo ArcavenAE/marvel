@@ -66,8 +66,9 @@ func TestOnlyTerminalStopsReapAHome(t *testing.T) {
 	}
 	plain := map[string][]string{
 		// the finished-run drop, the health restart, the shift abort and the
-		// rolling-shift drain, and the schedule clock.
-		".": {"controller.go:abortStuckShift", "controller.go:applyRolePlan", "controller.go:restartSession", "controller.go:shiftDrain", "schedule_clock.go:stepScheduleClock"},
+		// rolling-shift drain, a hibernate's end of a seat (the same key comes
+		// back on wake, so its home stays), and the schedule clock.
+		".": {"controller.go:abortStuckShift", "controller.go:applyRolePlan", "controller.go:restartSession", "controller.go:shiftDrain", "hibernate.go:endHibernated", "schedule_clock.go:stepScheduleClock"},
 	}
 	for dir, want := range reaping {
 		got := callSites(t, dir, "DeleteAndReap")
