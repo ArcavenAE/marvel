@@ -246,17 +246,33 @@ func suspendActor() string {
 }
 
 // productionCollector wires the collector to the tmux driver, ps and the
-// platform identity reader.
+// platform identity reader. The hold is already up while it runs, so its two
+// tmux reads go through the driver's unguarded view.
 func (d *Daemon) productionCollector(cliPid int) *suspend.Collector {
 	prober := childproof.New()
+	drv := d.driver.Unguarded()
 	return &suspend.Collector{
-		Server:   d.driver.ServerPID,
-		Panes:    d.driver.PanePIDs,
+		Server:   drv.ServerPID,
+		Panes:    drv.PanePIDs,
 		Table:    suspend.PSTable,
 		Identify: prober.Identify,
 		Daemon:   os.Getpid(),
 		CLI:      cliPid,
+		// The pane pid of every session the daemon holds, so a caller that runs
+		// inside a seat is refused. No tmux read: this is the store's own record.
+		SeatPids: d.sessionPanePids(),
 	}
+}
+
+// sessionPanePids is the pane pid of each session in the store.
+func (d *Daemon) sessionPanePids() []int {
+	var pids []int
+	for _, s := range d.store.ListSessions() {
+		if s.PID > 1 {
+			pids = append(pids, s.PID)
+		}
+	}
+	return pids
 }
 
 // handleSuspend freezes the cluster: it raises the hold first, so no method

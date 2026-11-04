@@ -60,6 +60,7 @@ The finding shows this works on Darwin for up to an hour across four harnesses. 
   - Shift every last-seen stamp and absolute deadline by the pause: heartbeat, `ContextAt`, activity rings, `BackoffUntil` and `HealthySince`. Do it in one transaction, or idempotently with the record cleared last.
   - Age checks of the form `now.Sub(CreatedAt)` subtract a persisted per-session `PausedTotal`. `CreatedAt` itself is never rewritten.
   - The schedule clock skips firings that fell inside the pause.
+- **Where the guards sit.** The `Driver` takes a suspend gate: while it reports suspended, every tmux call fails before a process starts, with an error that is both `ErrClusterSuspended` and `ErrTmuxTimeout`, so every outage branch treats it as tmux not answering and nothing reaches `RoleHealth` or `FailureCount`. The suspend and resume procedure and the collector's pid reads use the driver's `Unguarded()` view, the one bypass. The reconcile tick, the watchdog, the limits tick and the metrics sampler stand down while a record exists; the broker retry and the views keep running, since neither reaches tmux. `suspend` refuses a caller that runs inside a seat's pane (an ancestor of the CLI is the pane pid of a session in the store), before anything is signalled.
 - **Refused while a record exists:** `--reclaim` and `reap --confirm`. There is no override in phase 1 **(ruled, O5 option a)**; resume first.
 
 ## 4. Operator surface
