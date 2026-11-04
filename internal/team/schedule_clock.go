@@ -156,9 +156,15 @@ func (c *Controller) advanceFiring(t *api.Team, role *api.Role, st *api.Schedule
 		deadline = scheduleGrace
 	}
 	if late > deadline {
+		// A due time that fell inside a fleet suspend names it, so the miss is
+		// not read as a daemon that was down.
+		during := ""
+		if since, ok := c.suspended.contains(newest); ok {
+			during = " during a fleet suspend from " + since.Format(time.RFC3339)
+		}
 		event(events.KindScheduleMissed, events.SeverityWarning,
-			"missed %d firing(s); the newest, due %s, is %s late, past starting_deadline %s",
-			missed+1, newest.Format(time.RFC3339), late.Round(time.Second), deadline)
+			"missed %d firing(s)%s; the newest, due %s, is %s late, past starting_deadline %s",
+			missed+1, during, newest.Format(time.RFC3339), late.Round(time.Second), deadline)
 		return true
 	}
 	id := api.FiringID(newest)

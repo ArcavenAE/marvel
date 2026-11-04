@@ -2,6 +2,7 @@ package team
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -20,6 +21,7 @@ func (c *Controller) ShiftForPause(pause time.Duration, since, now time.Time) {
 	if pause <= 0 {
 		return
 	}
+	c.suspended.set(since, now)
 	c.ringMu.Lock()
 	for _, r := range c.rings {
 		r.Shift(pause, now)
@@ -44,4 +46,25 @@ func pausedNote(s api.Session) string {
 		return ""
 	}
 	return fmt.Sprintf(" (paused %s excluded)", s.PausedTotal.Round(time.Second))
+}
+
+// suspendWindow is the span of the last fleet suspend a resume applied: from the
+// moment it began to the moment it ended. The schedule clock reads it to say
+// that a firing was missed during a suspend and not while the daemon was down.
+// It lives in memory, so a daemon that restarts after the resume has forgotten
+// it and the message falls back to the plain one.
+type suspendWindow struct{ w atomic.Pointer[[2]time.Time] }
+
+func (s *suspendWindow) set(since, end time.Time) {
+	s.w.Store(&[2]time.Time{since, end})
+}
+
+// contains reports the start of the suspend when at fell inside it, from the
+// moment it began to the moment it ended.
+func (s *suspendWindow) contains(at time.Time) (since time.Time, ok bool) {
+	w := s.w.Load()
+	if w == nil || at.Before(w[0]) || at.After(w[1]) {
+		return time.Time{}, false
+	}
+	return w[0], true
 }

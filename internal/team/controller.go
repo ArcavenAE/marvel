@@ -53,6 +53,10 @@ type Controller struct {
 	// headroom the couple-second stagger is immaterial. Guarded by mu.
 	autoShiftsThisTick int
 
+	// suspended is the last fleet suspend a resume applied, so the schedule clock
+	// can say a firing was missed during it (pause.go). In memory only.
+	suspended suspendWindow
+
 	// handoffProbes runs the max-age handoff marker reads (shift_handoff.go).
 	handoffProbes handoffProbes
 
