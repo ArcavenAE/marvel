@@ -1,3 +1,5 @@
+> This idea became the design in [docs/design/fleet-hibernate.md](../../docs/design/fleet-hibernate.md).
+
 # Hibernate: ordered sign-off, scoped pause, ordered resume
 
 **Status: idea. Pre-hypothesis. Nothing here is designed or measured.**
