@@ -170,7 +170,14 @@ func TestCreateRefusesAProfiledSeatWhoseWorkspaceVanishesAfterTheCheck(t *testin
 		}
 		return api.Role{}, false
 	}
+	// A role that declares a backend has its overlay written before the guard
+	// runs, so the refusal must sweep it as the wrap refusal and the spawn
+	// failure do: a later session with the same key and a different backend
+	// would otherwise read the leftover.
+	overlays := t.TempDir()
+	r.mgr.BackendOverlayDir = overlays
 	sess := r.session()
+	sess.Runtime.Backend = "bedrock"
 	err := r.mgr.Create(sess)
 	if !errors.Is(err, ErrPlacementRefused) || !strings.Contains(err.Error(), RefusalSandboxChanged) {
 		t.Fatalf("Create = %v, want a placement refusal with reason %q", err, RefusalSandboxChanged)
@@ -180,6 +187,9 @@ func TestCreateRefusesAProfiledSeatWhoseWorkspaceVanishesAfterTheCheck(t *testin
 	}
 	if _, gerr := r.store.GetSession(sess.Key()); gerr == nil {
 		t.Error("the session record was kept")
+	}
+	if left, _ := os.ReadDir(overlays); len(left) != 0 {
+		t.Errorf("the backend overlay was left behind: %d file(s) in %s", len(left), overlays)
 	}
 	evs := r.refusedEvents()
 	if len(evs) != 1 {

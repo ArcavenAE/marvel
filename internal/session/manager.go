@@ -1002,6 +1002,7 @@ func (m *Manager) Create(sess *api.Session) error {
 	// planLaunch's lookup fallbacks. It is refused, never started.
 	if fail := m.unwrappedProfiledLaunch(sess, profiled, plan); fail != nil {
 		_ = m.store.DeleteSession(sess.Key())
+		m.sweepBackendOverlay(*sess)
 		m.teardownViews(sess.Key())
 		return m.refuseSandbox(sess, fail)
 	}
