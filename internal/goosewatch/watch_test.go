@@ -134,7 +134,10 @@ func wantKilled(t *testing.T, r result, reason string) {
 // at the limit.
 func TestWallClockEndsASteadyStream(t *testing.T) {
 	t.Parallel()
-	r := runSh(t, `while :; do printf '%s\n' '`+textLine+`'; sleep 0.2; done`, 2*time.Second, time.Second, nil)
+	// Idle is 10s so it cannot win a test about the wall clock: both limits
+	// count from run start, before the fixture's shell has written anything, so
+	// under load a short idle limit can fire first. The wall clock is 2s.
+	r := runSh(t, `while :; do printf '%s\n' '`+textLine+`'; sleep 0.2; done`, 2*time.Second, 10*time.Second, nil)
 	wantKilled(t, r, ReasonWallClock)
 	if r.elapsed < 2*time.Second || r.elapsed > 4500*time.Millisecond {
 		t.Errorf("ended after %v, want about the 2s wall-clock", r.elapsed)
@@ -185,7 +188,9 @@ func TestIdleRestartsAfterTheLastOpenCallIsAnswered(t *testing.T) {
 // The wall-clock limit never pauses, so a tool call that hangs is still ended.
 func TestWallClockEndsAHungToolCall(t *testing.T) {
 	t.Parallel()
-	r := runSh(t, `printf '%s\n' '`+reqLine+`'; sleep 30`, 2*time.Second, time.Second, nil)
+	// Idle is 10s for the same reason as in TestWallClockEndsASteadyStream: it
+	// counts from run start, so a short limit can fire before the wall clock.
+	r := runSh(t, `printf '%s\n' '`+reqLine+`'; sleep 30`, 2*time.Second, 10*time.Second, nil)
 	wantKilled(t, r, ReasonWallClock)
 	if r.elapsed < 2*time.Second || r.elapsed > 4500*time.Millisecond {
 		t.Errorf("ended after %v, want about the 2s wall-clock", r.elapsed)
@@ -216,9 +221,13 @@ func TestARunThatEndsEarlyIsUntouched(t *testing.T) {
 func TestKillFollowsTermAfterTheGrace(t *testing.T) {
 	t.Parallel()
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
-	r := runSh(t, `trap '' TERM; sleep 60 & echo $! > `+pidFile+`; printf '%s\n' '`+textLine+`'; while :; do sleep 0.1; done`, 10*time.Second, time.Second, nil)
+	// Idle counts from run start, so it has to leave the fixture's shell time to
+	// reach the pid-file write before the idle TERM; under load a 1s limit could
+	// end the run first. Grace is runSh's 1s, so the run ends at about 4s.
+	const idle, grace = 3 * time.Second, time.Second
+	r := runSh(t, `trap '' TERM; sleep 60 & echo $! > `+pidFile+`; printf '%s\n' '`+textLine+`'; while :; do sleep 0.1; done`, 10*time.Second, idle, nil)
 	wantKilled(t, r, ReasonIdle)
-	if r.elapsed < 1900*time.Millisecond {
+	if r.elapsed < idle+grace-100*time.Millisecond {
 		t.Errorf("ended after %v, before the idle limit plus the grace", r.elapsed)
 	}
 	b, err := os.ReadFile(pidFile)
@@ -262,8 +271,11 @@ func TestStderrIsCappedWithTheReasonLast(t *testing.T) {
 // On a kill the watchdog line comes after the tail, so it stays last.
 func TestWatchdogLineIsLastAfterACappedStderr(t *testing.T) {
 	t.Parallel()
+	// Idle is 5s: stderr is not stdout activity, so the 2000-line loop has to
+	// finish before idle fires for the cap to be exercised, and under load a 1s
+	// limit could end the run with no drop marker.
 	r := runSh(t, `i=0; while [ $i -lt 2000 ]; do echo "filler line $i" >&2; i=$((i+1)); done; printf '%s\n' '`+textLine+`'; sleep 30`,
-		10*time.Second, time.Second, func(c *Config) { c.StderrCap = 8192 })
+		10*time.Second, 5*time.Second, func(c *Config) { c.StderrCap = 8192 })
 	wantKilled(t, r, ReasonIdle)
 	if !strings.Contains(r.stderr, "bytes dropped]") {
 		t.Error("no drop marker")
