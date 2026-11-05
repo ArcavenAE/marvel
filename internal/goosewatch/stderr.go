@@ -104,6 +104,11 @@ func (s *stderrSink) finish(tr *tracker, lastLine string) {
 	startLine(s.lastByte)
 	if tr != nil {
 		tr.mu.Lock()
+		// A stop the wrapper sat out is named first, so a reader knows the
+		// max-gap that follows leaves it out.
+		if tr.frozen > 0 {
+			out = fmt.Appendf(out, "watchdog: frozen %.1fs\n", tr.frozen.Seconds())
+		}
 		out = fmt.Appendf(out, "watchdog: max-gap %.1fs lines %d\n", tr.maxGap.Seconds(), tr.lines)
 		tr.mu.Unlock()
 	}
