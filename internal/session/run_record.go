@@ -25,6 +25,9 @@ type runTail struct {
 	denials int
 	spend   usage.Spend
 	metered bool
+	// endReason is the reason the harness's end event gave: for a goose run
+	// ended by its watchdog, "watchdog: wall-clock" or "watchdog: idle".
+	endReason string
 }
 
 // spendReader is the accountant's per-session spend. Optional on the
@@ -47,6 +50,7 @@ func (d *usageDrain) note(ev rtevents.Event) {
 		if data.Metering != nil {
 			d.tail.denials = len(data.Metering.PermissionDenials)
 		}
+		d.tail.endReason = data.Reason
 	}
 }
 
@@ -73,8 +77,20 @@ func (m *Manager) gooseStderrTail(sess api.Session) string {
 // The event carries status only, never the result text (scheduled-runs
 // section 5). A session whose role is not scheduled records nothing.
 func (m *Manager) recordScheduledRun(sess api.Session, outcome api.RunOutcome, exitStatus string, tail runTail) {
-	m.recordRun(sess, outcome, exitStatus, tail, "")
+	var kind events.Kind
+	// A goose run its wrapper ended at the wall-clock limit is a deadline
+	// failure, which the per-tick kill leaves to the wrapper. The key is the
+	// parser's end reason: the idle limit exits the same way and stays
+	// run.failed.
+	if outcome == api.RunFailed && sess.Runtime.Name == "goose" && tail.endReason == gooseWallClockReason {
+		kind = events.KindRunDeadline
+	}
+	m.recordRun(sess, outcome, exitStatus, tail, kind)
 }
+
+// gooseWallClockReason is the end reason the goose parser gives a run its
+// watchdog wrapper ended at the wall-clock limit, which is active_deadline.
+const gooseWallClockReason = "watchdog: wall-clock"
 
 // recordRun is recordScheduledRun with an event kind that replaces the
 // outcome's own: a deadline kill is recorded failed and announced as
@@ -147,7 +163,7 @@ func (m *Manager) recordRun(sess api.Session, outcome api.RunOutcome, exitStatus
 	}
 	if kindOverride != "" {
 		kind = kindOverride
-		msg = fmt.Sprintf("killed after %s, past active_deadline %s; recorded %s; %s", rec.Duration().Round(time.Second), sched.ActiveDeadline, outcome, tokens)
+		msg = fmt.Sprintf("ended after %s, past active_deadline %s; recorded %s; %s", rec.Duration().Round(time.Second), sched.ActiveDeadline, outcome, tokens)
 	}
 	if rec.PermissionDenials > 0 {
 		msg += fmt.Sprintf("; %d permission denials", rec.PermissionDenials)
