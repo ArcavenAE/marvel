@@ -116,5 +116,13 @@ out=$(FAKE_BAD_ARGS=1 "$shim" await kf)
 if [[ "$out" == "kf pending sid-kf" ]]; then pass "wait exit 1 without a state word reads pending, not failed"
 else fail "wait exit 1 without a state word reads pending" "out=[$out]"; fi
 
+# PROBE_EXTRA_ENV pairs are never globbed: a value with * or ? reaches marvel literally
+new_env
+gd=$(mktemp -d); : >"$gd/A=x"
+( cd "$gd" && PROBE_EXTRA_ENV='A=* B=?' "$shim" dispatch kg "$prompt" >/dev/null )
+args=$(tr '\n' ' ' <"$FAKE_DIR/run.kg.args")
+if [[ "$args" == *"--env A=* --env B=? "* && "$args" != *"A=x"* ]]; then pass "PROBE_EXTRA_ENV is not globbed"
+else fail "PROBE_EXTRA_ENV is not globbed" "args=[$args]"; fi
+
 echo "failures: $fails"
 [[ $fails -eq 0 ]]
