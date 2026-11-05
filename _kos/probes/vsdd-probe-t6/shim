@@ -1,0 +1,157 @@
+#!/bin/bash
+# Arm B dispatch shim (brief sections 3 and 4). Installed in the derived pack as
+# bin/shim and called through the orchestrator's Bash tool.
+#
+#   shim dispatch <key> <prompt-file>   start one branch seat, once per key
+#   shim await <key>...                 wait for each key, one result line per key
+#
+# dispatch prints "dispatched <key>" or "refused <marvel's message>". await prints
+# "<key> <word> <harness session id>" with word one of succeeded, failed, crashed,
+# pending or unknown. The shim never retries and never reports a story done.
+#
+# Environment (all required unless marked):
+#   PROBE_WORKSPACE        marvel workspace of the probe
+#   PROBE_RUN_ID           the run id; the team is arm-b-<run-id>
+#   PROBE_WORKDIR          the project path the seat runs in
+#   PROBE_MODEL            the full model id
+#   PROBE_PERMISSION_MODE  the permission mode
+#   PROBE_EXTRA_ENV        optional, space-separated KEY=VALUE pairs passed as --env
+#   PROBE_WAIT_TIMEOUT     optional, per-key marvel wait timeout, default 100s
+#   MARVEL                 optional, the marvel binary, default marvel
+set -euo pipefail
+
+marvel_bin="${MARVEL:-marvel}"
+wait_timeout="${PROBE_WAIT_TIMEOUT:-100s}"
+overall_limit="${PROBE_AWAIT_LIMIT:-115}"
+role="branch-run"
+
+need() {
+  local v
+  for v in "$@"; do
+    if [[ -z "${!v:-}" ]]; then
+      echo "refused $v is not set"
+      exit 1
+    fi
+  done
+}
+
+valid_key() {
+  [[ "$1" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+}
+
+dispatch() {
+  if [[ -n "${PROBE_BRANCH_KEY:-}" ]]; then
+    echo "refused a branch seat cannot dispatch"
+    exit 1
+  fi
+  if [[ $# -ne 2 ]]; then
+    echo "refused usage: shim dispatch <key> <prompt-file>"
+    exit 1
+  fi
+  local key="$1" prompt="$2"
+  need PROBE_WORKSPACE PROBE_RUN_ID PROBE_WORKDIR PROBE_MODEL PROBE_PERMISSION_MODE
+  if ! valid_key "$key"; then
+    echo "refused key $key must be lowercase letters, digits and hyphens"
+    exit 1
+  fi
+  if [[ ! -r "$prompt" ]]; then
+    echo "refused prompt file $prompt is not readable"
+    exit 1
+  fi
+  local extra=() kv
+  for kv in ${PROBE_EXTRA_ENV:-}; do
+    extra+=(--env "$kv")
+  done
+  local out rc=0
+  out=$("$marvel_bin" run --experimental --mode headless \
+    --workspace "$PROBE_WORKSPACE" --team "arm-b-$PROBE_RUN_ID" --role "$role" \
+    --name "$key" --workdir "$PROBE_WORKDIR" --prompt-file "$prompt" \
+    --env "PROBE_BRANCH_KEY=$key" ${extra[@]+"${extra[@]}"} \
+    -- claude --agent vsdd-orchestrator --model "$PROBE_MODEL" \
+    --permission-mode "$PROBE_PERMISSION_MODE" 2>&1) || rc=$?
+  if [[ $rc -eq 0 ]]; then
+    echo "dispatched $key"
+  elif [[ "$out" == *"already exists"* ]]; then
+    # A repeated key is a no-op: the seat is already there.
+    echo "dispatched $key"
+  else
+    echo "refused $(printf '%s\n' "$out" | head -n 1)"
+    exit 1
+  fi
+}
+
+# word_for maps one wait result to a word. The exit code and the state wait
+# prints must agree, so a refused flag (exit 1, no state word) never reads as a
+# failed seat. Exit 3 (still running), 5 (daemon error) and anything else read
+# as pending.
+word_for() {
+  local rc="$1" said="$2"
+  case "$rc:$said" in
+    0:succeeded) echo succeeded ;;
+    1:failed) echo failed ;;
+    2:crashed) echo crashed ;;
+    4:unknown) echo unknown ;;
+    *) echo pending ;;
+  esac
+}
+
+await() {
+  if [[ $# -lt 1 ]]; then
+    echo "usage: shim await <key>..." >&2
+    exit 1
+  fi
+  need PROBE_WORKSPACE
+  local key i=0
+  pids=()
+  tmp=$(mktemp -d)
+  # No wait outlives this call: kill any still running when the shim exits.
+  trap 'for p in ${pids[@]+"${pids[@]}"}; do kill "$p" 2>/dev/null || true; done; rm -rf "$tmp"' EXIT
+  for key in "$@"; do
+    i=$((i + 1))
+    (
+      rc=0
+      out=$("$marvel_bin" wait --experimental --timeout "$wait_timeout" --poll 5s \
+        "$PROBE_WORKSPACE/$key" 2>/dev/null) || rc=$?
+      printf '%s\n' "$rc" >"$tmp/$i.rc"
+      printf '%s\n' "$(printf '%s\n' "$out" | tail -n 1)" >"$tmp/$i.said"
+    ) >/dev/null 2>&1 &
+    pids+=("$!")
+  done
+  # Overall limit, so the call returns inside the Bash tool's bound. A wait
+  # still running at the limit is killed and its key reads pending.
+  local deadline=$((SECONDS + overall_limit)) alive p
+  while :; do
+    alive=0
+    for p in "${pids[@]}"; do
+      if kill -0 "$p" 2>/dev/null; then alive=1; fi
+    done
+    [[ $alive -eq 0 ]] && break
+    if [[ $SECONDS -ge $deadline ]]; then
+      for p in "${pids[@]}"; do
+        kill "$p" 2>/dev/null || true
+        { wait "$p"; } 2>/dev/null || true
+      done
+      break
+    fi
+    sleep 0.2
+  done
+  i=0
+  for key in "$@"; do
+    i=$((i + 1))
+    local rc="" said="" sid="-"
+    [[ -r "$tmp/$i.rc" ]] && rc=$(cat "$tmp/$i.rc")
+    [[ -r "$tmp/$i.said" ]] && said=$(cat "$tmp/$i.said")
+    local desc
+    if desc=$("$marvel_bin" describe session "$PROBE_WORKSPACE/$key" 2>/dev/null); then
+      sid=$(printf '%s\n' "$desc" | sed -n 's/.*"harness_session_id": *"\([^"]*\)".*/\1/p' | head -n 1)
+      sid="${sid:--}"
+    fi
+    echo "$key $(word_for "$rc" "$said") $sid"
+  done
+}
+
+case "${1:-}" in
+  dispatch) shift; dispatch "$@" ;;
+  await) shift; await "$@" ;;
+  *) echo "usage: shim dispatch <key> <prompt-file> | shim await <key>..." >&2; exit 1 ;;
+esac

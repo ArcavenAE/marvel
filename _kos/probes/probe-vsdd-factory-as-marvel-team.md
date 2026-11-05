@@ -132,7 +132,7 @@ Each step stays its own subagent, one level deep, as in arm A.
 
 **One exception, listed for fidelity.** In arm A, cleanup-worktree updates `STATE.md` from inside the branch (`greenfield.lobster:796-802`). In arm B, that update moves to the orchestrator's single state-manager dispatch after the barrier (s7.1).
 
-**Byte-identical to `51023185`,** checked against the rc.25 file manifest (sha256 `e0ec70a1...325c`): every rc.25 path matches except the two patched files, and the only added path is the shim. Each is listed with its sha256. The derived pack installs beside rc.25 under its own version, with `--no-activate` (s5.1). Unchanged:
+**Byte-identical to `51023185`,** checked against the rc.25 file manifest (sha256 `e0ec70a1...325c`): every rc.25 path matches except the two patched files and `pack.yaml`, whose version line carries the derived version (sideshow reads the version from that file; see `vsdd-probe-t6/README.md`), and the only added path is the shim. Each is listed with its sha256. The derived pack installs beside rc.25 under its own version, with `--no-activate` (s5.1). Unchanged:
 - every other file under `agents/`;
 - all 16 `.lobster` files;
 - `skills/`, `templates/`, `rules/`, `hooks/`, `hook-plugins/`, `bin/` and `config/`;
