@@ -148,6 +148,13 @@ type Daemon struct {
 	// exclusion.
 	socketLock *socketLock
 
+	// Path of the root lock to take on Start. Empty = no root lock.
+	rootLockPath string
+
+	// Advisory lock on the marvel root, held from the first act of Start to
+	// shutdown. Nil when rootLockPath is empty.
+	rootLock *socketLock
+
 	// reclaim makes the startup reconcile destroy marvel-* tmux state
 	// this daemon does not own, instead of leaving it running. Off by
 	// default; `marvel daemon --reclaim` is the deliberate act.
@@ -251,6 +258,12 @@ type Daemon struct {
 // Options configures optional daemon behavior. Zero value disables
 // everything optional (matches legacy behavior).
 type Options struct {
+	// RootLock, when non-empty, is the path of the lock that makes one
+	// marvel root one daemon, <root>/run/daemon.lock. Start takes it first,
+	// before any other guard, and holds it until the daemon stops. Empty
+	// means no lock, as PidFile does, which keeps daemons built directly in
+	// tests out of it. cmd/marvel always sets it, from the layout.
+	RootLock string
 	// PidFile, when non-empty, is written with the daemon's PID on
 	// Start and removed on Stop. If the file already exists and
 	// points at a live process, Start refuses with an error.
@@ -462,6 +475,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		reexec:    syscall.Exec,
 
 		leafLossCause: leafLossCause,
+		rootLockPath:  opts.RootLock,
 	}
 	teamCtrl.Suspended = d.clusterSuspended
 	driver.SetSuspendGate(d.clusterSuspended)
@@ -558,7 +572,26 @@ func (d *Daemon) LogBuffer() *logbuf.Buffer { return d.logs }
 // Start starts the daemon: listens on Unix or TCP socket and starts reconciliation.
 // The address format determines the network: "host:port" for TCP, a file path
 // for Unix. Examples: "~/.marvel/run/marvel.sock", "0.0.0.0:9090", ":9090".
-func (d *Daemon) Start(socketPath string) error {
+func (d *Daemon) Start(socketPath string) (err error) {
+	// One root is one daemon. This is the first act, before the pid file
+	// guard, the socket lock and attachServices: a daemon that loses it must
+	// never reach the broker, the same rule the pid file guard states below.
+	// A start that fails after taking it gives it back, so a failed start
+	// leaves the root free.
+	if d.rootLockPath != "" {
+		lock, lerr := lockRoot(d.rootLockPath)
+		if lerr != nil {
+			return lerr
+		}
+		d.rootLock = lock
+		defer func() {
+			if err != nil {
+				d.rootLock.release()
+				d.rootLock = nil
+			}
+		}()
+	}
+
 	// Refuse to start if a pid file already points at a live process.
 	if d.pidFile != "" {
 		if err := checkPidFileFree(d.pidFile); err != nil {
@@ -971,6 +1004,8 @@ func (d *Daemon) shutdown(teardown bool) {
 	}
 	d.socketLock.release()
 	d.socketLock = nil
+	d.rootLock.release()
+	d.rootLock = nil
 	if d.pidFile != "" {
 		_ = os.Remove(d.pidFile)
 	}

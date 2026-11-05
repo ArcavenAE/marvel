@@ -415,7 +415,20 @@ Examples:
 				return err
 			}
 
+			// One root is one daemon (marvel#883). The lock path comes from
+			// the resolved layout and nothing else: no flag moves it, because
+			// moving it would let two daemons share a root. It sits in run/,
+			// which must exist before the daemon opens the lock file there.
+			rootLock := ""
+			if layout.Home != "" {
+				if err := layout.EnsureRunDir(); err != nil {
+					return err
+				}
+				rootLock = filepath.Join(layout.RunDir(), "daemon.lock")
+			}
+
 			d, err := newDaemon(daemon.Options{
+				RootLock:     rootLock,
 				PidFile:      pidFilePath,
 				StateBolt:    stateBoltPath,
 				ShiftTimeout: shiftTO,
