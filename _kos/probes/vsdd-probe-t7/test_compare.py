@@ -384,6 +384,36 @@ class ReadmeStatesTheReadings(unittest.TestCase):
             self.assertIn(needle, self.text)
 
 
+class StreamSeeds(unittest.TestCase):
+    def test_the_stream_seed_is_sha256_of_the_seed_and_names(self):
+        import hashlib
+        want = int.from_bytes(hashlib.sha256(b"1:cost").digest(), "big")
+        self.assertEqual(compare.stream_seed(1, "cost"), want)
+        want = int.from_bytes(hashlib.sha256(b"7:cost:hub_wait_removed").digest(), "big")
+        self.assertEqual(compare.stream_seed(7, "cost", "hub_wait_removed"), want)
+
+    def test_two_runs_on_one_input_give_identical_intervals_whatever_the_hash_seed(self):
+        outs = []
+        for hash_seed in ("1", "2", "random"):
+            env = dict(os.environ, PYTHONHASHSEED=hash_seed)
+            p = subprocess.run([sys.executable, "-B", SCRIPT, EXAMPLE],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            outs.append(json.loads(p.stdout))
+        self.assertEqual(outs[0], outs[1])
+        self.assertEqual(outs[0], outs[2])
+        boot = outs[0]["axes"]["cost"]["interval"]["bootstrap"]
+        self.assertIsNotNone(boot)
+        for sens in outs[0]["axes"]["cost"]["sensitivities"]:
+            self.assertIsNotNone(sens["interval"]["bootstrap"])
+
+    def test_readme_states_the_stream_rule(self):
+        with open(os.path.join(HERE, "README.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("sha256", text)
+        self.assertIn("hash()", text)
+
+
 def cli(text=None, path=None, *flags):
     if text is not None:
         fd, path = tempfile.mkstemp(suffix=".json")

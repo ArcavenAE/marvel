@@ -13,6 +13,7 @@ It exits 0 on a comparison, 2 on bad usage, and 4 when it refuses the input
 (`refused: <cause>: <detail>` on stderr, nothing on stdout). See README.md.
 """
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -392,6 +393,13 @@ def estimate_axis(rows):
     return theta, se, p
 
 
+def stream_seed(seed, *parts):
+    """The seed of one bootstrap stream: sha256 of "seed:part:part", read as an
+    integer. Never Python's hash() of a string, which differs per process."""
+    text = ":".join(str(x) for x in (seed,) + parts)
+    return int.from_bytes(hashlib.sha256(text.encode("utf-8")).digest(), "big")
+
+
 def analyse(spec):
     alpha, resamples, cov, pairs, axes = load(spec)
     k = len(pairs)
@@ -400,7 +408,7 @@ def analyse(spec):
     def axis_rng(*parts):
         # One stream per axis and sensitivity, so adding an axis never moves
         # another axis's bootstrap.
-        return random.Random(":".join(str(x) for x in (seed,) + parts))
+        return random.Random(stream_seed(seed, *parts))
 
     narrow = []
     for i, p in enumerate(pairs):

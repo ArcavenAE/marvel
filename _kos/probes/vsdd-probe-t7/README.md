@@ -92,6 +92,17 @@ Sensitivities (`hub_wait_removed` and `first_attempt_only` beside cost) get an
 estimate and an interval and no verdict. The series `close` reads (a) for the
 wave case or a both-zero cost axis, and (b) for a blind cost axis.
 
+## Random streams
+
+The bootstrap is seeded. The input's `seed` is the only value the protocol
+records. Each axis and each sensitivity gets its own stream, seeded from
+`sha256("seed:axis")` (and `sha256("seed:axis:sensitivity")` for a
+sensitivity), read as an integer. It is never Python's `hash()` of a string,
+which is randomized per process. So adding an axis, a breakdown or a
+sensitivity never moves another axis's bootstrap interval, and two runs on one
+input give identical output. The coverage simulation has its own seed under
+`coverage`.
+
 ## Readings 9.4 leaves open
 
 9.4 names the delta method, the bootstrap, Holm and the coverage check and
