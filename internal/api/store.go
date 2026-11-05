@@ -1034,6 +1034,30 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	return auth, nil
 }
 
+// UpdateSessionBusBeat authenticates a bus beat and, if it holds, stamps
+// LastBusBeat and nothing else. It checks the token with the heartbeat's own
+// rule, so a refusal reads the same on both RPCs. It never touches the CTX
+// reading, ContextAt or LastHeartbeat: those belong to the statusline feed,
+// and a bus beat that moved them would let one producer vouch for the other
+// (finding-166).
+func (s *Store) UpdateSessionBusBeat(r BusBeatRequest) (HeartbeatAuth, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[r.SessionKey]
+	if !ok {
+		return "", fmt.Errorf("session %s: %w", r.SessionKey, ErrNotFound)
+	}
+	auth, err := authenticateHeartbeat(sess, r.SessionToken)
+	if err != nil {
+		return "", fmt.Errorf("session %s: %w", r.SessionKey, err)
+	}
+	sess.LastBusBeat = time.Now().UTC()
+	if err := s.persistPut(bucketSessions, sess.Key(), sess); err != nil {
+		return "", err
+	}
+	return auth, nil
+}
+
 // recordTotals stores the statusline's running cost and API-time totals and
 // stamps TotalsChangedAt when either moves. A total the beat did not carry
 // stays as it was, and one never carried stays nil, so a feed that omits them

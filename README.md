@@ -259,9 +259,14 @@ send periodic heartbeats to the daemon) and `process-alive` (tmux pane exists).
 A passed heartbeat reads `healthy` in `marvel get sessions`; a `process-alive`
 role reads `alive`, because nothing beyond the pane was checked.
 
+A third type, `bus`, reads the director shim's own liveness beat (the `bus.beat`
+RPC) in place of the statusline heartbeat, so a seat whose statusline is live
+but whose director shim has lost the bus reads `unhealthy`. It stays inert until
+a role declares it, and the director side of the beat ships separately.
+
 ```toml
 [team.role.healthcheck]
-type = "heartbeat"       # "heartbeat" or "process-alive"
+type = "heartbeat"       # "heartbeat", "process-alive" or "bus"
 timeout = "30s"          # heartbeat staleness threshold
 failure_threshold = 3    # consecutive failures before action
 ```
