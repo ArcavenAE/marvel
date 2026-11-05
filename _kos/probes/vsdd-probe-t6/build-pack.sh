@@ -5,6 +5,7 @@
 #
 #   build-pack.sh build TARBALL BUNDLE MANIFEST OUTDIR [N]
 #   build-pack.sh check PACK_DIR MANIFEST
+#   build-pack.sh report PACK_DIR MANIFEST VERSION
 #
 # build refuses unless the tarball and the manifest match the pins below and
 # cosign verifies the tarball. The derived version is 1.0.0-rc.25.arm-b.N (N
@@ -22,6 +23,18 @@ sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
 check() {
   [[ $# -eq 2 ]] || die "usage: build-pack.sh check PACK_DIR MANIFEST"
   python3 -I -B "$here/derive.py" check "$1" "$2"
+}
+
+report() {
+  [[ $# -eq 3 ]] || die "usage: build-pack.sh report PACK_DIR MANIFEST VERSION"
+  echo "derived pack $3"
+  echo "tarball sha256 $TARBALL_SHA"
+  echo "manifest sha256 $MANIFEST_SHA"
+  echo "patch (apply_patch.py) sha256 $(sha "$here/apply_patch.py")"
+  echo "gate (derive.py) sha256 $(sha "$here/derive.py")"
+  echo "shim sha256 $(sha "$here/shim")"
+  echo "manifest check:"
+  check "$1" "$2"
 }
 
 build() {
@@ -45,15 +58,7 @@ build() {
   python3 -I -B "$here/derive.py" stamp "$pack/pack.yaml" "$version"
   cp "$here/shim" "$pack/bin/shim"
   chmod 0755 "$pack/bin/shim"
-  {
-    echo "derived pack $version"
-    echo "tarball sha256 $TARBALL_SHA"
-    echo "manifest sha256 $MANIFEST_SHA"
-    echo "patch (apply_patch.py) sha256 $(sha "$here/apply_patch.py")"
-    echo "shim sha256 $(sha "$here/shim")"
-    echo "manifest check:"
-    check "$pack" "$manifest"
-  } >"$out/report.txt" || { cat "$out/report.txt" >&2; die "manifest check failed"; }
+  report "$pack" "$manifest" "$version" >"$out/report.txt" || { cat "$out/report.txt" >&2; die "manifest check failed"; }
   cat "$out/report.txt"
   echo "pack directory: $pack"
 }
@@ -61,5 +66,6 @@ build() {
 case "${1:-}" in
   build) shift; build "$@" ;;
   check) shift; check "$@" ;;
-  *) die "usage: build-pack.sh build|check ..." ;;
+  report) shift; report "$@" ;;
+  *) die "usage: build-pack.sh build|check|report ..." ;;
 esac

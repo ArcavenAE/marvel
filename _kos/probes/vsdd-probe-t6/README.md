@@ -10,17 +10,18 @@ what `cosign verify-blob` needs.
 
 | file | job |
 |---|---|
-| `build-pack.sh` | `build`: checks the tarball and manifest against pinned sha256 values, runs `cosign verify-blob`, unpacks, applies the patch, stamps the version, adds the shim, then runs the manifest check and writes `report.txt`. `check`: the manifest check alone |
+| `build-pack.sh` | `report`: the pins, the sha256 of the patch, the gate (`derive.py`) and the shim, then the manifest check. `build`: checks the tarball and manifest against pinned sha256 values, runs `cosign verify-blob`, unpacks, applies the patch, stamps the version, adds the shim, then runs the manifest check and writes `report.txt`. `check`: the manifest check alone |
 | `apply_patch.py` | the patch: the section 3 edits to `agents/orchestrator/orchestrator.md` and `agents/orchestrator/per-story-delivery.md` |
 | `derive.py` | `stamp` (the version line) and `check` (the manifest comparison) |
 | `shim` | `dispatch` and `await` over the T1 surface (`marvel run --experimental`, `marvel wait --experimental`); installed in the pack as `bin/shim` |
-| `test_shim.sh`, `test_build.sh` | the unit tests; `testdata/fake-marvel` is the fake marvel the shim tests run against |
+| `test_shim.sh`, `test_build.sh`, `test_apply_patch.py` | the unit tests; `testdata/fake-marvel` is the fake marvel the shim tests run against |
 
 ## Run
 
 ```sh
 bash _kos/probes/vsdd-probe-t6/test_shim.sh
 bash _kos/probes/vsdd-probe-t6/test_build.sh
+python3 -I -B _kos/probes/vsdd-probe-t6/test_apply_patch.py
 _kos/probes/vsdd-probe-t6/build-pack.sh build TARBALL TARBALL.bundle file-manifest.csv OUTDIR 1
 ```
 
