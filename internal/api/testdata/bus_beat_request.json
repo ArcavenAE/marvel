@@ -1,1 +1,1 @@
-{"session_key":"ws/squad-worker-g1-0","session_token":"fixture-token-not-a-secret","source":"director-shim"}
+{"method":"bus.beat","params":{"session_key":"fixture-session","session_token":"fixture-token","source":"director-shim"}}

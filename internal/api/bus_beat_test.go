@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // busBeatSession seeds a running session carrying a token, and a statusline
@@ -119,32 +121,49 @@ func TestStatuslineHeartbeatLeavesLastBusBeat(t *testing.T) {
 	}
 }
 
-// The request fixture parses into the fields the director shim sends, and
-// marshals back to the same bytes. The director repo pins the same file's
-// bytes against what its shim builds, so a rename on either side fails a test
-// there.
+// The request fixture is the whole request line as it crosses the socket: the
+// daemonrpc envelope around the params. It parses into the fields the director
+// shim sends and marshals back to the same bytes, newline aside (the client
+// encoder adds one). The director repo pins the same file's bytes against what
+// its shim writes, so a rename or a reorder on either side fails a test there.
 func TestBusBeatRequestFixture(t *testing.T) {
 	raw, err := os.ReadFile("testdata/bus_beat_request.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var r BusBeatRequest
+	if n := bytes.Count(raw, []byte("\n")); n != 1 || !bytes.HasSuffix(raw, []byte("}\n")) {
+		t.Fatalf("fixture must be one line with one trailing newline, got %d newlines", n)
+	}
+	var req daemonrpc.Request
 	// Strict, so the fixture cannot grow a key the daemon would ignore.
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&r); err != nil {
-		t.Fatalf("fixture does not parse: %v", err)
+	if err := dec.Decode(&req); err != nil {
+		t.Fatalf("fixture does not parse as a daemon request: %v", err)
 	}
-	want := BusBeatRequest{SessionKey: "ws/squad-worker-g1-0", SessionToken: "fixture-token-not-a-secret", Source: BusBeatSourceDirectorShim}
+	if req.Method != "bus.beat" {
+		t.Fatalf("fixture method = %q, want bus.beat", req.Method)
+	}
+	var r BusBeatRequest
+	pdec := json.NewDecoder(bytes.NewReader(req.Params))
+	pdec.DisallowUnknownFields()
+	if err := pdec.Decode(&r); err != nil {
+		t.Fatalf("fixture params do not parse: %v", err)
+	}
+	want := BusBeatRequest{SessionKey: "fixture-session", SessionToken: "fixture-token", Source: BusBeatSourceDirectorShim}
 	if r != want {
-		t.Fatalf("fixture parsed to %+v, want %+v", r, want)
+		t.Fatalf("fixture params parsed to %+v, want %+v", r, want)
 	}
-	back, err := json.Marshal(r)
+	params, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(back) != string(raw) {
-		t.Errorf("fixture is not byte-equal to the marshalled request:\nfile:  %s\nwire:  %s", raw, back)
+	back, err := json.Marshal(daemonrpc.Request{Method: "bus.beat", Params: params})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(back)+"\n" != string(raw) {
+		t.Errorf("fixture is not byte-equal to the marshalled request:\nfile:  %q\nwire:  %q", raw, string(back)+"\n")
 	}
 }
 
