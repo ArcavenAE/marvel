@@ -79,8 +79,16 @@ func runFrozen(t *testing.T, script string, wall, freezeAfter, freezeFor time.Du
 		t.Fatal("the fake goose never reported ready")
 	}
 	r.readyAt = time.Now()
-	b, _ := os.ReadFile(pidFile)
-	goosePid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		kill()
+		t.Fatalf("read the fake goose's pid: %v", err)
+	}
+	goosePid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || goosePid <= 0 {
+		kill()
+		t.Fatalf("the fake goose's pid file reads %q, want a pid", b)
+	}
 
 	if freezeFor > 0 {
 		time.Sleep(freezeAfter)
@@ -223,9 +231,11 @@ func TestFreezeIsNotWallTime(t *testing.T) {
 
 // stalledRun runs a silent fake goose in this process with the monitor's ticks
 // and SIGCONTs under the test's control, so the order of a resume is fixed and
-// needs no real stop. After firstTickAt it delivers one tick on time, then
-// holds the monitor for stall (nothing ticks, as in a stop), then delivers the
-// first tick after the stop and a SIGCONT. That tick carries a value dueOffset
+// needs no real stop. After firstTickAt it delivers one tick, which is on time
+// when firstTickAt is under two intervals and late, and held, when it is more
+// (a held tick excuses nothing: the next tick replaces what it left pending).
+// It then holds the monitor for stall (nothing ticks, as in a stop), then
+// delivers the first tick after the stop and a SIGCONT. That tick carries a value dueOffset
 // after the tick before the stop, which is what a real ticker sends: the time
 // the tick fell due inside the stop, not the time it is received.
 func stalledRun(t *testing.T, script string, idle, firstTickAt, stall, dueOffset time.Duration) result {
@@ -292,8 +302,10 @@ func TestATickReceivedAfterAStopIsLateWhateverItsValueSays(t *testing.T) {
 // A seat with most of its idle spent when it was stopped survives a resume
 // whose first tick is processed before the SIGCONT: the tick is late, so its
 // expiry check is held, and the SIGCONT then takes the stop off the idle clock.
-// At receipt time the idle clock reads 4s of a 2s limit, so a check that ran
-// before the SIGCONT would kill it.
+// At receipt time the idle clock reads 4.2s of a 2s limit, so a check that ran
+// before the SIGCONT would kill it. The seat's own first tick, at 1.2s, is late
+// against the 100ms interval and is held too; the post-stop tick replaces what
+// it left pending, so the SIGCONT excuses the 3s stop less one interval.
 func TestASeatWithMostOfItsIdleSpentSurvivesATickFirstResume(t *testing.T) {
 	t.Parallel()
 	r := stalledRun(t, "sleep 5", 2*time.Second, 1200*time.Millisecond, 3*time.Second, 90*time.Millisecond)
