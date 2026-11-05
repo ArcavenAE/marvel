@@ -270,15 +270,22 @@ func TestATickReceivedAfterAStopIsLateWhateverItsValueSays(t *testing.T) {
 	const (
 		stall = 3 * time.Second
 		idle  = 20 * time.Second // its tick is 1s, the cap
+		// The bound sits between the two figures this feed produces: 2.0s when
+		// lateness is read at receipt (stall less one tick), and 1.1s when the
+		// tick's value is read as the clock (that less the 0.9s due offset),
+		// measured 5 of 5 runs each. The midpoint leaves 0.5s on the passing side
+		// for load on the first tick's receipt and 0.4s against the old reading.
+		// Change the feed's timing and the bound has to be derived again.
+		bound = 1500 * time.Millisecond
 	)
 	r := stalledRun(t, "sleep 5", idle, 300*time.Millisecond, stall, 900*time.Millisecond)
 	frozen, ok := frozenOf(r.stderr)
 	if !ok {
 		t.Fatalf("stderr = %q, want a frozen line", r.stderr)
 	}
-	if want := stall - tickFor(idle) - 100*time.Millisecond; frozen < want {
+	if frozen < bound {
 		t.Errorf("frozen = %v, want at least %v: the excuse ran from the tick's due time, not from the last tick before the stop (stderr %q)",
-			frozen, want, r.stderr)
+			frozen, bound, r.stderr)
 	}
 }
 
