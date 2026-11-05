@@ -176,3 +176,131 @@ func TestATickReceivedAfterAStopHoldsTheExpiryUntilTheSIGCONT(t *testing.T) {
 		t.Errorf("excused %v, want %v", got, want)
 	}
 }
+
+// The longest gap with a stop in it. A stop of 3.9s begins just after the tick
+// at T0 and ends at T0+4s; the wrapper reads nothing in it, so the first line
+// read after the resume carries the whole stop as its gap, and the SIGCONT is
+// handled a moment later. interval is 100ms, so s, the last tick before the
+// stop, is now less frozen less one interval.
+func maxGapOfTracker(tr *tracker) time.Duration {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	return tr.maxGap
+}
+
+// One line read after the resume, before the SIGCONT: its gap holds the stop,
+// and the SIGCONT takes the stop back off it.
+func TestExcuseCorrectsTheGapOfALineReadBeforeTheSIGCONT(t *testing.T) {
+	tr := newTracker(fcT0)
+	tr.line(fcT0.Add(4*time.Second), nil)
+	if got := maxGapOfTracker(tr); got != 4*time.Second {
+		t.Fatalf("max-gap = %v before the SIGCONT, want the 4s the line read", got)
+	}
+	tr.excuse(fcT0.Add(4*time.Second+time.Millisecond), 3900*time.Millisecond)
+	if got := maxGapOfTracker(tr); got != 100*time.Millisecond {
+		t.Errorf("max-gap = %v, want 100ms: the 3.9s stop taken off the 4s gap", got)
+	}
+}
+
+// Two lines read after the resume: the first carries the stop and the second a
+// small gap. The max is the first's, and the SIGCONT takes the stop off it.
+func TestExcuseCorrectsTheMaxWhenItIsTheFirstOfTwoLinesReadBeforeTheSIGCONT(t *testing.T) {
+	tr := newTracker(fcT0)
+	tr.line(fcT0.Add(4*time.Second), nil)
+	tr.line(fcT0.Add(4200*time.Millisecond), nil)
+	tr.excuse(fcT0.Add(4300*time.Millisecond), 4100*time.Millisecond)
+	if got := maxGapOfTracker(tr); got != 200*time.Millisecond {
+		t.Errorf("max-gap = %v, want 200ms: the second line's gap, the first's stop taken off", got)
+	}
+}
+
+// A max that does not overlap the stop is left alone.
+func TestExcuseLeavesAMaxOutsideTheStop(t *testing.T) {
+	tr := newTracker(fcT0)
+	tr.line(fcT0.Add(10*time.Second), nil) // a real 10s gap, before the stop
+	tr.line(fcT0.Add(14*time.Second), nil) // the first line after a 3.9s stop
+	tr.excuse(fcT0.Add(14*time.Second+time.Millisecond), 3900*time.Millisecond)
+	if got := maxGapOfTracker(tr); got != 10*time.Second {
+		t.Errorf("max-gap = %v, want the 10s gap that held no stop", got)
+	}
+}
+
+// A real gap after the stop's own, and smaller than the stop but larger than
+// what is left of it, is kept as the max.
+func TestExcuseKeepsALargerRealGapReadAfterTheStop(t *testing.T) {
+	tr := newTracker(fcT0)
+	tr.line(fcT0.Add(4*time.Second), nil) // holds the stop
+	tr.line(fcT0.Add(7*time.Second), nil) // a real 3s gap
+	tr.excuse(fcT0.Add(7100*time.Millisecond), 3900*time.Millisecond)
+	if got := maxGapOfTracker(tr); got != 3*time.Second {
+		t.Errorf("max-gap = %v, want the real 3s gap", got)
+	}
+}
+
+// The SIGCONT handled first, then the line: the line's time is read against a
+// last-line time the stop was already taken off, so no correction is needed.
+func TestAGapReadAfterTheSIGCONTLeavesTheStopOut(t *testing.T) {
+	tr := newTracker(fcT0)
+	tr.excuse(fcT0.Add(4*time.Second), 3900*time.Millisecond)
+	tr.line(fcT0.Add(4100*time.Millisecond), nil)
+	if got := maxGapOfTracker(tr); got != 200*time.Millisecond {
+		t.Errorf("max-gap = %v, want 200ms (4.1s less the 3.9s shifted start)", got)
+	}
+}
+
+// A new max starts maxAfter over, so a gap from before it cannot outlive it.
+func TestANewMaxResetsTheLongestGapSince(t *testing.T) {
+	tr := newTracker(fcT0)
+	tr.line(fcT0.Add(300*time.Millisecond), nil) // gap 300ms, the max
+	tr.line(fcT0.Add(500*time.Millisecond), nil) // gap 200ms, since the max
+	tr.mu.Lock()
+	if tr.maxAfter != 200*time.Millisecond {
+		t.Errorf("maxAfter = %v, want 200ms", tr.maxAfter)
+	}
+	tr.mu.Unlock()
+	tr.line(fcT0.Add(1000*time.Millisecond), nil) // gap 500ms, a new max
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if tr.maxBefore != 300*time.Millisecond || tr.maxAfter != 0 || tr.maxGap != 500*time.Millisecond {
+		t.Errorf("maxBefore %v maxAfter %v maxGap %v, want 300ms, 0, 500ms", tr.maxBefore, tr.maxAfter, tr.maxGap)
+	}
+}
+
+// A line read in the last interval before the stop leaves the idle shift in
+// place: the stop is still taken off the idle clock, so a seat that wrote just
+// before it is not killed idle after the resume.
+func TestALineJustBeforeTheStopStillGetsTheIdleShift(t *testing.T) {
+	tr := newTracker(fcT0)
+	tr.line(fcT0.Add(30*time.Millisecond), nil) // read after the last tick, before the stop
+	now := fcT0.Add(4 * time.Second)
+	tr.excuse(now, 3900*time.Millisecond)
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if got := now.Sub(tr.idleSince); got > 200*time.Millisecond {
+		t.Errorf("idle reads %v at the SIGCONT, want the 3.9s stop taken off it", got)
+	}
+}
+
+// A 10s gap that ended 30ms before the stop held none of it, and stays 10s.
+func TestAGapEndingJustBeforeTheStopIsNotCorrected(t *testing.T) {
+	tr := newTracker(fcT0)
+	tr.line(fcT0.Add(10*time.Second+30*time.Millisecond), nil) // a real 10s gap, then the stop
+	tr.excuse(fcT0.Add(14*time.Second+30*time.Millisecond), 3900*time.Millisecond)
+	if got := maxGapOfTracker(tr); got != 10*time.Second+30*time.Millisecond {
+		t.Errorf("max-gap = %v, want the real 10.03s gap left as it was", got)
+	}
+}
+
+// An earlier line read just before the stop and a later one read after the
+// resume: the gap between them holds the stop and is corrected, as the steady
+// writer's is about half the time, when its last line before the stop falls
+// inside the last interval.
+func TestExcuseCorrectsAGapWhoseEarlierLineWasReadJustBeforeTheStop(t *testing.T) {
+	tr := newTracker(fcT0)
+	tr.line(fcT0.Add(70*time.Millisecond), nil) // read 30ms before the stop at T0+100ms
+	tr.line(fcT0.Add(4*time.Second), nil)       // the first line read after the resume
+	tr.excuse(fcT0.Add(4001*time.Millisecond), 3901*time.Millisecond)
+	if got := maxGapOfTracker(tr); got != 70*time.Millisecond {
+		t.Errorf("max-gap = %v, want 70ms: the stop taken off the 3.93s gap, leaving the earlier 70ms", got)
+	}
+}

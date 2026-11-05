@@ -35,8 +35,9 @@ type freezeRun struct {
 
 // runFrozen starts the wrapper over script with the given limits, waits for the
 // ready file, sleeps freezeAfter, stops both groups for freezeFor, then resumes
-// them and waits for the wrapper to end. freezeFor of zero is the control.
-func runFrozen(t *testing.T, script string, wall, freezeAfter, freezeFor time.Duration) freezeRun {
+// them and waits for the wrapper to end. freezeFor of zero is the control. A
+// gooseLead above zero resumes goose's group that long before the wrapper's.
+func runFrozen(t *testing.T, script string, wall, freezeAfter, freezeFor, gooseLead time.Duration) freezeRun {
 	t.Helper()
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "goose.pid")
@@ -99,8 +100,14 @@ func runFrozen(t *testing.T, script string, wall, freezeAfter, freezeFor time.Du
 		r.stoppedAt = time.Now()
 		time.Sleep(freezeFor)
 		r.contAt = time.Now()
-		_ = syscall.Kill(-wrapperPgid, syscall.SIGCONT)
-		if goosePid > 0 {
+		if gooseLead > 0 {
+			// A resume that reaches goose first: its output waits in the pipe
+			// until the wrapper runs, then is read before the SIGCONT is handled.
+			_ = syscall.Kill(-goosePid, syscall.SIGCONT)
+			time.Sleep(gooseLead)
+			_ = syscall.Kill(-wrapperPgid, syscall.SIGCONT)
+		} else {
+			_ = syscall.Kill(-wrapperPgid, syscall.SIGCONT)
 			_ = syscall.Kill(-goosePid, syscall.SIGCONT)
 		}
 	}
@@ -137,7 +144,7 @@ func runFrozen(t *testing.T, script string, wall, freezeAfter, freezeFor time.Du
 // at least 1.2s after SIGCONT, when its own remaining idle has run.
 func TestFreezeIsNotIdleTime(t *testing.T) {
 	script := `printf '%s\n' '` + textLine + `'; sleep 60`
-	r := runFrozen(t, script, 30*time.Second, 500*time.Millisecond, 4*time.Second)
+	r := runFrozen(t, script, 30*time.Second, 500*time.Millisecond, 4*time.Second, 0)
 	if r.code != ExitWatchdog || r.stderrLast != "watchdog: idle" {
 		t.Fatalf("exit %d, stderr last %q, want an idle kill", r.code, r.stderrLast)
 	}
@@ -156,9 +163,25 @@ func TestFreezeIsNotIdleTime(t *testing.T) {
 // the frozen figure has no upper bound: a load stall beside the stop is excused
 // with it.
 func TestFreezeDoesNotKillASteadyWriter(t *testing.T) {
+	steadyWriterFreeze(t, 0)
+}
+
+// Test 2 again with a resume that reaches goose first, as a suspend that thaws
+// the pids in turn does. Goose writes before the wrapper runs, so its lines wait
+// in the pipe and are read, with the whole stop as their gap, before the
+// SIGCONT is handled. With 50ms one line is waiting; with 300ms, two, the
+// first of which holds the stop and the second of which does not.
+func TestFreezeDoesNotKillASteadyWriterWhenGooseResumesFirst(t *testing.T) {
+	for _, lead := range []time.Duration{50 * time.Millisecond, 300 * time.Millisecond} {
+		t.Run(lead.String(), func(t *testing.T) { steadyWriterFreeze(t, lead) })
+	}
+}
+
+func steadyWriterFreeze(t *testing.T, gooseLead time.Duration) {
+	t.Helper()
 	const freeze = 4 * time.Second
 	script := `i=0; while [ $i -lt 40 ]; do printf '%s\n' '` + textLine + `'; sleep 0.2; i=$((i+1)); done`
-	r := runFrozen(t, script, 30*time.Second, time.Second, freeze)
+	r := runFrozen(t, script, 30*time.Second, time.Second, freeze, gooseLead)
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("wrapper stderr = %q", r.stderrAll)
@@ -216,7 +239,7 @@ func maxGapOf(t *testing.T, stderr string) time.Duration {
 // start, not at SIGCONT.
 func TestFreezeIsNotWallTime(t *testing.T) {
 	script := `printf '%s\n' '` + reqLine + `'; sleep 60`
-	r := runFrozen(t, script, 5*time.Second, time.Second, 6*time.Second)
+	r := runFrozen(t, script, 5*time.Second, time.Second, 6*time.Second, 0)
 	if r.code != ExitWatchdog || r.stderrLast != "watchdog: wall-clock" {
 		t.Fatalf("exit %d, stderr last %q, want a wall-clock kill", r.code, r.stderrLast)
 	}

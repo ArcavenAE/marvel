@@ -539,6 +539,14 @@ type tracker struct {
 	idleSince time.Time
 	lastLine  time.Time
 	maxGap    time.Duration
+	// maxBefore, maxAt and maxAfter let excuse take a stop back out of maxGap.
+	// maxBefore is the longest gap before the line that set maxGap, maxAt is
+	// when that line was read, and maxAfter is the longest gap since. A stop is
+	// excused after the lines read just past its end have recorded their gaps,
+	// and one of them carries the whole stop.
+	maxBefore time.Duration
+	maxAt     time.Time
+	maxAfter  time.Duration
 	lines     int
 	// frozen is the time a stop (a fleet suspend) held the wrapper, which counted
 	// toward neither limit.
@@ -563,11 +571,27 @@ func (t *tracker) activity(now time.Time, last byte) {
 // excuse takes a stop of length frozen out of the idle clock and out of the
 // longest gap: the clocks the wrapper missed while it was not running move
 // forward, never past now. It adds the span to the total the exit reports.
+//
+// frozen is now less the last tick before the stop, less one interval, so now
+// less frozen is that tick plus one interval, the latest the stop can have
+// begun. The wrapper reads nothing while stopped, so a line read later than that
+// was read after the resume. A gap whose earlier line was read before that point and whose later
+// line after it holds the whole stop, which comes off it. The gap is the one
+// that set the max, so the max is rebuilt from the gaps before and after it.
+// What the stop leaves in the gap is bounded by one interval plus however long
+// the lines waited in the pipe for the wrapper to run. A line read before the
+// stop but after the load-delayed last tick can sit past that point, and then
+// its gap is left whole: that misses the max-gap line, not the limits.
 func (t *tracker) excuse(now time.Time, frozen time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.idleSince = shiftedTo(t.idleSince, frozen, now)
 	t.lastLine = shiftedTo(t.lastLine, frozen, now)
+	afterResume := now.Add(-frozen) // the latest the stop began
+	if t.maxAt.After(afterResume) && !t.maxAt.Add(-t.maxGap).After(afterResume) {
+		t.maxGap = max(t.maxBefore, t.maxAfter, t.maxGap-frozen)
+		t.maxAt = time.Time{}
+	}
 	t.frozen += frozen
 }
 
@@ -592,8 +616,11 @@ func (t *tracker) line(now time.Time, content []byte) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.lines++
-	if gap := now.Sub(t.lastLine); gap > t.maxGap {
-		t.maxGap = gap
+	switch gap := now.Sub(t.lastLine); {
+	case gap > t.maxGap:
+		t.maxBefore, t.maxAt, t.maxAfter, t.maxGap = t.maxGap, now, 0, gap
+	case gap > t.maxAfter:
+		t.maxAfter = gap
 	}
 	t.lastLine = now
 	t.idleSince = now
