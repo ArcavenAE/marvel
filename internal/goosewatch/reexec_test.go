@@ -76,6 +76,28 @@ func reexecMain() {
 			Stderr:     os.Stderr,
 			GuardArgv:  testGuardArgv(),
 		}))
+	case "wrapperlim":
+		// wrapperlim <stderr-file> <grace> <script> <idle> <wall>: the wrapper
+		// with its limits taken from the command line, for the freeze tests.
+		if len(os.Args) != 9 {
+			os.Exit(96)
+		}
+		grace, err1 := time.ParseDuration(os.Args[5])
+		idle, err2 := time.ParseDuration(os.Args[7])
+		wall, err3 := time.ParseDuration(os.Args[8])
+		if err1 != nil || err2 != nil || err3 != nil {
+			os.Exit(96)
+		}
+		os.Exit(Run(Config{
+			Argv:       []string{"/bin/sh", "-c", os.Args[6]},
+			Wall:       wall,
+			Idle:       idle,
+			Grace:      grace,
+			StderrFile: os.Args[4],
+			Stdout:     os.Stdout,
+			Stderr:     os.Stderr,
+			GuardArgv:  testGuardArgv(),
+		}))
 	}
 	os.Exit(95)
 }

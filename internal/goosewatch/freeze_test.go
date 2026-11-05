@@ -1,0 +1,196 @@
+package goosewatch
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+)
+
+// A fleet suspend stops the wrapper and goose's group with SIGSTOP and resumes
+// them with SIGCONT. These tests do the same to a wrapper they started: the
+// test binary re-executes itself as the wrapper (reexec_test.go), with a fake
+// goose as `sh -c`. They signal only the two process groups they started.
+
+// freezeRun is what one frozen run looked like from outside.
+type freezeRun struct {
+	code       int
+	stderrLast string
+	stderrAll  string
+	markerLast string
+	start      time.Time
+	contAt     time.Time
+	end        time.Time
+	stoppedAt  time.Time
+	readyAt    time.Time
+}
+
+// runFrozen starts the wrapper over script with the given limits, waits for the
+// ready file, sleeps freezeAfter, stops both groups for freezeFor, then resumes
+// them and waits for the wrapper to end. freezeFor of zero is the control.
+func runFrozen(t *testing.T, script string, idle, wall, freezeAfter, freezeFor time.Duration) freezeRun {
+	t.Helper()
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "goose.pid")
+	ready := filepath.Join(dir, "ready")
+	errFile := filepath.Join(dir, "stderr.log")
+	outFile := filepath.Join(dir, "stdout.log")
+	full := `echo $$ > ` + pidFile + `; : > ` + ready + `; ` + script
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := newToken()
+	out, err := os.Create(outFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = out.Close() })
+	cmd := exec.Command("/usr/bin/env", reexecEnv+"="+tok, exe, reexecFlag, tok, "wrapperlim", errFile, "1s", full, idle.String(), wall.String())
+	cmd.Stdout = out
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var r freezeRun
+	r.start = time.Now()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	wrapperPgid := cmd.Process.Pid
+	kill := func() {
+		_ = syscall.Kill(-wrapperPgid, syscall.SIGKILL)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, err := os.Stat(ready); err != nil {
+		kill()
+		t.Fatal("the fake goose never reported ready")
+	}
+	r.readyAt = time.Now()
+	b, _ := os.ReadFile(pidFile)
+	goosePid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+
+	if freezeFor > 0 {
+		time.Sleep(freezeAfter)
+		if goosePid > 0 {
+			_ = syscall.Kill(-goosePid, syscall.SIGSTOP)
+		}
+		_ = syscall.Kill(-wrapperPgid, syscall.SIGSTOP)
+		r.stoppedAt = time.Now()
+		time.Sleep(freezeFor)
+		r.contAt = time.Now()
+		_ = syscall.Kill(-wrapperPgid, syscall.SIGCONT)
+		if goosePid > 0 {
+			_ = syscall.Kill(-goosePid, syscall.SIGCONT)
+		}
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-done:
+	case <-time.After(60 * time.Second):
+		kill()
+		if goosePid > 0 {
+			_ = syscall.Kill(-goosePid, syscall.SIGKILL)
+		}
+		t.Fatal("the wrapper did not end within 60s")
+	}
+	r.end = time.Now()
+	if ee, ok := waitErr.(*exec.ExitError); ok {
+		r.code = ee.ExitCode()
+	}
+	eb, _ := os.ReadFile(errFile)
+	ob, _ := os.ReadFile(outFile)
+	r.stderrAll = string(eb)
+	r.stderrLast = lastLine(string(eb))
+	r.markerLast = lastLine(string(ob))
+	t.Logf("exit %d, stderr last %q, stdout last %q; ready to end %v; frozen %v; SIGCONT to end %v",
+		r.code, r.stderrLast, r.markerLast, r.end.Sub(r.readyAt).Round(time.Millisecond),
+		r.contAt.Sub(r.stoppedAt).Round(time.Millisecond), r.end.Sub(r.contAt).Round(time.Millisecond))
+	return r
+}
+
+// Test 1. A run frozen for longer than Idle, with about half a second of idle
+// behind it, is not ended at resume: the freeze is not idle time. It ends idle
+// at least 1.2s after SIGCONT, when its own remaining idle has run.
+func TestFreezeIsNotIdleTime(t *testing.T) {
+	script := `printf '%s\n' '` + textLine + `'; sleep 60`
+	r := runFrozen(t, script, 2*time.Second, 30*time.Second, 500*time.Millisecond, 4*time.Second)
+	if r.code != ExitWatchdog || r.stderrLast != "watchdog: idle" {
+		t.Fatalf("exit %d, stderr last %q, want an idle kill", r.code, r.stderrLast)
+	}
+	if got := r.end.Sub(r.contAt); got < 1200*time.Millisecond {
+		t.Errorf("ended %v after SIGCONT, want at least 1.2s: the frozen 4s counted as idle", got)
+	}
+}
+
+// Test 2. A goose that writes a line every 0.2s is not idle, and a freeze does
+// not make it so. It is still running 1.5s after SIGCONT and ends with its own
+// exit 0, the frozen span is named, and the longest gap between lines leaves it
+// out. At base this run survives by a race (its first write after SIGCONT lands
+// before the monitor's first tick) and its max-gap counts the freeze, so the
+// max-gap line is what fails there.
+func TestFreezeDoesNotKillASteadyWriter(t *testing.T) {
+	script := `i=0; while [ $i -lt 40 ]; do printf '%s\n' '` + textLine + `'; sleep 0.2; i=$((i+1)); done`
+	r := runFrozen(t, script, 2*time.Second, 30*time.Second, time.Second, 4*time.Second)
+	if got := r.end.Sub(r.contAt); got < 1500*time.Millisecond {
+		t.Errorf("ended %v after SIGCONT (exit %d, stderr last %q), want it still running at 1.5s: the freeze counted as idle",
+			got, r.code, r.stderrLast)
+	}
+	if r.code != 0 {
+		t.Errorf("exit = %d, want goose's own 0", r.code)
+	}
+	if strings.Contains(r.stderrAll, "watchdog: idle") || strings.Contains(r.stderrAll, "watchdog: wall-clock") {
+		t.Errorf("stderr = %q, want no watchdog kill line", r.stderrAll)
+	}
+	if !strings.Contains(r.stderrAll, "watchdog: frozen ") {
+		t.Errorf("stderr = %q, want a frozen line", r.stderrAll)
+	}
+	gap := maxGapOf(t, r.stderrAll)
+	if gap >= time.Second {
+		t.Errorf("max-gap = %v, want under 1s: the freeze counted as a gap between lines", gap)
+	}
+}
+
+// maxGapOf reads the figure from the "watchdog: max-gap 0.2s lines 40" line.
+func maxGapOf(t *testing.T, stderr string) time.Duration {
+	t.Helper()
+	for _, l := range strings.Split(stderr, "\n") {
+		var gap float64
+		var lines int
+		if n, _ := fmt.Sscanf(l, "watchdog: max-gap %fs lines %d", &gap, &lines); n == 2 {
+			return time.Duration(gap * float64(time.Second))
+		}
+	}
+	t.Fatalf("no max-gap line in %q", stderr)
+	return 0
+}
+
+// Test 3. A tool call is open, so idle is paused, and Wall is 5s. A 6s freeze
+// is not wall time: the run ends by wall about 5s of running time from its
+// start, not at SIGCONT.
+func TestFreezeIsNotWallTime(t *testing.T) {
+	script := `printf '%s\n' '` + reqLine + `'; sleep 60`
+	r := runFrozen(t, script, 2*time.Second, 5*time.Second, time.Second, 6*time.Second)
+	if r.code != ExitWatchdog || r.stderrLast != "watchdog: wall-clock" {
+		t.Fatalf("exit %d, stderr last %q, want a wall-clock kill", r.code, r.stderrLast)
+	}
+	running := r.end.Sub(r.start) - r.contAt.Sub(r.stoppedAt)
+	if running < 4500*time.Millisecond || running > 6500*time.Millisecond {
+		t.Errorf("ended after %v of running time, want about 5s: the frozen 6s counted toward wall", running.Round(time.Millisecond))
+	}
+	if got := r.end.Sub(r.contAt); got < 1500*time.Millisecond {
+		t.Errorf("ended %v after SIGCONT, want it still running at 1.5s", got)
+	}
+}

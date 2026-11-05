@@ -3,11 +3,23 @@
 // own process group, copies goose's stdout to its own stdout line by line, and
 // ends the run when either limit is crossed:
 //
-//   - wall-clock: the run has lasted Wall. It never pauses.
+//   - wall-clock: the run has lasted Wall. It never pauses for a tool call. A
+//     stop of the wrapper itself (a fleet suspend) is not run time and is left
+//     out; see freezeClock.
 //   - idle: no stream line has arrived for Idle. The idle timer pauses while a
 //     toolRequest has no toolResponse yet, because goose writes nothing between
 //     the two, and a builtin shell call can run for any length of time. It
-//     restarts from zero when the last open call is answered.
+//     restarts from zero when the last open call is answered. A stop of the
+//     wrapper is not idle time either.
+//
+// A fleet suspend stops the wrapper and goose's group with SIGSTOP and resumes
+// them with SIGCONT. A stopped process does not stop the clock, so the monitor's
+// first tick after the resume would count the whole stop. It does not: a tick
+// that arrives more than one interval late, together with a SIGCONT, is a
+// freeze, and the time between is taken off the idle clock, the wall clock and
+// the longest gap. A late tick alone is load and counts as it always did. The
+// exit then writes one stderr line, "watchdog: frozen <s>s", just before the
+// max-gap line.
 //
 // On either limit the wrapper sends TERM to the group, KILL after Grace, writes
 // "watchdog: idle" or "watchdog: wall-clock" as the last line of the stderr
@@ -149,6 +161,9 @@ type Config struct {
 	// Signals delivers the signals to forward to goose; nil subscribes to TERM,
 	// HUP and INT.
 	Signals <-chan os.Signal
+	// Conts delivers SIGCONT, which tells the monitor a stop has ended; nil
+	// subscribes to SIGCONT. It is the counterpart of Signals for a test.
+	Conts <-chan os.Signal
 	// GuardArgv is the command that runs the guard, before the flags the wrapper
 	// appends. Nil means this binary's hidden `goose-guard` subcommand.
 	GuardArgv []string
@@ -198,6 +213,13 @@ func Run(cfg Config) int {
 		signal.Notify(ch, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
 		defer signal.Stop(ch)
 		sigs = ch
+	}
+	conts := cfg.Conts
+	if conts == nil {
+		ch := make(chan os.Signal, 4)
+		signal.Notify(ch, syscall.SIGCONT)
+		defer signal.Stop(ch)
+		conts = ch
 	}
 	if cfg.beforeStart != nil {
 		cfg.beforeStart()
@@ -319,8 +341,12 @@ func Run(cfg Config) int {
 
 	monitorDone := make(chan struct{})
 	monitor := func() {
-		tick := time.NewTicker(tickFor(cfg.Idle))
+		interval := tickFor(cfg.Idle)
+		tick := time.NewTicker(interval)
 		defer tick.Stop()
+		// The wall limit counts from wallStart, which a freeze moves forward.
+		wallStart := start
+		fc := newFreezeClock(interval, time.Now())
 		for {
 			select {
 			case <-monitorDone:
@@ -337,8 +363,21 @@ func Run(cfg Config) int {
 					_ = syscall.Kill(-pgid, s)
 					go killAfter(pgid, cfg.Grace, exited)
 				}
+			case <-conts:
+				// A SIGCONT after a stop: the span the monitor did not run for
+				// counts toward neither limit.
+				now := time.Now()
+				if frozen := fc.cont(now); frozen > 0 {
+					tr.excuse(now, frozen)
+					wallStart = wallStart.Add(frozen)
+				}
 			case now := <-tick.C:
-				if r := tr.expired(now, start, cfg.Wall, cfg.Idle); r != "" {
+				// A tick that came late by more than an interval may be a freeze
+				// that a SIGCONT is about to confirm, so it is held for one tick.
+				if fc.tick(now) {
+					continue
+				}
+				if r := tr.expired(now, wallStart, cfg.Wall, cfg.Idle); r != "" {
 					endRun(r)
 					return
 				}
@@ -486,6 +525,9 @@ type tracker struct {
 	lastLine  time.Time
 	maxGap    time.Duration
 	lines     int
+	// frozen is the time a stop (a fleet suspend) held the wrapper, which counted
+	// toward neither limit.
+	frozen time.Duration
 	// lastByte is the last byte forwarded to the sink, so a marker written after
 	// a run killed mid-line can start on a line of its own.
 	lastByte byte
@@ -501,6 +543,25 @@ func (t *tracker) activity(now time.Time, last byte) {
 	t.idleSince = now
 	t.lastByte = last
 	t.mu.Unlock()
+}
+
+// excuse takes a stop of length frozen out of the idle clock and out of the
+// longest gap: the clocks the wrapper missed while it was not running move
+// forward, never past now. It adds the span to the total the exit reports.
+func (t *tracker) excuse(now time.Time, frozen time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.idleSince = shiftedTo(t.idleSince, frozen, now)
+	t.lastLine = shiftedTo(t.lastLine, frozen, now)
+	t.frozen += frozen
+}
+
+// shiftedTo is at moved forward by d and held at no later than limit.
+func shiftedTo(at time.Time, d time.Duration, limit time.Time) time.Time {
+	if moved := at.Add(d); moved.Before(limit) {
+		return moved
+	}
+	return limit
 }
 
 // endedMidLine reports whether the last byte forwarded was not a newline.
@@ -616,4 +677,52 @@ func forward(r io.Reader, w io.Writer, t *tracker) {
 			return
 		}
 	}
+}
+
+// freezeClock tells a stop from a slow tick. The wrapper's monitor ticks at a
+// fixed interval; a stop (SIGSTOP, as a fleet suspend does to every process of
+// a seat) freezes the process and not the clock, so the first tick after
+// SIGCONT arrives long after it was due. A late tick alone is load, and counts
+// as it always did. A stop is known when a tick is late by more than an
+// interval and a SIGCONT arrives, in either order. It is used by the monitor
+// goroutine alone and needs no lock.
+type freezeClock struct {
+	interval time.Duration
+	lastTick time.Time
+	// pending is a late gap that no SIGCONT has confirmed yet.
+	pending time.Duration
+}
+
+func newFreezeClock(interval time.Duration, start time.Time) *freezeClock {
+	return &freezeClock{interval: interval, lastTick: start}
+}
+
+// tick records a tick at now. It reports whether this tick's expiry check
+// should be skipped: a tick late by more than an interval is held for one tick,
+// so a SIGCONT that follows can excuse it. A late tick that no SIGCONT confirms
+// is evaluated on the next tick, with the stall counted, so a starved wrapper
+// is still bounded.
+func (f *freezeClock) tick(now time.Time) (skip bool) {
+	late := now.Sub(f.lastTick) - f.interval
+	f.lastTick = now
+	if late > f.interval {
+		f.pending = late
+		return true
+	}
+	f.pending = 0
+	return false
+}
+
+// cont records a SIGCONT at now and returns the span to excuse: the pending late
+// gap when a late tick came first, or else the gap since the last tick beyond
+// one interval, because the signal can arrive before the stopped goroutine's
+// first tick. A SIGCONT with no gap excuses nothing.
+func (f *freezeClock) cont(now time.Time) time.Duration {
+	frozen := f.pending
+	if frozen <= 0 {
+		frozen = max(0, now.Sub(f.lastTick)-f.interval)
+	}
+	f.pending = 0
+	f.lastTick = now
+	return frozen
 }
