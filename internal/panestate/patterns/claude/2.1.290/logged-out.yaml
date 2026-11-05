@@ -14,7 +14,9 @@
 # until a sample for it is added.
 #
 # This set does not cover the expired-session screen: a seat whose login
-# expired mid-session may draw a different screen, which reads as unknown.
+# expired mid-session draws a notice that is not at the bottom of the screen.
+# That case is read from the seat's transcript instead, which is section 4a of
+# docs/design/harness-state-watchdog-p1.md (marvel#1079).
 id: logged-out
 version: 1
 harness: claude
