@@ -290,6 +290,11 @@ const (
 	// KindRunCancelled records a live run of a scheduled role ended by a
 	// kill or delete rather than by its own exit (#431 ruling on default 6).
 	KindRunCancelled Kind = "run.cancelled"
+	// KindRunDeadline records a live run of a scheduled role that marvel
+	// killed because it passed its schedule's active_deadline. The run is a
+	// failed run, so it spends an attempt; the event replaces run.failed for
+	// it, never run.cancelled (scheduled-runs section 2).
+	KindRunDeadline Kind = "run.deadline"
 	// KindContextFeedUnsupported records that an applied manifest declares
 	// runtime.context_feed on a role whose harness cannot honour it, so the
 	// declaration is advisory and CTX% will not be fed by it. Fires once

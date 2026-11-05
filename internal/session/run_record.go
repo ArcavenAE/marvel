@@ -73,6 +73,13 @@ func (m *Manager) gooseStderrTail(sess api.Session) string {
 // The event carries status only, never the result text (scheduled-runs
 // section 5). A session whose role is not scheduled records nothing.
 func (m *Manager) recordScheduledRun(sess api.Session, outcome api.RunOutcome, exitStatus string, tail runTail) {
+	m.recordRun(sess, outcome, exitStatus, tail, "")
+}
+
+// recordRun is recordScheduledRun with an event kind that replaces the
+// outcome's own: a deadline kill is recorded failed and announced as
+// run.deadline. An empty kind keeps the outcome's.
+func (m *Manager) recordRun(sess api.Session, outcome api.RunOutcome, exitStatus string, tail runTail, kindOverride events.Kind) {
 	team, err := m.store.GetTeam(sess.Workspace + "/" + sess.Team)
 	if err != nil {
 		return
@@ -137,6 +144,10 @@ func (m *Manager) recordScheduledRun(sess api.Session, outcome api.RunOutcome, e
 	msg := fmt.Sprintf("%s (exit %s) after %s; %s", outcome, orNone(exitStatus), rec.Duration().Round(time.Second), tokens)
 	if outcome == api.RunCancelled {
 		msg = fmt.Sprintf("cancelled by a kill after %s; %s", rec.Duration().Round(time.Second), tokens)
+	}
+	if kindOverride != "" {
+		kind = kindOverride
+		msg = fmt.Sprintf("killed after %s, past active_deadline %s; recorded %s; %s", rec.Duration().Round(time.Second), sched.ActiveDeadline, outcome, tokens)
 	}
 	if rec.PermissionDenials > 0 {
 		msg += fmt.Sprintf("; %d permission denials", rec.PermissionDenials)
