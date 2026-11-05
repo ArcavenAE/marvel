@@ -7,6 +7,7 @@
     "seed": 7,
     "sigma_block": 0.2,
     "sigma_run": 0.2,
+    "rho": 0.5,
     "resamples": 500
   },
   "axes": {

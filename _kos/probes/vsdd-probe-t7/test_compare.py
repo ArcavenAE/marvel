@@ -261,6 +261,129 @@ class Coverage(unittest.TestCase):
         self.assertEqual(r["coverage_at_7_pairs"]["pairs"], 7)
 
 
+class FamilyFlag(unittest.TestCase):
+    def pairs(self, k=7):
+        a, b = tight_rows(1.5, k=k)
+        out = []
+        for i, ((na, da), (nb, db)) in enumerate(zip(a, b)):
+            out.append({"block": i + 1,
+                        "A": {"widest_wave": 3, "cost": na, "accepted": da, "hours": 2.0 + 0.1 * i, "p3": na / 2},
+                        "B": {"widest_wave": 3, "cost": nb, "accepted": db, "hours": 1.5 + 0.1 * i, "p3": nb / 2}})
+        return out
+
+    def spec(self, with_breakdowns):
+        axes = {"cost": {"num": "cost", "den": "accepted", "smallest_effect": 0.2},
+                "wall_clock": {"num": "hours", "smallest_effect": 0.2}}
+        if with_breakdowns:
+            axes["cost_phase3"] = {"num": "p3", "den": "accepted", "smallest_effect": 0.2, "family": False}
+            axes["cost_wave3"] = {"num": "cost", "den": "accepted", "smallest_effect": 0.2, "family": False}
+        return {"alpha": 0.05, "seed": 1, "resamples": 500, "coverage": SMALL_COVERAGE,
+                "axes": axes, "pairs": self.pairs()}
+
+    def test_breakdowns_leave_the_family_size_and_the_cost_verdict_unchanged(self):
+        plain = compare.analyse(self.spec(False))["axes"]
+        broken = compare.analyse(self.spec(True))["axes"]
+        self.assertEqual(plain["cost"]["holm"]["family_size"], 2)
+        self.assertEqual(broken["cost"]["holm"]["family_size"], 2)
+        self.assertEqual(broken["wall_clock"]["holm"]["family_size"], 2)
+        self.assertEqual(broken["cost"]["holm"], plain["cost"]["holm"])
+        self.assertEqual(broken["cost"]["verdict"], plain["cost"]["verdict"])
+        self.assertEqual(broken["cost"]["interval"], plain["cost"]["interval"])
+
+    def test_a_breakdown_has_an_estimate_and_an_interval_at_alpha_and_no_verdict(self):
+        r = compare.analyse(self.spec(True))["axes"]["cost_phase3"]
+        self.assertEqual(r["status"], "estimated")
+        self.assertAlmostEqual(r["ratio"], 1.5, delta=0.02)
+        self.assertEqual(r["interval"]["alpha"], 0.05)
+        self.assertNotIn("verdict", r)
+        self.assertNotIn("holm", r)
+        self.assertNotIn("coverage_at_7_pairs", r)
+
+    def test_a_breakdown_is_not_closed_by_a_narrow_wave(self):
+        s = self.spec(True)
+        s["pairs"][0]["B"]["widest_wave"] = 1
+        out = compare.analyse(s)
+        self.assertEqual(out["axes"]["cost"]["verdict"], "a")
+        self.assertNotIn("verdict", out["axes"]["cost_phase3"])
+
+    def test_family_must_be_a_boolean(self):
+        s = self.spec(True)
+        s["axes"]["cost_wave3"]["family"] = "no"
+        with self.assertRaises(compare.Refused) as cm:
+            compare.analyse(s)
+        self.assertEqual(cm.exception.cause, "bad_axis")
+
+
+class CorrelatedCoverage(unittest.TestCase):
+    def test_rho_defaults_to_one_half_and_is_reported_in_the_model(self):
+        self.assertEqual(compare.DEFAULT_COVERAGE["rho"], 0.5)
+        t = compare.coverage_table([0.05], dict(compare.DEFAULT_COVERAGE, sims=50, resamples=50))
+        self.assertEqual(t[0.05]["model"]["rho"], 0.5)
+
+    def test_drawn_numerator_and_denominator_are_correlated_at_rho(self):
+        import random
+        for rho in (0.0, 0.5, 0.9):
+            cfg = dict(compare.DEFAULT_COVERAGE, rho=rho)
+            rows = compare.draw_pairs(random.Random(3), 6000, cfg)
+            xs = [math.log(r[0]) for r in rows]
+            ys = [math.log(r[1]) for r in rows]
+            mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+            cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+            corr = cov / math.sqrt(sum((x - mx) ** 2 for x in xs) * sum((y - my) ** 2 for y in ys))
+            self.assertAlmostEqual(corr, rho, delta=0.05, msg=f"rho {rho}")
+
+    def test_correlation_changes_the_simulated_coverage_inputs(self):
+        base = dict(compare.DEFAULT_COVERAGE, sims=200, resamples=50)
+        lo = compare.coverage_table([0.05], dict(base, rho=0.0))
+        hi = compare.coverage_table([0.05], dict(base, rho=0.9))
+        self.assertNotEqual(lo, hi)
+
+    def test_rho_outside_the_open_unit_interval_is_refused(self):
+        a, b = tight_rows(1.5)
+        s = spec(a, b)
+        s["coverage"] = dict(SMALL_COVERAGE, rho=1.0)
+        with self.assertRaises(compare.Refused) as cm:
+            compare.analyse(s)
+        self.assertEqual(cm.exception.cause, "bad_coverage")
+
+
+class NumeratorZero(unittest.TestCase):
+    def test_reports_each_arms_total_and_the_per_pair_counts_outside_the_family(self):
+        a, b = tight_rows(1.5, k=4)
+        s = spec(a, b)
+        for i, p in enumerate(s["pairs"]):
+            p["A"]["stops"] = 0
+            p["B"]["stops"] = 2 if i == 1 else 0
+            p["A"]["hours"], p["B"]["hours"] = 1.0, 1.0
+        s["axes"]["stops"] = {"num": "stops", "smallest_effect": 0.5}
+        out = compare.analyse(s)["axes"]
+        r = out["stops"]
+        self.assertEqual(r["status"], "numerator_zero")
+        self.assertIsNone(r.get("verdict"))
+        self.assertNotIn("holm", r)
+        self.assertEqual(r["totals"]["A"]["num"], 0.0)
+        self.assertEqual(r["totals"]["B"]["num"], 2.0)
+        self.assertEqual(
+            r["per_pair"],
+            [{"block": i + 1, "A": {"num": 0.0, "den": 1.0}, "B": {"num": 2.0 if i == 1 else 0.0, "den": 1.0}}
+             for i in range(4)])
+        self.assertEqual(out["cost"]["holm"]["family_size"], 1)
+
+
+class ReadmeStatesTheReadings(unittest.TestCase):
+    def setUp(self):
+        with open(os.path.join(HERE, "README.md"), encoding="utf-8") as fh:
+            self.text = fh.read()
+
+    def test_both_ends_of_the_smallest_effect_are_stated(self):
+        self.assertIn("at least 1.2", self.text)
+        self.assertIn("0.833", self.text)
+
+    def test_the_coverage_model_is_pre_registered_and_its_limit_named(self):
+        for needle in ("rho", "sigma_block", "pilot", "zero-accepted"):
+            self.assertIn(needle, self.text)
+
+
 def cli(text=None, path=None, *flags):
     if text is not None:
         fd, path = tempfile.mkstemp(suffix=".json")

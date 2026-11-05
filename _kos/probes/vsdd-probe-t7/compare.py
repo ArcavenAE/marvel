@@ -27,6 +27,7 @@ DEFAULT_COVERAGE = {
     "seed": 7,
     "sigma_block": 0.2,
     "sigma_run": 0.2,
+    "rho": 0.5,
     "resamples": 500,
     "true_log_ratio": 0.0,
 }
@@ -199,26 +200,44 @@ def resolving_n(se, k, alpha, effect_log):
 # ---- coverage at seven pairs ----------------------------------------------
 
 
+def draw_pairs(rng, k, cfg):
+    """k synthetic pairs (nA, dA, nB, dB). Each pair has a block factor shared
+    by both arms and a run factor per run, lognormal. On both levels the
+    numerator and denominator factors are correlated at rho, since a run that
+    accepts more stories spends more. Arm B's numerator is scaled by
+    exp(true_log_ratio)."""
+    theta0 = cfg["true_log_ratio"]
+    sb, sr, rho = cfg["sigma_block"], cfg["sigma_run"], cfg["rho"]
+    rest = math.sqrt(1.0 - rho * rho)
+
+    def corr():
+        x = rng.gauss(0, 1)
+        return x, rho * x + rest * rng.gauss(0, 1)
+
+    rows = []
+    for _ in range(k):
+        bn, bd = corr()
+        an, ad = corr()
+        cn, cd = corr()
+        rows.append((
+            math.exp(sb * bn + sr * an),
+            math.exp(sb * bd + sr * ad),
+            math.exp(sb * bn + sr * cn + theta0),
+            math.exp(sb * bd + sr * cd),
+        ))
+    return rows
+
+
 def coverage_table(alphas, cfg, k=COVERAGE_PAIRS):
     """Real coverage of the delta and bootstrap intervals at k pairs, by
-    simulation. Each pair has a shared block factor, each run an independent
-    run factor, on both the numerator and the denominator, and arm B's
-    numerator is scaled by exp(true_log_ratio)."""
+    simulation over draw_pairs. The model has no zero-accepted runs, so it
+    says nothing about the zero-total cases."""
     rng = random.Random(cfg["seed"])
     theta0 = cfg["true_log_ratio"]
-    sb, sr = cfg["sigma_block"], cfg["sigma_run"]
     hit = {a: [0, 0, 0] for a in alphas}
     crit = {a: t_crit(a, k - 1) for a in alphas}
     for _ in range(cfg["sims"]):
-        rows = []
-        for _ in range(k):
-            bn, bd = rng.gauss(0, sb), rng.gauss(0, sb)
-            rows.append((
-                math.exp(bn + rng.gauss(0, sr)),
-                math.exp(bd + rng.gauss(0, sr)),
-                math.exp(bn + rng.gauss(0, sr) + theta0),
-                math.exp(bd + rng.gauss(0, sr)),
-            ))
+        rows = draw_pairs(rng, k, cfg)
         theta = log_ratio(rows)
         se = delta_se(rows)
         draws = []
@@ -244,8 +263,9 @@ def coverage_table(alphas, cfg, k=COVERAGE_PAIRS):
             "bootstrap": h[1] / h[2],
             "sims": cfg["sims"],
             "model": {
-                "sigma_block": sb,
-                "sigma_run": sr,
+                "sigma_block": cfg["sigma_block"],
+                "sigma_run": cfg["sigma_run"],
+                "rho": cfg["rho"],
                 "true_log_ratio": theta0,
                 "seed": cfg["seed"],
                 "bootstrap_resamples": cfg["resamples"],
@@ -280,6 +300,9 @@ def load(spec):
         raise Refused("bad_resamples", f"resamples is {resamples!r}")
     cov = dict(DEFAULT_COVERAGE)
     cov.update(spec.get("coverage", {}))
+    rho = cov["rho"]
+    if isinstance(rho, bool) or not isinstance(rho, (int, float)) or not -1 < rho < 1:
+        raise Refused("bad_coverage", f"rho is {rho!r}, need a number above -1 and below 1")
     pairs = spec.get("pairs")
     if not isinstance(pairs, list) or len(pairs) < 2:
         raise Refused("too_few_pairs", "need at least 2 pairs")
@@ -297,6 +320,8 @@ def load(spec):
     for name, ax in axes.items():
         if "num" not in ax:
             raise Refused("bad_axis", f"axis {name!r} has no num field")
+        if not isinstance(ax.get("family", True), bool):
+            raise Refused("bad_axis", f"axis {name!r} has a family that is not true or false")
         e = ax.get("smallest_effect")
         if isinstance(e, bool) or not isinstance(e, (int, float)) or e <= 0:
             raise Refused("no_smallest_effect", f"axis {name!r} needs a smallest_effect above 0")
@@ -370,7 +395,12 @@ def estimate_axis(rows):
 def analyse(spec):
     alpha, resamples, cov, pairs, axes = load(spec)
     k = len(pairs)
-    rng = random.Random(spec.get("seed", 1))
+    seed = spec.get("seed", 1)
+
+    def axis_rng(*parts):
+        # One stream per axis and sensitivity, so adding an axis never moves
+        # another axis's bootstrap.
+        return random.Random(":".join(str(x) for x in (seed,) + parts))
 
     narrow = []
     for i, p in enumerate(pairs):
@@ -387,10 +417,20 @@ def analyse(spec):
         result[name] = rec
         if defn.get("blind"):
             rec.update({"status": "blind", "verdict": "b"})
+            if not defn.get("family", True):
+                del rec["verdict"]
             continue
         special = classify(rows)
         if special:
             rec.update(special)
+            if not defn.get("family", True):
+                rec.pop("verdict", None)
+            if special["status"] == "numerator_zero":
+                rec["per_pair"] = [
+                    {"block": pairs[i].get("block", i + 1),
+                     "A": {"num": r[0], "den": r[1]}, "B": {"num": r[2], "den": r[3]}}
+                    for i, r in enumerate(rows)
+                ]
             continue
         theta, se, p = estimate_axis(rows)
         rec.update({
@@ -400,7 +440,11 @@ def analyse(spec):
             "se_log": se,
             "p": p,
         })
-        estimable.append((name, rows, theta, se, p))
+        if defn.get("family", True):
+            estimable.append((name, rows, theta, se, p))
+        else:
+            # A breakdown: an estimate and an interval at alpha, no verdict.
+            rec["interval"] = interval_block(rows, theta, se, alpha, resamples, axis_rng(name))
 
     # Holm over the axes that have an estimate; blind and zero-total axes sit out.
     levels = {}
@@ -422,7 +466,7 @@ def analyse(spec):
             rec["holm"] = {"family_size": m, "rank": j, "adjusted_p": adj[i], "rejected": rejected}
             ax = axes[name]
             a_used = levels[name]
-            rec["interval"] = interval_block(rows, theta, se, a_used, resamples, rng)
+            rec["interval"] = interval_block(rows, theta, se, a_used, resamples, axis_rng(name))
             eff = math.log(1.0 + ax["smallest_effect"])
             if rejected:
                 near = min(abs(theta - t_crit(a_used, k - 1) * se), abs(theta + t_crit(a_used, k - 1) * se))
@@ -447,7 +491,7 @@ def analyse(spec):
                 entry.update({
                     "status": "estimated",
                     "ratio": math.exp(theta),
-                    "interval": interval_block(srows, theta, se, a_used, resamples, rng),
+                    "interval": interval_block(srows, theta, se, a_used, resamples, axis_rng(name, entry["name"])),
                 })
             result[name].setdefault("sensitivities", []).append(entry)
 
@@ -459,7 +503,9 @@ def analyse(spec):
 
     # Section 9.4: a series with a run whose widest wave is under 2 closes (a).
     if narrow:
-        for rec in result.values():
+        for name, rec in result.items():
+            if not axes[name].get("family", True):
+                continue
             rec["verdict_before_series_close"] = rec.get("verdict")
             rec["verdict"] = "a"
     series = {"pairs": k, "alpha": alpha, "widest_wave_under_2": narrow, "close": None}
