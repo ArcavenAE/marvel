@@ -75,6 +75,12 @@ jobs:
           # renovate: datasource=github-releases depName=golangci/golangci-lint
           version: v2.15.0
 
+      - name: Print the tmux version
+        # The runner image brings its own tmux and nothing else prints which.
+        # The tmux tests branch on it (below 3.5 an empty pane exit status is
+        # unknown), so a failure there is read against this line.
+        run: tmux -V
+
       - name: Run tests with race detector
         run: go test ./... -v -count=1 -race -coverprofile=coverage.out -covermode=atomic
 
