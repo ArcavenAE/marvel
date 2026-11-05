@@ -358,7 +358,7 @@ func TestTranscriptStateEndsWithTheSession(t *testing.T) {
 
 // The daemon wires the client test to the workspace's stored scope, the ruled
 // source (K1a), so the filter is live outside the rig.
-func TestWireWatchdogFiltersByTheStoredWorkspaceScope(t *testing.T) {
+func TestWireWatchdogClientFiltersByTheStoredWorkspaceScope(t *testing.T) {
 	d, err := New()
 	if err != nil {
 		t.Fatalf("new daemon: %v", err)
@@ -370,7 +370,7 @@ func TestWireWatchdogFiltersByTheStoredWorkspaceScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := newWatchdog(d.store, d.events, nil, 0)
-	d.wireWatchdog(w)
+	d.wireWatchdogClient(w)
 	if w.client == nil {
 		t.Fatal("the daemon left the client test unset")
 	}

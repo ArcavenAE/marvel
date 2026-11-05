@@ -565,7 +565,10 @@ func (d *Daemon) startWatchdog(ctx context.Context) {
 	if w == nil {
 		return
 	}
-	d.wireWatchdog(w)
+	w.suspended = d.clusterSuspended
+	w.readPane = d.driver.PaneForeground
+	w.capture = d.driver.CapturePaneJoined
+	d.wireWatchdogClient(w)
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
@@ -573,13 +576,9 @@ func (d *Daemon) startWatchdog(ctx context.Context) {
 	}()
 }
 
-// wireWatchdog connects the watchdog to this daemon: the suspend gate, the two
-// pane reads, and the workspace test that keeps the transcript reader off a
-// client seat.
-func (d *Daemon) wireWatchdog(w *watchdog) {
-	w.suspended = d.clusterSuspended
-	w.readPane = d.driver.PaneForeground
-	w.capture = d.driver.CapturePaneJoined
+// wireWatchdogClient gives the watchdog the workspace test that keeps the
+// transcript reader off a client seat: the stored scope, the ruled source (K1a).
+func (d *Daemon) wireWatchdogClient(w *watchdog) {
 	w.client = d.workspaceIsClient
 }
 
