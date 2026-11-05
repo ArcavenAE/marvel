@@ -137,6 +137,8 @@ Start time is the identity: on one boot, the pair (pid, start time) names one pr
 | pid | matches or present | not proven | yes | stale as above, signal nothing, and report "port held, child unproven" (MS-9) in `bus status` and in one `bus.pidfile-unproven` event; the bus stays down, with no crash loop |
 | pid | **none** (legacy) | | | **V11** (section 5) |
 
+Proven here means proven from this root's record. The root lock (`run/daemon.lock`, taken first in `Daemon.Start`) makes this daemon the only one under the root, so the pidfile and sidecar it reads are its own and a second daemon never reaches the broker (marvel#883).
+
 ### 4.3 Group signals
 
 `-pid` addresses the process group whose id is `pid`. `workload.Start` makes the broker a group leader, so for a proven broker `pgid == pid`. Before any `-pid` signal, the supervisor re-reads the identity. If the proof fails, it sends nothing. A group signal also needs `pid > 1`: `Parse` accepts 1, and `kill(-1, ...)` is the every-process broadcast, not a group. If the proof holds but `pgid != pid` (something moved the broker into another group), it signals `pid` alone. The group is signalled only when the proven process leads it.
