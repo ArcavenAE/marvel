@@ -371,7 +371,13 @@ func Run(cfg Config) int {
 					tr.excuse(now, frozen)
 					wallStart = wallStart.Add(frozen)
 				}
-			case now := <-tick.C:
+			case <-tick.C:
+				// The value a ticker delivers is the time the tick fell due, not
+				// the time it was received (time.sendTime sends Now minus the
+				// delay). After a stop the first tick still carries its due time
+				// and would read as on schedule, so lateness is measured from the
+				// receipt time, here and in every check below.
+				now := time.Now()
 				// A tick that came late by more than an interval may be a freeze
 				// that a SIGCONT is about to confirm, so it is held for one tick.
 				if fc.tick(now) {

@@ -154,3 +154,25 @@ func TestFrozenLineAppearsOnlyWhenSomethingWasFrozen(t *testing.T) {
 		}
 	}
 }
+
+// A tick received after a stop, before the SIGCONT: it is late by the whole
+// stop less one interval, so its expiry check is skipped, and the SIGCONT then
+// excuses that gap, which runs from the last tick before the stop. This is the
+// order a real resume produces, because the ticker's first tick is processed in
+// the same instant as the signal.
+func TestATickReceivedAfterAStopHoldsTheExpiryUntilTheSIGCONT(t *testing.T) {
+	f := newFreezeClock(fcInterval, fcT0)
+	// The last tick before the stop.
+	f.tick(fcT0)
+	received := fcT0.Add(4 * time.Second)
+	if !f.tick(received) {
+		t.Fatal("a tick received 3.9s late was not held, so its expiry check would run before the SIGCONT")
+	}
+	want := 4*time.Second - fcInterval
+	if f.pending != want {
+		t.Errorf("pending = %v, want %v from the last tick before the stop, less one interval", f.pending, want)
+	}
+	if got := f.cont(received.Add(500 * time.Microsecond)); got != want {
+		t.Errorf("excused %v, want %v", got, want)
+	}
+}

@@ -17,6 +17,10 @@ import (
 // test binary re-executes itself as the wrapper (reexec_test.go), with a fake
 // goose as `sh -c`. They signal only the two process groups they started.
 
+// freezeIdle is the idle limit every freeze test runs under; its tick is
+// tickFor(freezeIdle).
+const freezeIdle = 2 * time.Second
+
 // freezeRun is what one frozen run looked like from outside.
 type freezeRun struct {
 	code       int
@@ -33,7 +37,7 @@ type freezeRun struct {
 // runFrozen starts the wrapper over script with the given limits, waits for the
 // ready file, sleeps freezeAfter, stops both groups for freezeFor, then resumes
 // them and waits for the wrapper to end. freezeFor of zero is the control.
-func runFrozen(t *testing.T, script string, idle, wall, freezeAfter, freezeFor time.Duration) freezeRun {
+func runFrozen(t *testing.T, script string, wall, freezeAfter, freezeFor time.Duration) freezeRun {
 	t.Helper()
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "goose.pid")
@@ -52,7 +56,7 @@ func runFrozen(t *testing.T, script string, idle, wall, freezeAfter, freezeFor t
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = out.Close() })
-	cmd := exec.Command("/usr/bin/env", reexecEnv+"="+tok, exe, reexecFlag, tok, "wrapperlim", errFile, "1s", full, idle.String(), wall.String())
+	cmd := exec.Command("/usr/bin/env", reexecEnv+"="+tok, exe, reexecFlag, tok, "wrapperlim", errFile, "1s", full, freezeIdle.String(), wall.String())
 	cmd.Stdout = out
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var r freezeRun
@@ -126,7 +130,7 @@ func runFrozen(t *testing.T, script string, idle, wall, freezeAfter, freezeFor t
 // at least 1.2s after SIGCONT, when its own remaining idle has run.
 func TestFreezeIsNotIdleTime(t *testing.T) {
 	script := `printf '%s\n' '` + textLine + `'; sleep 60`
-	r := runFrozen(t, script, 2*time.Second, 30*time.Second, 500*time.Millisecond, 4*time.Second)
+	r := runFrozen(t, script, 30*time.Second, 500*time.Millisecond, 4*time.Second)
 	if r.code != ExitWatchdog || r.stderrLast != "watchdog: idle" {
 		t.Fatalf("exit %d, stderr last %q, want an idle kill", r.code, r.stderrLast)
 	}
@@ -147,7 +151,7 @@ func TestFreezeIsNotIdleTime(t *testing.T) {
 func TestFreezeDoesNotKillASteadyWriter(t *testing.T) {
 	const freeze = 4 * time.Second
 	script := `i=0; while [ $i -lt 40 ]; do printf '%s\n' '` + textLine + `'; sleep 0.2; i=$((i+1)); done`
-	r := runFrozen(t, script, 2*time.Second, 30*time.Second, time.Second, freeze)
+	r := runFrozen(t, script, 30*time.Second, time.Second, freeze)
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("wrapper stderr = %q", r.stderrAll)
@@ -200,12 +204,38 @@ func maxGapOf(t *testing.T, stderr string) time.Duration {
 	return 0
 }
 
+// Test 4. The excuse runs from the last tick before the stop to the resume,
+// less one interval, so a stop of 4s with a 100ms tick is excused for between
+// 3.9s and the whole stop. With the delivered tick value read as the clock, the
+// first tick after a stop still carries the time it fell due, up to a tick
+// after the stop began, and the excuse falls a further tick short (3.81s
+// measured), so this is red there and green here. The figure is printed to
+// 0.1s, so the bound sits at 3.85s.
+func TestAFreezeIsExcusedFromTheLastTickLessOneInterval(t *testing.T) {
+	const freeze = 4 * time.Second
+	interval := tickFor(freezeIdle)
+	script := `i=0; while [ $i -lt 25 ]; do printf '%s\n' '` + textLine + `'; sleep 0.2; i=$((i+1)); done`
+	r := runFrozen(t, script, 30*time.Second, time.Second, freeze)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("wrapper stderr = %q", r.stderrAll)
+		}
+	})
+	frozen, ok := frozenOf(r.stderrAll)
+	if !ok {
+		t.Fatalf("stderr = %q, want a frozen line", r.stderrAll)
+	}
+	if want := freeze - interval - 50*time.Millisecond; frozen < want {
+		t.Errorf("frozen = %v, want at least %v: the excuse fell more than one interval short of the stop", frozen, want)
+	}
+}
+
 // Test 3. A tool call is open, so idle is paused, and Wall is 5s. A 6s freeze
 // is not wall time: the run ends by wall about 5s of running time from its
 // start, not at SIGCONT.
 func TestFreezeIsNotWallTime(t *testing.T) {
 	script := `printf '%s\n' '` + reqLine + `'; sleep 60`
-	r := runFrozen(t, script, 2*time.Second, 5*time.Second, time.Second, 6*time.Second)
+	r := runFrozen(t, script, 5*time.Second, time.Second, 6*time.Second)
 	if r.code != ExitWatchdog || r.stderrLast != "watchdog: wall-clock" {
 		t.Fatalf("exit %d, stderr last %q, want a wall-clock kill", r.code, r.stderrLast)
 	}
