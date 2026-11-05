@@ -1,0 +1,199 @@
+{
+  "alpha": 0.05,
+  "seed": 1,
+  "resamples": 10000,
+  "coverage": {
+    "sims": 1000,
+    "seed": 7,
+    "sigma_block": 0.2,
+    "sigma_run": 0.2,
+    "rho": 0.5,
+    "resamples": 500
+  },
+  "axes": {
+    "cost": {
+      "num": "cost_usd",
+      "den": "accepted",
+      "smallest_effect": 0.2,
+      "blind": false,
+      "sensitivities": [
+        {
+          "name": "hub_wait_removed",
+          "num": "cost_usd",
+          "minus": "hub_wait_usd",
+          "den": "accepted"
+        },
+        {
+          "name": "first_attempt_only",
+          "num": "cost_usd",
+          "den": "accepted_first_attempt"
+        }
+      ]
+    },
+    "wall_clock": {
+      "num": "wall_hours",
+      "smallest_effect": 0.2,
+      "blind": false
+    },
+    "throughput": {
+      "num": "accepted",
+      "den": "wall_hours",
+      "smallest_effect": 0.2,
+      "blind": false
+    },
+    "compactions": {
+      "num": "compactions",
+      "smallest_effect": 0.5,
+      "blind": true
+    }
+  },
+  "pairs": [
+    {
+      "block": 1,
+      "A": {
+        "widest_wave": 3,
+        "cost_usd": 86.63,
+        "hub_wait_usd": 3.95,
+        "accepted": 8,
+        "accepted_first_attempt": 7,
+        "wall_hours": 1.58,
+        "compactions": 1
+      },
+      "B": {
+        "widest_wave": 3,
+        "cost_usd": 91.68,
+        "hub_wait_usd": 4.06,
+        "accepted": 8,
+        "accepted_first_attempt": 7,
+        "wall_hours": 1.2,
+        "compactions": 0
+      }
+    },
+    {
+      "block": 2,
+      "A": {
+        "widest_wave": 4,
+        "cost_usd": 84.81,
+        "hub_wait_usd": 3.79,
+        "accepted": 8,
+        "accepted_first_attempt": 6,
+        "wall_hours": 1.74,
+        "compactions": 0
+      },
+      "B": {
+        "widest_wave": 4,
+        "cost_usd": 116.64,
+        "hub_wait_usd": 6.76,
+        "accepted": 6,
+        "accepted_first_attempt": 6,
+        "wall_hours": 1.58,
+        "compactions": 2
+      }
+    },
+    {
+      "block": 3,
+      "A": {
+        "widest_wave": 3,
+        "cost_usd": 98.21,
+        "hub_wait_usd": 5.81,
+        "accepted": 9,
+        "accepted_first_attempt": 8,
+        "wall_hours": 1.67,
+        "compactions": 2
+      },
+      "B": {
+        "widest_wave": 4,
+        "cost_usd": 98.27,
+        "hub_wait_usd": 6.87,
+        "accepted": 7,
+        "accepted_first_attempt": 5,
+        "wall_hours": 1.75,
+        "compactions": 1
+      }
+    },
+    {
+      "block": 4,
+      "A": {
+        "widest_wave": 3,
+        "cost_usd": 104.57,
+        "hub_wait_usd": 4.52,
+        "accepted": 7,
+        "accepted_first_attempt": 6,
+        "wall_hours": 2.03,
+        "compactions": 0
+      },
+      "B": {
+        "widest_wave": 3,
+        "cost_usd": 120.75,
+        "hub_wait_usd": 4.83,
+        "accepted": 8,
+        "accepted_first_attempt": 8,
+        "wall_hours": 1.53,
+        "compactions": 1
+      }
+    },
+    {
+      "block": 5,
+      "A": {
+        "widest_wave": 3,
+        "cost_usd": 96.71,
+        "hub_wait_usd": 4.08,
+        "accepted": 8,
+        "accepted_first_attempt": 6,
+        "wall_hours": 1.87,
+        "compactions": 1
+      },
+      "B": {
+        "widest_wave": 3,
+        "cost_usd": 97.29,
+        "hub_wait_usd": 4.86,
+        "accepted": 6,
+        "accepted_first_attempt": 5,
+        "wall_hours": 1.88,
+        "compactions": 0
+      }
+    },
+    {
+      "block": 6,
+      "A": {
+        "widest_wave": 3,
+        "cost_usd": 100.03,
+        "hub_wait_usd": 5.46,
+        "accepted": 7,
+        "accepted_first_attempt": 7,
+        "wall_hours": 1.94,
+        "compactions": 1
+      },
+      "B": {
+        "widest_wave": 3,
+        "cost_usd": 115.35,
+        "hub_wait_usd": 6.06,
+        "accepted": 9,
+        "accepted_first_attempt": 8,
+        "wall_hours": 1.52,
+        "compactions": 2
+      }
+    },
+    {
+      "block": 7,
+      "A": {
+        "widest_wave": 3,
+        "cost_usd": 108.58,
+        "hub_wait_usd": 7.16,
+        "accepted": 6,
+        "accepted_first_attempt": 5,
+        "wall_hours": 2.4,
+        "compactions": 0
+      },
+      "B": {
+        "widest_wave": 3,
+        "cost_usd": 111.06,
+        "hub_wait_usd": 7.76,
+        "accepted": 7,
+        "accepted_first_attempt": 5,
+        "wall_hours": 1.59,
+        "compactions": 0
+      }
+    }
+  ]
+}
