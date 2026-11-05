@@ -313,7 +313,9 @@ func (g ExecGit) Fetch(ctx context.Context, mirror, remote, ref string) error {
 			return err
 		}
 	}
-	_, err := g.run(ctx, "--git-dir", mirror, "fetch", "-q", "--no-tags", remote, "+refs/heads/"+ref+":"+viewRef)
+	// The "--" keeps a remote that starts with a dash from being read as an
+	// option, --upload-pack=<program> among them.
+	_, err := g.run(ctx, "--git-dir", mirror, "fetch", "-q", "--no-tags", "--", remote, "+refs/heads/"+ref+":"+viewRef)
 	return err
 }
 
