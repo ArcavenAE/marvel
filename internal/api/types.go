@@ -334,6 +334,10 @@ type Session struct {
 	RestartCount    int           `toml:"-"`
 	LastHealthCheck time.Time     `toml:"-"`
 	CreatedAt       time.Time     `toml:"-"`
+	// TranscriptGap says why the watchdog's transcript reader has no reading
+	// for this seat, when it has none. Empty while it reads or does not apply.
+	// Status only, never persisted.
+	TranscriptGap string `json:"transcript_gap,omitempty" toml:"-"`
 	// PausedTotal is how long a fleet suspend held this session still. An age
 	// check of the form now.Sub(CreatedAt) reads AgeAt instead, so a seat that
 	// was frozen does not age while it did no work (docs/design/
@@ -1339,7 +1343,17 @@ type HarnessState struct {
 	// ContextAt is the session's ContextAt when this was seen. A later
 	// ContextAt means the seat did work, which clears the state.
 	ContextAt time.Time `json:"context_at,omitempty"`
+	// Source says which reader set the state: HarnessSourcePane or
+	// HarnessSourceTranscript. Empty reads as pane, so a record written before
+	// the field existed stays what it was.
+	Source string `json:"source,omitempty"`
 }
+
+// The readers that set a HarnessState.
+const (
+	HarnessSourcePane       = "pane"
+	HarnessSourceTranscript = "transcript"
+)
 
 // HarnessStateLoggedOut is the state a matched logged-out screen sets.
 const HarnessStateLoggedOut = "logged-out"

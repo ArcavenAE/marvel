@@ -148,6 +148,10 @@ type Daemon struct {
 	// exclusion.
 	socketLock *socketLock
 
+	// watchdog is the harness-state watchdog startWatchdog built, kept so a test
+	// can see how it was wired. Nil until the daemon starts it.
+	watchdog *watchdog
+
 	// Path of the root lock to take on Start. Empty = no root lock.
 	rootLockPath string
 
