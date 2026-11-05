@@ -50,7 +50,13 @@ func TestDaemonCommandSetsTheRootLockFromTheLayout(t *testing.T) {
 		t.Fatalf("the run dir was not made before the lock: %v", err)
 	}
 
-	named := filepath.Join(t.TempDir(), "other")
+	// A named root must leave room for the socket path, so it is made short.
+	short, err := os.MkdirTemp("/tmp", "mv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(short) })
+	named := filepath.Join(short, "h")
 	t.Setenv("MARVEL_HOME", named)
 	got = runDaemonCmdForOptions(t)
 	if want := filepath.Join(named, "run", "daemon.lock"); got.RootLock != want {
