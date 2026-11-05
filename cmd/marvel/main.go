@@ -3447,10 +3447,11 @@ func newSessionRow(s api.Session) sessionRow {
 	// reached (no pid, or a platform with no process table reader)
 	// shows absence rather than an idle-looking zero.
 	cpu, rss := "-", "-"
-	// A crashed row has no process left to read, and its last in-memory
-	// reading is frozen (the sampler skips it), so it shows absence too
-	// (aae-orc-wtavi).
-	if !s.MetricsAt.IsZero() && s.State != api.SessionCrashed {
+	// A crashed, failed or succeeded row has no process left to read, and its
+	// last in-memory reading is frozen (the sampler skips it), so it shows
+	// absence too (aae-orc-wtavi).
+	gone := s.State == api.SessionCrashed || s.State == api.SessionFailed || s.State == api.SessionSucceeded
+	if !s.MetricsAt.IsZero() && !gone {
 		cpu = fmt.Sprintf("%.1f", s.CPUPercent)
 		rss = formatBytes(s.RSSBytes)
 	}
