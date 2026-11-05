@@ -66,7 +66,7 @@ edges:
 notes: |
   Source: harvest distribution manifest 2026-09-27, row 16.
   Related: elem-k8s-resource-model (Schedule, model-only), finding-040,
-  finding-055.
+  finding-055, finding-marvel-36f7.
 provenance:
   created_by: agent
   session: "2026-09-27-marvel-builder-kos-harvest"
