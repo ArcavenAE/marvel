@@ -2,7 +2,7 @@
 
 Four stages, each optional. Each one works without the stages after it and ends with one proof command, so you can stop at the first stage that does what you need.
 
-Every stage needs marvel installed (see Install in the [README](../README.md)) and tmux:
+Every stage needs marvel installed (see Install in the [README](../README.md)) and tmux 3.5 or later. Below 3.5, tmux can lose a finished pane's exit status, so a run that exits 0 is stored as crashed (marvel#424), and `marvel doctor` warns about it:
 
 ```sh
 brew install tmux

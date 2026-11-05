@@ -66,7 +66,13 @@ const (
 	statFail = "FAIL"
 	statSkip = "SKIP"
 	statWait = "WAIT"
+	statWarn = "WARN"
 )
+
+// tmuxMinVersion is the oldest tmux marvel is measured against. Below it tmux
+// can lose a dead pane's exit status (marvel#424), so a headless run that
+// exited 0 is stored as crashed.
+var tmuxMinVersion = [2]int{3, 5}
 
 // doctorReport collects the lines and counts the failures.
 type doctorReport struct {
@@ -143,7 +149,47 @@ func checkTmux(r *doctorReport, in doctorInput) {
 		r.line(statFail, "tmux", "found, but `tmux -V` did not answer", "reinstall it: brew reinstall tmux")
 		return
 	}
-	r.line(statPass, "tmux", firstLine(out), "")
+	line := firstLine(out)
+	got, ok := tmuxVersion(tmuxVersionField(line))
+	switch {
+	case !ok:
+		r.line(statWarn, "tmux", line+" (version not read; marvel needs 3.5 or later, marvel#424)", "")
+	case got[0] < tmuxMinVersion[0] || (got[0] == tmuxMinVersion[0] && got[1] < tmuxMinVersion[1]):
+		r.line(statWarn, "tmux", line+" (below 3.5; it can lose a pane's exit status, so a run that exits 0 reads as crashed, marvel#424)", "")
+	default:
+		r.line(statPass, "tmux", line, "")
+	}
+}
+
+// tmuxVersionField is the word after "tmux" in `tmux -V` output, or "".
+func tmuxVersionField(line string) string {
+	f := strings.Fields(line)
+	if len(f) < 2 || f[0] != "tmux" {
+		return ""
+	}
+	return f[1]
+}
+
+// tmuxVersion reads major.minor from a tmux version word: "3.5a" and "3.4" as
+// they are, "next-3.6" as 3.6, the release a development build leads up to. A
+// word with no major.minor ("master", "next", "3") is unreadable.
+func tmuxVersion(v string) ([2]int, bool) {
+	var out [2]int
+	v = strings.TrimPrefix(v, "next-")
+	major, rest, ok := strings.Cut(v, ".")
+	if !ok {
+		return out, false
+	}
+	minor := rest
+	if i := strings.IndexFunc(rest, func(r rune) bool { return r < '0' || r > '9' }); i >= 0 {
+		minor = rest[:i]
+	}
+	a, err1 := strconv.Atoi(major)
+	b, err2 := strconv.Atoi(minor)
+	if err1 != nil || err2 != nil || a < 0 || b < 0 {
+		return out, false
+	}
+	return [2]int{a, b}, true
 }
 
 // checkRuntimes reuses ValidateRuntimes and prints the role it names, never the

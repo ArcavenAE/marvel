@@ -735,3 +735,63 @@ func homeEntries(t *testing.T, home string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// Given a tmux below the 3.5 floor, doctor prints a WARN line that names
+// marvel#424 and still reports no failure; at or above the floor, and for a
+// version it cannot read, the line is a PASS or a WARN and never a FAIL.
+func TestDoctorTmuxFloorWarnsAndNeverFails(t *testing.T) {
+	cases := []struct {
+		out  string
+		want string
+	}{
+		{"tmux 3.4", statWarn},
+		{"tmux 3.3a", statWarn},
+		{"tmux 2.9", statWarn},
+		{"tmux 3.5", statPass},
+		{"tmux 3.5a", statPass},
+		{"tmux 3.10", statPass},
+		{"tmux next-3.6", statPass},
+		{"tmux next-3.4", statWarn},
+		{"tmux master", statWarn},
+		{"tmux", statWarn},
+		{"something else entirely", statWarn},
+	}
+	for _, c := range cases {
+		in := fakeHost(t)
+		run := in.Run
+		in.Run = func(name string, args ...string) (string, error) {
+			if name == "tmux" {
+				return c.out, nil
+			}
+			return run(name, args...)
+		}
+		out, failed := doctorRun(in)
+		if failed != 0 {
+			t.Errorf("%q: want no failure, got %d\n%s", c.out, failed, out)
+		}
+		l := lineWith(out, "tmux")
+		if !strings.HasPrefix(l, c.want) {
+			t.Errorf("%q: want a %s line, got %q", c.out, c.want, l)
+		}
+		if c.want == statWarn && !strings.Contains(out, "marvel#424") {
+			t.Errorf("%q: the warning does not name marvel#424:\n%s", c.out, out)
+		}
+		if c.want == statPass && strings.Contains(out, "marvel#424") {
+			t.Errorf("%q: a pass names marvel#424:\n%s", c.out, out)
+		}
+	}
+}
+
+func TestTmuxVersionParts(t *testing.T) {
+	for in, want := range map[string][2]int{"3.5a": {3, 5}, "3.4": {3, 4}, "next-3.6": {3, 6}, "3.10b": {3, 10}} {
+		got, ok := tmuxVersion(in)
+		if !ok || got != want {
+			t.Errorf("tmuxVersion(%q) = %v, %v; want %v, true", in, got, ok, want)
+		}
+	}
+	for _, in := range []string{"", "master", "next", "3", "x.y", "3.", ".5"} {
+		if _, ok := tmuxVersion(in); ok {
+			t.Errorf("tmuxVersion(%q) read a version, want unparsable", in)
+		}
+	}
+}
