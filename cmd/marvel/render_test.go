@@ -567,3 +567,26 @@ func TestRenderSessionTableParkedAdvisory(t *testing.T) {
 		}
 	}
 }
+
+// A session that was sampled and then lost its process keeps the sampler's last
+// reading in memory (the sampler skips states that do not count as alive, so
+// nothing clears or refreshes it). A crashed, failed or succeeded row has no
+// process to measure, so it renders absence, not the frozen reading or an
+// idle-looking 0.0 / 0B (aae-orc-wtavi, finding-038 follow-on 4).
+func TestRenderSessionTableEndedRowRendersAbsence(t *testing.T) {
+	for _, st := range []api.SessionState{api.SessionCrashed, api.SessionFailed, api.SessionSucceeded} {
+		t.Run(string(st), func(t *testing.T) {
+			table := renderSessionTableCols([]api.Session{{
+				Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+				State: st, Runtime: api.Runtime{Name: "forestage"},
+				SessionMetrics: api.SessionMetrics{MetricsAt: time.Now().UTC()},
+			}}, columnsOrFatal(t, "name,cpu,rss", nil))
+			if got := column(t, table, "CPU%"); got != "-" {
+				t.Errorf("CPU%% = %q for a %s row, want %q", got, st, "-")
+			}
+			if got := column(t, table, "RSS"); got != "-" {
+				t.Errorf("RSS = %q for a %s row, want %q", got, st, "-")
+			}
+		})
+	}
+}
