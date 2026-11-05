@@ -1154,7 +1154,7 @@ func (d *Daemon) scopeRefusal(req daemonrpc.Request, c caller) (daemonrpc.Respon
 // never reaches a handler, so it cannot count toward a session's health.
 var ErrDaemonStarting = errors.New("daemon is starting: adopting tmux state, retry")
 
-// ErrReportDeferred is the refusal heartbeat and account.limits get while the
+// ErrReportDeferred is the refusal heartbeat, bus.beat and account.limits get while the
 // daemon is adopting. It wraps ErrDaemonStarting and is a different text, so a
 // producer can tell "try again after the start" from any verdict on its token
 // or its session. It is sent before the handler runs, so it never reaches a
@@ -1177,7 +1177,7 @@ var errStoppedWhileStarting = errors.New("daemon stopped while starting")
 // on adoption and a remote operator has no other way to end the daemon; stop
 // with teardown stays refused, because it would destroy panes adoption has not
 // finished accounting for. Every other method is refused with
-// ErrDaemonStarting before its handler runs. heartbeat and account.limits get
+// ErrDaemonStarting before its handler runs. heartbeat, bus.beat and account.limits get
 // ErrReportDeferred instead, which wraps ErrDaemonStarting: a heartbeat does
 // more than stamp liveness (it checks the session token and records orphan
 // sightings against a store adoption has not finished reconciling), so the
@@ -1220,7 +1220,7 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return daemonrpc.Response{Error: ErrClusterSuspended.Error()}
 	}
 	if d.adoptingSince.Load() != 0 && !startingAllows(req) {
-		if req.Method == "heartbeat" || req.Method == "account.limits" {
+		if req.Method == "heartbeat" || req.Method == "bus.beat" || req.Method == "account.limits" {
 			return daemonrpc.Response{Error: ErrReportDeferred.Error(), Starting: true}
 		}
 		return daemonrpc.Response{Error: ErrDaemonStarting.Error(), Starting: true}
@@ -1242,6 +1242,8 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return d.handleReap(req.Params)
 	case "heartbeat":
 		return d.handleHeartbeat(req.Params)
+	case "bus.beat":
+		return d.handleBusBeat(req.Params)
 	case "handoff.put":
 		return d.handleHandoffPut(req.Params)
 	case "broker.token":
@@ -2140,29 +2142,7 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) daemonrpc.Response {
 
 	auth, err := d.store.UpdateSessionHeartbeat(p)
 	if err != nil {
-		if errors.Is(err, api.ErrHeartbeatUnauthorized) {
-			// Two different faults reach this branch and they have
-			// opposite remedies, so they get different messages and
-			// throttle independently. Presenting NO token is a producer
-			// that was not updated to send one (the codex reader shipped
-			// exactly that, see #176). Presenting a WRONG token is a live
-			// process holding a credential minted for an earlier
-			// incarnation of this session key: an orphan from a previous
-			// daemon, which nothing reaps (aae-orc-k58k).
-			cause, msg := "no-token", "refused: this heartbeat presented no token while the session "+
-				"carries one, so its producer is not sending MARVEL_HEARTBEAT_TOKEN"
-			if p.SessionToken != "" {
-				cause, msg = "stale-token", "refused: token does not match the session claimed; an "+
-					"orphaned agent from an earlier daemon is still heartbeating for this key. "+
-					"See 'marvel orphans'. Clear it with 'marvel reap --confirm', or start with "+
-					"'marvel daemon --reclaim'"
-				// A stale-token refusal is a positive orphan sighting: record
-				// it so the condition is queryable, not only a throttled log
-				// line that ages out of the ring (aae-orc-m4of).
-				d.orphans.observe(p.SessionKey, time.Now())
-			}
-			d.emitHeartbeatAuth2(events.KindHeartbeatRefused, cause, p.SessionKey, msg)
-		}
+		d.noteHeartbeatRefusal(err, p.SessionKey, p.SessionToken)
 		return daemonrpc.Response{Error: err.Error()}
 	}
 	if auth == api.HeartbeatAuthUnbound {
@@ -2171,6 +2151,57 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) daemonrpc.Response {
 	}
 
 	return respond(map[string]string{"status": "ok"})
+}
+
+// handleBusBeat serves bus.beat: the director shim's report that it reached the
+// bus. It authenticates exactly as heartbeat does and records the same refusal
+// events and orphan sightings, so an orphaned shim shows as a stale-token
+// sighting. What it writes is LastBusBeat and nothing else, so it cannot move
+// CTX% or LastHeartbeat. A role reads it only when its healthcheck type is bus.
+func (d *Daemon) handleBusBeat(params json.RawMessage) daemonrpc.Response {
+	var p api.BusBeatRequest
+	if err := json.Unmarshal(params, &p); err != nil {
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+	auth, err := d.store.UpdateSessionBusBeat(p)
+	if err != nil {
+		d.noteHeartbeatRefusal(err, p.SessionKey, p.SessionToken)
+		return daemonrpc.Response{Error: err.Error()}
+	}
+	if auth == api.HeartbeatAuthUnbound {
+		d.emitHeartbeatAuth(events.KindHeartbeatUnbound, p.SessionKey,
+			"admitted unbound: session record carries no token, restart it to bind its heartbeat")
+	}
+	return respond(map[string]string{"status": "ok"})
+}
+
+// noteHeartbeatRefusal records a token refusal from heartbeat or bus.beat on
+// the ring and in the log. Any other error is not a refusal and records nothing.
+func (d *Daemon) noteHeartbeatRefusal(err error, sessionKey, sessionToken string) {
+	if !errors.Is(err, api.ErrHeartbeatUnauthorized) {
+		return
+	}
+	// Two different faults reach this branch and they have
+	// opposite remedies, so they get different messages and
+	// throttle independently. Presenting NO token is a producer
+	// that was not updated to send one (the codex reader shipped
+	// exactly that, see #176). Presenting a WRONG token is a live
+	// process holding a credential minted for an earlier
+	// incarnation of this session key: an orphan from a previous
+	// daemon, which nothing reaps (aae-orc-k58k).
+	cause, msg := "no-token", "refused: this heartbeat presented no token while the session "+
+		"carries one, so its producer is not sending MARVEL_HEARTBEAT_TOKEN"
+	if sessionToken != "" {
+		cause, msg = "stale-token", "refused: token does not match the session claimed; an "+
+			"orphaned agent from an earlier daemon is still heartbeating for this key. "+
+			"See 'marvel orphans'. Clear it with 'marvel reap --confirm', or start with "+
+			"'marvel daemon --reclaim'"
+		// A stale-token refusal is a positive orphan sighting: record
+		// it so the condition is queryable, not only a throttled log
+		// line that ages out of the ring (aae-orc-m4of).
+		d.orphans.observe(sessionKey, time.Now())
+	}
+	d.emitHeartbeatAuth2(events.KindHeartbeatRefused, cause, sessionKey, msg)
 }
 
 // emitHeartbeatAuth records an authentication outcome on the ring and in

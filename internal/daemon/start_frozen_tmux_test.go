@@ -161,6 +161,11 @@ func TestStartServesReadsWhileAdoptionWaitsOnTmux(t *testing.T) {
 		if resp.Error != ErrReportDeferred.Error() || !resp.Starting {
 			t.Errorf("heartbeat %v while adopting: want the deferred refusal, got %+v", hb, resp)
 		}
+		// bus.beat is the same kind of report: deferred, never a verdict.
+		resp = send(t, sock, "bus.beat", map[string]any{"session_key": hb["session_key"], "session_token": hb["session_token"], "source": "director-shim"})
+		if resp.Error != ErrReportDeferred.Error() || !resp.Starting {
+			t.Errorf("bus.beat %v while adopting: want the deferred refusal, got %+v", hb, resp)
+		}
 	}
 	if resp := send(t, sock, "account.limits", map[string]any{}); resp.Error != ErrReportDeferred.Error() {
 		t.Errorf("account.limits while adopting: want the deferred refusal, got %+v", resp)
@@ -170,7 +175,8 @@ func TestStartServesReadsWhileAdoptionWaitsOnTmux(t *testing.T) {
 		t.Fatalf("get session: %v", err)
 	}
 	if after.ContextSource != before.ContextSource || after.ContextPercent != before.ContextPercent ||
-		after.FailureCount != before.FailureCount || after.HealthState != before.HealthState {
+		after.FailureCount != before.FailureCount || after.HealthState != before.HealthState ||
+		!after.LastBusBeat.Equal(before.LastBusBeat) {
 		t.Errorf("a deferred heartbeat changed the session: before %+v, after %+v", before, after)
 	}
 	if orphans := d.orphanRecords(); len(orphans) != 0 {

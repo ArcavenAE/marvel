@@ -131,6 +131,11 @@ type HealthCheckType string
 const (
 	HealthCheckHeartbeat    HealthCheckType = "heartbeat"
 	HealthCheckProcessAlive HealthCheckType = "process-alive"
+	// HealthCheckBus reads LastBusBeat, the director shim's own liveness beat,
+	// in place of LastHeartbeat. The value is a ruling held for the operator
+	// (aae-orc-z63a4); it is named once here so a different ruled name is a
+	// one-line change.
+	HealthCheckBus HealthCheckType = "bus"
 )
 
 // HealthCheck configures health checking for a role's sessions.
@@ -294,6 +299,12 @@ type Session struct {
 	PaneID        string       `toml:"-"`
 	PID           int          `toml:"-"`
 	LastHeartbeat time.Time    `toml:"-"`
+	// LastBusBeat is when the director shim last reported that it reached the
+	// bus (the bus.beat RPC). It is a second liveness stamp beside LastHeartbeat,
+	// not a replacement: LastHeartbeat belongs to the statusline feed and moves
+	// with CTX%, so a live statusline beat can keep a seat looking healthy with
+	// its bus dead (finding-166). Only a role on HealthCheckBus reads this one.
+	LastBusBeat time.Time `toml:"-"`
 	// CostTotalUSD and APIDurationMS are the statusline feed's running totals
 	// for this session, and TotalsChangedAt is when either last moved. They sit
 	// outside SessionContext on purpose: that block is replaced whole by each

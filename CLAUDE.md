@@ -93,8 +93,8 @@ client that crossed over, and no harm came of it (#504).
 (PVC), Schedule (CronJob), Gateway (Ingress), Readycheck (readiness
 Probe). No type, no code, no CLI. They survive in
 `elem-k8s-resource-model` as design prose only. `HealthCheckType` has
-exactly two values, `heartbeat` and `process-alive`, so there is no
-readiness check to configure.
+three values, `heartbeat`, `process-alive` and `bus`, and none of them is
+a readiness check, so there is no readiness check to configure.
 
 The k8s mapping below is a **mechanics footnote**, not the frame:
 declarative desired state, the reconciliation loop, and typed resources

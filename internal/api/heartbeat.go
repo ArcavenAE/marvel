@@ -109,6 +109,21 @@ func authenticateHeartbeat(sess *Session, token string) (HeartbeatAuth, error) {
 	return HeartbeatAuthToken, nil
 }
 
+// BusBeatSourceDirectorShim is the source a director shim names on a bus.beat.
+const BusBeatSourceDirectorShim = "director-shim"
+
+// BusBeatRequest is the bus.beat RPC's wire shape. The director shim sends one
+// per tick after its presence write reached the bus. It carries no context
+// reading, so the RPC cannot move CTX% or LastHeartbeat. SessionKey and
+// SessionToken mean what they mean on HeartbeatRequest, and the token is
+// checked the same way. The director side builds the same JSON without
+// importing this package; a fixture pinned in both repos keeps the two equal.
+type BusBeatRequest struct {
+	SessionKey   string `json:"session_key"`
+	SessionToken string `json:"session_token,omitempty"`
+	Source       string `json:"source,omitempty"`
+}
+
 // HeartbeatRequest is the heartbeat RPC's wire shape, shared by every
 // producer and by the daemon that consumes it. One type rather than a
 // map literal per forwarder, so a field rename is a compile error at all
