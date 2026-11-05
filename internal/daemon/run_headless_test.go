@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
@@ -177,5 +178,57 @@ func TestNamedRunIntoAnUndeclaredRoleSurvivesTheController(t *testing.T) {
 	}
 	if orch != 1 || branch != 1 {
 		t.Errorf("after ten ticks: %d orchestrator, %d branch-run; want 1 and 1", orch, branch)
+	}
+}
+
+// A headless ad-hoc run (marvel run --mode headless --name ...) whose harness
+// exits 0 is stored as succeeded, and it stays in the store, through the
+// reaper and ten controller ticks, until an explicit delete removes it. A
+// caller that waits on the key can therefore read the verdict whenever it
+// asks, not only in the moment the process ends.
+func TestHeadlessNamedRunThatExitsZeroSucceedsAndStaysUntilDeleted(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sess := ranSession(t, d, runWith(t, d, map[string]any{
+		"workspace": "runh7", "name": "branch-ok", "mode": "headless", "prompt": "p",
+		"runtime_command": "sh", "runtime_args": []string{"-c", "exit 0"},
+	}))
+	key := sess.Key()
+
+	// The pane exits on its own. Reap until the store reads a verdict; a
+	// second pass must change nothing.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		d.sessMgr.ReapDead()
+		if got, err := d.store.GetSession(key); err == nil && got.State == api.SessionSucceeded {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	got, err := d.store.GetSession(key)
+	if err != nil {
+		t.Fatalf("a finished headless run left the store: %v", err)
+	}
+	if got.State != api.SessionSucceeded || got.ExitStatus != "0" {
+		t.Fatalf("state %q exit %q, want succeeded and 0", got.State, got.ExitStatus)
+	}
+
+	for i := 0; i < 10; i++ {
+		d.sessMgr.ReapDead()
+		d.teamCtrl.ReconcileOnce()
+	}
+	got, err = d.store.GetSession(key)
+	if err != nil {
+		t.Fatalf("the succeeded run was removed without a delete: %v", err)
+	}
+	if got.State != api.SessionSucceeded {
+		t.Fatalf("after ten ticks state = %q, want succeeded", got.State)
+	}
+
+	raw, _ := json.Marshal(map[string]string{"resource_type": "session", "name": key})
+	if resp := d.handleDelete(raw); resp.Error != "" {
+		t.Fatalf("explicit delete: %s", resp.Error)
+	}
+	if _, err := d.store.GetSession(key); err == nil {
+		t.Fatalf("session %s still in the store after an explicit delete", key)
 	}
 }
