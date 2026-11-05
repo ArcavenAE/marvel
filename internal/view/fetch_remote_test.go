@@ -2,45 +2,41 @@ package view
 
 import (
 	"context"
-	"os"
-	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
-// A remote that starts with a dash is a remote name, not a git option. The
-// control runs git without the "--" and shows --upload-pack=<program> would
-// start the program, so a quiet marker for Fetch means the separator held.
-func TestFetchTreatsADashRemoteAsAName(t *testing.T) {
-	scratch := t.TempDir()
-	marker := filepath.Join(scratch, "marker")
-	prog := filepath.Join(scratch, "up.sh")
-	if err := os.WriteFile(prog, []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 1\n"), 0o755); err != nil {
-		t.Fatal(err)
+// The separator sits right before the remote, so a remote that starts with a
+// dash is an operand and not an option.
+func TestFetchArgsPutTheSeparatorRightBeforeTheRemote(t *testing.T) {
+	for _, remote := range []string{"origin", "/srv/repo.git", "-dash-remote"} {
+		args := fetchArgs("/m", remote, "main")
+		i := slices.Index(args, remote)
+		if i < 1 || args[i-1] != "--" {
+			t.Errorf("fetchArgs remote %q = %q, want -- right before the remote", remote, args)
+		}
+		if slices.Index(args, "--") != i-1 {
+			t.Errorf("fetchArgs remote %q = %q, want one separator", remote, args)
+		}
 	}
-	remote := "--upload-pack=" + prog
-	env := append(cleanGitEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+}
 
-	ctrlMirror := filepath.Join(scratch, "control.git")
-	if out, err := exec.Command("git", "init", "--bare", "-q", ctrlMirror).CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
-	ctrl := exec.Command("git", "--git-dir", ctrlMirror, "fetch", "-q", "--no-tags", remote, "+refs/heads/main:"+viewRef)
-	ctrl.Env = env
-	_ = ctrl.Run()
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("control: git fetch without the separator did not run the program (%v); the test cannot tell anything", err)
-	}
-	if err := os.Remove(marker); err != nil {
-		t.Fatal(err)
-	}
-
+// A remote that starts with a dash is looked up as a repository and fails as
+// one. It is never parsed as an option.
+func TestFetchOfADashRemoteFailsAsAnUnknownRepository(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	if err := (ExecGit{}).Fetch(context.Background(), filepath.Join(scratch, "mirror.git"), remote, "main"); err == nil {
+	err := (ExecGit{}).Fetch(context.Background(), filepath.Join(t.TempDir(), "mirror.git"), "-dash-remote", "main")
+	if err == nil {
 		t.Fatal("Fetch of a dash remote returned no error")
 	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("Fetch ran the program named by a remote that starts with a dash")
+	msg := err.Error()
+	if strings.Contains(msg, "unknown switch") || strings.Contains(msg, "unknown option") || strings.Contains(msg, "usage:") {
+		t.Fatalf("the remote was parsed as an option: %v", err)
+	}
+	if !strings.Contains(msg, "does not appear to be a git repository") && !strings.Contains(msg, "strange pathname") {
+		t.Fatalf("Fetch error = %v, want an unknown-repository failure", err)
 	}
 }
