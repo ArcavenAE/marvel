@@ -917,7 +917,7 @@ func (m *Manager) Create(sess *api.Session) error {
 		return err
 	}
 	sess.State = api.SessionPending
-	sess.CreatedAt = time.Now().UTC()
+	sess.CreatedAt = m.now()
 
 	// Mint the heartbeat token before the record exists, so no session is
 	// ever in the store without one. The plaintext rides the caller's
@@ -2001,6 +2001,21 @@ func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 
 // Delete destroys a session: kills the tmux pane and removes from the store.
 func (m *Manager) Delete(key string) error {
+	return m.deleteSession(key, false)
+}
+
+// KillPastDeadline deletes a live run of a scheduled role that passed its
+// schedule's active_deadline. It is Delete with one difference: the run is
+// recorded failed, with run.deadline, instead of cancelled. A deadline kill
+// is a failed run, so it spends an attempt and follows retries and
+// on_failure; a cancelled record settles the firing with none of that
+// (scheduled-runs section 2). A run that had already ended is classified
+// as Delete classifies it.
+func (m *Manager) KillPastDeadline(key string) error {
+	return m.deleteSession(key, true)
+}
+
+func (m *Manager) deleteSession(key string, pastDeadline bool) error {
 	sess, err := m.store.GetSession(key)
 	if err != nil {
 		return err
@@ -2039,6 +2054,8 @@ func (m *Manager) Delete(key string) error {
 		m.recordScheduledRun(sess, api.RunSucceeded, endedSt.ExitStatus, tail)
 	case ended:
 		m.recordScheduledRun(sess, api.RunFailed, endedSt.ExitStatus, tail)
+	case pastDeadline:
+		m.recordRun(sess, api.RunFailed, "", tail, events.KindRunDeadline)
 	default:
 		m.recordScheduledRun(sess, api.RunCancelled, "", tail)
 	}
