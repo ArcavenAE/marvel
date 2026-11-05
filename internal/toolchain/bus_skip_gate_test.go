@@ -205,7 +205,7 @@ func linuxGateGaps(jobs map[string]ciJob) []string {
 //
 // The two-label set is transitional. ubuntu-26.04 is listed so the runner bump
 // in marvel#1217 can pass this guard; ubuntu-24.04 stays only until that bump
-// merges, and then drops, leaving the single label the guard started with.
+// merges, and then drops, leaving ubuntu-26.04 as the single label.
 var linuxLabels = []string{"ubuntu-24.04", "ubuntu-26.04"}
 
 // linuxRunner reports whether a runs-on label is one of linuxLabels, exactly.
