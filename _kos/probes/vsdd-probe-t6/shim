@@ -58,8 +58,10 @@ dispatch() {
     echo "refused prompt file $prompt is not readable"
     exit 1
   fi
-  local extra=() kv
-  for kv in ${PROBE_EXTRA_ENV:-}; do
+  # read splits on whitespace without globbing, so a * or ? in a value stays literal.
+  local pairs=() extra=() kv
+  read -r -a pairs <<<"${PROBE_EXTRA_ENV:-}"
+  for kv in ${pairs[@]+"${pairs[@]}"}; do
     extra+=(--env "$kv")
   done
   local out rc=0

@@ -10,25 +10,44 @@ what `cosign verify-blob` needs.
 
 | file | job |
 |---|---|
-| `build-pack.sh` | `build`: checks the tarball and manifest against pinned sha256 values, runs `cosign verify-blob`, unpacks, applies the patch, stamps the version, adds the shim, then runs the manifest check and writes `report.txt`. `check`: the manifest check alone |
+| `build-pack.sh` | `report`: the pins, the sha256 of the patch, the gate (`derive.py`) and the shim, then the manifest check. `build`: checks the tarball and manifest against pinned sha256 values, runs `cosign verify-blob`, unpacks, applies the patch, stamps the version, adds the shim, then runs the manifest check and writes `report.txt`. `check`: the manifest check alone |
 | `apply_patch.py` | the patch: the section 3 edits to `agents/orchestrator/orchestrator.md` and `agents/orchestrator/per-story-delivery.md` |
 | `derive.py` | `stamp` (the version line) and `check` (the manifest comparison) |
 | `shim` | `dispatch` and `await` over the T1 surface (`marvel run --experimental`, `marvel wait --experimental`); installed in the pack as `bin/shim` |
-| `test_shim.sh`, `test_build.sh` | the unit tests; `testdata/fake-marvel` is the fake marvel the shim tests run against |
+| `test_shim.sh`, `test_build.sh`, `test_apply_patch.py` | the unit tests; `testdata/fake-marvel` is the fake marvel the shim tests run against |
 
 ## Run
 
 ```sh
 bash _kos/probes/vsdd-probe-t6/test_shim.sh
 bash _kos/probes/vsdd-probe-t6/test_build.sh
-_kos/probes/vsdd-probe-t6/build-pack.sh build TARBALL TARBALL.bundle file-manifest.csv OUTDIR 1
+python3 -I -B _kos/probes/vsdd-probe-t6/test_apply_patch.py
+_kos/probes/vsdd-probe-t6/build-pack.sh build TARBALL TARBALL.bundle file-manifest.csv OUTDIR
 ```
 
 `TARBALL` and `file-manifest.csv` are the rc.25 release assets of
 `vsdd-factory-v1.0.0-rc.25` (tarball sha256 `6d38a905...cee1`, manifest sha256
 `e0ec70a1...325c`). `OUTDIR` must not exist. The last argument is the arm-b
-counter: the derived version is `1.0.0-rc.25.arm-b.<N>`, and each rebuild of
-the patch bumps it.
+counter, default 2: the derived version is `1.0.0-rc.25.arm-b.<N>`. Each change
+to the pack's bytes (the patch, the shim, `pack.yaml` or any other path) bumps
+it, so one version names one byte set.
+
+## Versions
+
+A version is never reused. `pack file manifest sha256` is the sha256 of the
+pack's file listing in the rc.25 manifest format (`derive.py manifest`; run on
+the unmodified rc.25 tree it gives the pinned manifest sha256).
+
+| version | status | shim sha256 | pack file manifest sha256 |
+|---|---|---|---|
+| `1.0.0-rc.25.arm-b.1` | superseded | `f6e073567cde7dd41ea210c1ef073a289e67e5f6045df68ef5b3ea7755d3ccb4` | `ff932bddad37265caac2e8820021ca08fcd6b5a033f1b57d759d7182435803e9` |
+| `1.0.0-rc.25.arm-b.2` | current | `3123d3a458b0189f6afb68bb3533161d37bcf76491394d5dd6ff10f2d65142b2` | `ec207f9c7a02874ccee507061576e1934cef231f0bd15ae36953c0851eaef979` |
+
+The patch hash (`apply_patch.py` sha256 `9c372d0c3ba2465ad3b02afedc90355269fa2c523ebecbea1b6c96da7a8b2b6b`)
+is the same in both. Nothing under arm-b.1 is invalidated, since no live test
+has run. Before live tests 1 and 2, run `sideshow list` on the probe host. If
+arm-b.1 is installed there, install arm-b.2 beside it and enable
+`@1.0.0-rc.25.arm-b.2` explicitly.
 
 ## The patch
 

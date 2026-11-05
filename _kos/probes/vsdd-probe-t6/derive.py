@@ -4,6 +4,10 @@
   derive.py stamp PACK_YAML NEW_VERSION
       Rewrites the one line "version: 1.0.0-rc.25" and asserts nothing else
       in the file changed. Exits nonzero if the line is missing or repeated.
+  derive.py manifest PACK_DIR
+      Prints PACK_DIR's files as lines of sha256,size,path, sorted by path, the
+      format of the rc.25 file manifest. The sha256 of this listing names the
+      pack's byte set.
   derive.py check PACK_DIR MANIFEST_CSV
       Compares every file under PACK_DIR with the rc.25 file manifest
       (lines of sha256,size,path). Prints one line per changed or added path
@@ -59,6 +63,15 @@ def read_manifest(path):
     return rows
 
 
+def listing(pack_dir):
+    root = Path(pack_dir)
+    rows = []
+    for f in sorted(root.rglob("*")):
+        if f.is_file() or f.is_symlink():
+            rows.append(f"{sha256(f)},{f.stat().st_size},{f.relative_to(root)}")
+    return "\n".join(sorted(rows, key=lambda r: r.split(",", 2)[2])) + "\n"
+
+
 def check(pack_dir, manifest):
     root = Path(pack_dir)
     want = read_manifest(manifest)
@@ -95,6 +108,8 @@ def check(pack_dir, manifest):
 def main(argv):
     if len(argv) == 4 and argv[1] == "stamp":
         stamp(argv[2], argv[3])
+    elif len(argv) == 3 and argv[1] == "manifest":
+        sys.stdout.write(listing(argv[2]))
     elif len(argv) == 4 and argv[1] == "check":
         sys.exit(check(argv[2], argv[3]))
     else:

@@ -52,13 +52,42 @@ out=$(py "$here/derive.py" check "$T/pack" "$T/manifest.csv"); rc=$?
 if [[ $rc -eq 1 && "$out" == *"unexpected-add bin/extra"* ]]; then pass "an extra added path is refused"
 else fail "an extra added path is refused" "rc=$rc out=[$out]"; fi
 
-# a missing shim, or an allowed file left unpatched, is refused
+# a missing shim is refused
 mk_fixture; derive_ok; rm "$T/pack/bin/shim"
 out=$(py "$here/derive.py" check "$T/pack" "$T/manifest.csv"); rc=$?
-mk_fixture; derive_ok; cp "$T/pack/pack.yaml" "$T/p.yaml"; echo "version: 1.0.0-rc.25" >"$T/pack/pack.yaml"; echo "name: x" >"$T/pack/pack.yaml.tmp"; { echo "name: x"; echo "version: 1.0.0-rc.25"; } >"$T/pack/pack.yaml"
-out2=$(py "$here/derive.py" check "$T/pack" "$T/manifest.csv"); rc2=$?
-if [[ $rc -eq 1 && "$out" == *"expected-add-absent bin/shim"* && $rc2 -eq 1 && "$out2" == *"expected-change-absent pack.yaml"* ]]; then pass "a missing shim or an unpatched allowed file is refused"
-else fail "a missing shim or unpatched file is refused" "rc=$rc out=[$out] rc2=$rc2 out2=[$out2]"; fi
+if [[ $rc -eq 1 && "$out" == *"expected-add-absent bin/shim"* ]]; then pass "a missing shim is refused"
+else fail "a missing shim is refused" "rc=$rc out=[$out]"; fi
+
+# an unpatched pack.yaml is refused, with nothing else wrong in the fixture
+mk_fixture; derive_ok
+printf 'name: x\nversion: 1.0.0-rc.25\n' >"$T/pack/pack.yaml"
+out=$(py "$here/derive.py" check "$T/pack" "$T/manifest.csv"); rc=$?
+if [[ $rc -eq 1 && "$out" == *"expected-change-absent pack.yaml"* && "$(echo "$out" | grep -c -E '^(unexpected|missing|expected)')" == 1 ]]; then pass "an unpatched pack.yaml is refused and nothing else is reported"
+else fail "an unpatched pack.yaml is refused" "rc=$rc out=[$out]"; fi
+
+# the report pins the patch, the gate and the shim by sha256
+mk_fixture; derive_ok
+out=$("$here/build-pack.sh" report "$T/pack" "$T/manifest.csv" 1.0.0-rc.25.arm-b.1 2>&1); rc=$?
+ok=1
+h() { shasum -a 256 "$here/$1" | cut -d' ' -f1; }
+[[ "$out" == *"patch (apply_patch.py) sha256 $(h apply_patch.py)"* ]] || ok=0
+[[ "$out" == *"gate (derive.py) sha256 $(h derive.py)"* ]] || ok=0
+[[ "$out" == *"shim sha256 $(h shim)"* ]] || ok=0
+if [[ $rc -eq 0 && $ok -eq 1 ]]; then pass "the report hashes apply_patch.py, derive.py and the shim"
+else fail "the report hashes the patch, the gate and the shim" "rc=$rc ok=$ok out=[$out]"; fi
+
+# the pack file manifest lists a tree in the rc.25 manifest's format, byte for byte
+mk_fixture
+if py "$here/derive.py" manifest "$T/pack" | cmp -s - "$T/manifest.csv"; then pass "derive.py manifest reproduces the rc.25 manifest format"
+else fail "derive.py manifest reproduces the rc.25 manifest format" "$(py "$here/derive.py" manifest "$T/pack" | diff - "$T/manifest.csv" | head -4)"; fi
+mk_fixture; derive_ok
+out=$("$here/build-pack.sh" report "$T/pack" "$T/manifest.csv" 1.0.0-rc.25.arm-b.2 2>&1)
+if [[ "$out" == *"pack file manifest sha256 $(py "$here/derive.py" manifest "$T/pack" | shasum -a 256 | cut -d' ' -f1)"* ]]; then pass "the report records the pack file manifest sha256"
+else fail "the report records the pack file manifest sha256" "out=[$out]"; fi
+
+# apply_patch's guards: anchors, the after-sha check, the before-sha check
+if py "$here/test_apply_patch.py" >/dev/null 2>&1; then pass "apply_patch guards (test_apply_patch.py)"
+else fail "apply_patch guards" "$(py "$here/test_apply_patch.py" 2>&1 | tail -5)"; fi
 
 # the version stamp changes the one line and nothing else
 mk_fixture
