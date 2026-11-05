@@ -83,17 +83,20 @@ func TestBusRoleGoesUnhealthyWhileStatuslineBeatsArrive(t *testing.T) {
 }
 
 // The failure event names its cause, so an operator reading the ring sees that
-// the director shim lost the bus. Threshold 1, because the event fires on the
-// tick that moves a seat into unhealthy at the threshold, and with a higher
-// threshold the below-threshold tick has already set unhealthy (the same for
-// heartbeat roles).
+// the director shim lost the bus. Threshold 2: the first tick marks the seat
+// unhealthy and emits nothing, and the tick that reaches the threshold emits
+// once (aae-orc-6zmvw).
 func TestBusRoleEventNamesTheMissingBusBeat(t *testing.T) {
-	_, ctrl, ring, _ := busFixture(t, "test-bus-event", busRole(time.Minute, 1), 10*time.Minute,
+	_, ctrl, ring, _ := busFixture(t, "test-bus-event", busRole(time.Minute, 2), 10*time.Minute,
 		time.Now().UTC(), time.Time{})
+	ctrl.evaluateHealth()
+	if n := len(healthEvents(t, ring)); n != 0 {
+		t.Fatalf("health events = %d after tick 1 of 2, want 0", n)
+	}
 	ctrl.evaluateHealth()
 	evs := healthEvents(t, ring)
 	if len(evs) != 1 {
-		t.Fatalf("health events = %d, want 1", len(evs))
+		t.Fatalf("health events = %d after tick 2 of 2, want 1", len(evs))
 	}
 	if !strings.Contains(evs[0].Message, "no bus beat from the director shim for") {
 		t.Errorf("event message %q does not name the missing bus beat", evs[0].Message)
