@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -28,7 +29,11 @@ type txRig struct {
 
 func newTXRig(t *testing.T) *txRig {
 	t.Helper()
-	return &txRig{wdRig: newWDRig(t), cfg: t.TempDir()}
+	r := &txRig{wdRig: newWDRig(t), cfg: t.TempDir()}
+	// A workspace is not a client one unless a test says so: a nil client test
+	// reads as client and reads nothing.
+	r.w.client = func(string) (bool, error) { return false, nil }
+	return r
 }
 
 // claude adds a claude seat that is heartbeating (worked a minute ago, so
@@ -357,7 +362,7 @@ func TestTranscriptStateEndsWithTheSession(t *testing.T) {
 }
 
 // The daemon wires the client test to the workspace's stored scope, the ruled
-// source (K1a), so the filter is live outside the rig.
+// source, so the filter is live outside the rig.
 func TestWireWatchdogClientFiltersByTheStoredWorkspaceScope(t *testing.T) {
 	d, err := New()
 	if err != nil {
@@ -382,5 +387,46 @@ func TestWireWatchdogClientFiltersByTheStoredWorkspaceScope(t *testing.T) {
 	}
 	if _, err := w.client("missing"); err == nil {
 		t.Error("an unknown workspace did not report an error")
+	}
+}
+
+// A watchdog with no client test reads no transcript: a wiring that drops the
+// filter must fail closed, not read every seat.
+func TestTranscriptWithNoClientTestReadsNothing(t *testing.T) {
+	r := newTXRig(t)
+	r.w.client = nil
+	r.claude("a", txSession)
+	r.write("-proj", txSession, txErr)
+	r.w.Once()
+	s := r.get("a")
+	if s.HarnessState != nil || s.TranscriptGap != "transcript: client workspace, not read" {
+		t.Fatalf("a watchdog with no client test read a seat: %+v", s)
+	}
+}
+
+// startWatchdog is the call site: the watchdog it builds carries the client
+// test, and the test follows the workspace's stored scope.
+func TestStartWatchdogWiresTheClientFilter(t *testing.T) {
+	d, err := New()
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	if err := d.store.CreateWorkspace(&api.Workspace{Name: "clientws", Scope: api.WorkspaceScopeClient}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.store.CreateWorkspace(&api.Workspace{Name: "ownws"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	d.startWatchdog(ctx)
+	t.Cleanup(func() { cancel(); d.wg.Wait() })
+	if d.watchdog == nil || d.watchdog.client == nil {
+		t.Fatalf("startWatchdog left the client test unset: %+v", d.watchdog)
+	}
+	if c, err := d.watchdog.client("clientws"); err != nil || !c {
+		t.Errorf("clientws: %v %v, want client", c, err)
+	}
+	if c, err := d.watchdog.client("ownws"); err != nil || c {
+		t.Errorf("ownws: %v %v, want not client", c, err)
 	}
 }

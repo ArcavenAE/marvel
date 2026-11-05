@@ -148,6 +148,10 @@ type Daemon struct {
 	// exclusion.
 	socketLock *socketLock
 
+	// watchdog is the harness-state watchdog startWatchdog built, kept so a test
+	// can see how it was wired. Nil until the daemon starts it.
+	watchdog *watchdog
+
 	// reclaim makes the startup reconcile destroy marvel-* tmux state
 	// this daemon does not own, instead of leaving it running. Off by
 	// default; `marvel daemon --reclaim` is the deliberate act.

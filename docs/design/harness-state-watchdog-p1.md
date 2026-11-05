@@ -148,8 +148,8 @@ transcript.
 - **Who.** A running claude seat with an assigned `HarnessSessionID`, outside a
   client workspace. A seat without an assigned id, a transcript file that is
   not there or not one, and a client seat have no reading, and `describe`
-  names which as `transcript_gap`. The client filter is tied to I-98 O2 and is
-  lifted when O2 is ruled.
+  names which as `transcript_gap`. The client filter holds until the operator
+  rules on reading client-workspace transcripts (aae-orc-sioy1 lifts it).
 - **Where.** `<config dir>/projects/*/<HarnessSessionID>.jsonl`, exactly one
   match. The id is matched, not derived from the working directory.
 - **When.** Every watchdog tick, outside the quiet gate. A stat comes first,

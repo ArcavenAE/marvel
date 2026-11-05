@@ -76,8 +76,10 @@ type watchdog struct {
 	rolled      map[string]string
 
 	// client reports whether a workspace is a client one. The transcript reader
-	// skips a client seat until I-98 O2 is ruled, and a workspace it cannot read
-	// counts as client. Nil means no workspace is.
+	// skips a client seat until the operator rules on reading client-workspace
+	// transcripts, and a workspace it cannot read counts as client. Nil counts
+	// every workspace as client, so a watchdog built without the test reads no
+	// transcript.
 	client func(workspace string) (bool, error)
 
 	// tailRead returns the bytes of a transcript from an offset to its end, at
@@ -569,6 +571,7 @@ func (d *Daemon) startWatchdog(ctx context.Context) {
 	w.readPane = d.driver.PaneForeground
 	w.capture = d.driver.CapturePaneJoined
 	d.wireWatchdogClient(w)
+	d.watchdog = w
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
@@ -577,7 +580,8 @@ func (d *Daemon) startWatchdog(ctx context.Context) {
 }
 
 // wireWatchdogClient gives the watchdog the workspace test that keeps the
-// transcript reader off a client seat: the stored scope, the ruled source (K1a).
+// transcript reader off a client seat: the workspace's stored scope, the same
+// source the COMPOSER column uses.
 func (d *Daemon) wireWatchdogClient(w *watchdog) {
 	w.client = d.workspaceIsClient
 }
@@ -653,12 +657,14 @@ func (w *watchdog) transcript(s api.Session) (r panestate.TranscriptReading, ok 
 	if w.reg.Resolve(s.Runtime.Name).Name() != "claude" {
 		return gap("")
 	}
-	// Until I-98 O2 is ruled, a client workspace's seat is not read, and one
-	// whose workspace cannot be read counts as client.
-	if w.client != nil {
-		if c, err := w.client(s.Workspace); err != nil || c {
-			return gap(gapClientNotRead)
-		}
+	// Until the operator rules on reading client-workspace transcripts, a client
+	// workspace's seat is not read, one whose workspace cannot be read counts as
+	// client, and so does a watchdog with no client test.
+	if w.client == nil {
+		return gap(gapClientNotRead)
+	}
+	if c, err := w.client(s.Workspace); err != nil || c {
+		return gap(gapClientNotRead)
 	}
 	id := s.HarnessSessionID
 	switch {
