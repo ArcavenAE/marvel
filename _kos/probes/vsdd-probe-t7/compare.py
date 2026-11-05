@@ -324,6 +324,14 @@ def load(spec):
     if not isinstance(axes, dict) or not axes:
         raise Refused("no_axes", "the input names no axes")
     for name, ax in axes.items():
+        # The stream seed joins names with ":", so a name holding one could
+        # collide with an axis and sensitivity pair.
+        if ":" in str(name):
+            raise Refused("bad_input", f"axis name {name!r} holds a colon")
+        for sens in ax.get("sensitivities", []):
+            sname = str(sens.get("name", "sensitivity"))
+            if ":" in sname:
+                raise Refused("bad_input", f"sensitivity name {sname!r} of axis {name!r} holds a colon")
         if "num" not in ax:
             raise Refused("bad_axis", f"axis {name!r} has no num field")
         if not isinstance(ax.get("family", True), bool):

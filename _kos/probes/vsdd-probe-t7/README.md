@@ -85,24 +85,26 @@ For an axis with an estimate:
 - `coverage_at_7_pairs`: the simulated coverage of the delta and bootstrap
   intervals at the level that axis was tested at, with its model.
 
-The close letters are cost's: in 9.4 (a) and (b) close a series, and the blind
-stop and the zero totals are written for cost. (c) and (d) are per-axis
-verdicts. For cost, the zero-total cases follow 9.4: if both arms'
+The blind and zero-total closes are cost's: in 9.4 (a) and (b) close a series,
+and the blind stop and the zero totals are written for cost. (c) and (d) are
+per-axis verdicts. For cost, the zero-total cases follow 9.4: if both arms'
 denominator totals are zero, the axis reports the totals and closes **(a)**;
 if one is zero, no ratio is computed, the axis reports both arms' totals and
 closes **(c)** against the arm with the zero. Only cost's status feeds the
-series `close`, which reads (a) for a both-zero cost axis and (b) for a blind
-cost axis.
+series `close` for these, which reads (a) for a both-zero cost axis and (b)
+for a blind cost axis.
+
+The narrow-wave close belongs to the series, not to cost. A series in which any
+run's widest wave is under 2 closes **(a)** with the widths listed, and never
+writes (d). So every family axis reads (a) in that series, with its
+earlier verdict kept beside it as `verdict_before_series_close`. A
+`family: false` axis is left as it is.
 
 Any other axis meets the same zeros (a per-accepted-story axis such as cache
 does), so the script handles them there too, **as a reading and not as 9.4's
 text**: both totals zero reads status `not_comparable`, and one total zero
 reads `one_arm_zero` naming the arm, each with both arms' totals and no
 letter. The handling is extended to every axis; the letters are not.
-
-A series in which any run's widest wave is under 2 closes **(a)** with the
-widths listed, and never writes (d); each family axis keeps its estimate and
-carries `verdict_before_series_close`.
 
 Sensitivities (`hub_wait_removed` and `first_attempt_only` beside cost) get an
 estimate and an interval and no verdict and no Holm level. Where the parent
@@ -115,7 +117,8 @@ The bootstrap is seeded. The input's `seed` is the only value the protocol
 records. Each axis and each sensitivity gets its own stream, seeded from
 `sha256("seed:axis")` (and `sha256("seed:axis:sensitivity")` for a
 sensitivity), read as an integer. It is never Python's `hash()` of a string,
-which is randomized per process. So adding an axis, a breakdown or a
+which is randomized per process. The join is ":", so an axis or sensitivity
+name holding a colon is refused at load (`bad_input`). So adding an axis, a breakdown or a
 sensitivity never moves another axis's bootstrap interval, and two runs on one
 input give identical output. The coverage simulation has its own seed under
 `coverage`.

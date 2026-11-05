@@ -4,6 +4,7 @@ run data. Nothing here reads a real transcript or a real run.
 import json
 import math
 import os
+import random
 import subprocess
 import sys
 import tempfile
@@ -391,6 +392,59 @@ class StreamSeeds(unittest.TestCase):
         self.assertEqual(compare.stream_seed(1, "cost"), want)
         want = int.from_bytes(hashlib.sha256(b"7:cost:hub_wait_removed").digest(), "big")
         self.assertEqual(compare.stream_seed(7, "cost", "hub_wait_removed"), want)
+
+    def test_each_axis_bootstrap_uses_the_stream_of_its_own_name(self):
+        a = [(100.0 + 9 * i * i, 10.0 + (i % 3)) for i in range(7)]
+        b = [(n * 1.1 + 7 * (-1) ** i * i, d) for i, (n, d) in enumerate(a)]
+        twin = {"num": "cost", "den": "accepted", "smallest_effect": 0.2, "family": False}
+        s = spec(a, b, extra_axes={"north": dict(twin), "south": dict(twin)}, seed=5)
+        out = compare.analyse(s)
+        _, resamples, _, pairs, axes = compare.load(s)
+        got = {}
+        for name in ("north", "south"):
+            rows = compare.axis_rows(pairs, axes[name])
+            theta, se, _ = compare.estimate_axis(rows)
+            want = compare.interval_block(rows, theta, se, 0.05, resamples,
+                                          random.Random(compare.stream_seed(5, name)))
+            self.assertEqual(out["axes"][name]["interval"], want)
+            got[name] = out["axes"][name]["interval"]["bootstrap"]
+        self.assertNotEqual(got["north"], got["south"])
+
+    def test_each_sensitivity_bootstrap_uses_the_stream_of_axis_and_name(self):
+        a = [(100.0 + 9 * i * i, 10.0 + (i % 3)) for i in range(7)]
+        b = [(n * 1.1 + 7 * (-1) ** i * i, d) for i, (n, d) in enumerate(a)]
+        s = spec(a, b, seed=5)
+        s["axes"]["cost"]["sensitivities"] = [
+            {"name": "left", "num": "cost", "den": "accepted"},
+            {"name": "right", "num": "cost", "den": "accepted"},
+        ]
+        out = compare.analyse(s)
+        _, resamples, _, pairs, axes = compare.load(s)
+        rows = compare.axis_rows(pairs, axes["cost"])
+        theta, se, _ = compare.estimate_axis(rows)
+        got = []
+        for entry in out["axes"]["cost"]["sensitivities"]:
+            want = compare.interval_block(rows, theta, se, entry["interval"]["alpha"], resamples,
+                                          random.Random(compare.stream_seed(5, "cost", entry["name"])))
+            self.assertEqual(entry["interval"], want)
+            got.append(entry["interval"]["bootstrap"])
+        self.assertNotEqual(got[0], got[1])
+
+    def test_a_colon_in_an_axis_name_is_refused(self):
+        a, b = tight_rows(1.0)
+        twin = {"num": "cost", "den": "accepted", "smallest_effect": 0.2, "family": False}
+        with self.assertRaises(compare.Refused) as ctx:
+            compare.analyse(spec(a, b, extra_axes={"cost:x": twin}))
+        self.assertEqual(ctx.exception.cause, "bad_input")
+
+    def test_a_colon_in_a_sensitivity_name_is_refused(self):
+        a, b = tight_rows(1.0)
+        sens = {"name": "x:y", "num": "cost", "den": "accepted"}
+        s = spec(a, b)
+        s["axes"]["cost"]["sensitivities"] = [sens]
+        with self.assertRaises(compare.Refused) as ctx:
+            compare.analyse(s)
+        self.assertEqual(ctx.exception.cause, "bad_input")
 
     def test_two_runs_on_one_input_give_identical_intervals_whatever_the_hash_seed(self):
         outs = []
