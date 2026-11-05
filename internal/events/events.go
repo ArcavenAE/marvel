@@ -564,6 +564,7 @@ var allKinds = []Kind{
 	KindRunSucceeded,
 	KindRunFailed,
 	KindRunCancelled,
+	KindRunDeadline,
 	KindContextFeedUnsupported,
 	KindAdmissionRefused,
 	KindClusterSuspendInterrupted,
