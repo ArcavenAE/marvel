@@ -76,6 +76,15 @@ h() { shasum -a 256 "$here/$1" | cut -d' ' -f1; }
 if [[ $rc -eq 0 && $ok -eq 1 ]]; then pass "the report hashes apply_patch.py, derive.py and the shim"
 else fail "the report hashes the patch, the gate and the shim" "rc=$rc ok=$ok out=[$out]"; fi
 
+# the pack file manifest lists a tree in the rc.25 manifest's format, byte for byte
+mk_fixture
+if py "$here/derive.py" manifest "$T/pack" | cmp -s - "$T/manifest.csv"; then pass "derive.py manifest reproduces the rc.25 manifest format"
+else fail "derive.py manifest reproduces the rc.25 manifest format" "$(py "$here/derive.py" manifest "$T/pack" | diff - "$T/manifest.csv" | head -4)"; fi
+mk_fixture; derive_ok
+out=$("$here/build-pack.sh" report "$T/pack" "$T/manifest.csv" 1.0.0-rc.25.arm-b.2 2>&1)
+if [[ "$out" == *"pack file manifest sha256 $(py "$here/derive.py" manifest "$T/pack" | shasum -a 256 | cut -d' ' -f1)"* ]]; then pass "the report records the pack file manifest sha256"
+else fail "the report records the pack file manifest sha256" "out=[$out]"; fi
+
 # apply_patch's guards: anchors, the after-sha check, the before-sha check
 if py "$here/test_apply_patch.py" >/dev/null 2>&1; then pass "apply_patch guards (test_apply_patch.py)"
 else fail "apply_patch guards" "$(py "$here/test_apply_patch.py" 2>&1 | tail -5)"; fi
