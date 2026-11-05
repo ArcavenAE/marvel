@@ -137,13 +137,22 @@ func TestFreezeIsNotIdleTime(t *testing.T) {
 
 // Test 2. A goose that writes a line every 0.2s is not idle, and a freeze does
 // not make it so. It is still running 1.5s after SIGCONT and ends with its own
-// exit 0, the frozen span is named, and the longest gap between lines leaves it
-// out. At base this run survives by a race (its first write after SIGCONT lands
-// before the monitor's first tick) and its max-gap counts the freeze, so the
-// max-gap line is what fails there.
+// exit 0, the frozen span is named and is at least half the freeze, and the
+// longest gap between lines is under half the freeze. At base this run survives
+// by a race (its first write after SIGCONT lands before the monitor's first
+// tick) and its max-gap counts the freeze (4.1 to 4.2s), so the max-gap bound is
+// what fails there. The bounds are fractions of the freeze, not literals, and
+// the frozen figure has no upper bound: a load stall beside the stop is excused
+// with it.
 func TestFreezeDoesNotKillASteadyWriter(t *testing.T) {
+	const freeze = 4 * time.Second
 	script := `i=0; while [ $i -lt 40 ]; do printf '%s\n' '` + textLine + `'; sleep 0.2; i=$((i+1)); done`
-	r := runFrozen(t, script, 2*time.Second, 30*time.Second, time.Second, 4*time.Second)
+	r := runFrozen(t, script, 2*time.Second, 30*time.Second, time.Second, freeze)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("wrapper stderr = %q", r.stderrAll)
+		}
+	})
 	if got := r.end.Sub(r.contAt); got < 1500*time.Millisecond {
 		t.Errorf("ended %v after SIGCONT (exit %d, stderr last %q), want it still running at 1.5s: the freeze counted as idle",
 			got, r.code, r.stderrLast)
@@ -154,13 +163,27 @@ func TestFreezeDoesNotKillASteadyWriter(t *testing.T) {
 	if strings.Contains(r.stderrAll, "watchdog: idle") || strings.Contains(r.stderrAll, "watchdog: wall-clock") {
 		t.Errorf("stderr = %q, want no watchdog kill line", r.stderrAll)
 	}
-	if !strings.Contains(r.stderrAll, "watchdog: frozen ") {
+	frozen, ok := frozenOf(r.stderrAll)
+	switch {
+	case !ok:
 		t.Errorf("stderr = %q, want a frozen line", r.stderrAll)
+	case frozen < freeze/2:
+		t.Errorf("frozen = %v, want at least %v: the freeze path did not take off most of the stop", frozen, freeze/2)
 	}
-	gap := maxGapOf(t, r.stderrAll)
-	if gap >= time.Second {
-		t.Errorf("max-gap = %v, want under 1s: the freeze counted as a gap between lines", gap)
+	if gap := maxGapOf(t, r.stderrAll); gap >= freeze/2 {
+		t.Errorf("max-gap = %v, want under %v: the freeze counted as a gap between lines", gap, freeze/2)
 	}
+}
+
+// frozenOf reads the figure from the "watchdog: frozen 3.9s" line.
+func frozenOf(stderr string) (time.Duration, bool) {
+	for _, l := range strings.Split(stderr, "\n") {
+		var secs float64
+		if n, _ := fmt.Sscanf(l, "watchdog: frozen %fs", &secs); n == 1 {
+			return time.Duration(secs * float64(time.Second)), true
+		}
+	}
+	return 0, false
 }
 
 // maxGapOf reads the figure from the "watchdog: max-gap 0.2s lines 40" line.
