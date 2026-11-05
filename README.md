@@ -25,7 +25,7 @@ Claude Code, Codex, opencode, or any command you name.
 
 New here? The [first-run page](docs/first-run.md) walks four stages, each optional and each with one proof command, so you can stop at the first one that does what you need.
 
-Try it with an installed marvel. It needs no model login and costs nothing, and tmux is the one prerequisite. `marvel example` lists the manifests the binary carries:
+Try it with an installed marvel. It needs no model login and costs nothing, and tmux 3.5 or later is the one prerequisite. `marvel example` lists the manifests the binary carries:
 
 ```sh
 marvel example
