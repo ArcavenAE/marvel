@@ -164,6 +164,11 @@ type Config struct {
 	// Conts delivers SIGCONT, which tells the monitor a stop has ended; nil
 	// subscribes to SIGCONT. It is the counterpart of Signals for a test.
 	Conts <-chan os.Signal
+	// Ticks delivers the monitor's ticks; nil uses a ticker at the check
+	// interval. The value of a tick is never read, because a ticker delivers the
+	// time the tick fell due and lateness is measured at receipt. It is the
+	// counterpart of Signals and Conts for a test.
+	Ticks <-chan time.Time
 	// GuardArgv is the command that runs the guard, before the flags the wrapper
 	// appends. Nil means this binary's hidden `goose-guard` subcommand.
 	GuardArgv []string
@@ -342,8 +347,12 @@ func Run(cfg Config) int {
 	monitorDone := make(chan struct{})
 	monitor := func() {
 		interval := tickFor(cfg.Idle)
-		tick := time.NewTicker(interval)
-		defer tick.Stop()
+		ticks := cfg.Ticks
+		if ticks == nil {
+			tick := time.NewTicker(interval)
+			defer tick.Stop()
+			ticks = tick.C
+		}
 		// The wall limit counts from wallStart, which a freeze moves forward.
 		wallStart := start
 		fc := newFreezeClock(interval, time.Now())
@@ -371,7 +380,7 @@ func Run(cfg Config) int {
 					tr.excuse(now, frozen)
 					wallStart = wallStart.Add(frozen)
 				}
-			case <-tick.C:
+			case <-ticks:
 				// The value a ticker delivers is the time the tick fell due, not
 				// the time it was received (time.sendTime sends Now minus the
 				// delay). After a stop the first tick still carries its due time

@@ -17,8 +17,7 @@ import (
 // test binary re-executes itself as the wrapper (reexec_test.go), with a fake
 // goose as `sh -c`. They signal only the two process groups they started.
 
-// freezeIdle is the idle limit every freeze test runs under; its tick is
-// tickFor(freezeIdle).
+// freezeIdle is the idle limit every re-exec freeze test runs under.
 const freezeIdle = 2 * time.Second
 
 // freezeRun is what one frozen run looked like from outside.
@@ -204,32 +203,6 @@ func maxGapOf(t *testing.T, stderr string) time.Duration {
 	return 0
 }
 
-// Test 4. The excuse runs from the last tick before the stop to the resume,
-// less one interval, so a stop of 4s with a 100ms tick is excused for between
-// 3.9s and the whole stop. With the delivered tick value read as the clock, the
-// first tick after a stop still carries the time it fell due, up to a tick
-// after the stop began, and the excuse falls a further tick short (3.81s
-// measured), so this is red there and green here. The figure is printed to
-// 0.1s, so the bound sits at 3.85s.
-func TestAFreezeIsExcusedFromTheLastTickLessOneInterval(t *testing.T) {
-	const freeze = 4 * time.Second
-	interval := tickFor(freezeIdle)
-	script := `i=0; while [ $i -lt 25 ]; do printf '%s\n' '` + textLine + `'; sleep 0.2; i=$((i+1)); done`
-	r := runFrozen(t, script, 30*time.Second, time.Second, freeze)
-	t.Cleanup(func() {
-		if t.Failed() {
-			t.Logf("wrapper stderr = %q", r.stderrAll)
-		}
-	})
-	frozen, ok := frozenOf(r.stderrAll)
-	if !ok {
-		t.Fatalf("stderr = %q, want a frozen line", r.stderrAll)
-	}
-	if want := freeze - interval - 50*time.Millisecond; frozen < want {
-		t.Errorf("frozen = %v, want at least %v: the excuse fell more than one interval short of the stop", frozen, want)
-	}
-}
-
 // Test 3. A tool call is open, so idle is paused, and Wall is 5s. A 6s freeze
 // is not wall time: the run ends by wall about 5s of running time from its
 // start, not at SIGCONT.
@@ -245,5 +218,85 @@ func TestFreezeIsNotWallTime(t *testing.T) {
 	}
 	if got := r.end.Sub(r.contAt); got < 1500*time.Millisecond {
 		t.Errorf("ended %v after SIGCONT, want it still running at 1.5s", got)
+	}
+}
+
+// stalledRun runs a silent fake goose in this process with the monitor's ticks
+// and SIGCONTs under the test's control, so the order of a resume is fixed and
+// needs no real stop. After firstTickAt it delivers one tick on time, then
+// holds the monitor for stall (nothing ticks, as in a stop), then delivers the
+// first tick after the stop and a SIGCONT. That tick carries a value dueOffset
+// after the tick before the stop, which is what a real ticker sends: the time
+// the tick fell due inside the stop, not the time it is received.
+func stalledRun(t *testing.T, script string, idle, firstTickAt, stall, dueOffset time.Duration) result {
+	t.Helper()
+	ticks := make(chan time.Time)
+	conts := make(chan os.Signal)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		time.Sleep(firstTickAt)
+		before := time.Now()
+		select {
+		case ticks <- before:
+		case <-done:
+			return
+		}
+		time.Sleep(stall)
+		select {
+		case ticks <- before.Add(dueOffset):
+		case <-done:
+			return
+		}
+		select {
+		case conts <- syscall.SIGCONT:
+		case <-done:
+		}
+	}()
+	return runSh(t, script, time.Minute, idle, func(c *Config) {
+		c.Ticks = ticks
+		c.Conts = conts
+	})
+}
+
+// A tick received after a stop is late whatever value it carries, so its expiry
+// check is held until the SIGCONT, which excuses the stop from the last tick
+// before it, less one interval. The tick here carries a due time 0.9s after the
+// last tick, inside the 3s stop. Read as the clock, that value reads as on
+// schedule: nothing is held and the excuse runs from the stale value, 1.1s of
+// the 3s. The excuse here is 2.0s. The figure is printed to 0.1s.
+func TestATickReceivedAfterAStopIsLateWhateverItsValueSays(t *testing.T) {
+	t.Parallel()
+	const (
+		stall = 3 * time.Second
+		idle  = 20 * time.Second // its tick is 1s, the cap
+	)
+	r := stalledRun(t, "sleep 5", idle, 300*time.Millisecond, stall, 900*time.Millisecond)
+	frozen, ok := frozenOf(r.stderr)
+	if !ok {
+		t.Fatalf("stderr = %q, want a frozen line", r.stderr)
+	}
+	if want := stall - tickFor(idle) - 100*time.Millisecond; frozen < want {
+		t.Errorf("frozen = %v, want at least %v: the excuse ran from the tick's due time, not from the last tick before the stop (stderr %q)",
+			frozen, want, r.stderr)
+	}
+}
+
+// A seat with most of its idle spent when it was stopped survives a resume
+// whose first tick is processed before the SIGCONT: the tick is late, so its
+// expiry check is held, and the SIGCONT then takes the stop off the idle clock.
+// At receipt time the idle clock reads 4s of a 2s limit, so a check that ran
+// before the SIGCONT would kill it.
+func TestASeatWithMostOfItsIdleSpentSurvivesATickFirstResume(t *testing.T) {
+	t.Parallel()
+	r := stalledRun(t, "sleep 5", 2*time.Second, 1200*time.Millisecond, 3*time.Second, 90*time.Millisecond)
+	if r.code != 0 {
+		t.Errorf("exit = %d, want goose's own 0 (stderr %q)", r.code, r.stderr)
+	}
+	if strings.Contains(r.stderr, "watchdog: idle") {
+		t.Errorf("stderr = %q, want no idle kill: the stop was counted as idle", r.stderr)
+	}
+	if _, ok := frozenOf(r.stderr); !ok {
+		t.Errorf("stderr = %q, want a frozen line", r.stderr)
 	}
 }
