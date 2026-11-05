@@ -139,6 +139,8 @@ jobs:
             help.v.aaplimg.com:443
             stocks-data-service.v.aaplimg.com:443
             ocsp.edge.digicert.com:443
+            xp.apple.com:443
+            north-america-mask.wrr.me.apple-dns.net:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -174,6 +176,8 @@ jobs:
             help.v.aaplimg.com:443
             stocks-data-service.v.aaplimg.com:443
             ocsp.edge.digicert.com:443
+            xp.apple.com:443
+            north-america-mask.wrr.me.apple-dns.net:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
