@@ -60,9 +60,13 @@ func TestWaitExecutableOutlastsAnOpenWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command(script, "--exec-probe").Run(); !errors.Is(err, syscall.ETXTBSY) {
+	switch err := exec.Command(script, "--exec-probe").Run(); {
+	case err == nil:
 		_ = w.Close()
-		t.Skipf("exec with a writer open gave %v, not ETXTBSY; nothing to wait out here", err)
+		t.Skip("exec with a writer open succeeded; there is no ETXTBSY to wait out on this OS")
+	case !errors.Is(err, syscall.ETXTBSY):
+		_ = w.Close()
+		t.Fatalf("exec with a writer open: %v, want nil or ETXTBSY", err)
 	}
 	go func() {
 		time.Sleep(100 * time.Millisecond)
