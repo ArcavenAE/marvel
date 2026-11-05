@@ -81,7 +81,9 @@ seat already running keeps the environment it started with.
 ## Limits
 
 - Two daemons under one root are still one cluster. The root names a cluster;
-  it does not make two clusters share one.
+  it does not make two clusters share one. A second daemon under the same
+  root refuses at start, on a lock at `run/daemon.lock` that nothing but the
+  root moves (marvel#883).
 - A relocated root does not move a running daemon. Start the daemon under the
   root you mean.
 - The tmux server name is derived from the root, so a new root is a new tmux
