@@ -200,7 +200,7 @@ class HolmFamily(unittest.TestCase):
         self.assertEqual(axes["cost"]["holm"]["family_size"], 2)
         self.assertEqual(axes["wall_clock"]["holm"]["family_size"], 2)
         self.assertEqual(axes["stops"]["status"], "numerator_zero")
-        self.assertEqual(axes["noisy"]["verdict"], "b")
+        self.assertEqual(axes["noisy"]["verdict"], "blind")
         self.assertGreaterEqual(axes["cost"]["holm"]["adjusted_p"], axes["cost"]["p"])
 
 
@@ -414,6 +414,125 @@ class StreamSeeds(unittest.TestCase):
         self.assertIn("hash()", text)
 
 
+class NonCostLetters(unittest.TestCase):
+    """9.4 scopes the close letters (a) and (b) to cost; (c) and (d) are the
+    per-axis verdicts. Other axes get the same zero handling and no letter."""
+
+    def spec(self, a_other, b_other, blind=False):
+        a, b = tight_rows(1.5, k=5)
+        pairs = []
+        for i, ((na, da), (nb, db)) in enumerate(zip(a, b)):
+            pairs.append({"block": i + 1,
+                          "A": {"widest_wave": 3, "cost": na, "accepted": da, "cache": 40.0, "acc2": a_other},
+                          "B": {"widest_wave": 3, "cost": nb, "accepted": db, "cache": 30.0, "acc2": b_other}})
+        return {"alpha": 0.05, "seed": 1, "resamples": 500, "coverage": SMALL_COVERAGE, "pairs": pairs,
+                "axes": {"cost": {"num": "cost", "den": "accepted", "smallest_effect": 0.2},
+                         "cache": {"num": "cache", "den": "acc2", "smallest_effect": 0.2, "blind": blind}}}
+
+    def test_a_blind_non_cost_axis_reads_blind_not_b(self):
+        r = compare.analyse(self.spec(5.0, 5.0, blind=True))["axes"]["cache"]
+        self.assertEqual(r["status"], "blind")
+        self.assertEqual(r["verdict"], "blind")
+
+    def test_a_blind_non_cost_axis_does_not_close_the_series(self):
+        out = compare.analyse(self.spec(5.0, 5.0, blind=True))
+        self.assertIsNone(out["series"]["close"])
+
+    def test_non_cost_both_zero_is_not_comparable_with_no_letter(self):
+        out = compare.analyse(self.spec(0.0, 0.0))
+        r = out["axes"]["cache"]
+        self.assertEqual(r["status"], "not_comparable")
+        self.assertIsNone(r["verdict"])
+        self.assertEqual(r["totals"]["A"], {"num": 200.0, "den": 0.0})
+        self.assertEqual(r["totals"]["B"], {"num": 150.0, "den": 0.0})
+        self.assertIsNone(out["series"]["close"])
+
+    def test_non_cost_one_zero_names_the_arm_with_no_letter(self):
+        out = compare.analyse(self.spec(0.0, 5.0))
+        r = out["axes"]["cache"]
+        self.assertEqual(r["status"], "one_arm_zero")
+        self.assertEqual(r["against"], "A")
+        self.assertIsNone(r["verdict"])
+        self.assertNotIn("ratio", r)
+        self.assertEqual(r["totals"]["B"]["den"], 25.0)
+        self.assertIsNone(out["series"]["close"])
+
+    def test_non_cost_zero_axes_sit_outside_the_family(self):
+        out = compare.analyse(self.spec(0.0, 0.0))
+        self.assertEqual(out["axes"]["cost"]["holm"]["family_size"], 1)
+
+    def test_only_cost_feeds_the_series_close_whatever_the_axis_order(self):
+        s = self.spec(5.0, 5.0)
+        s["axes"] = {"cache": s["axes"]["cache"],
+                     "cost": dict(s["axes"]["cost"], blind=True)}
+        out = compare.analyse(s)
+        self.assertEqual(list(out["axes"]), ["cache", "cost"])
+        self.assertEqual(out["series"]["close"], "b")
+
+    def test_cost_keeps_its_letters(self):
+        a = [(100.0, 0.0)] * 5
+        b = [(120.0, 0.0)] * 5
+        r = compare.analyse(spec(a, b))["axes"]["cost"]
+        self.assertEqual((r["status"], r["verdict"]), ("both_zero", "a"))
+
+
+class SensitivityUnderABlindParent(unittest.TestCase):
+    def test_a_sensitivity_of_a_blind_cost_axis_is_shown_at_unadjusted_alpha_with_no_verdict(self):
+        pairs = []
+        for i in range(7):
+            pairs.append({"block": i + 1,
+                          "A": {"widest_wave": 3, "cost": 100.0 + i, "hub": 10.0, "accepted": 8.0},
+                          "B": {"widest_wave": 3, "cost": 130.0 + i, "hub": 5.0, "accepted": 8.0}})
+        s = {"alpha": 0.05, "seed": 1, "resamples": 500, "coverage": SMALL_COVERAGE, "pairs": pairs,
+             "axes": {"cost": {"num": "cost", "den": "accepted", "smallest_effect": 0.2, "blind": True,
+                               "sensitivities": [{"name": "hub_wait_removed", "num": "cost",
+                                                  "minus": "hub", "den": "accepted"}]}}}
+        r = compare.analyse(s)["axes"]["cost"]
+        self.assertEqual(r["verdict"], "b")
+        sens = r["sensitivities"][0]
+        self.assertEqual(sens["interval"]["alpha"], 0.05)
+        self.assertNotIn("verdict", sens)
+        self.assertNotIn("holm", sens)
+
+
+class BootstrapSkips(unittest.TestCase):
+    def test_the_skipped_fraction_sits_beside_every_bootstrap_interval(self):
+        a, b = tight_rows(1.5)
+        r = compare.analyse(spec(a, b))["axes"]["cost"]
+        iv = r["interval"]
+        self.assertEqual(iv["bootstrap_skipped"], 0)
+        self.assertEqual(iv["bootstrap_skipped_fraction"], 0.0)
+        self.assertEqual(iv["bootstrap_resamples"], 500)
+
+    def test_resamples_with_a_zero_total_are_dropped_and_counted(self):
+        # Two of seven pairs carry every accepted story in arm B, so a resample
+        # that misses both has a zero denominator total and is dropped.
+        a = [(100.0, 5.0)] * 7
+        b = [(110.0, 5.0) if i < 2 else (110.0, 0.0) for i in range(7)]
+        r = compare.analyse(spec(a, b))["axes"]["cost"]
+        iv = r["interval"]
+        self.assertGreater(iv["bootstrap_skipped"], 0)
+        self.assertAlmostEqual(iv["bootstrap_skipped_fraction"], iv["bootstrap_skipped"] / 500)
+
+
+class CoverageSizes(unittest.TestCase):
+    def test_sims_of_zero_or_below_is_a_refusal_not_a_crash(self):
+        a, b = tight_rows(1.5)
+        for sims in (0, -3):
+            s = spec(a, b)
+            s["coverage"] = dict(SMALL_COVERAGE, sims=sims)
+            p = cli(json.dumps(s))
+            self.assertEqual(p.returncode, 4, p.stderr)
+            self.assertEqual(p.stdout, "")
+            self.assertIn("refused: bad_input:", p.stderr)
+
+
+class HolmDocstring(unittest.TestCase):
+    def test_holm_returns_two_values_and_the_docstring_says_so(self):
+        self.assertEqual(len(compare.holm([0.01, 0.02])), 2)
+        self.assertNotIn("first axis not rejected", compare.holm.__doc__)
+
+
 def cli(text=None, path=None, *flags):
     if text is not None:
         fd, path = tempfile.mkstemp(suffix=".json")
@@ -435,7 +554,7 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(p1.stdout, p2.stdout)
         out = json.loads(p1.stdout)
         self.assertEqual(out["series"]["pairs"], 7)
-        self.assertEqual(out["axes"]["compactions"]["verdict"], "b")
+        self.assertEqual(out["axes"]["compactions"]["verdict"], "blind")
 
     def test_text_form(self):
         p = cli(None, EXAMPLE, "--text")

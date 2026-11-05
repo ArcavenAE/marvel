@@ -33,6 +33,7 @@ DEFAULT_COVERAGE = {
     "true_log_ratio": 0.0,
 }
 MAX_N = 1000
+COST = "cost"
 
 
 class Refused(Exception):
@@ -162,8 +163,8 @@ def bootstrap_interval(rows, alpha, resamples, rng):
 
 
 def holm(pvals):
-    """Holm step-down. Returns adjusted p, rank (1 = smallest p), and the
-    1-based rank of the first axis not rejected at alpha, or None."""
+    """Holm step-down. Returns two lists in the input order: the adjusted p
+    values and the ranks (1 = smallest p)."""
     m = len(pvals)
     order = sorted(range(m), key=lambda i: (pvals[i], i))
     adj = [0.0] * m
@@ -301,6 +302,10 @@ def load(spec):
         raise Refused("bad_resamples", f"resamples is {resamples!r}")
     cov = dict(DEFAULT_COVERAGE)
     cov.update(spec.get("coverage", {}))
+    for key in ("sims", "resamples"):
+        v = cov[key]
+        if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+            raise Refused("bad_input", f"coverage {key} is {v!r}, need a whole number of at least 1")
     rho = cov["rho"]
     if isinstance(rho, bool) or not isinstance(rho, (int, float)) or not -1 < rho < 1:
         raise Refused("bad_coverage", f"rho is {rho!r}, need a number above -1 and below 1")
@@ -357,13 +362,21 @@ def totals_note(rows):
 # ---- one axis --------------------------------------------------------------
 
 
-def classify(rows):
-    """None when a ratio can be computed, else the 9.4 zero-total cases."""
+def classify(rows, is_cost):
+    """None when a ratio can be computed, else the zero-total cases. 9.4 writes
+    the zero-total closes for cost, so only cost gets a letter, (a) for both
+    totals zero and (c) against the arm with the zero. Any other axis meets the
+    same zeros and reads a status and no letter."""
     na, da, nb, db = sums(rows)
     if da == 0 and db == 0:
-        return {"status": "both_zero", "verdict": "a"}
+        if is_cost:
+            return {"status": "both_zero", "verdict": "a"}
+        return {"status": "not_comparable", "verdict": None}
     if da == 0 or db == 0:
-        return {"status": "one_zero", "verdict": "c", "against": "A" if da == 0 else "B"}
+        arm = "A" if da == 0 else "B"
+        if is_cost:
+            return {"status": "one_zero", "verdict": "c", "against": arm}
+        return {"status": "one_arm_zero", "verdict": None, "against": arm}
     if na == 0 or nb == 0:
         return {"status": "numerator_zero", "verdict": None}
     return None
@@ -377,7 +390,9 @@ def interval_block(rows, theta, se, alpha, resamples, rng):
         "alpha": alpha,
         "delta": [math.exp(theta - half), math.exp(theta + half)],
         "bootstrap": None if boot is None else [math.exp(boot[0]), math.exp(boot[1])],
+        "bootstrap_resamples": resamples,
         "bootstrap_skipped": skipped,
+        "bootstrap_skipped_fraction": skipped / resamples,
     }
     return out
 
@@ -424,11 +439,12 @@ def analyse(spec):
         rec = {"totals": totals_note(rows), "smallest_effect": defn["smallest_effect"]}
         result[name] = rec
         if defn.get("blind"):
-            rec.update({"status": "blind", "verdict": "b"})
+            # 9.4: (b) is cost's close; any other blind axis reads "blind".
+            rec.update({"status": "blind", "verdict": "b" if name == COST else "blind"})
             if not defn.get("family", True):
                 del rec["verdict"]
             continue
-        special = classify(rows)
+        special = classify(rows, name == COST)
         if special:
             rec.update(special)
             if not defn.get("family", True):
@@ -490,7 +506,7 @@ def analyse(spec):
         for sens in defn.get("sensitivities", []):
             srows = axis_rows(pairs, {**sens, "smallest_effect": defn["smallest_effect"]})
             entry = {"name": sens.get("name", "sensitivity"), "totals": totals_note(srows)}
-            special = classify(srows)
+            special = classify(srows, name == COST)
             if special:
                 entry.update({"status": special["status"]})
             else:
@@ -535,7 +551,8 @@ def render_text(out):
     for w in s["widest_wave_under_2"]:
         lines.append(f"  widest wave under 2: block {w['block']} arm {w['arm']} width {w['widest_wave']}")
     for name, r in out["axes"].items():
-        head = f"{name}: verdict ({r.get('verdict')}) {r['status']}"
+        v = r.get("verdict")
+        head = f"{name}: {'no verdict' if v is None else f'verdict ({v})'} {r['status']}"
         if "ratio" in r:
             iv = r["interval"]["delta"]
             head += f"  B/A {r['ratio']:.4g}  [{iv[0]:.4g}, {iv[1]:.4g}]"

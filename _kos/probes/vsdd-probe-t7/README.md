@@ -58,7 +58,8 @@ Exit 0 is a comparison. Exit 4 is a refusal: nothing on stdout, and
 - **`smallest_effect` is an input** for every axis (0.2 for cost, as ruled).
   The protocol file states the others at M1.
 - **`blind` is an input** for every axis, decided from the pilot (section
-  8.5). The script does not compute it.
+  8.5). The script does not compute it. Cost, the axis named `cost`, reads
+  verdict **(b)**; any other blind axis reads `"blind"`, as 9.4 words it.
 - **More axes** (per phase, per wave width) are more entries under `axes`,
   each with `"family": false`. An axis with `family: false` gets an estimate
   and an interval at alpha and no verdict, as the sensitivities do, and it
@@ -72,25 +73,41 @@ For an axis with an estimate:
 
 - the ratio B over A, its standard error on the log scale, and its p value;
 - the delta method interval (a t interval on the log of the ratio of sums,
-  blocked by pair) and a percentile bootstrap over pairs as a sensitivity;
+  blocked by pair) and a percentile bootstrap over pairs as a sensitivity. The
+  bootstrap reports how many resamples it ran, how many it dropped for a zero
+  total, and the dropped fraction (`bootstrap_skipped_fraction`), beside the
+  interval;
 - the Holm family size, rank and adjusted p (not for a `family: false` axis);
 - the verdict: **(c)** when the Holm step-down rejects, with
   `past_smallest_effect` true when the near end of the interval is at or past
   `ln(1 + smallest_effect)`; **(d)** otherwise, with `pairs_to_resolve`;
-  **(b)** for a blind axis;
+  **(b)** for a blind cost axis, `"blind"` for any other blind axis;
 - `coverage_at_7_pairs`: the simulated coverage of the delta and bootstrap
   intervals at the level that axis was tested at, with its model.
 
-The zero-total cases follow 9.4. If both arms' denominator totals are zero,
-the axis reports the totals and closes **(a)**. If one is zero, no ratio is
-computed, the axis reports both arms' totals and closes **(c)** against the
-arm with the zero. A series in which any run's widest wave is under 2 closes
-**(a)** with the widths listed, and never writes (d); each axis keeps its
-estimate and carries `verdict_before_series_close`.
+The close letters are cost's: in 9.4 (a) and (b) close a series, and the blind
+stop and the zero totals are written for cost. (c) and (d) are per-axis
+verdicts. For cost, the zero-total cases follow 9.4: if both arms'
+denominator totals are zero, the axis reports the totals and closes **(a)**;
+if one is zero, no ratio is computed, the axis reports both arms' totals and
+closes **(c)** against the arm with the zero. Only cost's status feeds the
+series `close`, which reads (a) for a both-zero cost axis and (b) for a blind
+cost axis.
+
+Any other axis meets the same zeros (a per-accepted-story axis such as cache
+does), so the script handles them there too, **as a reading and not as 9.4's
+text**: both totals zero reads status `not_comparable`, and one total zero
+reads `one_arm_zero` naming the arm, each with both arms' totals and no
+letter. The handling is extended to every axis; the letters are not.
+
+A series in which any run's widest wave is under 2 closes **(a)** with the
+widths listed, and never writes (d); each family axis keeps its estimate and
+carries `verdict_before_series_close`.
 
 Sensitivities (`hub_wait_removed` and `first_attempt_only` beside cost) get an
-estimate and an interval and no verdict. The series `close` reads (a) for the
-wave case or a both-zero cost axis, and (b) for a blind cost axis.
+estimate and an interval and no verdict and no Holm level. Where the parent
+axis is blind, or has a zero total so it has no level, its sensitivities are
+shown at the unadjusted alpha.
 
 ## Random streams
 
