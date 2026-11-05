@@ -92,6 +92,9 @@ leaves alone.
   When something was frozen, the stderr file gets one line, `watchdog: frozen <s>s`, just before the max-gap
   line, so the last line is still the one named above. Excluding the stop from the wall limit is a design default:
   the wall limit bounds spend, and a frozen run spends nothing.
+- Up to one tick interval of the stop, plus the time from the wrapper's resume to its first read, stays in the
+  longest gap; if the monitor was starved for more than an interval before the stop, the stop can stay in it
+  uncorrected.
 - The reap records exit 124 with that reason. 124 is not one of goose's codes, since every goose
   failure exits 1 (G8).
 - The 300 s default is a guess above the measured 1 s gap. The probe's fixtures (section 4)

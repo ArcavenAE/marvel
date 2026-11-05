@@ -19,7 +19,10 @@
 // freeze, and the time between is taken off the idle clock, the wall clock and
 // the longest gap. A late tick alone is load and counts as it always did. The
 // exit then writes one stderr line, "watchdog: frozen <s>s", just before the
-// max-gap line.
+// max-gap line. Up to one tick interval of the stop, plus the time from the
+// wrapper's resume to its first read, stays in the longest gap; if the monitor
+// was starved for more than an interval before the stop, the stop can stay in
+// it uncorrected.
 //
 // On either limit the wrapper sends TERM to the group, KILL after Grace, writes
 // "watchdog: idle" or "watchdog: wall-clock" as the last line of the stderr
@@ -578,10 +581,12 @@ func (t *tracker) activity(now time.Time, last byte) {
 // was read after the resume. A gap whose earlier line was read before that point and whose later
 // line after it holds the whole stop, which comes off it. The gap is the one
 // that set the max, so the max is rebuilt from the gaps before and after it.
-// What the stop leaves in the gap is bounded by one interval plus however long
-// the lines waited in the pipe for the wrapper to run. A line read before the
-// stop but after the load-delayed last tick can sit past that point, and then
-// its gap is left whole: that misses the max-gap line, not the limits.
+// What the stop leaves in the gap is up to one interval of it (the stop less
+// frozen) plus the time from the wrapper's resume to its first read. The time
+// goose ran ahead of the wrapper lies inside the stop and comes off with it. A
+// line read before the stop but after the load-delayed last tick can sit past
+// that point, and then its gap is left whole: that misses the max-gap line, not
+// the limits.
 func (t *tracker) excuse(now time.Time, frozen time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
