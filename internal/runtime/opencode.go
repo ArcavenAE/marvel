@@ -24,10 +24,12 @@ type OpenCode struct{}
 
 func (o *OpenCode) Name() string { return "opencode" }
 
-// OffersHandoffTool reports true: opencode reaches an MCP server through the role's own
-// environment, so the marvel-handoff entry needs no seeder
-// (read-only-seat-handoff.md, section 2).
-func (o *OpenCode) OffersHandoffTool() bool { return true }
+// OffersHandoffTool reports false until the opencode half is built. opencode
+// reaches an MCP server through the role's own environment
+// (read-only-seat-handoff.md, section 2), but section 5 check 2 has not run: it
+// must show the MCP call is not prompted for, so apply refuses handoff_via =
+// "tool" here as it does for crush.
+func (o *OpenCode) OffersHandoffTool() bool { return false }
 
 // SupportsStream reports whether this launch produces a parseable stream.
 // Only headless launches do.

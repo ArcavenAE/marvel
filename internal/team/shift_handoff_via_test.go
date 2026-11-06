@@ -85,3 +85,26 @@ func TestFileRoleNoticeIsUnchangedByTheToolPath(t *testing.T) {
 		t.Fatalf("notices = %q, want the file notice", f.notices)
 	}
 }
+
+// A retirement still asks for a file, even for a role that hands off by tool:
+// the retire notice does not carry the tool path yet (a follow-up), so a tool
+// role being retired is told the path and the marker line, never the tool.
+func TestRetireNoticeStillAsksAViaToolRoleForAFile(t *testing.T) {
+	base := realTempDir(t)
+	role := viaToolRole(base)
+	f := newRetireFixture(t, "test-retire-via-tool", role)
+	sess := f.seat(role.Name, 0)
+
+	f.retire(sess)
+
+	if len(f.notices) != 1 {
+		t.Fatalf("notices = %q, want one", f.notices)
+	}
+	n := f.notices[0]
+	if !strings.Contains(n, base) || !strings.Contains(n, "END HANDOFF") {
+		t.Errorf("retire notice %q names no path or marker line", n)
+	}
+	if strings.Contains(n, "submit_handoff") {
+		t.Errorf("retire notice %q names the tool, which the retire path does not carry yet", n)
+	}
+}
