@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
 )
 
 // acctSession is a session on the claude harness whose account home is home,
@@ -248,5 +249,69 @@ func TestAcctKeyPrefersARecordedHomeOverTheConfigDir(t *testing.T) {
 	}
 	if key("a-both") == key("c-env-only") {
 		t.Errorf("a seat with a recorded home prints the key of its variable %q", key("c-env-only"))
+	}
+}
+
+// acctKeyOf is the key token of a session's ACCT cell.
+func acctKeyOf(s api.Session) string {
+	key, _, _ := strings.Cut(acctCell(s), " ")
+	return key
+}
+
+// A row with no cluster hashes as it did before the cluster was folded in. The
+// hex was captured on main at 76cd6950 for this session (svccol-4).
+func TestAcctUnchangedWithoutCluster(t *testing.T) {
+	s := acctSession("a", "/acct/a", api.ReadingFresh, "fresh 87% (seven_day)")
+	if got := acctKeyOf(s); got != "613756" {
+		t.Errorf("key = %q, want 613756 (unchanged from main)", got)
+	}
+}
+
+// On a read of several clusters the cluster joins the fingerprint, so one
+// home path on two clusters is two accounts, and two rows of one cluster still
+// share a key.
+func TestAcctFoldsClusterOnFanOut(t *testing.T) {
+	mk := func(name, cluster string) api.Session {
+		s := acctSession(name, "/acct/a", api.ReadingFresh, "fresh 87% (seven_day)")
+		s.Cluster = cluster
+		return s
+	}
+	a1, a2, b := acctKeyOf(mk("x", "a")), acctKeyOf(mk("y", "a")), acctKeyOf(mk("z", "b"))
+	if a1 != a2 {
+		t.Errorf("two rows of one cluster print %q and %q, want one key", a1, a2)
+	}
+	if a1 == b {
+		t.Errorf("one home on two clusters prints one key %q", a1)
+	}
+	if a1 == "613756" || b == "613756" {
+		t.Errorf("a cluster row kept the cluster-free key 613756")
+	}
+}
+
+// One --cluster names one daemon, so the key is the one a plain read prints.
+func TestAcctSingleClusterFlagDoesNotFold(t *testing.T) {
+	s := acctSession("a-one", "/acct/a", api.ReadingFresh, "fresh 87% (seven_day)")
+	a := startFake(t, fakeAnswers, []api.Session{s})
+	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock})
+	code, out, _ := runFanGet(t, "get", "sessions", "--cluster", "a", "--columns", "name,acct")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(out, "613756") {
+		t.Errorf("a single-cluster read changed the key:\n%s", out)
+	}
+}
+
+// --all-clusters with one configured cluster is a set read and folds.
+func TestAcctAllClustersWithOneClusterFolds(t *testing.T) {
+	s := acctSession("a-one", "/acct/a", api.ReadingFresh, "fresh 87% (seven_day)")
+	a := startFake(t, fakeAnswers, []api.Session{s})
+	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock})
+	code, out, _ := runFanGet(t, "get", "sessions", "--all-clusters", "--columns", "name,acct")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if strings.Contains(out, "613756") || !strings.Contains(out, "87% (seven_day)") {
+		t.Errorf("a one-cluster set read kept the cluster-free key:\n%s", out)
 	}
 }
