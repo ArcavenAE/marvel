@@ -282,8 +282,9 @@ func TestAdapterRowsEqualTheDirectorGolden(t *testing.T) {
 }
 
 // Live: against a director-mcp binary on the same broker, every field matches
-// exactly, the oldest stored time to the second director prints it in, and the
-// age within 2 s. It runs when DIRECTOR_MCP_BIN names the binary.
+// exactly, and the oldest stored time to the second director prints it in. The
+// adapter's age is only checked to be a broker-clock age under a minute; it is
+// not compared with director's. It runs when DIRECTOR_MCP_BIN names the binary.
 func TestAdapterRowsEqualADirectorRunOnTheSameBroker(t *testing.T) {
 	bin := os.Getenv("DIRECTOR_MCP_BIN")
 	if bin == "" {
