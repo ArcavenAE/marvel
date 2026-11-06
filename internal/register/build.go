@@ -36,6 +36,10 @@ func Build(in Input) Row {
 		HarnessVersion: unmeasured(), HarnessCovered: unmeasured(), HarnessReader: unmeasured(),
 		InterruptKey: unmeasured(), EmptyCCExits: unmeasured(), BusPublishScope: unmeasured(),
 	}
+	row.HarnessReader = in.Declared.cell(in.Declared.HarnessReader)
+	row.InterruptKey = in.Declared.cell(in.Declared.InterruptKey)
+	row.EmptyCCExits = in.Declared.cell(in.Declared.EmptyCCExits)
+	row.BusPublishScope = in.Declared.cell(in.Declared.BusPublishScope)
 	if len(in.Duties) > 0 {
 		row.Duties = make(map[string]Cell, len(in.Duties))
 		for _, d := range in.Duties {
@@ -46,3 +50,13 @@ func Build(in Input) Row {
 }
 
 func unmeasured() Cell { return Cell{Source: SourceUnmeasured} }
+
+// cell is the declared cell for a value the build declared, observed when the
+// build declared it and never expiring, or an unmeasured cell when the build
+// declared nothing or gave no time to declare it at.
+func (d Declared) cell(value string) Cell {
+	if value == "" || d.At.IsZero() {
+		return unmeasured()
+	}
+	return Cell{Value: value, ObservedAt: d.At, Source: SourceDeclared}
+}

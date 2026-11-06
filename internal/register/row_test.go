@@ -224,7 +224,13 @@ func TestBuildLeavesAnUndeclaredCellUnmeasured(t *testing.T) {
 	in := builtInput()
 	in.Declared.InterruptKey, in.Declared.EmptyCCExits = "", ""
 	row := Build(in)
-	for name, c := range map[string]Cell{"interrupt.key": row.InterruptKey, "empty_c_c_exits": row.EmptyCCExits} {
+	untimed := builtInput()
+	untimed.Declared.At = time.Time{}
+	noTime := Build(untimed)
+	for name, c := range map[string]Cell{
+		"interrupt.key": row.InterruptKey, "empty_c_c_exits": row.EmptyCCExits,
+		"harness.reader with no declared time": noTime.HarnessReader,
+	} {
 		if c.Source != SourceUnmeasured || c.State(renderNow) != asof.None {
 			t.Errorf("%s = %+v, want an unmeasured cell", name, c)
 		}
