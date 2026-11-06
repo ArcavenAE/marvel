@@ -230,3 +230,23 @@ func TestAcctKeyFollowsAClaudeSeatsConfigDir(t *testing.T) {
 		t.Errorf("one directory spelled two ways prints %q and %q", key("b-one"), key("c-one-again"))
 	}
 }
+
+// A recorded account home is the harness's own answer and wins over the
+// variable: a seat with a home and a variable prints the key of the home, not
+// of the variable.
+func TestAcctKeyPrefersARecordedHomeOverTheConfigDir(t *testing.T) {
+	both := acctEnvSession("a-both", "/home/d/.claude-env")
+	both.AccountHome = "/home/d/.claude-home"
+	got, _ := acctCells(t,
+		both,
+		acctSession("b-home-only", "/home/d/.claude-home", api.ReadingFresh, "fresh 10% (five_hour)"),
+		acctEnvSession("c-env-only", "/home/d/.claude-env"),
+	)
+	key := func(n string) string { k, _, _ := strings.Cut(got[n], " "); return k }
+	if key("a-both") != key("b-home-only") {
+		t.Errorf("a seat with a recorded home prints %q, want the key of that home %q", key("a-both"), key("b-home-only"))
+	}
+	if key("a-both") == key("c-env-only") {
+		t.Errorf("a seat with a recorded home prints the key of its variable %q", key("c-env-only"))
+	}
+}
