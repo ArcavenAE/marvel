@@ -53,7 +53,7 @@ func clientAccountKey(s api.Session) api.AccountKey {
 func acctKey(k api.AccountKey) string { return acctKeyIn(k, "") }
 
 // acctKeyIn is acctKey for a row read from a cluster. cluster is set only on a
-// read of several clusters. It is the fifth field only when non-empty, so a
+// cluster-set read (several clusters, or --all-clusters with one configured). It is the fifth field only when non-empty, so a
 // plain read hashes exactly as before; on a set read the same home path on two
 // clusters is two accounts, and the key says so.
 func acctKeyIn(k api.AccountKey, cluster string) string {
