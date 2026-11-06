@@ -1,6 +1,7 @@
 package register
 
 import (
+	"encoding/json"
 	"os"
 	"reflect"
 	"regexp"
@@ -246,5 +247,33 @@ func TestBuiltRowRenderGolden(t *testing.T) {
 	}
 	if got := Build(builtInput()).Render(renderNow); got != string(want) {
 		t.Errorf("render differs from testdata/built-row.golden:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// The duty cells serialize as an object keyed by the full cell name,
+// "duty.<name>", the same key ReadinessCells and the render use, and never the
+// bare duty name.
+//
+// Falsification: a row keyed by the bare name marshals {"first-turn": ...}, so
+// a reader that looks a duty up by its cell name finds nothing.
+func TestRowJSONKeysDutiesByFullCellName(t *testing.T) {
+	data, err := json.Marshal(Build(Input{Seat: "ws/squad-worker-g1-0", Duties: []string{"first-turn", "ack"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Duties map[string]json.RawMessage `json:"duties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for k := range doc.Duties {
+		got = append(got, k)
+	}
+	sort.Strings(got)
+	want := []string{"duty.ack", "duty.first-turn"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("duties keys = %q, want %q", got, want)
 	}
 }
