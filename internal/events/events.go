@@ -113,6 +113,12 @@ const (
 	// KindViewRefreshFailed records a refresh that failed: the current tree
 	// stays, and the next tick tries again.
 	KindViewRefreshFailed Kind = "view.refresh-failed"
+	// KindHostVitalsCrossed records a host reading passing its line, once, when
+	// it is first passed. It is a report and blocks nothing
+	// (docs/design/host-vitals.md sections 3 to 5).
+	KindHostVitalsCrossed Kind = "host.vitals.crossed"
+	// KindHostVitalsCleared records the same reading no longer passing its line.
+	KindHostVitalsCleared Kind = "host.vitals.cleared"
 	// KindViewUnavailable records a view that could not be built when its seat
 	// was spawned, so the seat started without MARVEL_VIEW_<NAME>. Once per
 	// change of cause.
@@ -518,6 +524,8 @@ var allKinds = []Kind{
 	KindAccountLoggedOut,
 	KindViewRefreshed,
 	KindViewRefreshFailed,
+	KindHostVitalsCrossed,
+	KindHostVitalsCleared,
 	KindViewUnavailable,
 	KindViewRetentionHeld,
 	KindCodexTrust,

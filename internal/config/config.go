@@ -305,6 +305,10 @@ type Cluster struct {
 	// ScheduleHistoryMax caps schedule.history on any role this cluster
 	// applies.
 	ScheduleHistoryMax int `yaml:"schedule_history_max,omitempty"`
+	// HostVitals turns on the host vitals sampler (docs/design/host-vitals.md):
+	// swap and memory pressure read once a minute and reported, nothing acted
+	// on. Unset is off.
+	HostVitals bool `yaml:"host_vitals,omitempty"`
 }
 
 // Service is one entry of a cluster's Services list. The four common
