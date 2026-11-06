@@ -1802,6 +1802,9 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 			if r, ok := reasons[live[i].Key()]; ok && live[i].Reason == "" {
 				live[i].Reason = r
 			}
+			if live[i].Reason == "" {
+				live[i].Reason = api.ConfigErrorReason(live[i])
+			}
 		}
 		d.stampLimitReading(live, time.Now().UTC())
 		d.stampActivity(live, time.Now().UTC())
