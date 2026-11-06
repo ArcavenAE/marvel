@@ -1,0 +1,135 @@
+[
+  {
+    "durable": "mcp_c10_i1",
+    "filters": [
+      "agent.aae.squad.c10.inbox"
+    ],
+    "depth": 0,
+    "ack_pending": 0,
+    "ack_floor": 27,
+    "oldest_seq": 0,
+    "live": true
+  },
+  {
+    "durable": "mcp_c1_i1",
+    "filters": [
+      "agent.aae.squad.c1.inbox"
+    ],
+    "depth": 2,
+    "ack_pending": 1,
+    "ack_floor": 1,
+    "oldest_seq": 2,
+    "live": true
+  },
+  {
+    "durable": "mcp_c2_a",
+    "filters": [
+      "agent.aae.squad.c2.inbox"
+    ],
+    "depth": 1,
+    "ack_pending": 1,
+    "ack_floor": 6,
+    "oldest_seq": 7,
+    "live": true
+  },
+  {
+    "durable": "mcp_c2_b",
+    "filters": [
+      "agent.aae.squad.c2.inbox"
+    ],
+    "depth": 3,
+    "ack_pending": 3,
+    "ack_floor": 4,
+    "oldest_seq": 5,
+    "live": true
+  },
+  {
+    "durable": "mcp_c3_new",
+    "filters": [
+      "agent.aae.squad.c3.inbox"
+    ],
+    "depth": 2,
+    "ack_pending": 0,
+    "ack_floor": 10,
+    "oldest_seq": 11,
+    "live": true
+  },
+  {
+    "durable": "mcp_c3_old",
+    "filters": [
+      "agent.aae.squad.c3.inbox"
+    ],
+    "depth": 2,
+    "ack_pending": 0,
+    "ack_floor": 10,
+    "oldest_seq": 11,
+    "live": false
+  },
+  {
+    "durable": "mcp_c4_gone",
+    "filters": [
+      "agent.aae.squad.c4.inbox"
+    ],
+    "depth": 2,
+    "ack_pending": 1,
+    "ack_floor": 13,
+    "oldest_seq": 14,
+    "live": false
+  },
+  {
+    "durable": "mcp_c5_i1",
+    "filters": [
+      "agent.aae.squad.c5.inbox",
+      "agent.aae.squad.role.worker.inbox"
+    ],
+    "depth": 3,
+    "ack_pending": 0,
+    "ack_floor": 0,
+    "oldest_seq": 16,
+    "live": true
+  },
+  {
+    "durable": "mcp_c6_i1",
+    "filters": [
+      "agent.aae.squad.c6.inbox"
+    ],
+    "depth": 2,
+    "ack_pending": 2,
+    "ack_floor": 0,
+    "oldest_seq": 19,
+    "live": true
+  },
+  {
+    "durable": "mcp_c7_i1",
+    "filters": [
+      "agent.aae.squad.c7.inbox"
+    ],
+    "depth": 2,
+    "ack_pending": 2,
+    "ack_floor": 0,
+    "oldest_seq": 21,
+    "live": true
+  },
+  {
+    "durable": "mcp_c8_i1",
+    "filters": [
+      "agent.aae.squad.c8.inbox"
+    ],
+    "depth": 1,
+    "ack_pending": 1,
+    "ack_floor": 0,
+    "oldest_seq": 24,
+    "live": true
+  },
+  {
+    "durable": "mcp_global_director_g1",
+    "filters": [
+      "global.director.inbox"
+    ],
+    "depth": 2,
+    "ack_pending": 2,
+    "ack_floor": 1,
+    "oldest_seq": 2,
+    "live": true
+  }
+]

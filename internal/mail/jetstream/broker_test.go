@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -30,10 +32,20 @@ type scratchBroker struct {
 	st  njs.Stream
 }
 
-func newScratchBroker(t *testing.T) *scratchBroker {
+func newScratchBroker(t *testing.T) *scratchBroker { return newScratchBrokerWith(t, "", nil) }
+
+// newScratchBrokerWith is newScratchBroker with an extra fragment of server
+// configuration (an authorization block) and the options the setup connection
+// connects with.
+func newScratchBrokerWith(t *testing.T, extraConf string, opts []nats.Option) *scratchBroker {
 	t.Helper()
 	bin, err := exec.LookPath("nats-server")
 	if err != nil {
+		// CI installs it (.github/workflows/ci.yml), so a missing binary there is
+		// a failure, never a quiet skip.
+		if os.Getenv("CI") != "" {
+			t.Fatal("nats-server not on PATH under CI: the broker tests would not run")
+		}
 		t.Skip("nats-server not on PATH")
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -42,7 +54,15 @@ func newScratchBroker(t *testing.T) *scratchBroker {
 	}
 	port := l.Addr().(*net.TCPAddr).Port
 	_ = l.Close()
-	cmd := exec.Command(bin, "-js", "-a", "127.0.0.1", "-p", fmt.Sprint(port), "-sd", t.TempDir())
+	// The server carries JetStream domain "global", as the hub does, so director's
+	// global read (JetStream in domain "global") can be run against it. The
+	// adapter's own handle is domain-less and the server answers both.
+	conf := filepath.Join(t.TempDir(), "nats.conf")
+	body := fmt.Sprintf("host: 127.0.0.1\nport: %d\njetstream {\n  store_dir: %q\n  domain: global\n}\n%s", port, t.TempDir(), extraConf)
+	if err := os.WriteFile(conf, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "-c", conf)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start nats-server: %v", err)
 	}
@@ -50,7 +70,7 @@ func newScratchBroker(t *testing.T) *scratchBroker {
 	url := fmt.Sprintf("nats://127.0.0.1:%d", port)
 	var nc *nats.Conn
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		if nc, err = nats.Connect(url); err == nil {
+		if nc, err = nats.Connect(url, opts...); err == nil {
 			break
 		}
 	}
@@ -156,4 +176,27 @@ func (b *scratchBroker) consumerCount(stream string) int {
 		b.t.Fatal(err)
 	}
 	return info.State.Consumers
+}
+
+// takeNak fetches n messages from c, refuses the one at nakIdx and acks the one
+// at ackIdx, as a seat does when it cannot handle a message yet.
+func (b *scratchBroker) takeNak(c njs.Consumer, n, nakIdx, ackIdx int) {
+	b.t.Helper()
+	batch, err := c.Fetch(n, njs.FetchMaxWait(2*time.Second))
+	if err != nil {
+		b.t.Fatal(err)
+	}
+	var msgs []njs.Msg
+	for m := range batch.Messages() {
+		msgs = append(msgs, m)
+	}
+	if len(msgs) != n {
+		b.t.Fatalf("fetched %d messages, want %d", len(msgs), n)
+	}
+	if err := msgs[nakIdx].Nak(); err != nil {
+		b.t.Fatal(err)
+	}
+	if err := msgs[ackIdx].DoubleAck(context.Background()); err != nil {
+		b.t.Fatal(err)
+	}
 }
