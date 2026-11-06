@@ -1885,6 +1885,11 @@ func (d *Daemon) handleDescribe(params json.RawMessage) daemonrpc.Response {
 			if one[0].SettingSources != "" && one[0].SettingSourcesDelivery == "" {
 				one[0].SettingSourcesNote = api.SettingSourcesNotRecorded
 			}
+			// The configuration-error reason get sessions shows, on this copy
+			// only (ADR-010 Amendment 2).
+			if one[0].Reason == "" {
+				one[0].Reason = api.ConfigErrorReason(one[0])
+			}
 			result = one[0]
 		}
 	case "team":
