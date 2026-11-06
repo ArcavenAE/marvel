@@ -286,6 +286,13 @@ type ModelCapable interface {
 	RendersModel() bool
 }
 
+var (
+	_ ModelCapable = (*Claude)(nil)
+	_ ModelCapable = (*Codex)(nil)
+	_ ModelCapable = (*OpenCode)(nil)
+	_ ModelCapable = (*Goose)(nil)
+)
+
 // CanRenderModel reports whether the adapter registered under runtimeName can
 // pass a declared model to its harness. An unregistered name resolves to the
 // fallback adapter, which cannot. This is the stub: it answers false for all.

@@ -2192,7 +2192,7 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) daemonrpc.Response {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
-	auth, err := d.store.UpdateSessionHeartbeat(p)
+	res, err := d.store.UpdateSessionHeartbeat(p)
 	if err != nil {
 		if errors.Is(err, api.ErrHeartbeatUnauthorized) {
 			// Two different faults reach this branch and they have
@@ -2219,7 +2219,7 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) daemonrpc.Response {
 		}
 		return daemonrpc.Response{Error: err.Error()}
 	}
-	if auth == api.HeartbeatAuthUnbound {
+	if res.Auth == api.HeartbeatAuthUnbound {
 		d.emitHeartbeatAuth(events.KindHeartbeatUnbound, p.SessionKey,
 			"admitted unbound: session record carries no token, restart it to bind its heartbeat")
 	}

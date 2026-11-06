@@ -103,7 +103,8 @@ func TestUpdateSessionHeartbeatAuthenticates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			before, _ := s.GetSession(tt.key)
-			auth, err := s.UpdateSessionHeartbeat(HeartbeatRequest{SessionKey: tt.key, SessionToken: tt.token, ContextPercent: 42.5})
+			res, err := s.UpdateSessionHeartbeat(HeartbeatRequest{SessionKey: tt.key, SessionToken: tt.token, ContextPercent: 42.5})
+			auth := res.Auth
 
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {

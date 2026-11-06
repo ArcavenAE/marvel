@@ -355,3 +355,7 @@ func (c *Claude) Foreground(paneCommand string) (string, bool) {
 	}
 	return "", paneCommand == "claude"
 }
+
+// RendersModel reports that this adapter can pass a declared model to its
+// harness. Stub: false until the render step lands.
+func (*Claude) RendersModel() bool { return false }

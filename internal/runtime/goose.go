@@ -249,3 +249,7 @@ func init() {
 	var _ SessionHomeAssigner = (*Goose)(nil)
 	var _ StreamCapable = (*Goose)(nil)
 }
+
+// RendersModel reports that this adapter can pass a declared model to its
+// harness. Stub: false until the render step lands.
+func (*Goose) RendersModel() bool { return false }

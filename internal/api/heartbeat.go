@@ -67,6 +67,21 @@ const (
 	HeartbeatAuthUnbound HeartbeatAuth = "unbound"
 )
 
+// HeartbeatResult is what UpdateSessionHeartbeat reports to its caller: how the
+// heartbeat was admitted, and the model identity facts the daemon needs to
+// decide a model.mismatch (the store holds the lock and the prior record, but
+// cannot import internal/usage, so the decision is the daemon's).
+type HeartbeatResult struct {
+	// Auth is how the heartbeat was admitted.
+	Auth HeartbeatAuth
+	// PriorObservedModelID is Session.ObservedModelID before this beat.
+	PriorObservedModelID string
+	// ObservedModelID is Session.ObservedModelID after this beat.
+	ObservedModelID string
+	// DeclaredModel is the session's runtime.model, as written.
+	DeclaredModel string
+}
+
 // NewHeartbeatToken mints a 256-bit token, hex-encoded, and returns it
 // with its digest. Minted once per session at spawn.
 func NewHeartbeatToken() (token, hash string, err error) {

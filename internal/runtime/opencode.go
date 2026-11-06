@@ -105,3 +105,7 @@ func (*OpenCode) Composer() ComposerContract {
 		},
 	}
 }
+
+// RendersModel reports that this adapter can pass a declared model to its
+// harness. Stub: false until the render step lands.
+func (*OpenCode) RendersModel() bool { return false }

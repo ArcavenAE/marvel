@@ -356,6 +356,14 @@ var aliases = map[string]string{
 	"fable[1m]": "claude-fable-5[1m]",
 }
 
+// IsAlias reports whether model is a short form in the alias table (opus,
+// sonnet, haiku, fable[1m]) and not a full model id. Read-only over the table.
+// This is the stub: it answers false for all.
+func IsAlias(model string) bool {
+	_ = model
+	return false
+}
+
 // NormalizeModel canonicalizes a vendor model id for WINDOW lookup. Each
 // rule is required by an observed id form:
 //

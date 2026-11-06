@@ -191,3 +191,7 @@ func (*Codex) Composer() ComposerContract {
 		},
 	}
 }
+
+// RendersModel reports that this adapter can pass a declared model to its
+// harness. Stub: false until the render step lands.
+func (*Codex) RendersModel() bool { return false }

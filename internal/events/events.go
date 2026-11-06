@@ -358,6 +358,13 @@ const (
 	// severity: the exemption drains as those sessions end, and an
 	// accepted gap nobody can see is not an accepted gap.
 	KindHeartbeatUnbound Kind = "heartbeat.unbound"
+	// KindModelMismatch records that a session's harness reported a model
+	// identity different from the one its role declared (runtime.model), and
+	// different from the one it reported on the beat before. Warning severity:
+	// the seat is running on a model the operator did not choose, which moves
+	// its window, its price and its behavior. It fires on a change of identity,
+	// so a repeat beat or a respelling of the same model is silent.
+	KindModelMismatch Kind = "model.mismatch"
 	// KindReconcileLeft records that a daemon found marvel-* tmux state
 	// it does not own and left it running, which is the default posture
 	// ratified 2026-08-07.
@@ -583,6 +590,7 @@ var allKinds = []Kind{
 	KindReconcileKilled,
 	KindHeartbeatRefused,
 	KindHeartbeatUnbound,
+	KindModelMismatch,
 	KindReconcileLeft,
 	KindCredentialPut,
 	KindCredentialDeleted,

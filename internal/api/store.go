@@ -903,16 +903,16 @@ func (s *Store) DeleteCredential(key string) error {
 // dominant write rate for marvel's bbolt usage; if it surfaces as a
 // performance issue, batch by waiting N heartbeats before persisting
 // (or move heartbeat state into a separate in-memory-only path).
-func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error) {
+func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[r.SessionKey]
 	if !ok {
-		return "", fmt.Errorf("session %s: %w", r.SessionKey, ErrNotFound)
+		return HeartbeatResult{}, fmt.Errorf("session %s: %w", r.SessionKey, ErrNotFound)
 	}
 	auth, err := authenticateHeartbeat(sess, r.SessionToken)
 	if err != nil {
-		return "", fmt.Errorf("session %s: %w", r.SessionKey, err)
+		return HeartbeatResult{}, fmt.Errorf("session %s: %w", r.SessionKey, err)
 	}
 	// A heartbeat is a COMPLETE reading of its own shape, not a partial
 	// update layered over whatever the accountant left behind. Writing
@@ -1029,9 +1029,10 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	// heartbeat is a measurement too, so it stamps it.
 	sess.ContextAt = sess.LastHeartbeat
 	if err := s.persistPut(bucketSessions, sess.Key(), sess); err != nil {
-		return "", err
+		return HeartbeatResult{}, err
 	}
-	return auth, nil
+	// Stub: the model fields are not filled yet.
+	return HeartbeatResult{Auth: auth}, nil
 }
 
 // recordTotals stores the statusline's running cost and API-time totals and
