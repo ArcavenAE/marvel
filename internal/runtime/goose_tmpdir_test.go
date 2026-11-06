@@ -92,6 +92,11 @@ func seedHome(t *testing.T, ctx *LaunchContext, dir string) error {
 	if !ok || spec.Seed == nil {
 		t.Fatal("goose offers no seed")
 	}
+	// The manager calls Seed before it sets HarnessHomePath (manager.go, the
+	// private-home step), so the seeder must not read it: seed as the manager does.
+	saved := ctx.HarnessHomePath
+	ctx.HarnessHomePath = ""
+	defer func() { ctx.HarnessHomePath = saved }()
 	return spec.Seed(dir)
 }
 
@@ -148,11 +153,51 @@ func TestGooseSeedFailsWhenTheTempDirCannotBeMade(t *testing.T) {
 func TestGooseTempDirNeedsAnAbsoluteHome(t *testing.T) {
 	ctx := gooseContext(t, nil)
 	ctx.SandboxProfile = gooseProfile
-	if _, ok := gooseTempDir(ctx); !ok {
+	if _, ok := gooseTempDir(ctx, ctx.HarnessHomePath); !ok {
 		t.Fatal("no temp dir for an absolute home under a profile")
 	}
 	ctx.HarnessHomePath = "relative/home"
-	if dir, ok := gooseTempDir(ctx); ok {
+	if dir, ok := gooseTempDir(ctx, ctx.HarnessHomePath); ok {
 		t.Errorf("temp dir %q named for a relative home", dir)
+	}
+}
+
+// On the manager's path (Seed with the home not yet set, then the home set, then
+// Prepare), the directory exists whenever TMPDIR names it.
+func TestGooseTempDirExistsOnTheManagersSeedThenSetOrder(t *testing.T) {
+	ctx := gooseContext(t, nil)
+	ctx.SandboxProfile = gooseProfile
+	home := ctx.HarnessHomePath
+	ctx.HarnessHomePath = ""
+	spec, _ := (&Goose{}).SessionHome(ctx)
+	if err := spec.Seed(home); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	ctx.HarnessHomePath = home
+	tmp := prepareGooseEnv(t, ctx)["TMPDIR"]
+	if tmp == "" {
+		t.Fatal("no TMPDIR set")
+	}
+	if st, err := os.Stat(tmp); err != nil || !st.IsDir() {
+		t.Errorf("TMPDIR %q does not exist as a directory: %v", tmp, err)
+	}
+}
+
+// A temp directory that cannot be made never stops the permission file from
+// being written: a first launch must not lose its NeverAllow list.
+func TestGooseTempDirFailureStillWritesThePermissionFile(t *testing.T) {
+	ctx := gooseContext(t, nil)
+	ctx.SandboxProfile = gooseProfile
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tmp"), []byte("in the way"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedHome(t, ctx, dir); err == nil {
+		t.Fatal("seed succeeded with a file where the temp dir goes")
+	}
+	for _, f := range []string{goosePermissionFile, gooseConfigFile} {
+		if _, err := os.Stat(filepath.Join(dir, gooseConfigDir, f)); err != nil {
+			t.Errorf("%s was not written before the temp dir failed: %v", f, err)
+		}
 	}
 }

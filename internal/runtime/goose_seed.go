@@ -55,14 +55,18 @@ const gooseTempName = "tmp"
 // is in force and the home is absolute, and never where the role set TMPDIR
 // itself. The inherited process TMPDIR is not the role's: it is the value to
 // replace.
-func gooseTempDir(ctx *LaunchContext) (string, bool) {
-	if ctx == nil || ctx.Session == nil || ctx.SandboxProfile == "" || !filepath.IsAbs(ctx.HarnessHomePath) {
+//
+// home is the seat's private home. The launch passes ctx.HarnessHomePath; the
+// seeder passes the directory it is handed, because the manager calls Seed
+// before it sets HarnessHomePath.
+func gooseTempDir(ctx *LaunchContext, home string) (string, bool) {
+	if ctx == nil || ctx.Session == nil || ctx.SandboxProfile == "" || !filepath.IsAbs(home) {
 		return "", false
 	}
 	if _, set := ctx.Session.Runtime.Env["TMPDIR"]; set {
 		return "", false
 	}
-	return filepath.Join(ctx.HarnessHomePath, gooseTempName), true
+	return filepath.Join(home, gooseTempName), true
 }
 
 // gooseSeeder returns the Seed step for one launch: config.yaml with the mode,
@@ -83,11 +87,6 @@ func gooseSeeder(ctx *LaunchContext) func(dir string) error {
 		cfgDir := filepath.Join(dir, gooseConfigDir)
 		if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 			return fmt.Errorf("make goose config dir: %w", err)
-		}
-		if _, ok := gooseTempDir(ctx); ok {
-			if err := os.MkdirAll(filepath.Join(dir, gooseTempName), 0o700); err != nil {
-				return fmt.Errorf("make goose temp dir: %w", err)
-			}
 		}
 		cfg := map[string]any{gooseModeEnv: g.Posture}
 		for _, k := range []string{"GOOSE_PROVIDER", "GOOSE_MODEL"} {
@@ -110,7 +109,17 @@ func gooseSeeder(ctx *LaunchContext) func(dir string) error {
 		if err := writeGooseYAML(filepath.Join(cfgDir, gooseConfigFile), cfg); err != nil {
 			return err
 		}
-		return writeGooseYAML(filepath.Join(cfgDir, goosePermissionFile), perm)
+		if err := writeGooseYAML(filepath.Join(cfgDir, goosePermissionFile), perm); err != nil {
+			return err
+		}
+		// Last, so a failure here never costs the permission file a first
+		// launch needs.
+		if tmp, ok := gooseTempDir(ctx, dir); ok {
+			if err := os.MkdirAll(tmp, 0o700); err != nil {
+				return fmt.Errorf("make goose temp dir: %w", err)
+			}
+		}
+		return nil
 	}
 }
 

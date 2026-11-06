@@ -118,7 +118,7 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	posture := goosePosture(ctx)
 	env[gooseHomeEnv] = ctx.HarnessHomePath
 	env[gooseModeEnv] = posture
-	if dir, ok := gooseTempDir(ctx); ok {
+	if dir, ok := gooseTempDir(ctx, ctx.HarnessHomePath); ok {
 		env["TMPDIR"] = dir
 	}
 	env["OTEL_SDK_DISABLED"] = "true"
