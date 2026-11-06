@@ -1625,6 +1625,9 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	if err := refuseUnadmittedGlobalRoles(m, d.sessMgr.Bus); err != nil {
 		return daemonrpc.Response{Error: err.Error()}
 	}
+	if refusals := m.HandoffViaRefusals(d.sessMgr.CanOfferHandoffToolRole); len(refusals) > 0 {
+		return daemonrpc.Response{Error: "apply manifest: " + strings.Join(refusals, "; ")}
+	}
 
 	// Pre-flight: a team name held by another workspace would commit, spawn,
 	// and then break bus-auth rendering cluster-wide (marvel#319).

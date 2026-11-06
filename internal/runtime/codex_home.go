@@ -75,7 +75,7 @@ type codexSeed struct {
 	// operator has none configured.
 	Director *codexMCPServer
 	// Handoff, when set, adds the marvel-handoff MCP server beside director.
-	// Nothing sets it yet: a role asks for it with handoff_via = "tool".
+	// codexSeeder sets it for a role that declares shift.handoff_via = "tool".
 	Handoff *codexHandoffSeed
 	// EnvVars names the variables codex forwards to the director server.
 	// Codex does not pass its environment to an MCP child, so without
@@ -410,6 +410,15 @@ func codexSeeder(ctx *LaunchContext, source string) func(dir string) error {
 			EnvVars:     codexForwardedEnv(ctx),
 			Untrusted:   start,
 			TrustedRoot: trust.Root,
+		}
+		// A role that hands off by tool is given the marvel-handoff server;
+		// no other role is (read-only-seat-handoff.md, section 6).
+		if ctx.Role.Shift != nil && ctx.Role.Shift.HandoffVia == api.ShiftHandoffViaTool {
+			exe, err := MarvelHookPath()
+			if err != nil {
+				return fmt.Errorf("resolve marvel binary for the marvel-handoff server: %w", err)
+			}
+			seed.Handoff = &codexHandoffSeed{Command: exe, EnvVars: codexHandoffEnv(ctx.TokenFile != "")}
 		}
 		bin, err := codexBinary(ctx.Role.Runtime.Command)
 		if err != nil {
