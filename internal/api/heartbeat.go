@@ -133,6 +133,9 @@ type HeartbeatRequest struct {
 	// does not know (the simulator). The statusline feed sends the
 	// harness's display name.
 	Model string `json:"model,omitempty"`
+	// ModelID is the model's id as the reporter names it, as opposed to Model's
+	// display name. "" when the reporter does not know.
+	ModelID string `json:"model_id,omitempty"`
 	// ContextTokens is the NUMERATOR: the occupancy the harness measured,
 	// in tokens, 0 when the producer ships only a percentage. A producer
 	// that ships it turns this RPC from a bare percentage into a graded

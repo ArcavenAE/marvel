@@ -55,7 +55,8 @@ type resolverCall struct {
 // makes that contribution assertable in isolation; the daemon package
 // tests the real usage.Resolver end to end.
 func ladderResolver(rec *resolverCall) ContextLimitResolveFunc {
-	return func(harness, model string, args []string, manifestLimit, feedLimit int, redirection BackendRedirection) (int, string) {
+	return func(harness, model, declaredModel string, args []string, env map[string]string, manifestLimit, feedLimit int, redirection BackendRedirection) (int, string) {
+		_, _ = declaredModel, env
 		*rec = resolverCall{harness, model, args, manifestLimit, feedLimit, redirection}
 		// The real ladder: an operator's manifest override outranks a
 		// side-channel feed (limitLadder in internal/usage).

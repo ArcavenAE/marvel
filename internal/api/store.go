@@ -97,7 +97,7 @@ type Store struct {
 // window exactly as the accountant path does (finding-031 / aae-orc-bv7m).
 // The daemon adapts its usage.Resolver to this shape in
 // SetContextLimitResolver's call site.
-type ContextLimitResolveFunc func(harness, model string, args []string, manifestLimit, feedLimit int, redirection BackendRedirection) (limit int, source string)
+type ContextLimitResolveFunc func(harness, model, declaredModel string, args []string, env map[string]string, manifestLimit, feedLimit int, redirection BackendRedirection) (limit int, source string)
 
 // SetContextLimitResolver injects the ladder the heartbeat path consults.
 // Called once at daemon construction with a closure over the same
@@ -958,7 +958,7 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 		reading.ContextTokens = r.ContextTokens
 		if s.contextResolver != nil {
 			limit, src := s.contextResolver(
-				sess.Runtime.Name, r.Model, sess.Runtime.Args,
+				sess.Runtime.Name, r.Model, "", sess.Runtime.Args, nil,
 				sess.Runtime.ContextWindow, r.ContextWindow,
 				sess.BackendRedirection,
 			)

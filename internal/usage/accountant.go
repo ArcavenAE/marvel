@@ -55,6 +55,10 @@ type Bind struct {
 	Args    []string
 	// Model is a launch-arg model, "" when absent.
 	Model string
+	// DeclaredModel is the model the role declared (runtime.model), "" when none.
+	DeclaredModel string
+	// Env is the role's declared env, read for ANTHROPIC_MODEL on claude.
+	Env map[string]string
 	// Window is a manifest override, 0 when unset.
 	Window int
 	// Redirection is the spawn-time backend verdict marvel classified for

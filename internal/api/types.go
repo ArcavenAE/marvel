@@ -580,6 +580,9 @@ type SessionContext struct {
 	// from a table guess. Values are usage.LimitSource.
 	ContextLimitSource string
 	ContextModel       string
+	// ObservedModelID is the model id the harness reported on its last
+	// heartbeat, beside ContextModel (the display name). "" when none reported.
+	ObservedModelID    string
 	ContextRequests    int
 	ContextCompactions int
 	// ContextPeak is the high-water ContextPercent, valid when

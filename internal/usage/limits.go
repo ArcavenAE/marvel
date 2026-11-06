@@ -423,15 +423,29 @@ func ModelFromArgs(args []string) string {
 	return ""
 }
 
+// ModelFromEnv extracts a model id from a role's declared env, for the harness
+// that reads one from its environment. Returns "" when absent. This is the
+// stub: it reads nothing yet.
+func ModelFromEnv(env map[string]string) string {
+	_ = env
+	return ""
+}
+
 // Request is one denominator resolution.
 type Request struct {
 	Harness string
 	// StreamModel is the model the harness named in-stream, "" when it
 	// named none.
 	StreamModel string
+	// DeclaredModel is the model the role declared (runtime.model), "" when
+	// none. It ranks after StreamModel and before RuntimeArgs.
+	DeclaredModel string
 	// RuntimeArgs is the role's launch args, searched for a model flag
 	// when StreamModel is empty.
 	RuntimeArgs []string
+	// RuntimeEnv is the role's declared env; for the claude harness it is
+	// searched for ANTHROPIC_MODEL after the args.
+	RuntimeEnv map[string]string
 	// ManifestLimit is runtime.context_window, 0 when unset.
 	ManifestLimit int
 	// SampleLimit is a window declared in the harness's own stream

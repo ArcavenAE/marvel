@@ -505,6 +505,13 @@ func newCtxForwardCmd() *cobra.Command {
 	return cmd
 }
 
+// statuslineModelID is the model id the harness reported ("model.id"), as
+// opposed to the display name. This is the stub: it reads nothing yet.
+func statuslineModelID(raw []byte) string {
+	_ = raw
+	return ""
+}
+
 func readAllStdin() ([]byte, error) {
 	return io.ReadAll(os.Stdin)
 }
