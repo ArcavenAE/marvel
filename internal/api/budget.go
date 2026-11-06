@@ -262,8 +262,7 @@ const ExitConfig = "78"
 
 // IsConfigError reports whether this is a headless run that ended with exit 78.
 // It holds its replica slot like a finished run: a relaunch would only print the
-// same refusal again, so the slot waits for a config change, a manifest re-apply
-// or a person. Every other nonzero exit is not this and keeps its crash-loop
+// same refusal again, so the slot waits for a person to delete the session. Every other nonzero exit is not this and keeps its crash-loop
 // backoff.
 func IsConfigError(s Session) bool {
 	return s.Runtime.Mode == RuntimeModeHeadless && s.State == SessionFailed && s.ExitStatus == ExitConfig
@@ -276,7 +275,7 @@ func ConfigErrorReason(s Session) string {
 	if !IsConfigError(s) {
 		return ""
 	}
-	return "configuration error: the run exited 78 and is not relaunched; change the role's configuration or re-apply the manifest"
+	return "configuration error: the run exited 78 and is not relaunched; delete the session to release its slot"
 }
 
 // CountReplicaSlots returns how many of these sessions occupy a replica
