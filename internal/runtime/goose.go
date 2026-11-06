@@ -118,6 +118,9 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	posture := goosePosture(ctx)
 	env[gooseHomeEnv] = ctx.HarnessHomePath
 	env[gooseModeEnv] = posture
+	if dir, ok := gooseTempDir(ctx); ok {
+		env["TMPDIR"] = dir
+	}
 	env["OTEL_SDK_DISABLED"] = "true"
 	env["GOOSE_TELEMETRY_ENABLED"] = "false"
 	env["GOOSE_DISABLE_SESSION_NAMING"] = "1"

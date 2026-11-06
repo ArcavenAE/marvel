@@ -43,6 +43,28 @@ type gooseExtensionEntry struct {
 	Name    string `yaml:"name"`
 }
 
+// gooseTempName is the directory under the seat's home that holds its temp
+// files when a sandbox profile is in force. It persists across launches and is
+// never cleared.
+const gooseTempName = "tmp"
+
+// gooseTempDir is where a goose seat's temp files go under a sandbox profile:
+// the shipped profile lets a seat write only to its private home and its working
+// directory, so goose's temp file under the daemon's inherited per-user temp
+// directory is refused (marvel#1315). It names a directory only when a profile
+// is in force and the home is absolute, and never where the role set TMPDIR
+// itself. The inherited process TMPDIR is not the role's: it is the value to
+// replace.
+func gooseTempDir(ctx *LaunchContext) (string, bool) {
+	if ctx == nil || ctx.Session == nil || ctx.SandboxProfile == "" || !filepath.IsAbs(ctx.HarnessHomePath) {
+		return "", false
+	}
+	if _, set := ctx.Session.Runtime.Env["TMPDIR"]; set {
+		return "", false
+	}
+	return filepath.Join(ctx.HarnessHomePath, gooseTempName), true
+}
+
 // gooseSeeder returns the Seed step for one launch: config.yaml with the mode,
 // the provider and model the role's env names, and the extensions; and
 // permission.yaml with the role's tools. Neither carries a credential: the
@@ -61,6 +83,11 @@ func gooseSeeder(ctx *LaunchContext) func(dir string) error {
 		cfgDir := filepath.Join(dir, gooseConfigDir)
 		if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 			return fmt.Errorf("make goose config dir: %w", err)
+		}
+		if _, ok := gooseTempDir(ctx); ok {
+			if err := os.MkdirAll(filepath.Join(dir, gooseTempName), 0o700); err != nil {
+				return fmt.Errorf("make goose temp dir: %w", err)
+			}
 		}
 		cfg := map[string]any{gooseModeEnv: g.Posture}
 		for _, k := range []string{"GOOSE_PROVIDER", "GOOSE_MODEL"} {
