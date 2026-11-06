@@ -31,6 +31,7 @@ import (
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/hostvitals"
 	"github.com/arcavenae/marvel/internal/limitmenu"
 	"github.com/arcavenae/marvel/internal/logbuf"
 	"github.com/arcavenae/marvel/internal/panemenu"
@@ -92,6 +93,12 @@ type Daemon struct {
 	sessMgr            *session.Manager
 	teamCtrl           *team.Controller
 	driver             *tmux.Driver
+
+	// vitals is the host vitals sampler. It is built off unless the cluster
+	// config turns it on, and metricsPass drives it every VitalsEvery passes.
+	vitals     *hostvitals.Sampler
+	vitalsPass int
+
 	// composerClient reports whether a workspace is a client one, whose
 	// panes the COMPOSER column never reads, or an error when its manifest
 	// cannot be read. New sets the workspace scope; nil captures nothing.
@@ -642,6 +649,7 @@ func (d *Daemon) Start(socketPath string) (err error) {
 	// hand it. A managed bus that cannot start is a start failure, the
 	// tmux posture.
 	d.loadScheduleHistoryMax(socketPath)
+	d.loadHostVitals(socketPath)
 	d.identifyCluster(socketPath)
 	d.loadSuspendRecord(socketPath)
 	d.loadResumeJournal(socketPath)
