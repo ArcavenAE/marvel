@@ -1802,6 +1802,9 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 			if r, ok := reasons[live[i].Key()]; ok && live[i].Reason == "" {
 				live[i].Reason = r
 			}
+			if live[i].Reason == "" {
+				live[i].Reason = api.ConfigErrorReason(live[i])
+			}
 		}
 		d.stampLimitReading(live, time.Now().UTC())
 		d.stampActivity(live, time.Now().UTC())
@@ -1881,6 +1884,11 @@ func (d *Daemon) handleDescribe(params json.RawMessage) daemonrpc.Response {
 			// it back to the store.
 			if one[0].SettingSources != "" && one[0].SettingSourcesDelivery == "" {
 				one[0].SettingSourcesNote = api.SettingSourcesNotRecorded
+			}
+			// The configuration-error reason get sessions shows, on this copy
+			// only (ADR-010 Amendment 2).
+			if one[0].Reason == "" {
+				one[0].Reason = api.ConfigErrorReason(one[0])
 			}
 			result = one[0]
 		}

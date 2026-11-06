@@ -2284,6 +2284,33 @@ func (m *Manager) ReapDead() []ReapedSession {
 			continue
 		}
 
+		if headlessConfigError(sess, st) {
+			log.Printf("session %s: pane %s exited %s, a configuration error; marking failed, not relaunching", sess.Key(), lostPane, api.ExitConfig)
+			if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+				live.State = api.SessionFailed
+				live.PaneID = ""
+				live.ExitStatus = st.ExitStatus
+				// Not unhealthy: the restart path keys on HealthUnhealthy, and
+				// a relaunch only repeats the refusal (ADR-010 Amendment 2).
+				live.HealthState = api.HealthUnknown
+				return nil
+			}); err != nil {
+				log.Printf("warning: mark config error %s: %v", sess.Key(), err)
+				continue
+			}
+			events.Emit(m.Events, events.Event{
+				Kind:      events.KindSessionFailed,
+				Severity:  events.SeverityWarning,
+				Workspace: sess.Workspace,
+				Team:      sess.Team,
+				Role:      sess.Role,
+				Session:   sess.Key(),
+				Message:   fmt.Sprintf("pane %s exited %s: configuration error, not relaunched", lostPane, api.ExitConfig),
+			})
+			m.recordScheduledRun(sess, api.RunFailed, st.ExitStatus, tail)
+			continue
+		}
+
 		log.Printf("session %s: pane %s gone (%s), marking crashed", sess.Key(), lostPane, describeExit(st))
 		m.clearStaleCrashed(sessions, marked, sess.Workspace, sess.Team, sess.Role, sess.Key())
 		if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
@@ -2349,6 +2376,14 @@ func (m *Manager) ReapDead() []ReapedSession {
 func headlessCompleted(sess api.Session, st tmux.PaneStatus) bool {
 	return sess.Runtime.Mode == api.RuntimeModeHeadless &&
 		st.Exists && st.Dead && st.ExitStatus == "0"
+}
+
+// headlessConfigError is the one mapping from a dead pane to a configuration
+// error: a headless role whose pane is still listed, dead, with a literal exit
+// status of "78" (ADR-010 Amendment 2). No other nonzero status is affected.
+func headlessConfigError(sess api.Session, st tmux.PaneStatus) bool {
+	return sess.Runtime.Mode == api.RuntimeModeHeadless &&
+		st.Exists && st.Dead && st.ExitStatus == api.ExitConfig
 }
 
 // describeExit renders a dead pane's status for logs and events.
