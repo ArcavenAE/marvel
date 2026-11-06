@@ -230,6 +230,11 @@ type Runtime struct {
 	// against the backend the constructed environment actually resolves to
 	// and fail loudly when they disagree. Empty means no declared intent.
 	Backend string `toml:"backend,omitempty"`
+	// AccountLabel is the login the operator says this role runs on, one word
+	// such as a tier name. It is declared, never checked: marvel does not ask
+	// the harness who is logged in. It is display text for the SERVICE column
+	// and takes no part in the account key.
+	AccountLabel string `toml:"account_label,omitempty" json:"account_label,omitempty"`
 	// Goose is the runtime.goose table, read only by the goose adapter. Nil
 	// means the role declared none.
 	Goose *GooseRuntime `toml:"goose,omitempty"`

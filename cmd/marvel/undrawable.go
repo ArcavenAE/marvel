@@ -148,8 +148,9 @@ func (t *undrawTally) key(s string) string {
 
 // cells counts the cells drawn in cols that held a replaced character.
 func (t *undrawTally) cells(sessions []api.Session, cols []sessionColumn) {
+	homes := countServiceHomes(sessions)
 	for _, s := range sessions {
-		row := newSessionRow(s)
+		row := newSessionRow(s, homes)
 		for _, c := range cols {
 			_, held := filterForColumn(c.name)(c.pick(row))
 			t.add(held)

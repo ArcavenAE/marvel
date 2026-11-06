@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -96,7 +97,10 @@ type ManifestTeam struct {
 	// own. Relative values resolve against workspace.root only.
 	WorkDir string          `toml:"workdir,omitempty" yaml:"workdir,omitempty"`
 	Budget  *ManifestBudget `toml:"budget,omitempty" yaml:"budget,omitempty"`
-	Roles   []ManifestRole  `toml:"role"  yaml:"roles"`
+	// AccountLabel is the login label every role of the team runs on unless
+	// the role declares its own. See api.Runtime.AccountLabel.
+	AccountLabel string         `toml:"account_label,omitempty" yaml:"account_label,omitempty"`
+	Roles        []ManifestRole `toml:"role"  yaml:"roles"`
 }
 
 // ManifestBudget is the budget section within a team — the operator's
@@ -276,6 +280,9 @@ type ManifestRuntime struct {
 	// Backend is the per-role INTENDED backend label, compared against the
 	// resolved backend at spawn for loud failure. See api.Runtime.Backend.
 	Backend string `toml:"backend,omitempty" yaml:"backend,omitempty"`
+	// AccountLabel is the login this role runs on, declared and never checked.
+	// It overrides the team's. See api.Runtime.AccountLabel.
+	AccountLabel string `toml:"account_label,omitempty" yaml:"account_label,omitempty"`
 	// Goose is the runtime.goose table for a role on the goose adapter. See
 	// api.GooseRuntime.
 	Goose *GooseRuntime `toml:"goose,omitempty" yaml:"goose,omitempty"`
@@ -460,12 +467,18 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			return nil, fmt.Errorf("parse manifest: team[%d].name %q is duplicated", i, t.Name)
 		}
 		teamNames[t.Name] = true
+		if err := validateAccountLabel(fmt.Sprintf("team %s", t.Name), t.AccountLabel); err != nil {
+			return nil, fmt.Errorf("parse manifest: %w", err)
+		}
 		if len(t.Roles) == 0 {
 			return nil, fmt.Errorf("parse manifest: team[%d] must have at least one role", i)
 		}
 		for j, r := range t.Roles {
 			if r.Name == "" {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].name is required", i, j)
+			}
+			if err := validateAccountLabel(fmt.Sprintf("role %s", r.Name), r.Runtime.AccountLabel); err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
 			// 0 is legal and parks the role (marvel#335); the bound is the
 			// one marvel scale applies, from the same validator.
@@ -1132,6 +1145,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				PromptArtifactSha256: mr.Runtime.PromptArtifactSha256,
 				Env:                  mr.Runtime.Env,
 				Backend:              mr.Runtime.Backend,
+				AccountLabel:         cmp.Or(mr.Runtime.AccountLabel, mt.AccountLabel),
 				Goose:                mr.Runtime.Goose.clone(),
 			}
 			rt.Name = mr.Runtime.AdapterName()

@@ -1240,6 +1240,15 @@ that account's limit reading: 87% (seven_day) while fresh, stale once the readin
 is old, a - when none was read. Sessions on one account repeat the same cell; it is
 never summed or averaged across rows.
 
+SERVICE (opt-in, --columns service) says in words which account a session spends
+against: harness, backend, credential source, the account home, then the login
+label the role or team declared with account_label. The backend is the one the
+environment resolved to, written backend!intent where the role declared another.
+The home is its last element, or the whole path where another home on the same
+cluster shares that element. The label is declared, never checked against the login.
+Example: 'claude subscription ambient alt-ultra ultra'. It is the first column
+cut on a narrow terminal when it came from rest.
+
 ACTIVE% is the share of the last 15 minutes of daemon ticks that found the seat
 not quiet, under the role's activity_timeout or the cluster quiet window. It
 says "not quiet", not busy: a seat in a long tool call can read low. It is a -
@@ -3398,19 +3407,19 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
-	key                                                                                  string
-	workspace, team, role, generation, name                                              string
-	state, health, context, cpu, rss                                                     string
-	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct string
-	lastTurn                                                                             string
-	composer                                                                             string
-	pane                                                                                 string
+	key                                                                                           string
+	workspace, team, role, generation, name                                                       string
+	state, health, context, cpu, rss                                                              string
+	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct, service string
+	lastTurn                                                                                      string
+	composer                                                                                      string
+	pane                                                                                          string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
 // one place, whichever columns are selected: "-" is never measured, "?" is
 // a reading whose window could not be resolved.
-func newSessionRow(s api.Session) sessionRow {
+func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 	runtimeName := s.Runtime.Name
 	if runtimeName == "" {
 		runtimeName = s.Runtime.Command
@@ -3555,6 +3564,7 @@ func newSessionRow(s api.Session) sessionRow {
 		active:     activePctCell(s, lastActiveClock()),
 		spec:       specCell(s),
 		acct:       acctCell(s),
+		service:    serviceCell(s, homes),
 		composer:   composerCell(s),
 		pane:       paneCell(s),
 		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,

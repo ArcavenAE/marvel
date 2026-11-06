@@ -355,3 +355,60 @@ func TestGetSessionsOutputRedactsSecretEnv(t *testing.T) {
 		check(t, "set "+format, set)
 	}
 }
+
+// The declared label rides the session's runtime in -o json under
+// account_label, and a session without one omits the key.
+func TestGetSessionsOutputJSONCarriesServiceFields(t *testing.T) {
+	labelled := row("w", "s1")
+	labelled.Runtime.AccountLabel = "ultra"
+	cannedDaemon(t, map[string]any{"session": []api.Session{labelled}})
+	out, err := runGet(t, "sessions", "-o", "json")
+	if err != nil {
+		t.Fatalf("get sessions -o json: %v", err)
+	}
+	if !strings.Contains(out, `"account_label": "ultra"`) && !strings.Contains(out, `"account_label":"ultra"`) {
+		t.Errorf("the JSON does not carry account_label ultra:\n%s", out)
+	}
+}
+
+func TestGetSessionsOutputJSONOmitsEmptyServiceFields(t *testing.T) {
+	cannedDaemon(t, map[string]any{"session": []api.Session{row("w", "s1")}})
+	out, err := runGet(t, "sessions", "-o", "json")
+	if err != nil {
+		t.Fatalf("get sessions -o json: %v", err)
+	}
+	if strings.Contains(out, "account_label") {
+		t.Errorf("a session with no label carries account_label:\n%s", out)
+	}
+}
+
+// `get sessions` has no row filter, so the path that could change a cell is the
+// width fit, which trims and re-renders. A collision is counted over the whole
+// reply, so the fitted table prints the cells the plain one does (X4).
+func TestGetSessionsFitDoesNotChangeServiceCell(t *testing.T) {
+	a := svcSession("a", "", api.BackendDefaultName, api.BackendCredentialAmbient, "/a/x", "")
+	b := svcSession("b", "", api.BackendDefaultName, api.BackendCredentialAmbient, "/b/x", "")
+	cols := columnsOrFatal(t, "name,service", nil)
+	plain := renderSessionTableCols([]api.Session{a, b}, cols)
+	fitted := fitSessionTable([]api.Session{a, b}, cols, fitOptions{width: 200, explicit: true}).table
+	for _, want := range []string{"claude default ambient /a/x", "claude default ambient /b/x"} {
+		if !strings.Contains(plain, want) || !strings.Contains(fitted, want) {
+			t.Errorf("%q missing from the plain or the fitted table:\nplain:\n%s\nfitted:\n%s", want, plain, fitted)
+		}
+	}
+}
+
+// The default table is byte for byte what it was before the SERVICE column
+// existed. The golden was captured on main at 76cd6950.
+func TestGetSessionsDefaultTableByteIdentical(t *testing.T) {
+	a := api.Session{Name: "a-0", Workspace: "ws", Team: "squad", Role: "worker", State: api.SessionRunning, PaneID: "%3", Generation: 2}
+	a.Runtime.Name = "claude"
+	a.AccountHome = "/h/x"
+	b := api.Session{Name: "b-0", Workspace: "ws", Team: "squad", Role: "lead", State: api.SessionCrashed, Generation: 1}
+	want := "WORKSPACE  TEAM   ROLE    GEN  AGENT NAME  STATE    HEALTH   CTX%  ACTIVE%  LAST-ACTIVE  AGE  LLM\n" +
+		"ws         squad  worker  2    a-0         running  unknown  -     -        -            -    -\n" +
+		"ws         squad  lead    1    b-0         crashed  unknown  -     -        -            -    -\n"
+	if got := renderSessionTable([]api.Session{a, b}); got != want {
+		t.Errorf("default table changed:\n%s\nwant:\n%s", got, want)
+	}
+}

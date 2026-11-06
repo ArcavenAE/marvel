@@ -45,7 +45,7 @@ func TestGetRequestAsksForComposerOnlyWhenSelected(t *testing.T) {
 // The cell is the daemon's word, or "-" where no pane was read.
 func TestComposerCell(t *testing.T) {
 	for word, want := range map[string]string{"": "-", "mid_turn": "mid_turn", "unknown": "unknown", "holds_text": "holds_text"} {
-		if got := newSessionRow(api.Session{Composer: word}).composer; got != want {
+		if got := newSessionRow(api.Session{Composer: word}, nil).composer; got != want {
 			t.Errorf("cell for %q = %q, want %q", word, got, want)
 		}
 	}
