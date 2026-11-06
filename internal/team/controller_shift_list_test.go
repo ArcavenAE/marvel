@@ -1091,7 +1091,11 @@ func TestMaxAgeIgnoresHandoffOlderThanTheRequest(t *testing.T) {
 	if got.Shift.Phase != api.ShiftNone || !got.ShiftRequests[testShiftRole].Escalated {
 		t.Fatalf("phase=%q escalated=%v, want none and escalated", got.Shift.Phase, got.ShiftRequests[testShiftRole].Escalated)
 	}
-	if n := f.count(events.KindShiftHandoffMissing); n != 1 {
-		t.Fatalf("handoff-missing events = %d, want 1", n)
+	missing := f.ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffMissing}, 0)
+	if len(missing) != 1 {
+		t.Fatalf("handoff-missing events = %d, want 1", len(missing))
+	}
+	if !strings.Contains(missing[0].Message, "no fresh regular file") || !strings.Contains(missing[0].Message, "written after the request") {
+		t.Errorf("handoff-missing message = %q, want it to say no fresh file was written after the request", missing[0].Message)
 	}
 }
