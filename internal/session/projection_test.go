@@ -323,6 +323,56 @@ func TestProjectionInjectsStatuslineFeed(t *testing.T) {
 	}
 }
 
+// The projected settings file outlives the daemon that wrote it, so the
+// statusline command names the marvel link the PATH resolves when that link is
+// this binary, not the binary's own (versioned, removable) path.
+// No t.Parallel: it sets PATH for the process.
+func TestProjectionStatuslineFeedNamesTheStableLink(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	link := filepath.Join(bin, "marvel")
+	if err := os.Symlink(self, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	mgr, _ := projectionManager(t)
+	m, err := api.ParseManifestBytes([]byte(feedOnlyManifest))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	sess := &api.Session{
+		Name: "squad-watcher-g1-0", Workspace: "acme", Team: "squad", Role: "watcher",
+		Runtime: api.Runtime{Name: "claude", Command: "claude", ContextFeed: api.ContextFeedStatusline},
+	}
+	if err := mgr.store.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := mgr.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.State, live.PaneID = api.SessionRunning, "%1"
+		return nil
+	}); err != nil {
+		t.Fatalf("mark running: %v", err)
+	}
+	key := sess.Key()
+	if n := mgr.Reproject(); n != 1 {
+		t.Fatalf("Reproject changed = %d, want 1", n)
+	}
+	got := readProjection(t, filepath.Join(mgr.ProjectionDir, strings.ReplaceAll(key, "/", "-")+".settings.json"))
+	for _, k := range []string{"statusLine", "subagentStatusLine"} {
+		block, _ := got[k].(map[string]any)
+		cmd, _ := block["command"].(string)
+		if want := "'" + link + "' ctx-forward"; cmd != want {
+			t.Errorf("%s.command = %q, want %q", k, cmd, want)
+		}
+	}
+}
+
 // feedlessAdapter reads a projected settings file but has no context-feed
 // schema of its own. It stands in for the next harness added to marvel:
 // something that accepts a settings path but is not Claude Code.
