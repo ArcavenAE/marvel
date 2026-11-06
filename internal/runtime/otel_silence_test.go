@@ -36,12 +36,15 @@ func exporterKeys(env map[string]string) []string {
 
 // launchEnvs builds the launch env of every harness marvel has a builder for,
 // each with no telemetry env declared on its role, interactive and headless
-// where the harness has both.
-func launchEnvs(t *testing.T) map[string]map[string]string {
+// where the harness has both. It also returns the names of the adapters it
+// built, so a test can check the matrix against the registry.
+func launchEnvs(t *testing.T) (envs map[string]map[string]string, built map[string]bool) {
 	t.Helper()
-	envs := map[string]map[string]string{}
+	envs = map[string]map[string]string{}
+	built = map[string]bool{}
 	prep := func(name string, a Adapter, ctx *LaunchContext) {
 		t.Helper()
+		built[a.Name()] = true
 		r, err := a.Prepare(ctx)
 		if err != nil {
 			t.Fatalf("%s: Prepare: %v", name, err)
@@ -62,14 +65,37 @@ func launchEnvs(t *testing.T) map[string]map[string]string {
 	gen.Session.Runtime.Command = "/bin/true"
 	gen.Session.Runtime.Args = nil
 	prep("generic", &Generic{}, gen)
-	return envs
+	prep("forestage", &Forestage{}, testContext())
+	oc := testContext()
+	oc.Session.Runtime.Name, oc.Session.Runtime.Command = "opencode", "opencode"
+	prep("opencode interactive", &OpenCode{}, oc)
+	prep("opencode headless", &OpenCode{}, headlessContext("opencode", "opencode", ""))
+	prep("simulator", &Simulator{}, simulatorContext())
+	return envs, built
+}
+
+// Every adapter the registry holds is in the matrix, so a harness added later
+// cannot be launched without this check reading its env. The registry is read
+// here, not listed, so a new Register line fails this test until a row is added.
+func TestLaunchMatrixCoversEveryRegisteredAdapter(t *testing.T) {
+	t.Setenv(resourceAttrs, "")
+	_, built := launchEnvs(t)
+	reg := NewRegistry()
+	reg.mu.RLock()
+	defer reg.mu.RUnlock()
+	for name := range reg.adapters {
+		if !built[name] {
+			t.Errorf("the registry holds adapter %q and the launch matrix builds no env for it", name)
+		}
+	}
 }
 
 // A role that declares no telemetry env gets a seat with no OTEL_EXPORTER_*
 // variable from marvel.
 func TestUnsetKeyLaunchedSeatHasNoOTELExporterVar(t *testing.T) {
 	t.Setenv(resourceAttrs, "")
-	for name, env := range launchEnvs(t) {
+	envs, _ := launchEnvs(t)
+	for name, env := range envs {
 		if keys := exporterKeys(env); len(keys) > 0 {
 			t.Errorf("%s: marvel put %v in the seat's env", name, keys)
 		}
@@ -83,7 +109,8 @@ func TestAnInheritedExporterVarIsNotAddedByMarvel(t *testing.T) {
 	t.Setenv(resourceAttrs, "")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://inherited.invalid:4318")
 	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-inherited=1")
-	for name, env := range launchEnvs(t) {
+	envs, _ := launchEnvs(t)
+	for name, env := range envs {
 		if keys := exporterKeys(env); len(keys) > 0 {
 			t.Errorf("%s: the launch env carries %v while the daemon's env holds exporter vars", name, keys)
 		}
