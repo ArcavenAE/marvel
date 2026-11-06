@@ -590,6 +590,14 @@ func TestRenderSessionTableUnwatchedAdvisory(t *testing.T) {
 		{"control-failed, not running", &api.HarnessState{State: api.HarnessStateControlFailed}, api.SessionFailed, "healthy"},
 		{"logged-out stays its own word", &api.HarnessState{State: api.HarnessStateLoggedOut, Confidence: "high"}, api.SessionRunning, "healthy (logged-out)"},
 	}
+	// (stalled) comes first, then one harness-state suffix; director's
+	// dashboard grammar refuses any other order.
+	stalled := base
+	stalled.ActivityState = api.ActivityStalled
+	stalled.HarnessState = &api.HarnessState{State: api.HarnessStateUncovered}
+	if got := column(t, renderSessionTable([]api.Session{stalled}), "HEALTH"); got != "healthy (stalled) (unwatched)" {
+		t.Errorf("stalled and unwatched: HEALTH = %q, want %q", got, "healthy (stalled) (unwatched)")
+	}
 	for _, c := range cases {
 		s := base
 		s.HarnessState, s.State = c.hs, c.st
