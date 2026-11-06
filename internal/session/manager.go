@@ -935,8 +935,9 @@ func (m *Manager) Create(sess *api.Session) error {
 		return fmt.Errorf("create session %s: %w", sess.Key(), err)
 	}
 	// Default-deny: from the moment the seat exists, every duty it must pass is
-	// unproven. A launch that fails below deletes the session, and its records
-	// with it.
+	// unproven. A refusal after planLaunch (sandbox, hold, harness home) deletes
+	// the session, and its duty records with it. A failure at the ensure-tmux
+	// step below returns with the session still stored, so its records stay.
 	m.recordDuties(sess)
 
 	tmuxSess := tmuxSessionName(sess.Workspace)
