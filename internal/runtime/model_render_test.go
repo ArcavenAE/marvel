@@ -110,7 +110,7 @@ func TestRefusingAdaptersReportNoModelCapability(t *testing.T) {
 	if reg.CanRenderModel("no-such-harness") {
 		t.Error("registry says an unregistered name can render a model")
 	}
-	for _, name := range []string{"claude", "codex", "opencode"} {
+	for _, name := range []string{"claude", "codex", "opencode", "goose"} {
 		if !reg.CanRenderModel(name) {
 			t.Errorf("registry says %s cannot render a model", name)
 		}

@@ -321,9 +321,11 @@ time of writing. Line cites above were refreshed on the same pass.
   command words, and `ANTHROPIC_MODEL` in the env of a claude role. The
   daemon passes `Manager.CanRenderModelRole`
   (`internal/daemon/daemon.go:1620`).
-- **Goose row.** The goose adapter does not render a model yet, so a model on
-  a goose role is refused at apply. The env route and its refusal wait on the
-  open question for goose.
+- **Goose row.** The goose adapter renders a model as `GOOSE_MODEL`, written
+  into the launch env and into the seeded `config.yaml`, before the context cap
+  reads it, so a declared model also picks the `GOOSE_CONTEXT_LIMIT` entry.
+  A goose role that declares a model and also sets `runtime.env.GOOSE_MODEL` is
+  refused at apply, as a claude role is for `ANTHROPIC_MODEL`.
 - **Rendering.** Bare claude gets `--model <id>` before its positional
   argument. Codex and opencode get `-m <id>`, interactive and headless. A
   claude command that is a wrapper, or whose words cannot be read, gets

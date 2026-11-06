@@ -754,7 +754,7 @@ func modelFlagSpelling(words []string) string {
 // ValidateModels refuses, at apply, a role that declares runtime.model on a
 // harness marvel cannot deliver it to, or that states the model twice: a model
 // flag in args or in the command words, or ANTHROPIC_MODEL in the env of a
-// claude role. A role that declares no model is never inspected, so existing
+// claude role or GOOSE_MODEL in the env of a goose role. A role that declares no model is never inspected, so existing
 // manifests that pass --model in args are unchanged.
 //
 // canRender is required when any role declares a model. A nil predicate is a
@@ -782,9 +782,12 @@ func (m *Manifest) ValidateModels(canRender ModelRenderableRole) error {
 					problems = append(problems, fmt.Sprintf("  %s: runtime.model is declared and runtime.command also carries %s; state the model once", where, f))
 				}
 			}
-			if modelHarnessName(r.Runtime) == "claude" {
-				if _, ok := r.Runtime.Env["ANTHROPIC_MODEL"]; ok {
-					problems = append(problems, fmt.Sprintf("  %s: runtime.model is declared and runtime.env also sets ANTHROPIC_MODEL; state the model once", where))
+			for harness, key := range map[string]string{"claude": "ANTHROPIC_MODEL", "goose": "GOOSE_MODEL"} {
+				if modelHarnessName(r.Runtime) != harness {
+					continue
+				}
+				if _, ok := r.Runtime.Env[key]; ok {
+					problems = append(problems, fmt.Sprintf("  %s: runtime.model is declared and runtime.env also sets %s; state the model once", where, key))
 				}
 			}
 		}

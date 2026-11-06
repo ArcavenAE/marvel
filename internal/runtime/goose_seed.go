@@ -52,6 +52,7 @@ func gooseSeeder(ctx *LaunchContext) func(dir string) error {
 		return nil
 	}
 	rt := ctx.Session.Runtime
+	rtEnv := gooseRuntimeEnv(rt)
 	return func(dir string) error {
 		g := rt.Goose
 		if g == nil || g.Posture == "" {
@@ -64,7 +65,7 @@ func gooseSeeder(ctx *LaunchContext) func(dir string) error {
 		}
 		cfg := map[string]any{gooseModeEnv: g.Posture}
 		for _, k := range []string{"GOOSE_PROVIDER", "GOOSE_MODEL"} {
-			if v := strings.TrimSpace(rt.Env[k]); v != "" {
+			if v := strings.TrimSpace(rtEnv[k]); v != "" {
 				cfg[k] = v
 			}
 		}

@@ -218,6 +218,24 @@ func TestValidateModelsRefusesAnthropicModelEnvOnClaude(t *testing.T) {
 	}
 }
 
+func TestValidateModelsRefusesGooseModelEnvOnGoose(t *testing.T) {
+	t.Parallel()
+	const secretLooking = "qwen-private-value"
+	err := modelRole("goose", "goose", "qwen3:8b", nil, map[string]string{"GOOSE_MODEL": secretLooking}).ValidateModels(canRenderFake)
+	if err == nil {
+		t.Fatal("a model beside runtime.env.GOOSE_MODEL was accepted")
+	}
+	if !strings.Contains(err.Error(), "GOOSE_MODEL") {
+		t.Errorf("error %q does not name the key", err)
+	}
+	if strings.Contains(err.Error(), secretLooking) {
+		t.Errorf("error %q carries the env value", err)
+	}
+	if err := modelRole("goose", "goose", "", nil, map[string]string{"GOOSE_MODEL": "x"}).ValidateModels(canRenderFake); err != nil {
+		t.Errorf("GOOSE_MODEL with no runtime.model = %v, want accepted", err)
+	}
+}
+
 func TestValidateModelsEnvRuleIsPerAdapter(t *testing.T) {
 	t.Parallel()
 	err := modelRole("codex", "codex", "gpt-5", nil, map[string]string{"ANTHROPIC_MODEL": "x"}).ValidateModels(canRenderFake)

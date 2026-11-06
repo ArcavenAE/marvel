@@ -121,7 +121,13 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	env["OTEL_SDK_DISABLED"] = "true"
 	env["GOOSE_TELEMETRY_ENABLED"] = "false"
 	env["GOOSE_DISABLE_SESSION_NAMING"] = "1"
-	limit, note := gooseContextLimit(ctx.Session.Runtime.ContextWindow, ctx.Session.Runtime.Env["GOOSE_MODEL"])
+	// runtime.model reaches goose as GOOSE_MODEL, written before the context cap
+	// reads it, and the seeded config carries the same value (gooseRuntimeEnv).
+	genv := gooseRuntimeEnv(ctx.Session.Runtime)
+	if m := genv["GOOSE_MODEL"]; ctx.Session.Runtime.Model != "" {
+		env["GOOSE_MODEL"] = m
+	}
+	limit, note := gooseContextLimit(ctx.Session.Runtime.ContextWindow, genv["GOOSE_MODEL"])
 	if limit > 0 {
 		env["GOOSE_CONTEXT_LIMIT"] = fmt.Sprint(limit)
 	}
@@ -250,6 +256,21 @@ func init() {
 	var _ StreamCapable = (*Goose)(nil)
 }
 
-// RendersModel reports that this adapter can pass a declared model to its
-// harness. Stub: false until the render step lands.
-func (*Goose) RendersModel() bool { return false }
+// RendersModel reports that this adapter passes a declared model to goose, as
+// GOOSE_MODEL in the launch env and in the seeded config.
+func (*Goose) RendersModel() bool { return true }
+
+// gooseRuntimeEnv is the role's env with runtime.model written into
+// GOOSE_MODEL. Apply refuses a role that sets both, so a declared model never
+// overwrites an operator's value. The context cap and the seeded config both
+// read the model from here, so they see the same one.
+func gooseRuntimeEnv(rt api.Runtime) map[string]string {
+	env := make(map[string]string, len(rt.Env)+1)
+	for k, v := range rt.Env {
+		env[k] = v
+	}
+	if rt.Model != "" {
+		env["GOOSE_MODEL"] = rt.Model
+	}
+	return env
+}
