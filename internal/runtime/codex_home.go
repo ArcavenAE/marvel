@@ -372,6 +372,16 @@ func codexBinary(command string) (string, error) {
 	return exec.LookPath("codex")
 }
 
+// codexHookCommand is the command the seeded hooks run: this marvel binary's
+// codex-ctx subcommand.
+func codexHookCommand() (string, error) {
+	exe, err := MarvelHookPath()
+	if err != nil {
+		return "", err
+	}
+	return buildCommand(shellQuote(exe), []string{"codex-ctx"}), nil
+}
+
 // codexSeeder returns the Seed step for one launch. The inputs are resolved
 // here, at spawn, so the file names this daemon's binary and this session's
 // constructed env.
@@ -380,7 +390,7 @@ func codexSeeder(ctx *LaunchContext, source string) func(dir string) error {
 		return nil
 	}
 	return func(dir string) error {
-		exe, err := os.Executable()
+		hook, err := codexHookCommand()
 		if err != nil {
 			return fmt.Errorf("resolve marvel binary for the codex-ctx hook: %w", err)
 		}
@@ -395,7 +405,7 @@ func codexSeeder(ctx *LaunchContext, source string) func(dir string) error {
 		}
 		trust := codexFolderTrust(ctx, start)
 		seed := codexSeed{
-			HookCommand: buildCommand(shellQuote(exe), []string{"codex-ctx"}),
+			HookCommand: hook,
 			Director:    operatorDirector(source),
 			EnvVars:     codexForwardedEnv(ctx),
 			Untrusted:   start,

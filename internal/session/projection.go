@@ -266,7 +266,7 @@ func injectStatuslineFeed(settings map[string]any, adapter runtime.Adapter, sess
 			sessionKey, adapter.Name())
 		return nil
 	}
-	exe, err := os.Executable()
+	exe, err := runtime.MarvelHookPath()
 	if err != nil {
 		log.Printf("context feed: cannot resolve marvel binary path, feed not injected: %v", err)
 		return nil
