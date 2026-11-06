@@ -25,7 +25,7 @@ const BackendNone = "none"
 
 // HibernateHeldLine is what scale and apply print when the team they changed is
 // hibernated: the change is recorded, a wake honours it, and nothing started.
-const HibernateHeldLine = "held: hibernated; run marvel wake"
+const HibernateHeldLine = "held: hibernated; run marvel wake (seats return as successors reading their handoff)"
 
 // HibernateModeHandoff is the one mode phase 2 has: every seat comes back as a
 // fresh successor reading its handoff.

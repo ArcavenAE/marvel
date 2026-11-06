@@ -20,7 +20,7 @@ import (
 // hibernateNotice is what a seat is sent when its team hibernates. Everything
 // from "write your handoff now" on is built by prepareHandoffNotice, as the
 // shift and retire notices are.
-const hibernateNotice = "hibernate: write your handoff now"
+const hibernateNotice = "hibernate: you return as a successor that reads your handoff; write your handoff now"
 
 // wakeHealthFallback is how long a woken supervisor has to heartbeat when its
 // role declares no health timeout, before the workers start anyway.

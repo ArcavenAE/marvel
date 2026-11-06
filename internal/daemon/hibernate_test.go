@@ -197,7 +197,7 @@ func TestScaleOnAHibernatedTeamHoldsAndSaysSo(t *testing.T) {
 	if err := json.Unmarshal(resp.Result, &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Held != "held: hibernated; run marvel wake" {
+	if out.Held != api.HibernateHeldLine {
 		t.Fatalf("scale held = %q, want the hold line", out.Held)
 	}
 	tm, _ := d.store.GetTeam("acme/squad")

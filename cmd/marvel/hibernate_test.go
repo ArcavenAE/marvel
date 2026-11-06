@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
@@ -191,5 +192,21 @@ func TestScaleAndApplyPrintTheHoldLineOnAHibernatedTeam(t *testing.T) {
 	}
 	if got := heldLines([]string{"acme/squad"}, "held: hibernated; run marvel wake"); got != "team/acme/squad held: hibernated; run marvel wake\n" {
 		t.Fatalf("apply output = %q", got)
+	}
+}
+
+func TestHibernateHelpSaysSeatsReturnAsSuccessors(t *testing.T) {
+	long := hibernateCmd().Long
+	if !strings.Contains(long, "Seats return as successors that read their handoff") {
+		t.Fatalf("hibernate help = %q, want the successor sentence", long)
+	}
+}
+
+func TestHeldLineSaysSeatsReturnAsSuccessors(t *testing.T) {
+	if !strings.Contains(api.HibernateHeldLine, "seats return as successors reading their handoff") {
+		t.Fatalf("held line = %q, want the successor clause", api.HibernateHeldLine)
+	}
+	if !strings.HasPrefix(api.HibernateHeldLine, "held: hibernated; run marvel wake") {
+		t.Fatalf("held line = %q, want it to keep the wake pointer", api.HibernateHeldLine)
 	}
 }

@@ -428,3 +428,18 @@ func TestShiftIsRefusedForAHibernatedRole(t *testing.T) {
 		t.Fatalf("shift of an uncovered role: %v", err)
 	}
 }
+
+func TestHibernateNoticeSaysTheSeatReturnsAsASuccessor(t *testing.T) {
+	f := newRetireFixture(t, "test-hib-notice", hibernateRole("worker", realTempDir(t), 1))
+	f.seat("worker", 0)
+
+	f.hibernate(HibernateOptions{Actor: "op", Source: "cli"})
+	f.tick()
+
+	if len(f.notices) != 1 {
+		t.Fatalf("notices = %q, want one", f.notices)
+	}
+	if !strings.Contains(f.notices[0], "you return as a successor that reads your handoff") {
+		t.Fatalf("notice = %q, want it to say the seat returns as a successor reading its handoff", f.notices[0])
+	}
+}

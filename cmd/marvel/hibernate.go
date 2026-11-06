@@ -67,6 +67,9 @@ been reported. A seat that writes no handoff is never ended by this command: it
 is reported by name and keeps running. marvel hibernate --end <session> ends that
 one seat without a handoff, which loses its context.
 
+Seats return as successors that read their handoff: marvel wake starts each one
+fresh, and nothing carries over except that handoff.
+
 --backend and --except-backend select roles by their declared backend label;
 the word "none" names a role with no label. A selected subset is marked per role,
 and the rest of the team keeps running.
