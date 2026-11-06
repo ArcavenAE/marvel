@@ -93,6 +93,9 @@ func TestSpawnWritesDeclaredDutiesUnproven(t *testing.T) {
 		if r.SetBy != api.SetByDaemon {
 			t.Errorf("duty %s set_by = %q, want %q", r.Duty, r.SetBy, api.SetByDaemon)
 		}
+		if err := api.ValidateDutyRecord(r); err != nil {
+			t.Errorf("duty %s record is not valid: %v", r.Duty, err)
+		}
 	}
 }
 

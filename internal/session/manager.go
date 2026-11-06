@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/runtime"
@@ -933,6 +934,10 @@ func (m *Manager) Create(sess *api.Session) error {
 	if err := m.store.CreateSession(sess); err != nil {
 		return fmt.Errorf("create session %s: %w", sess.Key(), err)
 	}
+	// Default-deny: from the moment the seat exists, every duty it must pass is
+	// unproven. A launch that fails below deletes the session, and its records
+	// with it.
+	m.recordDuties(sess)
 
 	tmuxSess := tmuxSessionName(sess.Workspace)
 	if err := m.driver.NewSession(tmuxSess); err != nil {
@@ -1108,15 +1113,33 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.State = api.SessionRunning
 	log.Printf("session %s running in pane %s", sess.Key(), paneID)
 	m.recordResume(sess)
-	m.recordDuties(sess)
 	m.announceSpawn(sess, paneID, plan.firstPrompt, plan.sandbox)
 	return nil
 }
 
 // recordDuties writes every duty the seat's role must pass as unproven, so a
 // seat that has proven nothing is never routable (docs/design/seat-readiness.md
-// section 5). Stub: writes nothing yet.
-func (m *Manager) recordDuties(sess *api.Session) {}
+// section 5). It runs on every fresh spawn and resets a duty a dead process
+// proved; adoption after a daemon restart is not a spawn and never calls it.
+// The records go through the store's daemon write path. A write that fails is
+// logged and does not fail the launch: the seat reads as having no proof, which
+// is the default-deny reading anyway.
+func (m *Manager) recordDuties(sess *api.Session) {
+	role, ok := m.roleOf(sess)
+	if !ok {
+		log.Printf("session %s: duties not written: its role is not in the store", sess.Key())
+		return
+	}
+	now := m.now()
+	for _, duty := range config.ResolvedDuties(role) {
+		if _, err := m.store.RecordDuty(api.DutyRecord{
+			Seat: sess.Key(), Duty: duty, State: api.DutyUnproven,
+			ObservedAt: now, SetBy: api.SetByDaemon,
+		}); err != nil {
+			log.Printf("session %s: duty %s not written: %v", sess.Key(), duty, err)
+		}
+	}
+}
 
 // recordResume writes sess's entry in the resume journal
 // (docs/design/fleet-hibernate.md section 5). It runs on every launch, and each
