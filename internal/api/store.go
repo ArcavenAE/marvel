@@ -1142,6 +1142,17 @@ func (s *Store) SetHarnessState(key string, hs *HarnessState) {
 	sess.HarnessState = &c
 }
 
+// SetTranscriptGap records why the transcript reader has no reading for a
+// session, "" when it has one. Like SetHarnessState it is status only and does
+// not persist.
+func (s *Store) SetTranscriptGap(key, gap string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[key]; ok {
+		sess.TranscriptGap = gap
+	}
+}
+
 // UpdateSessionMetrics records one process-sampler reading. m.MetricsAt
 // is set here so every stored reading carries the store's clock.
 //

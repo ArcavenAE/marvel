@@ -59,6 +59,44 @@ func (p *RoleInboxPublisher) PublishRoleInbox(ctx context.Context, ws, team, rol
 	if err != nil {
 		return err
 	}
+	return p.publish(ctx, subject, env, msgID)
+}
+
+// SeatInboxSubject is the subject one seat's mail is delivered on:
+// agent.<ws>.<team>.<agent id>.inbox, the subject its shim always reads. The
+// same character class as RoleInboxSubject applies.
+func SeatInboxSubject(ws, team, agentID string) (string, error) {
+	for _, tok := range [...]struct{ name, v string }{{"workspace", ws}, {"team", team}, {"agent id", agentID}} {
+		if !subjectToken.MatchString(tok.v) {
+			return "", fmt.Errorf("%s %q is not an addressable name", tok.name, tok.v)
+		}
+	}
+	return "agent." + ws + "." + team + "." + agentID + ".inbox", nil
+}
+
+// DirectorInboxSubject is the director's global address on the cluster's own
+// broker. The subject crosses to the hub over the cluster's leaf connection.
+const DirectorInboxSubject = "global.director.inbox"
+
+// PublishSeatInbox publishes env to one seat's inbox, by the seat's agent id.
+func (p *RoleInboxPublisher) PublishSeatInbox(ctx context.Context, ws, team, agentID string, env envelope.Envelope, msgID string) error {
+	subject, err := SeatInboxSubject(ws, team, agentID)
+	if err != nil {
+		return err
+	}
+	return p.publish(ctx, subject, env, msgID)
+}
+
+// PublishDirectorInbox publishes env to the director's global inbox.
+func (p *RoleInboxPublisher) PublishDirectorInbox(ctx context.Context, env envelope.Envelope, msgID string) error {
+	return p.publish(ctx, DirectorInboxSubject, env, msgID)
+}
+
+// publish validates env, then publishes it on subject and waits for the
+// stream's acknowledgement. Every public method builds its subject from
+// validated tokens or a constant, so the admin principal behind the connection
+// can publish nowhere else.
+func (p *RoleInboxPublisher) publish(ctx context.Context, subject string, env envelope.Envelope, msgID string) error {
 	data, err := json.Marshal(env)
 	if err != nil {
 		return fmt.Errorf("encode envelope: %w", err)

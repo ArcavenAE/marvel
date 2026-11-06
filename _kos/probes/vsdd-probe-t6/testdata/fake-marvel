@@ -1,0 +1,55 @@
+#!/bin/bash
+# A fake marvel for test_shim.sh. State lives in $FAKE_DIR. Not a model of the
+# daemon: it only answers run, wait and describe the way marvel's CLI does
+# (cmd/marvel/wait.go exit codes 0 succeeded, 1 failed, 2 crashed, 3 timeout,
+# 4 unknown key, 5 daemon error).
+set -u
+d="${FAKE_DIR:?}"
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  run)
+    ws=""; name=""; exp=0
+    args=("$@")
+    i=0
+    while [[ $i -lt ${#args[@]} ]]; do
+      case "${args[$i]}" in
+        --workspace) ws="${args[$((i + 1))]}" ;;
+        --name) name="${args[$((i + 1))]}" ;;
+        --experimental) exp=1 ;;
+      esac
+      i=$((i + 1))
+    done
+    echo run >>"$d/run.calls"
+    printf '%s\n' "$@" >"$d/run.$name.args"
+    [[ $exp -eq 1 ]] || { echo "--mode is experimental; pass --experimental to use it" >&2; exit 1; }
+    if [[ -n "${FAKE_RUN_FAIL:-}" ]]; then echo "$FAKE_RUN_FAIL" >&2; exit 1; fi
+    if [[ -e "$d/seat.$ws.$name" ]]; then echo "session $ws/$name already exists" >&2; exit 1; fi
+    : >"$d/seat.$ws.$name"
+    echo "session/$ws/$name created"
+    ;;
+  wait)
+    exp=0; key=""
+    for a in "$@"; do
+      [[ "$a" == "--experimental" ]] && exp=1
+      key="$a"
+    done
+    [[ $exp -eq 1 ]] || { echo "marvel wait is experimental; pass --experimental to use it" >&2; exit 1; }
+    if [[ -n "${FAKE_BAD_ARGS:-}" ]]; then echo "bad argument" >&2; exit 1; fi
+    if [[ -n "${FAKE_DAEMON_DOWN:-}" ]]; then echo unavailable; exit 5; fi
+    f="$d/seat.${key%%/*}.${key#*/}"
+    [[ -e "$f" ]] || { echo unknown; exit 4; }
+    st=$(cat "$d/state.${key%%/*}.${key#*/}" 2>/dev/null || true)
+    case "${st:-running}" in
+      succeeded) echo succeeded; exit 0 ;;
+      failed) echo failed; exit 1 ;;
+      crashed) echo crashed; exit 2 ;;
+      *) sleep "${FAKE_WAIT_SLEEP:-0}"; echo running; exit 3 ;;
+    esac
+    ;;
+  describe)
+    key="${2:-}"
+    [[ -e "$d/seat.${key%%/*}.${key#*/}" ]] || exit 1
+    printf '{\n  "name": "%s",\n  "harness_session_id": "sid-%s"\n}\n' "${key#*/}" "${key#*/}"
+    ;;
+  *) echo "fake marvel: unexpected $cmd" >&2; exit 9 ;;
+esac

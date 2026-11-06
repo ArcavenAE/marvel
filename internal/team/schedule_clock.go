@@ -32,6 +32,7 @@ func (c *Controller) reconcileScheduleClock(teams []api.Team) {
 		for j := range t.Roles {
 			if t.Roles[j].Schedule != nil {
 				c.stepScheduleClock(t, &t.Roles[j], now)
+				c.killPastDeadline(t, &t.Roles[j], now)
 			}
 		}
 	}
@@ -240,5 +241,30 @@ func (c *Controller) setNextDue(st *api.ScheduleStatus, p api.SchedulePolicy, fr
 	if observes && !p.DSTAck {
 		event(events.KindScheduleDSTUnacknowledged, events.SeverityWarning,
 			"timezone %s observes daylight saving and the schedule has no dst_ack; it keeps firing in local time. Add dst_ack = true or use a fixed offset", p.Timezone)
+	}
+}
+
+// killPastDeadline ends each live run of a scheduled role that has outlived
+// the schedule's active_deadline. The run is a failed run (the kill records
+// it failed, not cancelled), so retries and on_failure apply to it like
+// any other failure. A goose run is skipped: its wrapper already kills at
+// the same limit, and one kill should settle the run once.
+//
+// A run killed while its account reads limited is meant to be recorded
+// limited, not failed (the limited row of the outcome table in
+// docs/design/scheduled-runs.md). No limited outcome exists yet, so this
+// records failed.
+func (c *Controller) killPastDeadline(t *api.Team, role *api.Role, now time.Time) {
+	p := role.Schedule
+	if p.ActiveDeadline <= 0 || role.Runtime.Name == "goose" {
+		return
+	}
+	for _, s := range c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role.Name) {
+		if !s.State.CountsAsAlive() || s.Firing == "" || now.Sub(s.CreatedAt) <= p.ActiveDeadline {
+			continue
+		}
+		if err := c.sessMgr.KillPastDeadline(s.Key()); err != nil {
+			log.Printf("schedule: deadline kill %s: %v", s.Key(), err)
+		}
 	}
 }

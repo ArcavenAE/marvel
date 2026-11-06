@@ -12,7 +12,7 @@ permissions:
 jobs:
   quality-gate:
     name: Quality Gate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -74,6 +74,12 @@ jobs:
         with:
           # renovate: datasource=github-releases depName=golangci/golangci-lint
           version: v2.15.0
+
+      - name: Print the tmux version
+        # The runner image brings its own tmux and nothing else prints which.
+        # The tmux tests branch on it (below 3.5 an empty pane exit status is
+        # unknown), so a failure there is read against this line.
+        run: tmux -V
 
       - name: Run tests with race detector
         run: go test ./... -v -count=1 -race -coverprofile=coverage.out -covermode=atomic
@@ -139,6 +145,8 @@ jobs:
             help.v.aaplimg.com:443
             stocks-data-service.v.aaplimg.com:443
             ocsp.edge.digicert.com:443
+            xp.apple.com:443
+            north-america-mask.wrr.me.apple-dns.net:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -174,6 +182,8 @@ jobs:
             help.v.aaplimg.com:443
             stocks-data-service.v.aaplimg.com:443
             ocsp.edge.digicert.com:443
+            xp.apple.com:443
+            north-america-mask.wrr.me.apple-dns.net:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -233,7 +243,7 @@ jobs:
     # job has read-only permissions, no secret and no token, and a snapshot
     # never pushes to the tap.
     name: GoReleaser check
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -284,7 +294,7 @@ jobs:
     name: Build Binaries
     needs: quality-gate
     if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -491,7 +501,7 @@ jobs:
     permissions:
       contents: write
     environment: release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -616,7 +626,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3

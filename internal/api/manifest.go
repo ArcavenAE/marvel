@@ -236,6 +236,7 @@ type ManifestShift struct {
 	Handoff        string                   `toml:"handoff,omitempty"         yaml:"handoff,omitempty"`
 	HandoffMarker  string                   `toml:"handoff_marker,omitempty"  yaml:"handoff_marker,omitempty"`
 	HandoffWindow  string                   `toml:"handoff_window,omitempty"  yaml:"handoff_window,omitempty"`
+	HandoffVia     string                   `toml:"handoff_via,omitempty"     yaml:"handoff_via,omitempty"`
 }
 
 // ManifestShiftCondition is one entry of a shift table's any list.

@@ -81,6 +81,11 @@ type Controller struct {
 	// once more, which is the point of a report that can be missed. Guarded
 	// by mu.
 	stuckEmitted map[string]time.Time
+	// stuckAt is when the stuck event was last emitted for a session's request,
+	// so the director's one repeat goes only after a stuck event that follows its
+	// first notice. In memory: a restart can re-emit the event, and the cap is
+	// on the request, so the director still gets two at most.
+	stuckAt map[string]time.Time
 	// publishRecords is what the controller remembers, in memory, about
 	// publishing each escalated session's request to the supervisor
 	// (shift_handoff_deliver.go). The count and time are durable on the request.
@@ -117,6 +122,9 @@ type Controller struct {
 	// by the gate is RoleHold with HoldBus and one bus.unavailable per role
 	// per transition, the admission-latch shape (aae-orc-xy1dh).
 	BusGate func() (ready bool, reason string)
+	// LeafUp reports whether the cluster's leaf connection to the hub is up. The
+	// director leg of an escalation is on only while it is. Nil means no leg.
+	LeafUp func() bool
 	// busHolds latches the roles currently held for the bus, so a standing
 	// outage announces itself once per role rather than once per tick.
 	busHolds map[string]bool
@@ -2164,6 +2172,7 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 			c.handoffProbes.forget(req.Session)
 			delete(c.missingEmitted, req.Session)
 			delete(c.stuckEmitted, req.Session)
+			delete(c.stuckAt, req.Session)
 			delete(c.publishRecords, req.Session)
 		}
 		return nil

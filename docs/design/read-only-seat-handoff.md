@@ -18,11 +18,15 @@ opens with the held one (`os.SameFile`), so a reused inode number cannot pass;
 a request restored after a restart falls back to the recorded numbers. The
 `submit_handoff` MCP server is `marvel mcp handoff`, and the codex seed can
 render its `marvel-handoff` entry; no role asks for it yet, so nothing is
-seeded into a live config until `handoff_via = "tool"` is wired. Not built
-yet: crush seeding (deferred to the crush adapter, aae-orc-6c2r; the section 5
-checks have not run), retention and expiry with the nonce line (7.1), `handoff get` (7.2),
-`handoff_via` validation at apply (RH-A), and the notice text for a seat that
-hands off by tool. A seat can run the verb only if its allowlist admits that
+seeded into a live config until a role declares `handoff_via = "tool"`. That
+declaration is now built (marvel#1308): the shift table takes it, `apply`
+refuses it for a harness that cannot be given the tool, the request notice names
+the tool, and the codex seeder renders the `marvel-handoff` entry for it. Not
+built yet: crush seeding (deferred to the crush adapter, aae-orc-6c2r), the
+opencode half, retention and expiry with the nonce line (7.1), `handoff get`
+(7.2), the escalation legs of #1309, and the retire notice, which still asks for
+a file. The section 5 checks have not run, so `apply` refuses `tool` for crush
+and opencode meanwhile. A seat can run the verb only if its allowlist admits that
 one command; that grant is role configuration outside marvel. The pull request
 for slice 1 is #1050.
 

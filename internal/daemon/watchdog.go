@@ -1,13 +1,16 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -72,11 +75,36 @@ type watchdog struct {
 	lastCapture map[string]time.Time
 	rolled      map[string]string
 
+	// client reports whether a workspace is a client one. The transcript reader
+	// skips a client seat until the operator rules on reading client-workspace
+	// transcripts, and a workspace it cannot read counts as client. Nil counts
+	// every workspace as client, so a watchdog built without the test reads no
+	// transcript.
+	client func(workspace string) (bool, error)
+
+	// tailRead returns the bytes of a transcript from an offset to its end, at
+	// most transcriptTailCap of them. Injected so a test can count reads.
+	tailRead func(path string, from int64) ([]byte, error)
+
+	// tx holds, per session key, where the transcript reader left off.
+	tx map[string]*transcriptTail
+
 	// uncovered holds, per "<harness>/<version>", how many examined sessions
 	// were on that uncovered version at the last pass. A key is present while
 	// the set is non-empty and gone when it empties, so a count change alone is
 	// not a transition.
 	uncovered map[string]int
+}
+
+// transcriptTail is what the reader keeps for one seat between ticks: the file
+// it read and how far, so an unchanged file costs one stat and a changed one
+// costs only its new bytes.
+type transcriptTail struct {
+	path   string
+	size   int64
+	mtime  time.Time
+	offset int64
+	read   panestate.TranscriptReading
 }
 
 func newWatchdog(store *api.Store, ring *events.Ring, sets []panestate.Pattern, window time.Duration) *watchdog {
@@ -89,6 +117,7 @@ func newWatchdog(store *api.Store, ring *events.Ring, sets []panestate.Pattern, 
 		reg:    runtime.NewRegistry(), now: func() time.Time { return time.Now().UTC() },
 		lastCapture: map[string]time.Time{}, rolled: map[string]string{}, failed: map[string]bool{},
 		uncovered: map[string]int{},
+		tailRead:  readTranscriptTail, tx: map[string]*transcriptTail{},
 	}
 }
 
@@ -260,13 +289,19 @@ func (w *watchdog) visit(now time.Time, s api.Session) {
 	if s.State != api.SessionRunning || s.PaneID == "" {
 		w.clear(s, "session ended")
 		delete(w.lastCapture, key)
+		delete(w.tx, key)
+		return
+	}
+	// The transcript source reads before the quiet gate and before the did-work
+	// clear: a heartbeating seat never opens either.
+	if w.visitTranscript(now, &s) {
 		return
 	}
 	// The did-work clear is for a state that describes the screen the seat was
 	// looking at. A coverage state describes the version, not the screen, so it
 	// stays: a seat that alternates work and quiet would otherwise clear and
 	// re-set it every cycle.
-	if hs := s.HarnessState; hs != nil && !isCoverageState(hs.State) && s.ContextAt.After(hs.ContextAt) {
+	if hs := s.HarnessState; hs != nil && !isCoverageState(hs.State) && hs.Source != api.HarnessSourceTranscript && s.ContextAt.After(hs.ContextAt) {
 		w.clear(s, "the session did work")
 		return
 	}
@@ -359,7 +394,7 @@ func (w *watchdog) uncoveredTransitions() {
 			noun = "session"
 		}
 		events.Emit(w.ring, events.Event{
-			Kind: events.KindWatchdogUncovered, Severity: events.SeverityInfo,
+			Kind: events.KindWatchdogUncovered, Severity: events.SeverityWarning,
 			Message: fmt.Sprintf("uncovered: %s %s, %d %s with no passing pattern (covered: %s)",
 				h, v, now[k], noun, coveredList(coveredVersions(w.sets, h))),
 		})
@@ -535,11 +570,20 @@ func (d *Daemon) startWatchdog(ctx context.Context) {
 	w.suspended = d.clusterSuspended
 	w.readPane = d.driver.PaneForeground
 	w.capture = d.driver.CapturePaneJoined
+	d.wireWatchdogClient(w)
+	d.watchdog = w
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
 		w.Run(ctx)
 	}()
+}
+
+// wireWatchdogClient gives the watchdog the workspace test that keeps the
+// transcript reader off a client seat: the workspace's stored scope, the same
+// source the COMPOSER column uses.
+func (d *Daemon) wireWatchdogClient(w *watchdog) {
+	w.client = d.workspaceIsClient
 }
 
 // configuredQuietWindow is the operator's watchdog.window from the client
@@ -559,4 +603,219 @@ func configuredQuietWindow() time.Duration {
 		return 0
 	}
 	return window
+}
+
+// transcriptTailCap bounds one read of a transcript. The newest assistant
+// entry decides, so a longer file is read from its last transcriptTailCap
+// bytes and nothing older matters.
+const transcriptTailCap = 1 << 20
+
+// readTranscriptTail returns the bytes of path from an offset to the end, at
+// most transcriptTailCap of them.
+func readTranscriptTail(path string, from int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(io.LimitReader(f, transcriptTailCap))
+}
+
+// The reasons the transcript reader has no reading for a seat. They are
+// status on the session, so describe says why a seat is uncovered.
+const (
+	gapNoSessionID   = "transcript: no assigned session id"
+	gapBadSessionID  = "transcript: the session id is not a file name"
+	gapNoConfigDir   = "transcript: the config directory is not resolvable"
+	gapNoFile        = "transcript: no file for the session id"
+	gapSeveralFiles  = "transcript: several files for the session id"
+	gapClientNotRead = "transcript: client workspace, not read"
+	gapUnreadable    = "transcript: the file cannot be read"
+)
+
+// transcriptSource is the watchdog's second reader (docs/design/
+// harness-state-watchdog-p1.md section 4a). It reads the typed fields of a
+// claude seat's own transcript and reports whether the newest assistant entry
+// is an authentication failure. It runs on every tick, outside the quiet gate:
+// a seat whose login expired keeps beating, and every beat moves ContextAt
+// (#801), so the pane path never gets to look at it.
+//
+// ok is false when the reader does not apply or cannot read, with the reason
+// recorded as the session's TranscriptGap.
+func (w *watchdog) transcript(s api.Session) (r panestate.TranscriptReading, ok bool) {
+	key := s.Key()
+	gap := func(g string) (panestate.TranscriptReading, bool) {
+		if s.TranscriptGap != g {
+			w.store.SetTranscriptGap(key, g)
+		}
+		delete(w.tx, key)
+		return panestate.TranscriptReading{}, false
+	}
+	if w.reg.Resolve(s.Runtime.Name).Name() != "claude" {
+		return gap("")
+	}
+	// Until the operator rules on reading client-workspace transcripts, a client
+	// workspace's seat is not read, one whose workspace cannot be read counts as
+	// client, and so does a watchdog with no client test.
+	if w.client == nil {
+		return gap(gapClientNotRead)
+	}
+	if c, err := w.client(s.Workspace); err != nil || c {
+		return gap(gapClientNotRead)
+	}
+	id := s.HarnessSessionID
+	switch {
+	case id == "":
+		return gap(gapNoSessionID)
+	case strings.ContainsAny(id, "/\\\x00"):
+		return gap(gapBadSessionID)
+	}
+
+	t := w.tx[key]
+	if t != nil {
+		if _, err := os.Stat(t.path); err != nil {
+			t = nil
+		}
+	}
+	if t == nil {
+		path, why := findTranscript(s, id)
+		if why != "" {
+			return gap(why)
+		}
+		t = &transcriptTail{path: path, offset: -1}
+		w.tx[key] = t
+	}
+	fi, err := os.Stat(t.path)
+	if err != nil {
+		return gap(gapUnreadable)
+	}
+	if s.TranscriptGap != "" {
+		w.store.SetTranscriptGap(key, "")
+	}
+	if t.offset >= 0 && fi.Size() == t.size && fi.ModTime().Equal(t.mtime) {
+		return t.read, true
+	}
+	from := t.offset
+	if from < 0 || fi.Size() < from {
+		from = 0
+	}
+	if fi.Size()-from > transcriptTailCap {
+		from = fi.Size() - transcriptTailCap
+	}
+	data, err := w.tailRead(t.path, from)
+	if err != nil {
+		return t.read, t.offset >= 0
+	}
+	t.size, t.mtime = fi.Size(), fi.ModTime()
+	// Only whole lines are consumed: a line still being written is read again
+	// once it is finished.
+	end := bytes.LastIndexByte(data, '\n') + 1
+	t.offset = from + int64(end)
+	if end > 0 {
+		var lines [][]byte
+		for _, l := range bytes.Split(data[:end], []byte{'\n'}) {
+			if len(l) > 0 {
+				lines = append(lines, l)
+			}
+		}
+		if got := panestate.ClassifyClaudeTranscript(lines); got.Verdict != panestate.TranscriptNone {
+			t.read = got
+		}
+	}
+	return t.read, true
+}
+
+// findTranscript locates the seat's transcript by its assigned id. Globbing by
+// the id avoids deriving claude's cwd slug, which is why the codex rollout
+// reader refuses to derive its path too. Exactly one match is a file; none or
+// several is a reason.
+func findTranscript(s api.Session, id string) (path, why string) {
+	home, _ := os.UserHomeDir()
+	dir := api.CanonicalConfigDir("claude", s.Runtime.Env["CLAUDE_CONFIG_DIR"], home)
+	if dir == "" {
+		if home == "" {
+			return "", gapNoConfigDir
+		}
+		dir = filepath.Join(home, ".claude")
+	}
+	if !filepath.IsAbs(dir) {
+		return "", gapNoConfigDir
+	}
+	projects := filepath.Join(dir, "projects")
+	entries, err := os.ReadDir(projects)
+	if err != nil {
+		return "", gapNoFile
+	}
+	var found []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		p := filepath.Join(projects, e.Name(), id+".jsonl")
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			found = append(found, p)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", gapNoFile
+	case 1:
+		return found[0], ""
+	}
+	return "", gapSeveralFiles
+}
+
+// visitTranscript runs the transcript source for one seat and reports whether
+// a transcript state stands, in which case the pane path has nothing to add. A
+// transcript state is cleared only by this reader: when the seat answers, or
+// when the file is no longer read. The pane picker's state is the pane
+// path's, and a seat that never logged in may write no assistant entry at
+// all, so it stands when the transcript has no authentication failure.
+func (w *watchdog) visitTranscript(now time.Time, s *api.Session) bool {
+	r, ok := w.transcript(*s)
+	if ok && r.Verdict == panestate.TranscriptAuthFailed {
+		w.setTranscript(now, *s, r)
+		return true
+	}
+	if hs := s.HarnessState; hs != nil && hs.Source == api.HarnessSourceTranscript {
+		why := "the transcript is no longer read"
+		if ok {
+			why = "the session answered"
+		}
+		w.clear(*s, why)
+		s.HarnessState = nil
+	}
+	return false
+}
+
+// clip keeps a transcript field short before it reaches evidence or an event.
+func clip(v string) string {
+	if r := []rune(v); len(r) > 64 {
+		return string(r[:64])
+	}
+	return v
+}
+
+func (w *watchdog) setTranscript(now time.Time, s api.Session, r panestate.TranscriptReading) {
+	hs := &api.HarnessState{
+		State: api.HarnessStateLoggedOut, Confidence: "high",
+		Harness: "claude", HarnessVersion: clip(r.Version),
+		PatternID: "transcript:authentication_failed", PatternVersion: 1,
+		Evidence:   []string{fmt.Sprintf("entry %s at %s", clip(r.UUID), clip(r.Timestamp))},
+		CapturedAt: now, ContextAt: s.ContextAt, Source: api.HarnessSourceTranscript,
+	}
+	already := s.HarnessState != nil && s.HarnessState.State == hs.State
+	w.store.SetHarnessState(s.Key(), hs)
+	if already {
+		return
+	}
+	events.Emit(w.ring, events.Event{
+		Kind: events.KindSessionHarnessState, Severity: events.SeverityWarning,
+		Workspace: s.Workspace, Team: s.Team, Role: s.Role, Session: s.Name,
+		Message: fmt.Sprintf("%s %s (high, claude %s, from the transcript's API error, %s)",
+			hs.State, s.Name, versionOrUnknown(hs.HarnessVersion), hs.Evidence[0]),
+	})
 }

@@ -334,6 +334,10 @@ type Session struct {
 	RestartCount    int           `toml:"-"`
 	LastHealthCheck time.Time     `toml:"-"`
 	CreatedAt       time.Time     `toml:"-"`
+	// TranscriptGap says why the watchdog's transcript reader has no reading
+	// for this seat, when it has none. Empty while it reads or does not apply.
+	// Status only, never persisted.
+	TranscriptGap string `json:"transcript_gap,omitempty" toml:"-"`
 	// PausedTotal is how long a fleet suspend held this session still. An age
 	// check of the form now.Sub(CreatedAt) reads AgeAt instead, so a seat that
 	// was frozen does not age while it did no work (docs/design/
@@ -878,7 +882,15 @@ type ShiftPolicy struct {
 	// HandoffWindow is how long after a request marvel waits for the marker
 	// before it escalates. Zero means DefaultShiftHandoffWindow.
 	HandoffWindow time.Duration `toml:"-"`
+	// HandoffVia names how a seat that cannot write a file hands off. Empty
+	// means the seat writes the declared file itself; ShiftHandoffViaTool means
+	// it calls the submit_handoff tool and marvel writes the file for it
+	// (docs/design/read-only-seat-handoff.md).
+	HandoffVia string `toml:"-"`
 }
+
+// ShiftHandoffViaTool is the one value handoff_via takes.
+const ShiftHandoffViaTool = "tool"
 
 // ShiftCondition is one entry of a shift policy's list.
 type ShiftCondition struct {
@@ -975,6 +987,11 @@ type ShiftRequest struct {
 	// supervisor role had no live seat, so the first holder gets an immediate
 	// send instead of waiting out a window.
 	LastDeliveryQueued bool
+	// DirectorSent is how many escalation notices marvel has published to the
+	// director for this request, at most two: one at escalation and one when the
+	// request is reported stuck. DirectorSentAt is when the last one went.
+	DirectorSent   int
+	DirectorSentAt time.Time
 	// Escalated is set once the window expired with no marker and marvel
 	// emitted shift.handoff-missing. From then on the team's supervisor
 	// decides; marvel neither re-requests nor shifts on its own.
@@ -1354,7 +1371,17 @@ type HarnessState struct {
 	// ContextAt is the session's ContextAt when this was seen. A later
 	// ContextAt means the seat did work, which clears the state.
 	ContextAt time.Time `json:"context_at,omitempty"`
+	// Source says which reader set the state: HarnessSourcePane or
+	// HarnessSourceTranscript. Empty reads as pane, so a record written before
+	// the field existed stays what it was.
+	Source string `json:"source,omitempty"`
 }
+
+// The readers that set a HarnessState.
+const (
+	HarnessSourcePane       = "pane"
+	HarnessSourceTranscript = "transcript"
+)
 
 // HarnessStateLoggedOut is the state a matched logged-out screen sets.
 const HarnessStateLoggedOut = "logged-out"

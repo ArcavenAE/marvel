@@ -12,7 +12,7 @@ import (
 
 // The watchdog informs and never acts (docs/design/harness-state-watchdog-p1.md
 // sections 2 and 6, test 10). This reads its source: no call that types into a
-// pane, injects, or restarts, and no store write but SetHarnessState.
+// pane, injects, or restarts, and no store write but SetHarnessState and SetTranscriptGap.
 func TestWatchdogSourceNeverActsOnAPane(t *testing.T) {
 	files := []string{"watchdog.go"}
 	panestate, err := filepath.Glob("../panestate/*.go")
@@ -25,7 +25,10 @@ func TestWatchdogSourceNeverActsOnAPane(t *testing.T) {
 		}
 	}
 	forbidden := []string{"SendKeys", "Inject", "Restart", "Paste", "SendText", "KillPane", "KillWindow", "Respawn", "Escapes"}
-	allowedStore := map[string]bool{"ListSessions": true, "SetHarnessState": true}
+	// SetTranscriptGap writes the reason the transcript reader has no reading
+	// for a seat. It is status the way HarnessState is: nothing in the restart or
+	// shift path reads it, and it changes no State or HealthState.
+	allowedStore := map[string]bool{"ListSessions": true, "SetHarnessState": true, "SetTranscriptGap": true}
 	fset := token.NewFileSet()
 	for _, name := range files {
 		src, err := os.ReadFile(name)

@@ -113,6 +113,12 @@ const (
 	// KindViewRefreshFailed records a refresh that failed: the current tree
 	// stays, and the next tick tries again.
 	KindViewRefreshFailed Kind = "view.refresh-failed"
+	// KindHostVitalsCrossed records a host reading passing its line, once, when
+	// it is first passed. It is a report and blocks nothing
+	// (docs/design/host-vitals.md sections 3 to 5).
+	KindHostVitalsCrossed Kind = "host.vitals.crossed"
+	// KindHostVitalsCleared records the same reading no longer passing its line.
+	KindHostVitalsCleared Kind = "host.vitals.cleared"
 	// KindViewUnavailable records a view that could not be built when its seat
 	// was spawned, so the seat started without MARVEL_VIEW_<NAME>. Once per
 	// change of cause.
@@ -303,6 +309,11 @@ const (
 	// KindRunCancelled records a live run of a scheduled role ended by a
 	// kill or delete rather than by its own exit (#431 ruling on default 6).
 	KindRunCancelled Kind = "run.cancelled"
+	// KindRunDeadline records a live run of a scheduled role that marvel
+	// killed because it passed its schedule's active_deadline. The run is a
+	// failed run, so it spends an attempt; the event replaces run.failed for
+	// it, never run.cancelled (scheduled-runs section 2).
+	KindRunDeadline Kind = "run.deadline"
 	// KindContextFeedUnsupported records that an applied manifest declares
 	// runtime.context_feed on a role whose harness cannot honour it, so the
 	// declaration is advisory and CTX% will not be fed by it. Fires once
@@ -526,6 +537,8 @@ var allKinds = []Kind{
 	KindAccountLoggedOut,
 	KindViewRefreshed,
 	KindViewRefreshFailed,
+	KindHostVitalsCrossed,
+	KindHostVitalsCleared,
 	KindViewUnavailable,
 	KindViewRetentionHeld,
 	KindCodexTrust,
@@ -575,6 +588,7 @@ var allKinds = []Kind{
 	KindRunSucceeded,
 	KindRunFailed,
 	KindRunCancelled,
+	KindRunDeadline,
 	KindContextFeedUnsupported,
 	KindAdmissionRefused,
 	KindClusterSuspendInterrupted,

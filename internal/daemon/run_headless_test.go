@@ -2,11 +2,14 @@ package daemon
 
 import (
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
+	"github.com/arcavenae/marvel/internal/tmux/tmuxtest"
 )
 
 // runWith sends a run request as the CLI would, from loose params so the test
@@ -177,5 +180,97 @@ func TestNamedRunIntoAnUndeclaredRoleSurvivesTheController(t *testing.T) {
 	}
 	if orch != 1 || branch != 1 {
 		t.Errorf("after ten ticks: %d orchestrator, %d branch-run; want 1 and 1", orch, branch)
+	}
+}
+
+// waitForExitStatus waits for the pane to die and reports whether tmux kept
+// its exit status. Below tmux 3.5 a dead pane's status can be lost for good
+// (marvel#424), and an empty status is read as unknown on purpose, so the
+// caller asserts the unknown-status contract there instead of skipping. A tmux
+// that should keep the status (3.5 and later) and does not fails the test.
+func waitForExitStatus(t *testing.T, d *Daemon, paneID string) (kept bool) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	var deadSince time.Time
+	for {
+		st, _ := d.driver.PaneStatus(paneID)
+		switch {
+		case st.Exists && st.Dead && st.ExitStatus != "":
+			return true
+		case st.Exists && st.Dead:
+			if deadSince.IsZero() {
+				deadSince = time.Now()
+			} else if time.Since(deadSince) > 3*time.Second {
+				out, _ := exec.Command("tmux", "-V").Output()
+				if tmuxtest.StatusExpected(string(out)) {
+					t.Fatalf("%s lost a dead pane's exit status, which 3.5 and later keep", strings.TrimSpace(string(out)))
+				}
+				t.Logf("%s loses a dead pane's exit status: asserting the unknown-status contract", strings.TrimSpace(string(out)))
+				return false
+			}
+		case time.Now().After(deadline):
+			t.Fatal("pane never died")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// A headless ad-hoc run (marvel run --mode headless --name ...) whose harness
+// exits 0 is stored as succeeded, and it stays in the store, through the
+// reaper and ten controller ticks, until an explicit delete removes it. A
+// caller that waits on the key can therefore read the verdict whenever it
+// asks, not only in the moment the process ends. Where tmux loses the exit
+// status (below 3.5) the row is crashed with no status, and it stays and is
+// deleted the same way.
+func TestHeadlessNamedRunThatExitsZeroSucceedsAndStaysUntilDeleted(t *testing.T) {
+	d := newHandlerDaemon(t)
+	sess := ranSession(t, d, runWith(t, d, map[string]any{
+		"workspace": "runh7", "name": "branch-ok", "mode": "headless", "prompt": "p",
+		"runtime_command": "sh", "runtime_args": []string{"-c", "exit 0"},
+	}))
+	key := sess.Key()
+
+	// Wait for the exit status before the reap reads it, then reap until the
+	// store reads a verdict.
+	kept := waitForExitStatus(t, d, sess.PaneID)
+	wantState, wantExit := api.SessionSucceeded, "0"
+	if !kept {
+		// A lost status reads as unknown, which is a crash with no status.
+		wantState, wantExit = api.SessionCrashed, ""
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		d.sessMgr.ReapDead()
+		if got, err := d.store.GetSession(key); err == nil && got.State != api.SessionRunning {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	got, err := d.store.GetSession(key)
+	if err != nil {
+		t.Fatalf("a finished headless run left the store: %v", err)
+	}
+	if got.State != wantState || got.ExitStatus != wantExit {
+		t.Fatalf("state %q exit %q, want %s and %q", got.State, got.ExitStatus, wantState, wantExit)
+	}
+
+	for i := 0; i < 10; i++ {
+		d.sessMgr.ReapDead()
+		d.teamCtrl.ReconcileOnce()
+	}
+	got, err = d.store.GetSession(key)
+	if err != nil {
+		t.Fatalf("the finished run was removed without a delete: %v", err)
+	}
+	if got.State != wantState {
+		t.Fatalf("after ten ticks state = %q, want %s", got.State, wantState)
+	}
+
+	raw, _ := json.Marshal(map[string]string{"resource_type": "session", "name": key})
+	if resp := d.handleDelete(raw); resp.Error != "" {
+		t.Fatalf("explicit delete: %s", resp.Error)
+	}
+	if _, err := d.store.GetSession(key); err == nil {
+		t.Fatalf("session %s still in the store after an explicit delete", key)
 	}
 }

@@ -282,6 +282,8 @@ the manifest adds `dst_ack` or changes the zone.
 | Run exits non-zero or crashes | `attempts` + 1; retried after backoff while `attempts <= retries` and inside `starting_deadline`; else the firing settles failed and `on_failure` applies (default `wait`: next firing runs as declared) | `run.failed`; `schedule.frozen` only under `freeze` |
 | Run ends while its account is `limited` (#419) | not a failure: `attempts` unchanged, no retry and no freeze; the firing waits for the clear, then #419's catch-up rule applies | `run.limited` |
 
+A deadline kill is a failed run: it spends an attempt and follows `retries` and `on_failure` (section 2).
+
 There is no backlog and no burst: a recovery produces at most one run. That is
 the property that matters for a shared account.
 

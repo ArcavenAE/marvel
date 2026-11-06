@@ -31,6 +31,7 @@ import (
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/hostvitals"
 	"github.com/arcavenae/marvel/internal/limitmenu"
 	"github.com/arcavenae/marvel/internal/logbuf"
 	"github.com/arcavenae/marvel/internal/panemenu"
@@ -92,6 +93,12 @@ type Daemon struct {
 	sessMgr            *session.Manager
 	teamCtrl           *team.Controller
 	driver             *tmux.Driver
+
+	// vitals is the host vitals sampler. It is built off unless the cluster
+	// config turns it on, and metricsPass drives it every VitalsEvery passes.
+	vitals     *hostvitals.Sampler
+	vitalsPass int
+
 	// composerClient reports whether a workspace is a client one, whose
 	// panes the COMPOSER column never reads, or an error when its manifest
 	// cannot be read. New sets the workspace scope; nil captures nothing.
@@ -147,6 +154,17 @@ type Daemon struct {
 	// shutdown. Nil for TCP listeners, which have their own kernel-level
 	// exclusion.
 	socketLock *socketLock
+
+	// watchdog is the harness-state watchdog startWatchdog built, kept so a test
+	// can see how it was wired. Nil until the daemon starts it.
+	watchdog *watchdog
+
+	// Path of the root lock to take on Start. Empty = no root lock.
+	rootLockPath string
+
+	// Advisory lock on the marvel root, held from the first act of Start to
+	// shutdown. Nil when rootLockPath is empty.
+	rootLock *socketLock
 
 	// reclaim makes the startup reconcile destroy marvel-* tmux state
 	// this daemon does not own, instead of leaving it running. Off by
@@ -251,6 +269,12 @@ type Daemon struct {
 // Options configures optional daemon behavior. Zero value disables
 // everything optional (matches legacy behavior).
 type Options struct {
+	// RootLock, when non-empty, is the path of the lock that makes one
+	// marvel root one daemon, <root>/run/daemon.lock. Start takes it first,
+	// before any other guard, and holds it until the daemon stops. Empty
+	// means no lock, as PidFile does, which keeps daemons built directly in
+	// tests out of it. cmd/marvel always sets it, from the layout.
+	RootLock string
 	// PidFile, when non-empty, is written with the daemon's PID on
 	// Start and removed on Stop. If the file already exists and
 	// points at a live process, Start refuses with an error.
@@ -462,6 +486,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		reexec:    syscall.Exec,
 
 		leafLossCause: leafLossCause,
+		rootLockPath:  opts.RootLock,
 	}
 	teamCtrl.Suspended = d.clusterSuspended
 	driver.SetSuspendGate(d.clusterSuspended)
@@ -558,7 +583,26 @@ func (d *Daemon) LogBuffer() *logbuf.Buffer { return d.logs }
 // Start starts the daemon: listens on Unix or TCP socket and starts reconciliation.
 // The address format determines the network: "host:port" for TCP, a file path
 // for Unix. Examples: "~/.marvel/run/marvel.sock", "0.0.0.0:9090", ":9090".
-func (d *Daemon) Start(socketPath string) error {
+func (d *Daemon) Start(socketPath string) (err error) {
+	// One root is one daemon. This is the first act, before the pid file
+	// guard, the socket lock and attachServices: a daemon that loses it must
+	// never reach the broker, the same rule the pid file guard states below.
+	// A start that fails after taking it gives it back, so a failed start
+	// leaves the root free.
+	if d.rootLockPath != "" {
+		lock, lerr := lockRoot(d.rootLockPath)
+		if lerr != nil {
+			return lerr
+		}
+		d.rootLock = lock
+		defer func() {
+			if err != nil {
+				d.rootLock.release()
+				d.rootLock = nil
+			}
+		}()
+	}
+
 	// Refuse to start if a pid file already points at a live process.
 	if d.pidFile != "" {
 		if err := checkPidFileFree(d.pidFile); err != nil {
@@ -605,6 +649,7 @@ func (d *Daemon) Start(socketPath string) error {
 	// hand it. A managed bus that cannot start is a start failure, the
 	// tmux posture.
 	d.loadScheduleHistoryMax(socketPath)
+	d.loadHostVitals(socketPath)
 	d.identifyCluster(socketPath)
 	d.loadSuspendRecord(socketPath)
 	d.loadResumeJournal(socketPath)
@@ -971,6 +1016,8 @@ func (d *Daemon) shutdown(teardown bool) {
 	}
 	d.socketLock.release()
 	d.socketLock = nil
+	d.rootLock.release()
+	d.rootLock = nil
 	if d.pidFile != "" {
 		_ = os.Remove(d.pidFile)
 	}
@@ -1582,6 +1629,9 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	if err := refuseUnadmittedGlobalRoles(m, d.sessMgr.Bus); err != nil {
 		return daemonrpc.Response{Error: err.Error()}
 	}
+	if refusals := m.HandoffViaRefusals(d.sessMgr.CanOfferHandoffToolRole); len(refusals) > 0 {
+		return daemonrpc.Response{Error: "apply manifest: " + strings.Join(refusals, "; ")}
+	}
 
 	// Pre-flight: a team name held by another workspace would commit, spawn,
 	// and then break bus-auth rendering cluster-wide (marvel#319).
@@ -1766,6 +1816,9 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 			if r, ok := reasons[live[i].Key()]; ok && live[i].Reason == "" {
 				live[i].Reason = r
 			}
+			if live[i].Reason == "" {
+				live[i].Reason = api.ConfigErrorReason(live[i])
+			}
 		}
 		d.stampLimitReading(live, time.Now().UTC())
 		d.stampActivity(live, time.Now().UTC())
@@ -1845,6 +1898,11 @@ func (d *Daemon) handleDescribe(params json.RawMessage) daemonrpc.Response {
 			// it back to the store.
 			if one[0].SettingSources != "" && one[0].SettingSourcesDelivery == "" {
 				one[0].SettingSourcesNote = api.SettingSourcesNotRecorded
+			}
+			// The configuration-error reason get sessions shows, on this copy
+			// only (ADR-010 Amendment 2).
+			if one[0].Reason == "" {
+				one[0].Reason = api.ConfigErrorReason(one[0])
 			}
 			result = one[0]
 		}
@@ -3340,6 +3398,7 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		admin := mgr.Admin()
 		return mgr.URL(), admin.Name, admin.Password
 	})
+	d.teamCtrl.LeafUp = leafGate(sup.Status)
 	d.teamCtrl.BusGate = func() (bool, string) {
 		if sup.Ready() {
 			return true, ""

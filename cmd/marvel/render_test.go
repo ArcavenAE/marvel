@@ -567,3 +567,65 @@ func TestRenderSessionTableParkedAdvisory(t *testing.T) {
 		}
 	}
 }
+
+// A running seat the watchdog cannot watch, because no pattern covers its
+// version or every pattern failed its control, reads "(unwatched)" in HEALTH,
+// so a blind seat is not mistaken for a working one. The two states stay
+// distinct in describe (docs/design/watchdog-control-and-uncovered.md section 4).
+func TestRenderSessionTableUnwatchedAdvisory(t *testing.T) {
+	base := api.Session{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "claude"},
+		HealthState: api.HealthHealthy,
+	}
+	cases := []struct {
+		name string
+		hs   *api.HarnessState
+		st   api.SessionState
+		want string
+	}{
+		{"uncovered", &api.HarnessState{State: api.HarnessStateUncovered}, api.SessionRunning, "healthy (unwatched)"},
+		{"control-failed", &api.HarnessState{State: api.HarnessStateControlFailed}, api.SessionRunning, "healthy (unwatched)"},
+		{"uncovered, not running", &api.HarnessState{State: api.HarnessStateUncovered}, api.SessionCrashed, "healthy"},
+		{"control-failed, not running", &api.HarnessState{State: api.HarnessStateControlFailed}, api.SessionFailed, "healthy"},
+		{"logged-out stays its own word", &api.HarnessState{State: api.HarnessStateLoggedOut, Confidence: "high"}, api.SessionRunning, "healthy (logged-out)"},
+	}
+	// (stalled) comes first, then one harness-state suffix; director's
+	// dashboard grammar refuses any other order.
+	stalled := base
+	stalled.ActivityState = api.ActivityStalled
+	stalled.HarnessState = &api.HarnessState{State: api.HarnessStateUncovered}
+	if got := column(t, renderSessionTable([]api.Session{stalled}), "HEALTH"); got != "healthy (stalled) (unwatched)" {
+		t.Errorf("stalled and unwatched: HEALTH = %q, want %q", got, "healthy (stalled) (unwatched)")
+	}
+	for _, c := range cases {
+		s := base
+		s.HarnessState, s.State = c.hs, c.st
+		if got := column(t, renderSessionTable([]api.Session{s}), "HEALTH"); got != c.want {
+			t.Errorf("%s: HEALTH = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// A session that was sampled and then lost its process keeps the sampler's last
+// reading in memory (the sampler skips states that do not count as alive, so
+// nothing clears or refreshes it). A crashed, failed or succeeded row has no
+// process to measure, so it renders absence, not the frozen reading or an
+// idle-looking 0.0 / 0B (aae-orc-wtavi, finding-038 follow-on 4).
+func TestRenderSessionTableEndedRowRendersAbsence(t *testing.T) {
+	for _, st := range []api.SessionState{api.SessionCrashed, api.SessionFailed, api.SessionSucceeded} {
+		t.Run(string(st), func(t *testing.T) {
+			table := renderSessionTableCols([]api.Session{{
+				Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+				State: st, Runtime: api.Runtime{Name: "forestage"},
+				SessionMetrics: api.SessionMetrics{MetricsAt: time.Now().UTC()},
+			}}, columnsOrFatal(t, "name,cpu,rss", nil))
+			if got := column(t, table, "CPU%"); got != "-" {
+				t.Errorf("CPU%% = %q for a %s row, want %q", got, st, "-")
+			}
+			if got := column(t, table, "RSS"); got != "-" {
+				t.Errorf("RSS = %q for a %s row, want %q", got, st, "-")
+			}
+		})
+	}
+}

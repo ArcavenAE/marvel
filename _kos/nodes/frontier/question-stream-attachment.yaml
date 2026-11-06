@@ -204,9 +204,11 @@ content: |
   THIRD CHANNEL UNDER INVESTIGATION 2026-08-01 (finding-008, aae-orc-mki1).
   Native harness telemetry (OpenTelemetry) is a third observation channel,
   orthogonal to the FIFO stream and capture-pane because it is emitted by
-  the harness itself regardless of what owns the terminal, so it flows in
-  BOTH headless and interactive/TUI sessions. Claude Code 2.1.220 OTEL is
-  live-verified on kinu (CLAUDE_CODE_ENABLE_TELEMETRY=1 + standard OTEL env;
+  the harness itself regardless of what owns the terminal. That it also
+  flows in interactive/TUI sessions is INFERRED from docs and binary
+  strings, NOT measured: finding-008 ran one headless turn only (see its
+  2026-11-06 addendum). Claude Code 2.1.220 OTEL is live-verified headless
+  on kinu (CLAUDE_CODE_ENABLE_TELEMETRY=1 + standard OTEL env;
   metrics session.count/token.usage/cost.usage/active_time.total; events
   api_request/user_prompt/tool_result/tool_decision/api_error carrying the
   per-request token classes; session.id resource attribution). Codex 0.146.0
@@ -219,6 +221,11 @@ content: |
   RE-SCOPES aae-orc-w5su (changes the feed, not the derivation) and gives
   aae-orc-dc1j its first clean interactive-CTX% path (retires capture-pane
   scraping for the three OTEL-capable harnesses) without fully closing it.
+  RETIRED 2026-08-08: the w5su and dc1j consumer claims in the last
+  sentence do not hold, because every harness token instrument is a
+  cumulative counter and occupancy is a level that resets at compaction
+  (question-marvel-otel-architecture, "BOTH OF THOSE CONSUMER CLAIMS ARE
+  RETIRED"). OTEL stays a source for cumulative quantities, not CTX%.
   No harness exposes a Prometheus scrape endpoint; delivery is OTLP push.
   Marvel is currently an OTEL producer (internal/otel/metrics.go stdout
   exporter + marvel.agent.context_window_percent gauge), not a receiver;

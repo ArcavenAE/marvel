@@ -91,7 +91,7 @@ func macOSGateReasons(jobs map[string]ciJob, pkgs []string) []string {
 }
 
 // macOSLabel is the runner the restructure packages are held to, pinned for
-// the same reason as linuxLabel.
+// the same reason as linuxLabels.
 const macOSLabel = "macos-latest"
 
 // macOSRunner reports whether a runs-on label is macOSLabel.
@@ -139,6 +139,10 @@ func TestShippedCIPinsTheRunnerLabels(t *testing.T) {
 		{"the shipped labels", text, true, true},
 		{"quality-gate on a self-hosted ubuntu label", relabel("  quality-gate:\n", "ubuntu-self-hosted"), false, true},
 		{"quality-gate on another ubuntu image", relabel("  quality-gate:\n", "ubuntu-22.04"), false, true},
+		{"quality-gate on the ubuntu 26 image", relabel("  quality-gate:\n", "ubuntu-26.04"), true, true},
+		{"quality-gate on the ubuntu 26 image with a suffix", relabel("  quality-gate:\n", "ubuntu-26.04-self-hosted"), false, true},
+		{"quality-gate on a prefix of the ubuntu 26 image", relabel("  quality-gate:\n", "ubuntu-26"), false, true},
+		{"quality-gate on a third ubuntu image", relabel("  quality-gate:\n", "ubuntu-28.04"), false, true},
 		{"restructure-macos on a self-hosted macos label", relabel("  restructure-macos:\n", "macos-self-hosted"), true, false},
 		{"restructure-macos on another macos image", relabel("  restructure-macos:\n", "macos-14"), true, false},
 	} {

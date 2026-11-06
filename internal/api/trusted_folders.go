@@ -25,13 +25,27 @@ const (
 // stuck filesystem.
 const gitTimeout = 5 * time.Second
 
+// gitOutSubcommands are the git subcommands gitOut runs. dir is a folder a
+// seat can write, so its repository config is not trusted: a subcommand that
+// reads the work tree (status and its relatives) can run a program that config
+// names. rev-parse reads only repository metadata. A new subcommand is added
+// here on purpose, with its own test.
+var gitOutSubcommands = map[string]bool{"rev-parse": true}
+
+var errGitSubcommand = errors.New("git subcommand not allowed")
+
 // gitOut runs git in dir and returns its trimmed stdout. The inherited
 // repository variables are dropped so the answer is about dir, not about the
-// environment the daemon happened to start in.
+// environment the daemon happened to start in. Only the subcommands in
+// gitOutSubcommands run, and core.fsmonitor is cleared on the command line so
+// the repository's own config cannot start a program as a side effect.
 func gitOut(dir string, args ...string) (string, error) {
+	if len(args) == 0 || !gitOutSubcommands[args[0]] {
+		return "", fmt.Errorf("%w: git %s", errGitSubcommand, strings.Join(args, " "))
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=", "-C", dir}, args...)...)
 	for _, kv := range os.Environ() {
 		switch {
 		case strings.HasPrefix(kv, "GIT_DIR="), strings.HasPrefix(kv, "GIT_WORK_TREE="),

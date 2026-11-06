@@ -85,6 +85,16 @@ leaves alone.
 - On either limit it sends TERM, then KILL after 10 s. It writes `watchdog: wall-clock` or
   `watchdog: idle` as the last line of the per-launch stderr file (v1 section 3, the failure
   reason), and exits 124.
+- A stop of the wrapper counts toward neither limit. A fleet suspend stops it with SIGSTOP and resumes it with
+  SIGCONT, and the monitor's ticker would count the whole stop on its first tick after the resume. A tick that
+  comes more than one interval late, together with a SIGCONT, is read as a stop, and the span is taken off the
+  idle clock, the wall clock and the longest gap between lines. A late tick alone is load and counts as before.
+  When something was frozen, the stderr file gets one line, `watchdog: frozen <s>s`, just before the max-gap
+  line, so the last line is still the one named above. Excluding the stop from the wall limit is a design default:
+  the wall limit bounds spend, and a frozen run spends nothing.
+- Up to one tick interval of the stop, plus the time from the wrapper's resume to its first read, stays in the
+  longest gap; if the monitor was starved for more than an interval before the stop, the stop can stay in it
+  uncorrected.
 - The reap records exit 124 with that reason. 124 is not one of goose's codes, since every goose
   failure exits 1 (G8).
 - The 300 s default is a guess above the measured 1 s gap. The probe's fixtures (section 4)
@@ -185,6 +195,15 @@ These reach past the adapter, so this brief did not decide them. Director decide
      the sandbox-exec profile the launch runs under (empty for none). The fault fires when the
      placement is not container and the profile path is empty. An adapter that finds both
      unset treats the launch as unsandboxed, so a missing field refuses rather than launches.
+   - **Temp files under a profile (marvel#1315).** The shipped profile lets a seat write only to
+     its private home and its working directory, so goose's first temp file under the daemon's
+     inherited per-user temp directory is refused and goose panics. When a sandbox-exec profile
+     is in force and the seat's home is an absolute path, `Prepare` sets `TMPDIR` to `<home>/tmp`
+     and the home seeder makes that directory at 0700; the directory persists across launches
+     and is never cleared. A role that sets `TMPDIR` in its own env keeps its value; the
+     daemon's inherited `TMPDIR` is not the role's and is replaced. With no profile, nothing is
+     set. The tests cover `TMPDIR` only; no run under the profile was made when this was
+     written, so other writes outside the allowed trees are not ruled out.
    - **No container by default.** The goose adapter does not implement `SandboxRecommender` as
      true in v1, so it does not move goose workspaces to container. A container placement with
      no image is refused (`ErrPlacementRefused`), so a default to container would refuse every

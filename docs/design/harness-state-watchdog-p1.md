@@ -136,6 +136,45 @@ samples and the "does this still match" test. Phase 1 builds them once, as
 `internal/panestate`. If UL-R2 is answered in favor of the pane-menu source,
 it becomes a second pattern set in the same package, not a second matcher.
 
+## 4a. The transcript source (marvel#1079)
+
+A seat whose login expires mid-session draws its notice well above the bottom
+of the screen, with transcript and an empty composer below it, and keeps
+beating. A bottom-anchored pattern cannot match that screen, and dropping the
+rule would let a quoted notice read as logged-out. So the watchdog has a second
+source beside the pane classifier: the typed record claude writes to its own
+transcript.
+
+- **Who.** A running claude seat with an assigned `HarnessSessionID`, outside a
+  client workspace. A seat without an assigned id, a transcript file that is
+  not there or not one, and a client seat have no reading, and `describe`
+  names which as `transcript_gap`. The client filter holds until the operator
+  rules on reading client-workspace transcripts (aae-orc-sioy1 lifts it).
+- **Where.** `<config dir>/projects/*/<HarnessSessionID>.jsonl`, exactly one
+  match. The id is matched, not derived from the working directory.
+- **When.** Every watchdog tick, outside the quiet gate. A stat comes first,
+  and a file that has not changed is not read. A changed one is read from the
+  last whole line, at most 1 MiB.
+- **What is read.** Each line is decoded into `type`, `isApiErrorMessage`,
+  `error`, `timestamp`, `uuid` and `version`. The `message` field is never
+  decoded, kept, logged or put in evidence.
+- **The rule.** Only assistant entries decide, and the newest decides. An API
+  error whose error is `authentication_failed` reads `logged-out`; any other
+  assistant entry clears it. A user entry neither sets nor clears, so a nudge
+  into a logged-out seat leaves it logged out until the seat replies.
+- **The state.** Confidence high, `Source` transcript, pattern
+  `transcript:authentication_failed`, evidence `entry <uuid> at <timestamp>`.
+  The did-work clear does not apply to it, because every heartbeat moves
+  `ContextAt` (#801) and would clear it each tick. The transcript rule is this
+  source's only clear.
+- **Precedence.** A transcript `logged-out` wins over a pane reading for the
+  same seat. The picker's pane `logged-out` stands when the transcript has no
+  authentication failure, since a seat that never logged in may write no
+  assistant entry. Each source sets and clears only its own state.
+
+The no-action posture of section 2 is unchanged: nothing sends a key, restarts
+a seat, or changes `State` or `HealthState`.
+
 ## 5. Surfaces
 
 - **`get sessions`:** HEALTH carries `(logged-out)`, the same suffix idiom as

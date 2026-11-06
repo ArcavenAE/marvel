@@ -917,7 +917,7 @@ func (m *Manager) Create(sess *api.Session) error {
 		return err
 	}
 	sess.State = api.SessionPending
-	sess.CreatedAt = time.Now().UTC()
+	sess.CreatedAt = m.now()
 
 	// Mint the heartbeat token before the record exists, so no session is
 	// ever in the store without one. The plaintext rides the caller's
@@ -1682,6 +1682,19 @@ func (m *Manager) CanFeedContextRole(r api.ManifestRole) bool {
 	}, os.TempDir()).Supported
 }
 
+// CanOfferHandoffToolRole reports whether a role's harness can be given the
+// submit_handoff tool: its adapter has a seeder that renders the marvel-handoff
+// entry, or takes it from the role's environment. It is the manifest-side
+// capability apply asks for before it accepts handoff_via = "tool".
+func (m *Manager) CanOfferHandoffToolRole(r api.ManifestRole) bool {
+	name := r.Runtime.Image
+	if name == "" {
+		name = r.Runtime.Command
+	}
+	o, ok := m.adapters.Resolve(name).(runtime.HandoffToolOfferer)
+	return ok && o.OffersHandoffTool()
+}
+
 // openSink creates the FIFO for a stream-capable adapter, or returns nil.
 // A sink that cannot be created is logged and skipped: an unobservable
 // session is still a working session.
@@ -2001,6 +2014,21 @@ func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 
 // Delete destroys a session: kills the tmux pane and removes from the store.
 func (m *Manager) Delete(key string) error {
+	return m.deleteSession(key, false)
+}
+
+// KillPastDeadline deletes a live run of a scheduled role that passed its
+// schedule's active_deadline. It is Delete with one difference: the run is
+// recorded failed, with run.deadline, instead of cancelled. A deadline kill
+// is a failed run, so it spends an attempt and follows retries and
+// on_failure; a cancelled record settles the firing with none of that
+// (scheduled-runs section 2). A run that had already ended is classified
+// as Delete classifies it.
+func (m *Manager) KillPastDeadline(key string) error {
+	return m.deleteSession(key, true)
+}
+
+func (m *Manager) deleteSession(key string, pastDeadline bool) error {
 	sess, err := m.store.GetSession(key)
 	if err != nil {
 		return err
@@ -2039,6 +2067,8 @@ func (m *Manager) Delete(key string) error {
 		m.recordScheduledRun(sess, api.RunSucceeded, endedSt.ExitStatus, tail)
 	case ended:
 		m.recordScheduledRun(sess, api.RunFailed, endedSt.ExitStatus, tail)
+	case pastDeadline:
+		m.recordRun(sess, api.RunFailed, "", tail, events.KindRunDeadline)
 	default:
 		m.recordScheduledRun(sess, api.RunCancelled, "", tail)
 	}
@@ -2254,6 +2284,33 @@ func (m *Manager) ReapDead() []ReapedSession {
 			continue
 		}
 
+		if headlessConfigError(sess, st) {
+			log.Printf("session %s: pane %s exited %s, a configuration error; marking failed, not relaunching", sess.Key(), lostPane, api.ExitConfig)
+			if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+				live.State = api.SessionFailed
+				live.PaneID = ""
+				live.ExitStatus = st.ExitStatus
+				// Not unhealthy: the restart path keys on HealthUnhealthy, and
+				// a relaunch only repeats the refusal (ADR-010 Amendment 2).
+				live.HealthState = api.HealthUnknown
+				return nil
+			}); err != nil {
+				log.Printf("warning: mark config error %s: %v", sess.Key(), err)
+				continue
+			}
+			events.Emit(m.Events, events.Event{
+				Kind:      events.KindSessionFailed,
+				Severity:  events.SeverityWarning,
+				Workspace: sess.Workspace,
+				Team:      sess.Team,
+				Role:      sess.Role,
+				Session:   sess.Key(),
+				Message:   fmt.Sprintf("pane %s exited %s: configuration error, not relaunched", lostPane, api.ExitConfig),
+			})
+			m.recordScheduledRun(sess, api.RunFailed, st.ExitStatus, tail)
+			continue
+		}
+
 		log.Printf("session %s: pane %s gone (%s), marking crashed", sess.Key(), lostPane, describeExit(st))
 		m.clearStaleCrashed(sessions, marked, sess.Workspace, sess.Team, sess.Role, sess.Key())
 		if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
@@ -2319,6 +2376,14 @@ func (m *Manager) ReapDead() []ReapedSession {
 func headlessCompleted(sess api.Session, st tmux.PaneStatus) bool {
 	return sess.Runtime.Mode == api.RuntimeModeHeadless &&
 		st.Exists && st.Dead && st.ExitStatus == "0"
+}
+
+// headlessConfigError is the one mapping from a dead pane to a configuration
+// error: a headless role whose pane is still listed, dead, with a literal exit
+// status of "78" (ADR-010 Amendment 2). No other nonzero status is affected.
+func headlessConfigError(sess api.Session, st tmux.PaneStatus) bool {
+	return sess.Runtime.Mode == api.RuntimeModeHeadless &&
+		st.Exists && st.Dead && st.ExitStatus == api.ExitConfig
 }
 
 // describeExit renders a dead pane's status for logs and events.

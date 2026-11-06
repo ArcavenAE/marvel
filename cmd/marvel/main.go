@@ -417,7 +417,20 @@ Examples:
 				return err
 			}
 
+			// One root is one daemon (marvel#883). The lock path comes from
+			// the resolved layout and nothing else: no flag moves it, because
+			// moving it would let two daemons share a root. It sits in run/,
+			// which must exist before the daemon opens the lock file there.
+			rootLock := ""
+			if layout.Home != "" {
+				if err := layout.EnsureRunDir(); err != nil {
+					return err
+				}
+				rootLock = filepath.Join(layout.RunDir(), "daemon.lock")
+			}
+
 			d, err := newDaemon(daemon.Options{
+				RootLock:     rootLock,
 				PidFile:      pidFilePath,
 				StateBolt:    stateBoltPath,
 				ShiftTimeout: shiftTO,
@@ -3475,7 +3488,11 @@ func newSessionRow(s api.Session) sessionRow {
 	// reached (no pid, or a platform with no process table reader)
 	// shows absence rather than an idle-looking zero.
 	cpu, rss := "-", "-"
-	if !s.MetricsAt.IsZero() {
+	// A crashed, failed or succeeded row has no process left to read, and its
+	// last in-memory reading is frozen (the sampler skips it), so it shows
+	// absence too (aae-orc-wtavi).
+	gone := s.State == api.SessionCrashed || s.State == api.SessionFailed || s.State == api.SessionSucceeded
+	if !s.MetricsAt.IsZero() && !gone {
 		cpu = fmt.Sprintf("%.1f", s.CPUPercent)
 		rss = formatBytes(s.RSSBytes)
 	}
@@ -3503,6 +3520,12 @@ func newSessionRow(s api.Session) sessionRow {
 	}
 	if s.State == api.SessionRunning && s.HarnessState != nil && s.HarnessState.State == api.HarnessStateParked && s.HarnessState.Reason != "" {
 		health += " (parked: " + s.HarnessState.Reason + ")"
+	}
+	// A seat the watchdog cannot watch (no pattern covers its version, or every
+	// pattern failed its control) reads healthy above, which is the failure the
+	// watchdog exists to catch. describe session keeps the two states apart.
+	if s.State == api.SessionRunning && s.HarnessState != nil && isUnwatched(s.HarnessState.State) {
+		health += " (unwatched)"
 	}
 	// A failed row carrying a projection Reason is TERMINAL: the role
 	// will spawn no replacement. Without this suffix it is byte-identical
@@ -4063,4 +4086,10 @@ func paneCell(s api.Session) string {
 		return "-"
 	}
 	return s.Pane
+}
+
+// isUnwatched reports whether a harness state is one of the two coverage
+// states, in which the watchdog could not examine the seat's pane.
+func isUnwatched(state string) bool {
+	return state == api.HarnessStateUncovered || state == api.HarnessStateControlFailed
 }
