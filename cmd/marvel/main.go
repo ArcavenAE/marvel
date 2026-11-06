@@ -3493,6 +3493,12 @@ func newSessionRow(s api.Session) sessionRow {
 	if s.State == api.SessionRunning && s.HarnessState != nil && s.HarnessState.State == api.HarnessStateParked && s.HarnessState.Reason != "" {
 		health += " (parked: " + s.HarnessState.Reason + ")"
 	}
+	// A seat the watchdog cannot watch (no pattern covers its version, or every
+	// pattern failed its control) reads healthy above, which is the failure the
+	// watchdog exists to catch. describe session keeps the two states apart.
+	if s.State == api.SessionRunning && s.HarnessState != nil && isUnwatched(s.HarnessState.State) {
+		health += " (unwatched)"
+	}
 	// A failed row carrying a projection Reason is TERMINAL: the role
 	// will spawn no replacement. Without this suffix it is byte-identical
 	// to an ordinary failure the reconciler is about to replace, so the
@@ -4052,4 +4058,10 @@ func paneCell(s api.Session) string {
 		return "-"
 	}
 	return s.Pane
+}
+
+// isUnwatched reports whether a harness state is one of the two coverage
+// states, in which the watchdog could not examine the seat's pane.
+func isUnwatched(state string) bool {
+	return state == api.HarnessStateUncovered || state == api.HarnessStateControlFailed
 }
