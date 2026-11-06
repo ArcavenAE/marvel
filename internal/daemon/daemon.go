@@ -3370,6 +3370,7 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		admin := mgr.Admin()
 		return mgr.URL(), admin.Name, admin.Password
 	})
+	d.teamCtrl.LeafUp = leafGate(sup.Status)
 	d.teamCtrl.BusGate = func() (bool, string) {
 		if sup.Ready() {
 			return true, ""

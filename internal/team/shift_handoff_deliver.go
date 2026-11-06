@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/arcavenae/marvel/contracts/go/envelope"
@@ -27,6 +28,10 @@ import (
 // section 4). Nil means no managed bus, which is event-only escalation.
 type HandoffPublisher interface {
 	PublishRoleInbox(ctx context.Context, ws, team, role string, env envelope.Envelope, msgID string) error
+	// PublishSeatInbox publishes to one seat by its agent id (agent://<team>/<session>).
+	PublishSeatInbox(ctx context.Context, ws, team, agentID string, env envelope.Envelope, msgID string) error
+	// PublishDirectorInbox publishes to the director's global inbox (global://director).
+	PublishDirectorInbox(ctx context.Context, env envelope.Envelope, msgID string) error
 }
 
 const (
@@ -53,6 +58,12 @@ type publishRecord struct {
 	lastAttempt time.Time
 	gateReady   bool // the bus gate's answer at the last attempt
 	logged      bool // the no-recipient line has been logged
+	// The director leg keeps its own failure state, so a bus that is down for
+	// it is retried on its own schedule and never counted against its cap.
+	dirFailed      bool
+	dirLastAttempt time.Time
+	// legs is the last attempt's account of the replica and other-team legs.
+	legs string
 }
 
 // deliverHandoffMissing publishes the escalation when it is due and records
@@ -73,27 +84,24 @@ func (c *Controller) deliverHandoffMissing(t *api.Team, role *api.Role, sess api
 	case c.Publisher == nil:
 		rec.outcome = "none, no managed bus"
 		return
-	case role.Name == supervisorRoleName:
-		// The role address would reach the escalated seat's own durable. The
-		// other supervisors and the director are a follow-up.
-		rec.outcome = "none, the escalated seat is itself a supervisor"
-		return
 	case !addressable.MatchString(t.Workspace) || !addressable.MatchString(t.Name):
 		rec.outcome = "none, team name not addressable"
 		return
+	case role.Name == supervisorRoleName:
+		// The role address would reach the escalated seat's own durable, so the
+		// escalation goes to the other supervisors and the director instead.
+		c.deliverFromSupervisor(t, role, sess, req, now, rec)
+		return
 	}
-	hasRole := false
-	for i := range t.Roles {
-		if t.Roles[i].Name == supervisorRoleName {
-			hasRole = true
-		}
-	}
-	if !hasRole {
-		rec.outcome = "none, no recipient"
+	if !hasSupervisorRole(t) {
+		// Never delivered to the escalated seat or to any other role. The
+		// director gets a notice when its leg is on.
 		if !rec.logged {
 			rec.logged = true
 			log.Printf("escalation has no recipient: team %s declares no %s role", t.Key(), supervisorRoleName)
 		}
+		dir := c.directorLeg(t, role, sess, &req, now, rec)
+		rec.outcome = "none, no recipient (no " + supervisorRoleName + " role); " + dir
 		return
 	}
 
@@ -123,7 +131,7 @@ func (c *Controller) deliverHandoffMissing(t *api.Team, role *api.Role, sess api
 		due = req.LastDeliveryQueued || now.Sub(req.LastDeliveredAt) >= window
 	}
 	if !due {
-		if rec.outcome == "" || rec.outcome == "none, no recipient" || rec.outcome == "none, no managed bus" {
+		if rec.outcome == "" || strings.HasPrefix(rec.outcome, "none, ") {
 			rec.outcome = persistedOutcome(req)
 		}
 		return
@@ -170,6 +178,16 @@ func (c *Controller) deliverHandoffMissing(t *api.Team, role *api.Role, sess api
 	}
 	t.ShiftRequests[role.Name] = req
 	rec.outcome = persistedOutcome(req)
+}
+
+// hasSupervisorRole reports whether the team declares a role named supervisor.
+func hasSupervisorRole(t *api.Team) bool {
+	for i := range t.Roles {
+		if t.Roles[i].Name == supervisorRoleName {
+			return true
+		}
+	}
+	return false
 }
 
 // persistedOutcome is what the durable request says about its last send.
