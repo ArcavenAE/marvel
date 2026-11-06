@@ -1499,7 +1499,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// function.
 	team, teamErr := m.store.GetTeam(fmt.Sprintf("%s/%s", sess.Workspace, sess.Team))
 	if teamErr != nil {
-		// Ad-hoc session or team not found — use direct command, unless the
+		// Ad-hoc session or team not found: use the direct command, unless the
 		// role declares a model: the direct command carries none.
 		if sess.Runtime.Model != "" {
 			return launchPlan{modelRefusal: fmt.Sprintf("the team %s/%s was not found, so the declared model %s cannot be carried and the raw command is not used", sess.Workspace, sess.Team, sess.Runtime.Model)}
