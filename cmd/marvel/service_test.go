@@ -246,3 +246,21 @@ func TestServiceOutOfSetBearerPrintsUnknown(t *testing.T) {
 		t.Errorf("cell = %q, want ambient:? and no stored text", got)
 	}
 }
+
+// The help paragraph for SERVICE says the label is declared and that every cell
+// is diagnostic only: nothing gates or acts on it (design section 5).
+func TestGetHelpSaysServiceIsDiagnosticOnly(t *testing.T) {
+	long := getCmd().Long
+	_, para, ok := strings.Cut(long, "SERVICE (opt-in")
+	if !ok {
+		t.Fatal("the get help has no SERVICE paragraph")
+	}
+	if i := strings.Index(para, "\n\n"); i >= 0 {
+		para = para[:i]
+	}
+	for _, want := range []string{"declared", "diagnostic only"} {
+		if !strings.Contains(para, want) {
+			t.Errorf("the SERVICE paragraph lacks %q:\n%s", want, para)
+		}
+	}
+}

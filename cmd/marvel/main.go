@@ -1247,6 +1247,7 @@ label the role or team declared with account_label. The backend is the one the
 environment resolved to, written backend!intent where the role declared another.
 The home is its last element, or the whole path where another home on the same
 cluster shares that element. The label is declared, never checked against the login.
+Every SERVICE cell is diagnostic only: nothing gates or acts on it.
 Example: 'claude subscription ambient alt-ultra ultra'. It is the first column
 cut on a narrow terminal when it came from rest.
 For a session on the operator's own login the source reads ambient:api-key+oauth-token
