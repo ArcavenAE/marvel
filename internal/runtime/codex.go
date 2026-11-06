@@ -111,7 +111,11 @@ func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	args := make([]string, len(ctx.Session.Runtime.Args))
 	copy(args, ctx.Session.Runtime.Args)
 
+	model := ctx.Session.Runtime.Model
 	if ctx.Session.Runtime.Mode != api.RuntimeModeHeadless {
+		if model != "" {
+			args = append(args, "-m", model)
+		}
 		// Interactive: launch codex as-is; the TUI owns the pane.
 		env := codexEnv(ctx)
 		stampSeat(ctx, env, "", "")
@@ -128,6 +132,9 @@ func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// `codex exec [OPTIONS] [PROMPT]`: options first, prompt last.
 	// --skip-git-repo-check keeps codex from refusing a non-repo workspace.
 	full := []string{"exec", "--json", "--skip-git-repo-check"}
+	if model != "" {
+		full = append(full, "-m", model)
+	}
 	full = append(full, args...)
 	full = append(full, ctx.Session.Runtime.Prompt)
 
@@ -192,6 +199,5 @@ func (*Codex) Composer() ComposerContract {
 	}
 }
 
-// RendersModel reports that this adapter can pass a declared model to its
-// harness. Stub: false until the render step lands.
-func (*Codex) RendersModel() bool { return false }
+// RendersModel reports that this adapter passes a declared model as -m.
+func (*Codex) RendersModel() bool { return true }

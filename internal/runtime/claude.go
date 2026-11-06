@@ -209,6 +209,13 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		}
 	}
 
+	// The declared model, for the bare harness on a command whose words can be
+	// read. A wrapper or shell text owns its command line, and what to do for
+	// those is not decided here, so nothing is added for them.
+	if m := ctx.Session.Runtime.Model; m != "" && isBareClaude(binary) && readable {
+		args = append(args, "--model", m)
+	}
+
 	// The request goes last, as the positional argument. An interactive seat
 	// takes the same positional as its first message (marvel#391, design
 	// docs/design/interactive-first-prompt.md D1, D4): claude starts the
@@ -356,6 +363,5 @@ func (c *Claude) Foreground(paneCommand string) (string, bool) {
 	return "", paneCommand == "claude"
 }
 
-// RendersModel reports that this adapter can pass a declared model to its
-// harness. Stub: false until the render step lands.
-func (*Claude) RendersModel() bool { return false }
+// RendersModel reports that this adapter passes a declared model as --model.
+func (*Claude) RendersModel() bool { return true }

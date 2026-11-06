@@ -358,10 +358,9 @@ var aliases = map[string]string{
 
 // IsAlias reports whether model is a short form in the alias table (opus,
 // sonnet, haiku, fable[1m]) and not a full model id. Read-only over the table.
-// This is the stub: it answers false for all.
 func IsAlias(model string) bool {
-	_ = model
-	return false
+	_, ok := aliases[model]
+	return ok
 }
 
 // NormalizeModel canonicalizes a vendor model id for WINDOW lookup. Each
@@ -431,11 +430,29 @@ func ModelFromArgs(args []string) string {
 	return ""
 }
 
-// ModelFromEnv extracts a model id from a role's declared env, for the harness
-// that reads one from its environment. Returns "" when absent. This is the
-// stub: it reads nothing yet.
+// ModelFromEnv extracts a model id from a role's declared env: the value of
+// ANTHROPIC_MODEL, which is claude's variable. Returns "" when absent. The
+// caller applies it to the claude harness only (see requestModel).
 func ModelFromEnv(env map[string]string) string {
-	_ = env
+	return env["ANTHROPIC_MODEL"]
+}
+
+// requestModel is the model a request names, by the order the design fixes:
+// the stream's, then the role's declared runtime.model, then a model flag in
+// the launch args, then ANTHROPIC_MODEL for the claude harness only.
+func requestModel(req Request) string {
+	switch {
+	case req.StreamModel != "":
+		return req.StreamModel
+	case req.DeclaredModel != "":
+		return req.DeclaredModel
+	}
+	if m := ModelFromArgs(req.RuntimeArgs); m != "" {
+		return m
+	}
+	if req.Harness == "claude" {
+		return ModelFromEnv(req.RuntimeEnv)
+	}
 	return ""
 }
 
@@ -585,10 +602,7 @@ func (r *Resolver) Resolve(req Request) (int, LimitSource, string) {
 // ungraded signature refuses identically. On the vendor default nothing is
 // refused, which is the common case and unchanged.
 func (r *Resolver) ResolveGraded(req Request) (int, LimitSource, KeyConfidence, string) {
-	model := req.StreamModel
-	if model == "" {
-		model = ModelFromArgs(req.RuntimeArgs)
-	}
+	model := requestModel(req)
 
 	if req.SampleLimit > 0 {
 		if req.ManifestLimit > 0 && req.ManifestLimit != req.SampleLimit {

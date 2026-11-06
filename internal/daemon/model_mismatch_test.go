@@ -26,6 +26,9 @@ func mismatchDaemon(t *testing.T, declared string) (d *Daemon, key, token string
 		State:              api.SessionRunning,
 		CreatedAt:          time.Now().UTC(),
 		HeartbeatTokenHash: hash,
+		// The mismatch rule is built for a session on the vendor's default
+		// backend only; a redirected backend is held (open question 6).
+		BackendRedirection: api.BackendDefault,
 	}
 	if err := d.store.CreateSession(sess); err != nil {
 		t.Fatalf("create session: %v", err)

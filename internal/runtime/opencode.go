@@ -47,7 +47,11 @@ func (o *OpenCode) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	args := make([]string, len(ctx.Session.Runtime.Args))
 	copy(args, ctx.Session.Runtime.Args)
 
+	model := ctx.Session.Runtime.Model
 	if ctx.Session.Runtime.Mode != api.RuntimeModeHeadless {
+		if model != "" {
+			args = append(args, "-m", model)
+		}
 		return &LaunchResult{
 			Command: buildCommand(binary, args),
 			Env:     baseEnv(ctx),
@@ -60,6 +64,9 @@ func (o *OpenCode) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 
 	// `opencode run --format json [options] <message>`: message positional.
 	full := []string{"run", "--format", "json"}
+	if model != "" {
+		full = append(full, "-m", model)
+	}
 	full = append(full, args...)
 	full = append(full, ctx.Session.Runtime.Prompt)
 
@@ -106,6 +113,5 @@ func (*OpenCode) Composer() ComposerContract {
 	}
 }
 
-// RendersModel reports that this adapter can pass a declared model to its
-// harness. Stub: false until the render step lands.
-func (*OpenCode) RendersModel() bool { return false }
+// RendersModel reports that this adapter passes a declared model as -m.
+func (*OpenCode) RendersModel() bool { return true }

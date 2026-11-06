@@ -493,6 +493,7 @@ func newCtxForwardCmd() *cobra.Command {
 			// The running totals ride the same beat. They are presence-aware,
 			// so a payload without them leaves what the daemon holds.
 			p.CostTotalUSD, p.APIDurationMS = statuslineTotals(raw)
+			p.ModelID = statuslineModelID(raw)
 			params, _ := json.Marshal(p)
 			// Best-effort by design; see the failure posture above.
 			_, _ = daemonrpc.SendRequest(socket, daemonrpc.Request{
@@ -506,10 +507,18 @@ func newCtxForwardCmd() *cobra.Command {
 }
 
 // statuslineModelID is the model id the harness reported ("model.id"), as
-// opposed to the display name. This is the stub: it reads nothing yet.
+// opposed to the display name. A payload that is not JSON, or names no id,
+// gives "", which the daemon reads as "no change" and keeps what it holds.
 func statuslineModelID(raw []byte) string {
-	_ = raw
-	return ""
+	var p struct {
+		Model struct {
+			ID string `json:"id"`
+		} `json:"model"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return ""
+	}
+	return p.Model.ID
 }
 
 func readAllStdin() ([]byte, error) {

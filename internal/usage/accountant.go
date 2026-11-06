@@ -177,6 +177,8 @@ type sessionState struct {
 	rawModel      string
 	primaryModel  string
 	args          []string
+	declared      string
+	env           map[string]string
 	manifestLimit int
 	// catalogLimit is a window read once at Bind from the harness's own model
 	// catalog (opencode), 0 when none. Observe may not do file I/O, so the
@@ -253,7 +255,9 @@ func (a *Accountant) Bind(c Coords, b Bind) {
 	limit, src, model := a.limits.Resolve(Request{
 		Harness:       b.Harness,
 		StreamModel:   b.Model,
+		DeclaredModel: b.DeclaredModel,
 		RuntimeArgs:   b.Args,
+		RuntimeEnv:    b.Env,
 		ManifestLimit: b.Window,
 		FeedLimit:     catalogLimit,
 		Redirection:   b.Redirection,
@@ -270,6 +274,8 @@ func (a *Accountant) Bind(c Coords, b Bind) {
 		rawModel:      model,
 		primaryModel:  IdentityKey(model),
 		args:          b.Args,
+		declared:      b.DeclaredModel,
+		env:           b.Env,
 		manifestLimit: b.Window,
 		catalogLimit:  catalogLimit,
 		redirection:   b.Redirection,
@@ -288,10 +294,7 @@ func (a *Accountant) catalogLimit(b Bind) int {
 	if b.Harness != opencode.Harness || b.Window > 0 {
 		return 0
 	}
-	model := b.Model
-	if model == "" {
-		model = ModelFromArgs(b.Args)
-	}
+	model := requestModel(Request{Harness: b.Harness, StreamModel: b.Model, DeclaredModel: b.DeclaredModel, RuntimeArgs: b.Args, RuntimeEnv: b.Env})
 	w, err := OpenCodeWindow(a.opencodeModelsPath, model)
 	if err != nil {
 		a.mu.Lock()
@@ -375,12 +378,15 @@ func (a *Accountant) observeStart(c Coords, ev rtevents.Event, prof profile) {
 	a.mu.Lock()
 	st := a.stateLocked(c, ev.Harness, prof)
 	args, manifest, catalogLimit, redirection := st.args, st.manifestLimit, st.catalogLimit, st.redirection
+	declared, env := st.declared, st.env
 	a.mu.Unlock()
 
 	limit, src, model := a.limits.Resolve(Request{
 		Harness:       ev.Harness,
 		StreamModel:   d.Model,
+		DeclaredModel: declared,
 		RuntimeArgs:   args,
+		RuntimeEnv:    env,
 		ManifestLimit: manifest,
 		FeedLimit:     catalogLimit,
 		Redirection:   redirection,

@@ -926,10 +926,14 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatResult, err
 	// is a high-water mark against a resolved window, and a heartbeat
 	// percentage is the agent's own figure against its own denominator.
 	// Carrying it would reintroduce the cross-producer mixing this fixes.
+	// ObservedModelID lives in the reading, so it is carried across the
+	// replacement like ContextModel: a beat that names no id keeps the held one.
+	priorObserved := sess.ObservedModelID
 	reading := SessionContext{
-		ContextSource:  ContextSourceHeartbeat,
-		ContextPercent: r.ContextPercent,
-		ContextModel:   sess.ContextModel,
+		ContextSource:   ContextSourceHeartbeat,
+		ContextPercent:  r.ContextPercent,
+		ContextModel:    sess.ContextModel,
+		ObservedModelID: priorObserved,
 	}
 	// The heartbeat used to produce a bare percentage and nothing else,
 	// and that shape WAS the discriminator telling the two CTX% producers
@@ -958,7 +962,7 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatResult, err
 		reading.ContextTokens = r.ContextTokens
 		if s.contextResolver != nil {
 			limit, src := s.contextResolver(
-				sess.Runtime.Name, r.Model, "", sess.Runtime.Args, nil,
+				sess.Runtime.Name, r.Model, sess.Runtime.Model, sess.Runtime.Args, sess.Runtime.Env,
 				sess.Runtime.ContextWindow, r.ContextWindow,
 				sess.BackendRedirection,
 			)
@@ -1024,6 +1028,11 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatResult, err
 	if r.Model != "" {
 		sess.ContextModel = r.Model
 	}
+	// The harness's own model id, as it names it. Only a beat that carries one
+	// moves it; the display name above is never compared with it.
+	if r.ModelID != "" {
+		sess.ObservedModelID = r.ModelID
+	}
 	// ContextAt is the single "measured" sentinel for the context column,
 	// shared with the usage accountant's path below. A cooperative
 	// heartbeat is a measurement too, so it stamps it.
@@ -1031,8 +1040,12 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatResult, err
 	if err := s.persistPut(bucketSessions, sess.Key(), sess); err != nil {
 		return HeartbeatResult{}, err
 	}
-	// Stub: the model fields are not filled yet.
-	return HeartbeatResult{Auth: auth}, nil
+	return HeartbeatResult{
+		Auth:                 auth,
+		PriorObservedModelID: priorObserved,
+		ObservedModelID:      sess.ObservedModelID,
+		DeclaredModel:        sess.Runtime.Model,
+	}, nil
 }
 
 // recordTotals stores the statusline's running cost and API-time totals and

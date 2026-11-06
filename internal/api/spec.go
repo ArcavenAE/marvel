@@ -37,5 +37,6 @@ func RuntimeDrift(session, role Runtime) []string {
 	add(session.Backend != role.Backend, "backend")
 	add(session.PromptArtifactSha256 != role.PromptArtifactSha256, "prompt_artifact_sha256")
 	add(!session.Goose.equal(role.Goose), "goose")
+	add(session.Model != role.Model, "model")
 	return out
 }

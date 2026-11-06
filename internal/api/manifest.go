@@ -485,6 +485,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			if r.Runtime.ContextWindow < 0 {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.context_window must be >= 0", i, j)
 			}
+			if err := checkModelShape(r.Runtime.Model); err != nil {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].runtime.model %w", i, j, err)
+			}
 			// Like permissions: empty means unset, but a non-empty typo
 			// would silently project nothing, so reject it here.
 			if r.Runtime.ContextFeed != "" && r.Runtime.ContextFeed != ContextFeedStatusline {
@@ -700,12 +703,106 @@ func (m *Manifest) ValidateBudgets(canStream StreamCapableRole) error {
 // lives in the adapter registry.
 type ModelRenderableRole func(ManifestRole) bool
 
-// ValidateModels refuses, at apply, a role that declares runtime.model on a
-// harness marvel cannot deliver it to, or that states the model twice. This is
-// the stub: it refuses nothing yet.
-func (m *Manifest) ValidateModels(canRender ModelRenderableRole) error {
-	_ = canRender
+// maxModelLen bounds runtime.model. Real ids are well under it; the bound only
+// stops a pasted blob from reaching a command line.
+const maxModelLen = 256
+
+// checkModelShape reports why a declared model cannot be a model id. "" is
+// unset and passes. The error text continues the sentence "runtime.model ...".
+// A model reaches a command line as one word, so it may not be blank, hold a
+// space, a control byte or a non-ASCII byte, or start with a dash that the
+// harness would read as a flag.
+func checkModelShape(model string) error {
+	if model == "" {
+		return nil
+	}
+	if strings.TrimSpace(model) == "" {
+		return errors.New("is blank")
+	}
+	if len(model) > maxModelLen {
+		return fmt.Errorf("is %d bytes, over the %d byte limit", len(model), maxModelLen)
+	}
+	if model[0] == '-' {
+		return errors.New("must not start with a dash")
+	}
+	for i := 0; i < len(model); i++ {
+		if c := model[i]; c <= 0x20 || c >= 0x7f {
+			return fmt.Errorf("has a byte at offset %d that is not a printable ASCII character without spaces", i)
+		}
+	}
 	return nil
+}
+
+// modelFlagSpelling returns the model flag spelling found among words, or "".
+// A flag spelled -m is the codex and opencode short form. The dangling form
+// (a flag with nothing after it) counts: the harness would read the next word
+// marvel appends as its value.
+func modelFlagSpelling(words []string) string {
+	for _, w := range words {
+		switch {
+		case w == "--model" || w == "-m":
+			return w
+		case strings.HasPrefix(w, "--model="):
+			return "--model"
+		case strings.HasPrefix(w, "-m="):
+			return "-m"
+		}
+	}
+	return ""
+}
+
+// ValidateModels refuses, at apply, a role that declares runtime.model on a
+// harness marvel cannot deliver it to, or that states the model twice: a model
+// flag in args or in the command words, or ANTHROPIC_MODEL in the env of a
+// claude role. A role that declares no model is never inspected, so existing
+// manifests that pass --model in args are unchanged.
+//
+// canRender is required when any role declares a model. A nil predicate is a
+// wiring error and is reported as one, like ValidateBudgets.
+func (m *Manifest) ValidateModels(canRender ModelRenderableRole) error {
+	var problems []string
+	for _, t := range m.Teams {
+		for _, r := range t.Roles {
+			if r.Runtime.Model == "" {
+				continue
+			}
+			if canRender == nil {
+				return errors.New("model pre-flight: no model-capability predicate supplied, so runtime.model cannot be checked for a role that declares it")
+			}
+			where := fmt.Sprintf("team %s role %s", t.Name, r.Name)
+			if !canRender(r) {
+				problems = append(problems, fmt.Sprintf("  %s: runtime.model is declared but the %q harness cannot be handed a model by marvel; remove runtime.model or pick a harness that takes one", where, r.Runtime.AdapterName()))
+				continue
+			}
+			if f := modelFlagSpelling(r.Runtime.Args); f != "" {
+				problems = append(problems, fmt.Sprintf("  %s: runtime.model is declared and runtime.args also carries %s; state the model once", where, f))
+			}
+			if words := strings.Fields(r.Runtime.Command); len(words) > 1 {
+				if f := modelFlagSpelling(words[1:]); f != "" {
+					problems = append(problems, fmt.Sprintf("  %s: runtime.model is declared and runtime.command also carries %s; state the model once", where, f))
+				}
+			}
+			if modelHarnessName(r.Runtime) == "claude" {
+				if _, ok := r.Runtime.Env["ANTHROPIC_MODEL"]; ok {
+					problems = append(problems, fmt.Sprintf("  %s: runtime.model is declared and runtime.env also sets ANTHROPIC_MODEL; state the model once", where))
+				}
+			}
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("model pre-flight failed on %d role(s):\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+	return nil
+}
+
+// modelHarnessName is the program a role launches, by base name: the image
+// when one is set, else the first word of the command.
+func modelHarnessName(r ManifestRuntime) string {
+	name := r.AdapterName()
+	if f := strings.Fields(name); len(f) > 0 {
+		name = f[0]
+	}
+	return filepath.Base(name)
 }
 
 // ContextFeedCapableRole reports whether a role's harness can honour
@@ -1148,6 +1245,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				Env:                  mr.Runtime.Env,
 				Backend:              mr.Runtime.Backend,
 				Goose:                mr.Runtime.Goose.clone(),
+				Model:                mr.Runtime.Model,
 			}
 			rt.Name = mr.Runtime.AdapterName()
 			role := Role{

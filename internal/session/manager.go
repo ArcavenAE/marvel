@@ -956,6 +956,12 @@ func (m *Manager) Create(sess *api.Session) error {
 		return m.refuseHarnessHome(sess, plan.homeRefusal)
 	}
 	m.clearHarnessHomeRefusal(sess)
+	if plan.modelRefusal != "" {
+		_ = m.store.DeleteSession(sess.Key())
+		m.teardownViews(sess.Key())
+		return m.refuseModel(sess, plan.modelRefusal)
+	}
+	m.clearModelRefusal(sess)
 
 	// Layer A: write the per-session backend overlay for a role that declared a
 	// non-default backend, and stamp its path so cast-launch.sh passes it as
@@ -1185,6 +1191,30 @@ func (m *Manager) checkWorkDir(sess *api.Session) error {
 	msg := fmt.Sprintf("not started: the directory %s for %s/%s %s; tmux would start it in $HOME", sess.WorkDir, sess.Team, sess.Role, why)
 	m.noteRefusal(sess, key, RefusalDirectory, events.KindSessionPlacementRefused, sess.WorkDir, msg)
 	return fmt.Errorf("refuse to start session %s: directory %s %s: %w", sess.Key(), sess.WorkDir, why, ErrPlacementRefused)
+}
+
+// modelRefusalSuffix keys the declared-model refusal apart from the others, so
+// each clears on its own.
+const modelRefusalSuffix = "#model"
+
+// refuseModel records and returns the refusal of a spawn whose role declares
+// runtime.model but whose launch cannot carry it. It stands, and is logged and
+// listed by describe, until the launch can.
+func (m *Manager) refuseModel(sess *api.Session, why string) error {
+	key := sess.Workspace + "/" + sess.Team + "/" + sess.Role + modelRefusalSuffix
+	msg := fmt.Sprintf("not started: %s/%s declares runtime.model and %s", sess.Team, sess.Role, why)
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	m.noteRefusal(sess, key, RefusalModel, events.KindSessionPlacementRefused, "", msg)
+	return fmt.Errorf("refuse to start session %s: %s: %w", sess.Key(), why, ErrPlacementRefused)
+}
+
+// clearModelRefusal drops the standing declared-model refusal once a spawn gets
+// past the check.
+func (m *Manager) clearModelRefusal(sess *api.Session) {
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	delete(m.refused, sess.Workspace+"/"+sess.Team+"/"+sess.Role+modelRefusalSuffix)
 }
 
 // harnessHomeRefusalSuffix keys the harness home refusal apart from the
@@ -1469,7 +1499,11 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// function.
 	team, teamErr := m.store.GetTeam(fmt.Sprintf("%s/%s", sess.Workspace, sess.Team))
 	if teamErr != nil {
-		// Ad-hoc session or team not found — use direct command.
+		// Ad-hoc session or team not found — use direct command, unless the
+		// role declares a model: the direct command carries none.
+		if sess.Runtime.Model != "" {
+			return launchPlan{modelRefusal: fmt.Sprintf("the team %s/%s was not found, so the declared model %s cannot be carried and the raw command is not used", sess.Workspace, sess.Team, sess.Runtime.Model)}
+		}
 		return m.directPlan(sess)
 	}
 
@@ -1481,11 +1515,17 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		}
 	}
 	if role == nil {
+		if sess.Runtime.Model != "" {
+			return launchPlan{modelRefusal: fmt.Sprintf("the role %s was not found in team %s, so the declared model %s cannot be carried and the raw command is not used", sess.Role, team.Name, sess.Runtime.Model)}
+		}
 		return m.directPlan(sess)
 	}
 
 	ws, wsErr := m.store.GetWorkspace(sess.Workspace)
 	if wsErr != nil {
+		if sess.Runtime.Model != "" {
+			return launchPlan{modelRefusal: fmt.Sprintf("the workspace %s was not found, so the declared model %s cannot be carried and the raw command is not used", sess.Workspace, sess.Runtime.Model)}
+		}
 		return m.directPlan(sess)
 	}
 
@@ -1599,6 +1639,12 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 			_ = os.Remove(sbPlan.copyPath)
 			return launchPlan{sandboxFail: &sandboxFailure{reason: RefusalSandboxPrepare, msg: fmt.Sprintf("not started: %s/%s names a sandbox profile and the %s adapter failed to prepare the launch: %v; the raw command is not used for a profiled role", sess.Team, sess.Role, adapter.Name(), err)}}
 		}
+		if sess.Runtime.Model != "" {
+			// The raw command carries no model, so a role that declares one is
+			// refused, as a profiled role is, rather than started on whatever
+			// the harness defaults to.
+			return launchPlan{modelRefusal: fmt.Sprintf("the %s adapter failed to prepare the launch with the declared model %s: %v; the raw command is not used", adapter.Name(), sess.Runtime.Model, err)}
+		}
 		return m.directPlan(sess)
 	}
 
@@ -1668,10 +1714,10 @@ func (m *Manager) CanStreamRole(r api.ManifestRole) bool {
 
 // CanRenderModelRole reports whether a role's harness can pass a declared
 // model. It is the manifest-side predicate ValidateModels asks, resolved like
-// CanStreamRole. This is the stub: it answers false for every role.
+// CanStreamRole: it asks the registry about the harness the role names, the
+// adapter question launch asks, so the apply answer and the spawn answer agree.
 func (m *Manager) CanRenderModelRole(r api.ManifestRole) bool {
-	_ = r
-	return false
+	return m.adapters.CanRenderModel(r.Runtime.AdapterName())
 }
 
 // CanFeedContextRole reports whether a role's harness can honour
@@ -1822,10 +1868,12 @@ func (m *Manager) attachInstance(sess *api.Session, inst *runtime.TmuxInstance) 
 	// launch args on the first fold, not after a round trip.
 	if m.Usage != nil {
 		m.Usage.Bind(uc, usage.Bind{
-			Harness:     sess.Runtime.Name,
-			Args:        sess.Runtime.Args,
-			Window:      sess.Runtime.ContextWindow,
-			Redirection: sess.BackendRedirection,
+			Harness:       sess.Runtime.Name,
+			Args:          sess.Runtime.Args,
+			DeclaredModel: sess.Runtime.Model,
+			Env:           sess.Runtime.Env,
+			Window:        sess.Runtime.ContextWindow,
+			Redirection:   sess.BackendRedirection,
 		})
 	}
 	go func() {
@@ -2510,6 +2558,7 @@ const (
 	RefusalContainerImage   = "container image"
 	RefusalContainerRuntime = "container runtime"
 	RefusalHarnessHome      = "harness home"
+	RefusalModel            = "model"
 	// The reasons a profiled spawn is refused; all key under #sandbox.
 	RefusalSandboxHost      = "sandbox host"
 	RefusalSandboxProfile   = "sandbox profile"
@@ -2562,6 +2611,7 @@ func (m *Manager) ClearPlacementRefusal(workspace, team, role string) {
 	delete(m.refused, key+containerRefusalSuffix)
 	delete(m.refused, key+sandboxRefusalSuffix)
 	delete(m.refused, key+harnessHomeRefusalSuffix)
+	delete(m.refused, key+modelRefusalSuffix)
 }
 
 func (m *Manager) now() time.Time {

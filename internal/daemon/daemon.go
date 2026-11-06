@@ -447,11 +447,12 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	acct := usage.New(store, resolver, usage.WithEvents(evRing))
 	sessMgr.Usage = acct
 	store.SetContextLimitResolver(func(harness, model, declaredModel string, args []string, env map[string]string, manifestLimit, feedLimit int, redirection api.BackendRedirection) (int, string) {
-		_, _ = declaredModel, env
 		limit, src, _ := resolver.Resolve(usage.Request{
 			Harness:       harness,
 			StreamModel:   model,
+			DeclaredModel: declaredModel,
 			RuntimeArgs:   args,
+			RuntimeEnv:    env,
 			ManifestLimit: manifestLimit,
 			FeedLimit:     feedLimit,
 			Redirection:   redirection,
@@ -2224,7 +2225,50 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) daemonrpc.Response {
 			"admitted unbound: session record carries no token, restart it to bind its heartbeat")
 	}
 
+	d.noteModelMismatch(p.SessionKey, res)
+
 	return respond(map[string]string{"status": "ok"})
+}
+
+// noteModelMismatch emits model.mismatch when a beat reports a model identity
+// that is neither the declared one nor the one the last beat reported. The
+// store holds the lock and the prior record and reports the change; the
+// decision is here because internal/api cannot import internal/usage.
+//
+// It emits only when all of these hold:
+//   - the declared model is a full id: non-empty and not an alias;
+//   - the beat carried a model id, and its identity differs from the declared
+//     one (usage.IdentityKey, so a dated suffix, a Bedrock prefix and [1m] are
+//     the same model);
+//   - its identity differs from the prior beat's, so a repeat is silent and a
+//     change to a third identity emits again.
+//
+// The comparison reads ModelID only, never the display name. The change rule is
+// the throttle. Only a session on the vendor's default backend is judged: how a
+// redirected backend names its models is an open question, so those sessions
+// emit nothing.
+func (d *Daemon) noteModelMismatch(sessionKey string, res api.HeartbeatResult) {
+	declared, observed := res.DeclaredModel, res.ObservedModelID
+	if declared == "" || observed == "" || usage.IsAlias(declared) {
+		return
+	}
+	obs := usage.IdentityKey(observed)
+	if obs == usage.IdentityKey(declared) || obs == usage.IdentityKey(res.PriorObservedModelID) {
+		return
+	}
+	sess, err := d.store.GetSession(sessionKey)
+	if err != nil || sess.BackendRedirection != api.BackendDefault {
+		return
+	}
+	events.Emit(d.events, events.Event{
+		Kind:      events.KindModelMismatch,
+		Severity:  events.SeverityWarning,
+		Session:   sessionKey,
+		Workspace: sess.Workspace,
+		Team:      sess.Team,
+		Role:      sess.Role,
+		Message:   fmt.Sprintf("the harness reported model %s, and the role declares %s", observed, declared),
+	})
 }
 
 // emitHeartbeatAuth records an authentication outcome on the ring and in
