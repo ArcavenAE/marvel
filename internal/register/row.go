@@ -9,6 +9,11 @@ import (
 	"github.com/arcavenae/marvel/internal/asof"
 )
 
+// dutyCellPrefix starts the name of every duty cell. It is the prefix
+// api.DutyCellName adds, which a test holds equal, so the register does not
+// import the store for four characters.
+const dutyCellPrefix = "duty."
+
 // DeclaredWord is what a declared cell renders as in place of its value.
 const DeclaredWord = "declared"
 
@@ -47,7 +52,8 @@ type Row struct {
 	BusPublishScope Cell `json:"bus.publish_scope"`
 
 	// Duties holds one cell for each duty the seat's role declares, keyed by
-	// the duty name; the cell's name is "duty." plus the key.
+	// the full cell name, "duty." plus the duty name, the key ReadinessCells
+	// uses. A bare duty name is never a key.
 	Duties map[string]Cell `json:"duties,omitempty"`
 }
 
@@ -80,7 +86,7 @@ func (r Row) cells() []named {
 	}
 	sort.Strings(duties)
 	for _, d := range duties {
-		out = append(out, named{"duty." + d, r.Duties[d]})
+		out = append(out, named{d, r.Duties[d]})
 	}
 	return out
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/asof"
 )
 
@@ -43,8 +44,8 @@ func fixtureRow() Row {
 		EmptyCCExits:    Cell{},
 		BusPublishScope: declared("director.inbox"),
 		Duties: map[string]Cell{
-			"first-turn": fresh("proven", "pane:turn"),
-			"ack":        unmeasured(),
+			"duty.first-turn": fresh("proven", "pane:turn"),
+			"duty.ack":        unmeasured(),
 		},
 	}
 }
@@ -275,5 +276,12 @@ func TestRowJSONKeysDutiesByFullCellName(t *testing.T) {
 	want := []string{"duty.ack", "duty.first-turn"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("duties keys = %q, want %q", got, want)
+	}
+}
+
+// The prefix is the store's own: a duty cell has one name wherever it is read.
+func TestDutyCellPrefixMatchesTheStoresName(t *testing.T) {
+	if got, want := dutyCellPrefix+"first-turn", api.DutyCellName("first-turn"); got != want {
+		t.Errorf("register names the cell %q, the store names it %q", got, want)
 	}
 }

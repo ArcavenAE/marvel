@@ -43,7 +43,7 @@ func Build(in Input) Row {
 	if len(in.Duties) > 0 {
 		row.Duties = make(map[string]Cell, len(in.Duties))
 		for _, d := range in.Duties {
-			row.Duties[d] = unmeasured()
+			row.Duties[dutyCellPrefix+d] = unmeasured()
 		}
 	}
 	return row
