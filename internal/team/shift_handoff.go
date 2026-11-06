@@ -373,7 +373,7 @@ func handoffMissingReason(role *api.Role, sess api.Session, req api.ShiftRequest
 	if err != nil {
 		return never + fmt.Sprintf("the handoff path cannot be resolved (%v)", err)
 	}
-	return never + fmt.Sprintf("no regular file at %s ends in the marker", path)
+	return never + fmt.Sprintf("no fresh regular file at %s, written after the request, ends in the marker", path)
 }
 
 // directorNote says how many notices the director has had for this request, so
