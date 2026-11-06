@@ -209,3 +209,40 @@ func TestServiceCellSameAcrossHoldLastActiveAndTable(t *testing.T) {
 		t.Error("the legend scan found a source mark in SERVICE")
 	}
 }
+
+// The source field names the bearer kinds the tmux environment held at spawn
+// (svccol-3). A record from before the field reads as plain ambient (V2).
+func TestServiceAmbientCells(t *testing.T) {
+	for _, tc := range []struct {
+		bearer string
+		want   string
+	}{
+		{"none", "claude default ambient default-home"},
+		{"api-key+oauth-token", "claude default ambient:api-key+oauth-token default-home"},
+		{"auth-token", "claude default ambient:auth-token default-home"},
+		{"unknown", "claude default ambient:? default-home"},
+		{"", "claude default ambient default-home"},
+	} {
+		s := svcSession("a", "", api.BackendDefaultName, api.BackendCredentialAmbient, "", "")
+		s.AmbientBearer = tc.bearer
+		if got := svcCells(t, s)["a"]; got != tc.want {
+			t.Errorf("bearer %q: cell = %q, want %q", tc.bearer, got, tc.want)
+		}
+	}
+	other := svcSession("b", "", api.BackendDefaultName, api.BackendCredentialAWSProfile, "", "")
+	other.AmbientBearer = "api-key"
+	if got, want := svcCells(t, other)["b"], "claude default aws-profile default-home"; got != want {
+		t.Errorf("a non-ambient source: cell = %q, want %q", got, want)
+	}
+}
+
+// A stored value outside the closed set (a reply from another daemon version)
+// prints as unknown, and its text never reaches the screen.
+func TestServiceOutOfSetBearerPrintsUnknown(t *testing.T) {
+	s := svcSession("a", "", api.BackendDefaultName, api.BackendCredentialAmbient, "", "")
+	s.AmbientBearer = "api-key+SENTINEL"
+	got := svcCells(t, s)["a"]
+	if got != "claude default ambient:? default-home" || strings.Contains(got, "SENTINEL") {
+		t.Errorf("cell = %q, want ambient:? and no stored text", got)
+	}
+}

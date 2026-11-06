@@ -41,6 +41,10 @@ type Manager struct {
 	failures settingsFileFailures
 	// Clock is the time source for refusal bookkeeping; nil means time.Now.
 	Clock func() time.Time
+	// BearerReader says whether a bearer variable is set in the tmux
+	// environment a session's pane inherits; nil means the driver. A test sets
+	// it to make tmux unable to answer.
+	BearerReader func(tmuxSession, name string) tmux.BearerPresence
 	// LookPath finds the container runtime CLI; nil means exec.LookPath.
 	LookPath func(string) (string, error)
 	// GOOS is the host OS a sandbox profile is checked against; empty means the
@@ -996,6 +1000,7 @@ func (m *Manager) Create(sess *api.Session) error {
 	// see. Recorded for every session, overlay or not, so a default-mode
 	// session reads as ambient rather than as unclassified.
 	sess.BackendCredentialSource = api.ResolveBackendCredentialSource(backendOverlayFor(sess))
+	m.recordAmbientBearer(sess, tmuxSess)
 
 	// A seat that was profiled when it was checked, and whose plan carries
 	// neither a staged sandbox nor a failure, is the bare command from one of
@@ -1084,6 +1089,7 @@ func (m *Manager) Create(sess *api.Session) error {
 		live.BackendIntended = sess.BackendIntended
 		live.BackendResolved = sess.BackendResolved
 		live.BackendCredentialSource = sess.BackendCredentialSource
+		live.AmbientBearer = sess.AmbientBearer
 		live.BackendOverlayPath = sess.BackendOverlayPath
 		// What marvel named this launch, kept so the binding survives a
 		// daemon restart. Empty when the runtime has no id pin.

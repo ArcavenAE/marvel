@@ -546,8 +546,16 @@ type Session struct {
 	// loud-failure gate asks whether an expiring session can renew itself.
 	// Empty for a session marvel never classified. Status, not spec.
 	BackendCredentialSource BackendCredentialSource `toml:"-" json:"backend_credential_source,omitempty"`
-	SessionMetrics          `toml:"-"`
-	SessionContext          `toml:"-"`
+	// AmbientBearer records which bearer variable NAMES the tmux environment
+	// held when an ambient session was spawned: "" never checked, "none",
+	// "unknown" (tmux could not say), or kinds joined by "+" in the fixed order
+	// api-key, auth-token, oauth-token. Names only, never a value. It is written
+	// through SetAmbientBearer, which refuses anything outside that set. Absence
+	// is not proof of no key: a harness setting or a later environment change is
+	// outside what was read. Status, not spec; it takes no part in AccountKey.
+	AmbientBearer  string `toml:"-" json:"ambient_bearer,omitempty"`
+	SessionMetrics `toml:"-"`
+	SessionContext `toml:"-"`
 }
 
 // SessionContext is one context-window reading for a session.

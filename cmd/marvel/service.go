@@ -76,12 +76,28 @@ func serviceBackend(s api.Session) string {
 	}
 }
 
-// serviceSource is the credential source as stored.
+// serviceSource is the credential source as stored. For an ambient session it
+// carries the bearer variable names the tmux environment held at spawn:
+// ambient:api-key+oauth-token. A record from before the field, and one that
+// found none, print plain ambient; a value the closed set does not hold prints
+// ambient:? and never its own text, since a reply can come from another daemon
+// version. The cell names; it does not gate anything.
 func serviceSource(s api.Session) string {
 	if s.BackendCredentialSource == "" {
 		return "-"
 	}
-	return string(s.BackendCredentialSource)
+	src := string(s.BackendCredentialSource)
+	if s.BackendCredentialSource != api.BackendCredentialAmbient {
+		return src
+	}
+	switch b := s.AmbientBearer; {
+	case b == "", b == api.AmbientBearerNone:
+		return src
+	case b == api.AmbientBearerUnknown, !api.ValidAmbientBearer(b):
+		return src + ":?"
+	default:
+		return src + ":" + b
+	}
 }
 
 // serviceHome is the last element of the cleaned home, or the whole path where

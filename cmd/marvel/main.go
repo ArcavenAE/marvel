@@ -1248,6 +1248,11 @@ The home is its last element, or the whole path where another home on the same
 cluster shares that element. The label is declared, never checked against the login.
 Example: 'claude subscription ambient alt-ultra ultra'. It is the first column
 cut on a narrow terminal when it came from rest.
+For a session on the operator's own login the source reads ambient:api-key+oauth-token
+when those variable names were set in the tmux environment at spawn (names only, never
+values); plain ambient means none were seen, and ambient:? means tmux could not say.
+Absence is not proof of no key. To list seats that inherited a key:
+  marvel get sessions -o json | jq '.[] | select(.ambient_bearer // "" | test("^(api-key|auth-token|oauth-token)"))'
 
 ACTIVE% is the share of the last 15 minutes of daemon ticks that found the seat
 not quiet, under the role's activity_timeout or the cluster quiet window. It

@@ -412,3 +412,25 @@ func TestGetSessionsDefaultTableByteIdentical(t *testing.T) {
 		t.Errorf("default table changed:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// The bearer record rides the session in -o json under ambient_bearer, and a
+// session never checked omits the key.
+func TestGetSessionsOutputJSONCarriesAmbientBearer(t *testing.T) {
+	checked, unchecked := row("w", "s1"), row("w", "s2")
+	checked.AmbientBearer = "api-key"
+	cannedDaemon(t, map[string]any{"session": []api.Session{checked, unchecked}})
+	out, err := runGet(t, "sessions", "-o", "json")
+	if err != nil {
+		t.Fatalf("get sessions -o json: %v", err)
+	}
+	var list []map[string]any
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("not a JSON list: %v", err)
+	}
+	if list[0]["ambient_bearer"] != "api-key" {
+		t.Errorf("s1 ambient_bearer = %v, want api-key", list[0]["ambient_bearer"])
+	}
+	if _, ok := list[1]["ambient_bearer"]; ok {
+		t.Errorf("s2 carries ambient_bearer: %v", list[1])
+	}
+}
