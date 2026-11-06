@@ -162,3 +162,16 @@ Each carries a default the author recommends. Valid until 2026-11-13.
 1. **No grand total across clusters in the first PR.** Default: yes, one line per cluster; a grand total follows the team-rollup grammar.
 2. **Two figures for TOUT and RATE, never one.** Default: yes.
 3. **CPU as the plain sum, which can pass 100%.** Default: yes, labelled as a sum. The alternative is a share of the host, deferred for want of core counts.
+
+## 8. As built
+
+The operator ruled the open decisions in section 7. Where this section and the text above differ, this section governs.
+
+- **Two lines across clusters.** A fan-out read prints one `totals <cluster>` line for each answered cluster and, when two or more answered, one `totals fleet` line over the rows those clusters gave. Section 2.5's "no grand total" no longer holds. Each line has its own display preference, both shown by default: `display.totals_per_cluster` and `display.totals_fleet` in the client config's `display:` block.
+- **Two figures.** tout and rate print tokens and `~$` estimates apart, each with its row count, and never add them (section 2.2 as written).
+- **cpu is the plain sum**, so it can pass 100% on a multicore host. It is not a host share.
+- **Position.** The line sits after the daemon header's last line and before the source legend.
+- **No totals while disconnected.** The disconnected watch frame prints its last known rows and no totals line.
+- **Merged daemons.** A cluster merged into another's daemon gets no line, and the rows it kept count in the line of the cluster it merged into.
+- **Failed or late clusters.** The watch frame prints no totals line for a cluster that failed after a good read or is late, and keeps its last rows in the table.
+- **`get teams --load`.** The last row, `all teams`, sums seats running of declared and limited seats over the fresh team rows. Its ACTIVE% is the mean over seats. When any team row is expired, the row leaves it out and reads `(n of m teams)` in the TEAM column.
