@@ -877,7 +877,15 @@ type ShiftPolicy struct {
 	// HandoffWindow is how long after a request marvel waits for the marker
 	// before it escalates. Zero means DefaultShiftHandoffWindow.
 	HandoffWindow time.Duration `toml:"-"`
+	// HandoffVia names how a seat that cannot write a file hands off. Empty
+	// means the seat writes the declared file itself; ShiftHandoffViaTool means
+	// it calls the submit_handoff tool and marvel writes the file for it
+	// (docs/design/read-only-seat-handoff.md).
+	HandoffVia string `toml:"-"`
 }
+
+// ShiftHandoffViaTool is the one value handoff_via takes.
+const ShiftHandoffViaTool = "tool"
 
 // ShiftCondition is one entry of a shift policy's list.
 type ShiftCondition struct {

@@ -1682,6 +1682,19 @@ func (m *Manager) CanFeedContextRole(r api.ManifestRole) bool {
 	}, os.TempDir()).Supported
 }
 
+// CanOfferHandoffToolRole reports whether a role's harness can be given the
+// submit_handoff tool: its adapter has a seeder that renders the marvel-handoff
+// entry, or takes it from the role's environment. It is the manifest-side
+// capability apply asks for before it accepts handoff_via = "tool".
+func (m *Manager) CanOfferHandoffToolRole(r api.ManifestRole) bool {
+	name := r.Runtime.Image
+	if name == "" {
+		name = r.Runtime.Command
+	}
+	o, ok := m.adapters.Resolve(name).(runtime.HandoffToolOfferer)
+	return ok && o.OffersHandoffTool()
+}
+
 // openSink creates the FIFO for a stream-capable adapter, or returns nil.
 // A sink that cannot be created is logged and skipped: an unobservable
 // session is still a working session.

@@ -911,9 +911,18 @@ socket. The daemon records `handoff.put` (or `handoff.put-refused` with the
 reason), and the shift then starts on the marker, as it does for a file the seat
 writes itself. The daemon does not check that receipt before it shifts. `marvel mcp handoff` is
 started by the seat's harness, dials only the `MARVEL_SOCKET` of its own
-environment, and refuses `--socket`, `--cluster` and `--identity`. At this build
-no role asks marvel to seed that tool into a harness, so a seat reaches it only
-through a configuration the operator wrote.
+environment, and refuses `--socket`, `--cluster` and `--identity`.
+
+A role asks marvel to give its seat that tool with `handoff_via = "tool"` on the
+shift table, beside `handoff` and `handoff_marker`, which it needs because marvel
+writes the declared file. The request notice then names the tool and the window,
+and no path: `shift: max age reached; call submit_handoff with your handoff; you
+have 5m0s`. For a codex role marvel seeds the `marvel-handoff` server into the
+seat's config. `apply` refuses the key for a harness that cannot be given the
+tool, naming the role and the runtime: crush and opencode today (opencode's half
+is not built before its section 5 check has run), as well as claude, goose and
+the generic adapter. A value other than `"tool"` is refused. A retirement still
+asks for a file, not the tool.
 
 ```toml
 [team.role.shift]
