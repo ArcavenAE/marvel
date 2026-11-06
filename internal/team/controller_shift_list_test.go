@@ -1050,3 +1050,48 @@ func TestHandoffNoticeWithoutDeclaredPathIsBare(t *testing.T) {
 		t.Fatalf("notices = %q, want exactly %q", f.notices, want)
 	}
 }
+
+// A handoff file written before the request is the predecessor's old record, not
+// the answer to this ask. One that already ends in the marker must neither start
+// the shift nor be quoted as "wrote its handoff"; the request waits out its
+// window and escalates, and a file written after the request still shifts.
+//
+// Falsification: a check that reads only the marker starts the shift on the
+// first applied read, which is how a seat was deleted 8 s after being asked.
+func TestMaxAgeIgnoresHandoffOlderThanTheRequest(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-maxage-stale", maxAgeRole(dir))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+
+	writeHandoff(t, dir, s.Name, "old notes\nEND HANDOFF\n")
+	old := listEpoch.Add(-3 * time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, s.Name+".md"), old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	f.evaluate() // asks the seat at listEpoch
+	for range 3 {
+		f.ctrl.handoffProbes.wait()
+		f.clock.Advance(time.Second)
+		if got := f.evaluate(); got.Shift.Phase != api.ShiftNone {
+			t.Fatalf("phase = %q, want none: the file predates the request", got.Shift.Phase)
+		}
+	}
+	if n := f.count(events.KindShiftAutoTriggered); n != 0 {
+		t.Fatalf("autotriggered events = %d, want 0 for a stale file", n)
+	}
+
+	// The window passes with no fresh file: the request escalates and the seat stays.
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(api.DefaultShiftHandoffWindow)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
+	got := f.evaluate()
+	if got.Shift.Phase != api.ShiftNone || !got.ShiftRequests[testShiftRole].Escalated {
+		t.Fatalf("phase=%q escalated=%v, want none and escalated", got.Shift.Phase, got.ShiftRequests[testShiftRole].Escalated)
+	}
+	if n := f.count(events.KindShiftHandoffMissing); n != 1 {
+		t.Fatalf("handoff-missing events = %d, want 1", n)
+	}
+}
