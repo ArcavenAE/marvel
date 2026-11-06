@@ -1,6 +1,7 @@
 cluster  alpha (rung: env, <socket>)
 mrvl://  off
 bus      none
+totals   3 sessions   cpu -   rss -   tout -   rate -
 
 AGENT NAME  STATE    HEALTH   CTX%  LAST-ACTIVE
 agent-a     running  healthy  -     -

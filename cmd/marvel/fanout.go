@@ -400,7 +400,7 @@ func buildFanOutDocument(records []clusterRecord, rows []api.Session) fanOutDocu
 // runFanOutGet is `get sessions` across a cluster set. With -o it prints the
 // document instead of the table and the status lines, and exits as the table
 // does.
-func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, noTrunc, watching bool, interval time.Duration, hasOutput, load bool) error {
+func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, noTrunc, watching bool, interval time.Duration, hasOutput, load, header bool) error {
 	if err := fanOutRefusals(); err != nil {
 		return err
 	}
@@ -444,6 +444,9 @@ func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, no
 		explicit: explicit,
 		noTrunc:  noTrunc,
 		lead:     []sessionColumn{fanOutKeyColumn()},
+	}
+	if header {
+		fmt.Print(renderClusterTotals(records, rows, rateClock(), fit.width))
 	}
 	fmt.Print(renderSessionsView(rows, cols, "", fit))
 	return fanOutExitError(cmd, records)

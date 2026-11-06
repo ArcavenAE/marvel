@@ -1322,7 +1322,7 @@ Secret-looking Env values show as (redacted), as in the team document.`,
 						return err
 					}
 				}
-				return runFanOutGet(cmd, names, columns, output, noTrunc, watching, interval, cmd.Flags().Changed("output"), load)
+				return runFanOutGet(cmd, names, columns, output, noTrunc, watching, interval, cmd.Flags().Changed("output"), load, wantHeader(header))
 			}
 			if load {
 				switch {
@@ -3410,6 +3410,14 @@ type sessionRow struct {
 // newSessionRow derives a session's cells. The absence rules live here, in
 // one place, whichever columns are selected: "-" is never measured, "?" is
 // a reading whose window could not be resolved.
+// sampledProcess reports whether the row's CPU and RSS cells are values: the
+// sampler has read the session, and its process is not gone. The totals line
+// reads the same predicate, so a total and its column agree.
+func sampledProcess(s api.Session) bool {
+	gone := s.State == api.SessionCrashed || s.State == api.SessionFailed || s.State == api.SessionSucceeded
+	return !s.MetricsAt.IsZero() && !gone
+}
+
 func newSessionRow(s api.Session) sessionRow {
 	runtimeName := s.Runtime.Name
 	if runtimeName == "" {
@@ -3463,8 +3471,7 @@ func newSessionRow(s api.Session) sessionRow {
 	// A crashed, failed or succeeded row has no process left to read, and its
 	// last in-memory reading is frozen (the sampler skips it), so it shows
 	// absence too (aae-orc-wtavi).
-	gone := s.State == api.SessionCrashed || s.State == api.SessionFailed || s.State == api.SessionSucceeded
-	if !s.MetricsAt.IsZero() && !gone {
+	if sampledProcess(s) {
 		cpu = fmt.Sprintf("%.1f", s.CPUPercent)
 		rss = formatBytes(s.RSSBytes)
 	}
@@ -3775,6 +3782,11 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 	res := fitSessionTable(sessions, drawableColumns(cols), fit)
 	if fit.width > 0 && header != "" && sourceMarkOnScreen(sessions, res.cols) {
 		header = strings.TrimSuffix(header, "\n") + sourceLegend + "\n\n"
+	}
+	// The totals line rides with the header: it prints where the header does,
+	// on the cell clock, and breaks to the terminal width.
+	if header != "" {
+		header = strings.TrimSuffix(header, "\n") + renderTotalsLine(sessions, rateClock(), "totals", fit.width) + "\n"
 	}
 	var tally undrawTally
 	tally.cells(sessions, shownColumns(allCols, res.cols))
