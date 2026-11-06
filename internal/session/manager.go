@@ -1108,9 +1108,15 @@ func (m *Manager) Create(sess *api.Session) error {
 	sess.State = api.SessionRunning
 	log.Printf("session %s running in pane %s", sess.Key(), paneID)
 	m.recordResume(sess)
+	m.recordDuties(sess)
 	m.announceSpawn(sess, paneID, plan.firstPrompt, plan.sandbox)
 	return nil
 }
+
+// recordDuties writes every duty the seat's role must pass as unproven, so a
+// seat that has proven nothing is never routable (docs/design/seat-readiness.md
+// section 5). Stub: writes nothing yet.
+func (m *Manager) recordDuties(sess *api.Session) {}
 
 // recordResume writes sess's entry in the resume journal
 // (docs/design/fleet-hibernate.md section 5). It runs on every launch, and each
