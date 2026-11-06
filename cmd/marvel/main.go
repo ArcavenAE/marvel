@@ -3780,13 +3780,15 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 	allCols := append(append([]sessionColumn(nil), fit.lead...), cols...)
 	fit.lead = drawableColumns(fit.lead)
 	res := fitSessionTable(sessions, drawableColumns(cols), fit)
-	if fit.width > 0 && header != "" && sourceMarkOnScreen(sessions, res.cols) {
-		header = strings.TrimSuffix(header, "\n") + sourceLegend + "\n\n"
-	}
 	// The totals line rides with the header: it prints where the header does,
-	// on the cell clock, and breaks to the terminal width.
+	// directly under its last line and above the source legend, on the cell
+	// clock, and breaks to the terminal width. Its place against the legend is
+	// a placeholder at the recommended option, pending Desk card 6et12-4.
 	if header != "" {
 		header = strings.TrimSuffix(header, "\n") + renderTotalsLine(sessions, rateClock(), "totals", fit.width) + "\n"
+		if fit.width > 0 && sourceMarkOnScreen(sessions, res.cols) {
+			header = strings.TrimSuffix(header, "\n") + sourceLegend + "\n\n"
+		}
 	}
 	var tally undrawTally
 	tally.cells(sessions, shownColumns(allCols, res.cols))

@@ -102,7 +102,8 @@ func rateShowsValue(s api.Session, now time.Time) bool {
 // totalsRecord reports whether a cluster's record gets a totals line: it
 // answered, or is starting and its rows may be incomplete. A repeat of another
 // cluster's address, and a cluster that gave no rows, get none, so the same rows
-// are never totaled twice.
+// are never totaled twice. That the kept member's line counts the same-daemon
+// rows is a placeholder at the recommended option, pending Desk card 6et12-6.
 func totalsRecord(r clusterRecord) bool {
 	return r.Outcome == outcomeAnswered || r.Outcome == outcomeStarting
 }
