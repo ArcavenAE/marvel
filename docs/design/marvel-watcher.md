@@ -414,6 +414,7 @@ So a held seat is visited by a detector that has nothing to match it against. At
 | `parked`, reason `r` | `dialog` | `r` | |
 | `logged-out`, `Source` `pane` | `dialog` | `login` | |
 | `logged-out`, `Source` `transcript` | `dialog` | `login` | set by `setTranscript` from the transcript's authentication error, not from a screen; the record says `source transcript` |
+| `unknown`, `Confidence` `low` (the low-confidence branch of `visit`) | none: the seat is read as section 2 reads it, with its composer capture | none | the record notes `low-confidence <pattern id>`; never `dialog`, since only a high-confidence match sets a state |
 | `uncovered` | `unknown` | none | `no-dialog-pattern: uncovered <harness> <version>` |
 | `control-failed` | `unknown` | none | `no-dialog-pattern: control-failed` |
 | none, and no turn since spawn | `no-turn` (as today) | none | never `dialog` without a match |
@@ -449,13 +450,19 @@ Each pattern is built only from a captured sample, never written by hand (`inter
 A `dialog` record carries section 4's fields plus:
 - `dialog_class`;
 - the pattern id and harness version that matched;
-- `since`, when the watchdog first set this state. `CapturedAt` cannot carry it, because the watchdog overwrites the whole record on every capture (`internal/daemon/watchdog.go`, `set`, `setCoverage` and `setTranscript`). So `HarnessState` gains `Since time.Time` (`json:"since,omitempty"`): set to the capture time when the state or its reason changes, and copied from the previous record while both stay the same. J3 carries the field. A record written before it existed has a zero `Since`, and the report then prints `since unknown`, never the latest capture.
+- `since`, when the watchdog first set this state. `CapturedAt` cannot carry it, because most writers rebuild the record with `CapturedAt: now` on every capture. So `HarnessState` gains `Since time.Time` (`json:"since,omitempty"`). The writers of a non-nil record are four, in `internal/daemon/watchdog.go`:
+  - `set` (a high-confidence `logged-out` or `parked`), every capture;
+  - the low-confidence branch of `visit` (`SetHarnessState(key, harnessState(...))`), every capture;
+  - `setCoverage`, only when the verdict is new or changed: it returns early, leaving the stored record as it was, when state, harness, version and covered list all match;
+  - `setTranscript`, every reading with an authentication failure.
+
+  Each of the four sets `Since` through one helper over the previous record: `Since` is copied from it when it is non-nil with the same `State`, `Reason` and `Source`, and is `now` otherwise. So `setCoverage`'s early return keeps `Since` with the rest of the record, and a write it makes for a changed covered list keeps it too. `clear` writes nil, so a state set after a clear starts a new `Since`. J3 carries the field. A record written before it existed has a zero `Since`, and the report then prints `since unknown`, never the latest capture.
 
 For example: `seat <name>: dialog (onboarding; claude 2.1.318, pattern onboarding) since <time>; marvel does not answer prompts`.
 
 The watcher still only reports:
 - it sends no key to a held seat;
-- it never rings a seat whose harness state is `parked` or `logged-out`, whatever the composer reads;
+- it never rings a seat whose harness state is `parked` or `logged-out`, and it does not read that seat's composer (12.2), so the ring's `Empty` condition is never reached for it;
 - the record goes where section 4 sends any record, to the parent if it took a turn in the window, else to director.
 
 ### 12.5 Red tests
@@ -468,7 +475,9 @@ Watcher (J3):
 - `uncovered` gives `unknown` with the `no-dialog-pattern` note, never `dialog`;
 - a seat with no harness state and no turn gives `no-turn`, never `dialog`;
 - the record's text is the pattern's rows, and a planted secret in a variable span renders `<masked>`;
-- at G3: a `parked` seat whose composer reads `Empty` is not rung.
+- at G3: a `parked` seat that is otherwise ring-eligible (no turn open, no ceiling, no claim) is not rung, the composer reader is not called for it, and no ring claim is written;
+- `Since` is kept when `setCoverage` returns early, kept when it writes a changed covered list for the same state, and new after `clear`;
+- a low-confidence record (`State` `unknown`) gives no `dialog`, and the seat gets section 2's composer capture;
 
 Patterns (J1, J2):
 - each new pattern matches its own captured sample and does not match a chat-quoted copy of it, as the logged-out control does;
