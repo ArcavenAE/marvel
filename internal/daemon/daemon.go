@@ -1814,6 +1814,8 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 			d.stampPaneReads(live)
 		}
 		result = append(live, held...)
+	case "register", "registers":
+		result = d.registerRows()
 	case "teams", "team":
 		result = d.store.ListTeams()
 	case "team-load":
