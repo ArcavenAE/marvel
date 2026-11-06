@@ -91,9 +91,12 @@ not clear it.
   next goes quiet. This keeps the watchdog's pane-read cost unchanged.
 - A harness with no patterns at all reads nothing, as today: marvel does not
   claim to watch a harness it has never had a sample for.
-- `get sessions` HEALTH gains no suffix for either state. `describe session`
-  shows `Harness state: uncovered (claude 2.1.291; covered: 2.1.290)` or
-  `Harness state: control-failed (claude 2.1.290; covered: none)`.
+- `get sessions` HEALTH reads `(unwatched)` for either state on a running
+  seat, so a seat the watchdog cannot see is not mistaken for a working one.
+  A busy seat shows no suffix until it next goes quiet. `describe session`
+  keeps the two apart: `Harness state: uncovered (claude 2.1.291; covered:
+  2.1.290)` or `Harness state: control-failed (claude 2.1.290; covered:
+  none)`.
 
 ## 5. Surfaces and events
 
@@ -105,7 +108,8 @@ so the ring filter and the bus tap carry them.
 - **`watchdog.control`**, one per pattern per run, info on pass, warning on
   fail, with the pattern id and version, the harness version, and on fail
   the result state and confidence or the read error. Never sample text.
-- **`watchdog.uncovered`**, per harness version, at info. "Per change" means
+- **`watchdog.uncovered`**, per harness version, at warning (its cleared form
+  stays at info). "Per change" means
   on a transition only: it is emitted when the set of examined sessions on an
   uncovered version goes from empty to non-empty, naming the version and the
   count at that moment, and a cleared form when that set becomes empty or a
@@ -146,8 +150,10 @@ so the ring filter and the bus tap carry them.
   `Covered` = `[2.1.290]`, `PatternFor` empty; the same session with no
   claude patterns at all reads nothing.
 - `watchdog.uncovered` fires once as three sessions on 2.1.291 are examined,
-  not again when a fourth is, and its cleared form fires when a 2.1.291 set
-  loads.
+  not again when a fourth is, at warning, and its cleared form fires when a
+  2.1.291 set loads, at info.
+- `get sessions` HEALTH reads `(unwatched)` for a running seat in either
+  coverage state, and nothing for an ended seat.
 - A busy session (inside the window) on an uncovered version is not marked
   until it goes quiet.
 - `State` and `HealthState` are unchanged in every case above.

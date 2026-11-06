@@ -394,7 +394,7 @@ func (w *watchdog) uncoveredTransitions() {
 			noun = "session"
 		}
 		events.Emit(w.ring, events.Event{
-			Kind: events.KindWatchdogUncovered, Severity: events.SeverityInfo,
+			Kind: events.KindWatchdogUncovered, Severity: events.SeverityWarning,
 			Message: fmt.Sprintf("uncovered: %s %s, %d %s with no passing pattern (covered: %s)",
 				h, v, now[k], noun, coveredList(coveredVersions(w.sets, h))),
 		})

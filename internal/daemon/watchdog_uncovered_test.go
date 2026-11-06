@@ -48,8 +48,8 @@ func TestWatchdogUncoveredIsOneEventPerVersionNotPerSeat(t *testing.T) {
 		t.Fatalf("watchdog.uncovered events = %d, want 1: %+v", len(got), got)
 	}
 	ev := got[0]
-	if ev.Severity != events.SeverityInfo {
-		t.Errorf("severity = %s, want info", ev.Severity)
+	if ev.Severity != events.SeverityWarning {
+		t.Errorf("severity = %s, want warning: a blind watchdog is not routine news", ev.Severity)
 	}
 	if !strings.Contains(ev.Message, "claude 2.1.291") || !strings.Contains(ev.Message, "3 sessions") ||
 		!strings.Contains(ev.Message, "2.1.283") || strings.Contains(ev.Message, "cleared") {
