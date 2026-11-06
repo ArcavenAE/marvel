@@ -470,3 +470,35 @@ func jsonOf(t *testing.T, env envelope.Envelope) []byte {
 	}
 	return data
 }
+
+// A team that had no supervisor role and then gains one must stop reporting
+// "no recipient" at a tick where nothing is due: the event reads the persisted
+// outcome once the role exists.
+func TestStaleNoRecipientTextIsReplacedWhenTheTeamGainsASupervisorRole(t *testing.T) {
+	f := newDeliverFixture(t, "test-legs-gains-sup", false, false)
+	f.ctrl.LeafUp = func() bool { return false }
+	sess := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	f.escalate()
+	if got := f.ctrl.publishRecords[sess.Key()].outcome; !strings.HasPrefix(got, "none, no recipient") {
+		t.Fatalf("setup: outcome = %q, want the no-recipient text", got)
+	}
+
+	// The role arrives with one queued delivery already on the request and no
+	// running holder, so the next tick has nothing due.
+	if err := f.store.UpdateTeam(f.teamKey, func(live *api.Team) error {
+		live.Roles = append(live.Roles, supervisorRole())
+		req := live.ShiftRequests[testShiftRole]
+		req.DeliveredCount, req.LastDeliveryQueued, req.LastDeliveredAt = 1, true, f.clock.Now()
+		live.ShiftRequests[testShiftRole] = req
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.Advance(time.Second)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+
+	if got := f.ctrl.publishRecords[sess.Key()].outcome; got != "queued once, no live holder" {
+		t.Errorf("outcome = %q, want %q", got, "queued once, no live holder")
+	}
+}

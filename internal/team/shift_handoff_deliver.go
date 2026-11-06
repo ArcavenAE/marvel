@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/arcavenae/marvel/contracts/go/envelope"
@@ -130,7 +131,7 @@ func (c *Controller) deliverHandoffMissing(t *api.Team, role *api.Role, sess api
 		due = req.LastDeliveryQueued || now.Sub(req.LastDeliveredAt) >= window
 	}
 	if !due {
-		if rec.outcome == "" || rec.outcome == "none, no recipient" || rec.outcome == "none, no managed bus" {
+		if rec.outcome == "" || strings.HasPrefix(rec.outcome, "none, ") {
 			rec.outcome = persistedOutcome(req)
 		}
 		return
