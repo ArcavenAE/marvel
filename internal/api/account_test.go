@@ -436,3 +436,72 @@ func TestAccountRecordStaleStampedDoesNotDisplaceAnUnstampedReading(t *testing.T
 		t.Fatal("a stale reading into an empty store was refused")
 	}
 }
+
+// claudeSeat is a claude session whose role sets CLAUDE_CONFIG_DIR to dir
+// (nothing when dir is empty), with no recorded account home: the harness
+// reads the variable itself, marvel never prepared a home for it.
+func claudeSeat(dir string) Session {
+	s := sessionOn("claude", BackendDefaultName, "", "", "")
+	if dir != "" {
+		s.Runtime.Env = map[string]string{"CLAUDE_CONFIG_DIR": dir}
+	}
+	return s
+}
+
+// A claude seat that names its own config directory is its own login, so it
+// is its own account. Without this two seats on different logins share one
+// limit reading.
+// No t.Parallel: it sets HOME for the process.
+func TestAccountKeyFollowsAClaudeSeatsConfigDir(t *testing.T) {
+	t.Setenv("HOME", "/home/acct-test")
+	if AccountKeyOf(claudeSeat("/home/acct-test/.claude-a")) == AccountKeyOf(claudeSeat("/home/acct-test/.claude-b")) {
+		t.Error("two claude seats with different CLAUDE_CONFIG_DIR share an account key")
+	}
+	if AccountKeyOf(claudeSeat("/home/acct-test/.claude-a")) == AccountKeyOf(claudeSeat("")) {
+		t.Error("a claude seat with its own CLAUDE_CONFIG_DIR shares the default account key")
+	}
+	if got := AccountKeyOf(claudeSeat("/home/acct-test/.claude-a")).ConfigHome; got != "/home/acct-test/.claude-a" {
+		t.Errorf("config home = %q, want the seat's directory", got)
+	}
+}
+
+// The seats that name no directory, the default directory, or one spelling of
+// the same directory keep one key, today's key.
+// No t.Parallel: it sets HOME for the process.
+func TestAccountKeyKeepsOneKeyPerClaudeLogin(t *testing.T) {
+	t.Setenv("HOME", "/home/acct-test")
+	none := AccountKeyOf(claudeSeat(""))
+	if none.ConfigHome != "" {
+		t.Fatalf("a claude seat with no directory has config home %q, want the default", none.ConfigHome)
+	}
+	for name, dir := range map[string]string{
+		"explicit default":     "/home/acct-test/.claude",
+		"default with a slash": "/home/acct-test/.claude/",
+		"default with a dot":   "/home/acct-test/./.claude",
+	} {
+		if got := AccountKeyOf(claudeSeat(dir)); got != none {
+			t.Errorf("%s: key %v, want today's key %v", name, got, none)
+		}
+	}
+	if AccountKeyOf(claudeSeat("/home/acct-test/.claude-a/")) != AccountKeyOf(claudeSeat("/home/acct-test/.claude-a")) {
+		t.Error("one directory spelled with and without a trailing slash is two accounts")
+	}
+}
+
+// The recorded account home is the harness's own answer and wins; and a
+// harness that does not read CLAUDE_CONFIG_DIR is not moved by it.
+// No t.Parallel: it sets HOME for the process.
+func TestAccountKeyConfigDirOnlyFillsAnEmptyClaudeHome(t *testing.T) {
+	t.Setenv("HOME", "/home/acct-test")
+	named := claudeSeat("/home/acct-test/.claude-a")
+	named.AccountHome = "/home/acct-test/.claude-b"
+	if got := AccountKeyOf(named).ConfigHome; got != "/home/acct-test/.claude-b" {
+		t.Errorf("config home = %q, want the recorded account home", got)
+	}
+	codex := sessionOn("codex", BackendDefaultName, "", "", "")
+	want := AccountKeyOf(codex)
+	codex.Runtime.Env = map[string]string{"CLAUDE_CONFIG_DIR": "/home/acct-test/.claude-a"}
+	if got := AccountKeyOf(codex); got != want {
+		t.Errorf("a codex seat moved to %v by CLAUDE_CONFIG_DIR, want %v", got, want)
+	}
+}

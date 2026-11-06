@@ -201,3 +201,52 @@ func TestAcctKeyDiffersWhenAnyOneFieldDiffers(t *testing.T) {
 		t.Errorf("claude default and claude bedrock with no home print one key %s", acctKey(a))
 	}
 }
+
+// acctEnvSession is a claude session with no recorded account home whose role
+// names dir as its config directory.
+func acctEnvSession(name, dir string) api.Session {
+	s := acctSession(name, "", api.ReadingFresh, "fresh 10% (five_hour)")
+	if dir != "" {
+		s.Runtime.Env = map[string]string{"CLAUDE_CONFIG_DIR": dir}
+	}
+	return s
+}
+
+// Two claude seats on different config directories are two logins, so the
+// column must not print one key for both: it is how an operator sees which
+// rows share a limit.
+func TestAcctKeyFollowsAClaudeSeatsConfigDir(t *testing.T) {
+	got, _ := acctCells(t,
+		acctEnvSession("a-none", ""),
+		acctEnvSession("b-one", "/home/d/.claude-a"),
+		acctEnvSession("c-one-again", "/home/d/.claude-a/"),
+		acctEnvSession("d-two", "/home/d/.claude-b"),
+	)
+	key := func(n string) string { k, _, _ := strings.Cut(got[n], " "); return k }
+	if key("a-none") == key("b-one") || key("b-one") == key("d-two") || key("a-none") == key("d-two") {
+		t.Errorf("distinct logins share a key: none %q, a %q, b %q", key("a-none"), key("b-one"), key("d-two"))
+	}
+	if key("b-one") != key("c-one-again") {
+		t.Errorf("one directory spelled two ways prints %q and %q", key("b-one"), key("c-one-again"))
+	}
+}
+
+// A recorded account home is the harness's own answer and wins over the
+// variable: a seat with a home and a variable prints the key of the home, not
+// of the variable.
+func TestAcctKeyPrefersARecordedHomeOverTheConfigDir(t *testing.T) {
+	both := acctEnvSession("a-both", "/home/d/.claude-env")
+	both.AccountHome = "/home/d/.claude-home"
+	got, _ := acctCells(t,
+		both,
+		acctSession("b-home-only", "/home/d/.claude-home", api.ReadingFresh, "fresh 10% (five_hour)"),
+		acctEnvSession("c-env-only", "/home/d/.claude-env"),
+	)
+	key := func(n string) string { k, _, _ := strings.Cut(got[n], " "); return k }
+	if key("a-both") != key("b-home-only") {
+		t.Errorf("a seat with a recorded home prints %q, want the key of that home %q", key("a-both"), key("b-home-only"))
+	}
+	if key("a-both") == key("c-env-only") {
+		t.Errorf("a seat with a recorded home prints the key of its variable %q", key("c-env-only"))
+	}
+}

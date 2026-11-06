@@ -39,6 +39,8 @@ func clientAccountKey(s api.Session) api.AccountKey {
 	k.ConfigHome = ""
 	if s.AccountHome != "" {
 		k.ConfigHome = filepath.Clean(s.AccountHome)
+	} else if dir := api.ClaudeConfigDirEnv(s); dir != "" {
+		k.ConfigHome = filepath.Clean(dir)
 	}
 	return k
 }
