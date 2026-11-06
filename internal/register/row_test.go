@@ -22,8 +22,6 @@ func declared(value string) Cell {
 	return Cell{Value: value, ObservedAt: renderNow.Add(-time.Hour), Source: SourceDeclared}
 }
 
-func unmeasured() Cell { return Cell{Source: SourceUnmeasured} }
-
 // fixtureRow has one cell of every kind: fresh values, an expired cell, cells
 // never observed (with and without a reason), declared cells and duty cells.
 func fixtureRow() Row {
@@ -83,8 +81,10 @@ func TestRowNeverRendersAVerdictWord(t *testing.T) {
 // A cell expires on its own clock: the same row an hour later has no value.
 func TestRowRenderAgesWithTheClock(t *testing.T) {
 	later := fixtureRow().Render(renderNow.Add(time.Hour))
-	if strings.Contains(later, "worker") || strings.Contains(later, "proven") {
-		t.Errorf("an expired value was printed:\n%s", later)
+	for _, line := range []string{"role               ?", "duty.first-turn    ?"} {
+		if !strings.Contains(later, line+"\n") {
+			t.Errorf("want the line %q, with no expired value:\n%s", line, later)
+		}
 	}
 	if !strings.Contains(later, "declared") {
 		t.Errorf("a declared cell should not expire into a question mark:\n%s", later)
