@@ -114,3 +114,20 @@ func TestReadingPresenceCreatesNoConsumer(t *testing.T) {
 		t.Errorf("KV_AGENT_STATE consumers %d before, %d after a read", before, after)
 	}
 }
+
+// A global durable name is not read on the local tier even when a local key
+// would spell it: the two tiers' names are kept apart.
+func TestTheLocalTierDoesNotReadAGlobalDurableName(t *testing.T) {
+	b := newScratchBroker(t)
+	b.publish(subjA)
+	b.consumer("mcp_global_alpha_i1", subjA)
+	b.present("AGENT_STATE", "presence.squad.global_alpha.i1", `{}`)
+
+	got, err := NewQueue(b.js, LocalPresence).Durables(context.Background(), testStream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := durableByName(t, got, "mcp_global_alpha_i1"); d.Live {
+		t.Error("a mcp_global_ durable was read as live on the local tier")
+	}
+}
