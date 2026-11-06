@@ -53,10 +53,11 @@ func TestConfigErrorReason(t *testing.T) {
 	if r == "" {
 		t.Fatal("an exit-78 headless failure must carry a configuration-error reason")
 	}
-	// The text names what releases the slot today, and only that: a manifest
-	// re-apply does not release it.
-	if !strings.Contains(r, "delete the session") || strings.Contains(r, "re-apply") {
-		t.Errorf("reason %q must name deleting the session and must not name a re-apply", r)
+	// The text names what releases the slot today: deleting the session, plus
+	// reset-health for a schedule frozen by on_failure. A manifest re-apply
+	// releases neither.
+	if !strings.Contains(r, "delete the session") || !strings.Contains(r, "marvel reset-health") || strings.Contains(r, "re-apply") {
+		t.Errorf("reason %q must name deleting the session and marvel reset-health, and must not name a re-apply", r)
 	}
 	for _, s := range []Session{
 		{State: SessionFailed, ExitStatus: "1", Runtime: Runtime{Mode: RuntimeModeHeadless}},

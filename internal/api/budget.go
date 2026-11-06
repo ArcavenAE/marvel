@@ -275,7 +275,7 @@ func ConfigErrorReason(s Session) string {
 	if !IsConfigError(s) {
 		return ""
 	}
-	return "configuration error: the run exited 78 and is not relaunched; delete the session to release its slot"
+	return "configuration error: the run exited 78 and is not relaunched; delete the session to release its slot; a schedule frozen by on_failure also needs `marvel reset-health`"
 }
 
 // CountReplicaSlots returns how many of these sessions occupy a replica
