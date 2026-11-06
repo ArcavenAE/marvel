@@ -1,8 +1,11 @@
 package runtime
 
 import (
+	"errors"
+	"os/exec"
 	"regexp"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -100,5 +103,82 @@ func TestExporterKeysFindsAPlantedKeyAndOnlyTheKey(t *testing.T) {
 	want := []string{"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_HEADERS"}
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("exporterKeys = %v, want %v", got, want)
+	}
+}
+
+// otlpExporterPrefix is where the OTLP exporters live. A package under it in
+// marvel's dependency list means marvel's binary contains code that can open an
+// OTLP connection.
+const otlpExporterPrefix = "go.opentelemetry.io/otel/exporters/otlp"
+
+// otelPrefix is the OpenTelemetry API: the positive control's evidence that a
+// listing is a real one.
+const otelPrefix = "go.opentelemetry.io/otel"
+
+// depsOf lists the import paths a package depends on, from the package's own
+// directory. A listing that fails, or is empty, fails the test, so the check
+// below never reads nothing as a pass.
+func depsOf(t *testing.T, pkg string) []string {
+	t.Helper()
+	out, err := exec.Command("go", "list", "-deps", pkg).Output()
+	if err != nil {
+		var stderr string
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			stderr = string(ee.Stderr)
+		}
+		t.Fatalf("go list -deps %s: %v\n%s", pkg, err, stderr)
+	}
+	deps := strings.Fields(string(out))
+	if len(deps) == 0 {
+		t.Fatalf("go list -deps %s listed nothing, so the check would read nothing", pkg)
+	}
+	return deps
+}
+
+// withPrefix returns the entries of deps at or under prefix.
+func withPrefix(deps []string, prefix string) []string {
+	var hit []string
+	for _, d := range deps {
+		if d == prefix || strings.HasPrefix(d, prefix+"/") {
+			hit = append(hit, d)
+		}
+	}
+	return hit
+}
+
+// marvel's binary links no OTLP exporter, so it cannot open a telemetry
+// connection of its own. The plan's broader claim, that a reconcile opens no
+// connection beyond the daemon socket and the bus, is not proven here (the dial
+// sites are spread over several packages and subprocesses, and Go has no
+// process-wide dial hook). When marvel gains an exporter behind
+// telemetry.otlp_endpoint (I-100 P3), this test changes on purpose.
+func TestMarvelBinaryLinksNoOTLPExporter(t *testing.T) {
+	// The positive control: the simulator links the OpenTelemetry API, so an
+	// empty or failed listing cannot read as a pass.
+	if len(withPrefix(depsOf(t, "../../cmd/simulator"), otelPrefix)) == 0 {
+		t.Fatalf("the control listing of ../../cmd/simulator holds no %s package", otelPrefix)
+	}
+	if hit := withPrefix(depsOf(t, "../../cmd/marvel"), otlpExporterPrefix); len(hit) > 0 {
+		t.Errorf("marvel links an OTLP exporter: %v", hit)
+	}
+}
+
+// The matcher takes a path at or under the prefix and no neighbour of it.
+func TestWithPrefixTakesTheTreeAndNoNeighbour(t *testing.T) {
+	deps := []string{
+		"go.opentelemetry.io/otel",
+		"go.opentelemetry.io/otel/exporters/otlp",
+		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
+		"go.opentelemetry.io/otel/exporters/otlpother",
+		"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric",
+	}
+	got := withPrefix(deps, otlpExporterPrefix)
+	want := []string{
+		"go.opentelemetry.io/otel/exporters/otlp",
+		"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
+	}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("withPrefix = %v, want %v", got, want)
 	}
 }
