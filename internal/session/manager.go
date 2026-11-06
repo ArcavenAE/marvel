@@ -1267,6 +1267,10 @@ type launchPlan struct {
 	// hold is set when the role's settings file could not be read at launch; the
 	// spawn is not made.
 	hold *settingsFileError
+	// modelRefusal is set when the role declares runtime.model and the launch
+	// cannot carry it (the adapter failed to prepare, or no team and role were
+	// found); the spawn is not made and the raw command is not used.
+	modelRefusal string
 	// homeRefusal is set when no harness home base passed the spawn-time check
 	// and at least one failed validation; the spawn is not made.
 	homeRefusal string
@@ -1660,6 +1664,14 @@ func (m *Manager) CanStreamRole(r api.ManifestRole) bool {
 		Session: &api.Session{Runtime: rt},
 		Role:    &api.Role{Name: r.Name, Replicas: r.Replicas, Runtime: rt},
 	})
+}
+
+// CanRenderModelRole reports whether a role's harness can pass a declared
+// model. It is the manifest-side predicate ValidateModels asks, resolved like
+// CanStreamRole. This is the stub: it answers false for every role.
+func (m *Manager) CanRenderModelRole(r api.ManifestRole) bool {
+	_ = r
+	return false
 }
 
 // CanFeedContextRole reports whether a role's harness can honour

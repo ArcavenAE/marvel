@@ -13,7 +13,7 @@ func fullRuntime() Runtime {
 		Name:            "claude", Command: "claude", Args: []string{"--a", "--b"},
 		Script: "s.sh", Mode: RuntimeModeHeadless, Prompt: "do it",
 		ContextWindow: 200000, ContextFeed: ContextFeedStatusline,
-		Env: map[string]string{"K": "v"}, Backend: "bedrock",
+		Env: map[string]string{"K": "v"}, Backend: "bedrock", Model: "claude-sonnet-5-5",
 		PromptArtifactSha256: strings.Repeat("a", 64),
 		Goose:                &GooseRuntime{Posture: GoosePostureApprove, ToolsDeny: []string{"fetch"}},
 	}

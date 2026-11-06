@@ -233,6 +233,8 @@ type Runtime struct {
 	// Goose is the runtime.goose table, read only by the goose adapter. Nil
 	// means the role declared none.
 	Goose *GooseRuntime `toml:"goose,omitempty"`
+	// Model is the model id the role declared (runtime.model), "" when none.
+	Model string `toml:"model,omitempty"`
 }
 
 // SuccessorPromptOn reports whether a session that replaces another gets

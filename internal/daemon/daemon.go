@@ -1613,6 +1613,12 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		return daemonrpc.Response{Error: err.Error()}
 	}
 
+	// Pre-flight: refuse a role whose declared model its harness cannot be
+	// given, or that states the model twice.
+	if err := m.ValidateModels(d.sessMgr.CanRenderModelRole); err != nil {
+		return daemonrpc.Response{Error: err.Error()}
+	}
+
 	// Pre-flight: a writer role whose slot has read its function is refused
 	// here, before anything is stored, by the same gate every spawn path asks
 	// (marvel#945).

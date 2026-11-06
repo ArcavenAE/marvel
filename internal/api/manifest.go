@@ -278,6 +278,9 @@ type ManifestRuntime struct {
 	// Goose is the runtime.goose table for a role on the goose adapter. See
 	// api.GooseRuntime.
 	Goose *GooseRuntime `toml:"goose,omitempty" yaml:"goose,omitempty"`
+	// Model is the model id the role runs, passed to the harness. See
+	// api.Runtime.Model and docs/design/role-runtime-model.md.
+	Model string `toml:"model,omitempty" yaml:"model,omitempty"`
 }
 
 // ManifestEndpoint is an endpoint section of a manifest.
@@ -689,6 +692,19 @@ func (m *Manifest) ValidateBudgets(canStream StreamCapableRole) error {
 	if len(mute) > 0 {
 		return fmt.Errorf("budget pre-flight failed on %d team(s):\n%s", len(mute), strings.Join(mute, "\n"))
 	}
+	return nil
+}
+
+// ModelRenderableRole reports whether a role's harness can pass a model to the
+// harness it launches. Injected for the reason StreamCapableRole is: the answer
+// lives in the adapter registry.
+type ModelRenderableRole func(ManifestRole) bool
+
+// ValidateModels refuses, at apply, a role that declares runtime.model on a
+// harness marvel cannot deliver it to, or that states the model twice. This is
+// the stub: it refuses nothing yet.
+func (m *Manifest) ValidateModels(canRender ModelRenderableRole) error {
+	_ = canRender
 	return nil
 }
 

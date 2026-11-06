@@ -279,6 +279,21 @@ type StatuslineFeeder interface {
 	StatuslineFeed(command string) map[string]any
 }
 
+// ModelCapable is implemented by an adapter that can pass a role's declared
+// model (runtime.model) to its harness. An adapter that does not implement it
+// gets the role refused at apply, never a model it silently drops.
+type ModelCapable interface {
+	RendersModel() bool
+}
+
+// CanRenderModel reports whether the adapter registered under runtimeName can
+// pass a declared model to its harness. An unregistered name resolves to the
+// fallback adapter, which cannot. This is the stub: it answers false for all.
+func (r *Registry) CanRenderModel(runtimeName string) bool {
+	_ = runtimeName
+	return false
+}
+
 // LaunchResult is what the adapter returns: the fully resolved command,
 // arguments, and environment variables ready for the tmux driver.
 type LaunchResult struct {
