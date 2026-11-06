@@ -78,8 +78,8 @@ func TestPublishRoleInboxWithoutABusFails(t *testing.T) {
 
 func TestSeatInboxSubject(t *testing.T) {
 	t.Parallel()
-	got, err := SeatInboxSubject("aae", "arcaven", "arcaven-supervisor-g58-0")
-	if err != nil || got != "agent.aae.arcaven.arcaven-supervisor-g58-0.inbox" {
+	got, err := SeatInboxSubject("ws", "team-a", "team-a-supervisor-g1-0")
+	if err != nil || got != "agent.ws.team-a.team-a-supervisor-g1-0.inbox" {
 		t.Fatalf("subject = %q, %v", got, err)
 	}
 	for _, bad := range [][3]string{

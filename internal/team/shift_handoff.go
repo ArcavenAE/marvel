@@ -378,7 +378,7 @@ func directorNote(req api.ShiftRequest) string {
 	if req.DirectorSent == 0 {
 		return ""
 	}
-	return fmt.Sprintf("; the director has been sent %d of %d notices", req.DirectorSent, directorSendCap)
+	return fmt.Sprintf("; %d of %d notices published to the director", req.DirectorSent, directorSendCap)
 }
 
 // emitHandoffMissing emits the escalation and starts the repeat clock.

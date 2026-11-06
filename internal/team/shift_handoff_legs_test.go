@@ -270,8 +270,8 @@ func TestDirectorGetsOneSendAndOneRepeatAtTheStuckEvent(t *testing.T) {
 		t.Fatalf("director sends after the stuck event = %d, want 2", n)
 	}
 
-	if evs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftRequestStuck}, 0); len(evs) == 1 && !strings.Contains(evs[0].Message, "the director has been sent 1 of 2 notices") {
-		t.Errorf("stuck event %q does not say what the director has been sent", evs[0].Message)
+	if evs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftRequestStuck}, 0); len(evs) == 1 && !strings.Contains(evs[0].Message, "1 of 2 notices published to the director") {
+		t.Errorf("stuck event %q does not say what was published to the director", evs[0].Message)
 	}
 
 	for i := 0; i < 10; i++ {
