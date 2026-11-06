@@ -20,12 +20,12 @@ another has no manifest word for it today. There are two ways to say it, and
 marvel understands neither:
 
 - `runtime.args = ["--model", "<id>"]` reaches claude verbatim
-  (`internal/runtime/claude.go:99-100`). marvel's context-window resolver
+  (`internal/runtime/claude.go:105`). marvel's context-window resolver
   reads it back through `usage.ModelFromArgs`
-  (`internal/usage/limits.go:395-409`), but only by scanning a string list,
+  (`internal/usage/limits.go:417-431`), but only by scanning a string list,
   and the args are opaque to every other part of marvel.
 - `runtime.env.ANTHROPIC_MODEL` also reaches the pane
-  (`internal/runtime/adapter.go:399-411`), but nothing in marvel reads it,
+  (`internal/runtime/adapter.go:488-489`, `:715`), but nothing in marvel reads it,
   so the resolver treats the session as naming no model.
 
 Neither way is validated, neither is portable across harnesses (codex and
@@ -40,7 +40,7 @@ One optional string on the runtime section, next to its neighbours
 `context_window` and `backend`:
 
 ```go
-// ManifestRuntime (internal/api/manifest.go:152-172)
+// ManifestRuntime (internal/api/manifest.go:251-284)
 // Model is the per-role model id or alias the harness is launched with,
 // rendered by the adapter as its native flag. Empty means the harness's
 // own default, exactly as today. See api.Runtime.Model.
@@ -48,12 +48,12 @@ Model string `toml:"model,omitempty" yaml:"model,omitempty"`
 ```
 
 ```go
-// api.Runtime (internal/api/types.go:155-197)
+// api.Runtime (internal/api/types.go:182-238)
 Model string `toml:"model,omitempty"`
 ```
 
 It is copied from the manifest into `api.Runtime` the same way
-`ContextWindow` and `Backend` are (`internal/api/manifest.go:648-651`). Manifest:
+`ContextWindow` and `Backend` are (`internal/api/manifest.go:1243-1252`). Manifest:
 
 ```toml
     [team.role.runtime]
@@ -101,8 +101,8 @@ adapter that cannot render it fails the apply with an error naming the team,
 the role, and the adapter. It is never silently ignored. The seam has a
 precedent: `Manifest.ValidateBudgets` takes a capability predicate from the
 runtime package so `internal/api` does not import it, and the daemon's apply
-path calls it (`internal/api/manifest.go:430`, `internal/daemon/daemon.go:1156`).
-`ValidateModels(renders ModelRenderer)` follows the same shape, called
+path calls it (`internal/api/manifest.go:665`, `internal/daemon/daemon.go:1614`).
+`ValidateModels(canRender ModelRenderableRole)` follows the same shape, called
 beside it. Each adapter's `Prepare` re-checks and returns an error, as a
 second line for launch paths that do not pass through the apply (for example
 `marvel run`). The operator who wants a model on a generic CLI keeps
@@ -135,7 +135,7 @@ Why refuse rather than let the field win with a warning:
   harness rule marvel does not own and cannot see change. Refusing removes the dependency on that rule.
 - It matches how marvel already treats a declared intent that disagrees with
   reality: the `backend` label fails loudly on a mismatch rather than
-  choosing one (`api.Runtime.Backend`, `types.go:190-196`).
+  choosing one (`api.Runtime.Backend`, `types.go:226-232`).
 - It keeps `ModelFromArgs` meaningful: with the field set, the args can hold
   no model flag, so there is exactly one source for accounting to read.
 
@@ -149,7 +149,7 @@ declared-against-observed comparison, not prevented.
 ## 5. Usage accounting reads the field
 
 `ResolveGraded` picks its model today as `StreamModel`, else
-`ModelFromArgs(req.RuntimeArgs)` (`internal/usage/limits.go:550-552`). The
+`ModelFromArgs(req.RuntimeArgs)` (`internal/usage/limits.go:443-460`). The
 order becomes:
 
 1. the stream's own model (unchanged; what the harness says it is running),
@@ -165,7 +165,7 @@ their order matters only as defense in depth. Step 4 closes the measured gap
 for manifests that already set the model by env and never migrate. Nothing
 else in the resolver changes: an id the table does not know still resolves to
 `LimitUnresolved` and emits `context.limit-unresolved`
-(`internal/events/events.go:100`) rather than guessing a window.
+(`internal/events/events.go:251-257`) rather than guessing a window.
 
 ## 6. Model id validation: pass-through, with a shape check
 
@@ -177,7 +177,7 @@ cadence, and it differs by backend (the same model has different ids on
 different backends, which is BT13's territory). An allowlist in marvel would
 be wrong on the day a model ships and would need a marvel release to fix, the
 same reason `context_window` exists as an escape hatch from the shipped
-table (`types.go:166-171`). The concrete case: the operator's example model
+table (`types.go:202-207`). The concrete case: the operator's example model
 name is not confirmed as an id today, and `claude --help` on 2.1.284
 documents only aliases (`sonnet`, `opus`, `fable`) or "a model's full name".
 An allowlist would force marvel to rule on that; pass-through lets the
@@ -204,8 +204,8 @@ How an unknown or wrong id surfaces, in order of when:
    the model a session runs, but in two different forms:
    - headless sessions: the stream's model, which is an id;
    - interactive claude: `Session.ContextModel` from the statusline feed
-     (`internal/api/store.go:747`), which `ctxforward` fills from the
-     payload's `model.display_name` (`cmd/marvel/ctxforward.go:68-71`). A
+     (`internal/api/store.go:1029`), which `ctxforward` fills from the
+     payload's `model.display_name` (`cmd/marvel/ctxforward.go:69-72`). A
      display name ("Sonnet ...") is not an id and cannot be compared to one.
 
    The statusline payload also carries `model.id` beside
@@ -307,3 +307,39 @@ Each fails on `b1f4953` because the field does not exist.
 - Whether a Policy that sets a `model` key should be detected at projection
   time. Today marvel never parses policy content, and this design keeps it
   that way.
+
+## 10. As built (free parts)
+
+What the first build of this design does, checked against the code at the
+time of writing. Line cites above were refreshed on the same pass.
+
+- **Parse and carry.** `runtime.model` is checked for shape at parse
+  (`checkModelShape`, `internal/api/manifest.go:715`) and copied into
+  `api.Runtime.Model` at apply. `RuntimeDrift` names it.
+- **Apply refusal.** `ValidateModels` (`internal/api/manifest.go:762`) refuses
+  a model on an adapter that cannot render it, a model flag in args or in the
+  command words, and `ANTHROPIC_MODEL` in the env of a claude role. The
+  daemon passes `Manager.CanRenderModelRole`
+  (`internal/daemon/daemon.go:1620`).
+- **Goose row.** The goose adapter does not render a model yet, so a model on
+  a goose role is refused at apply. The env route and its refusal wait on the
+  open question for goose.
+- **Rendering.** Bare claude gets `--model <id>` before its positional
+  argument. Codex and opencode get `-m <id>`, interactive and headless. A
+  claude command that is a wrapper, or whose words cannot be read, gets
+  nothing added; what to do for those is open.
+- **Fallback.** A role that declares a model never launches on the raw
+  command. A failed `Prepare`, a missing team, role or workspace gives a
+  standing refusal with reason `model` (`internal/session/manager.go`,
+  `launchPlan.modelRefusal`), listed with the other placement refusals.
+- **Three reader sites.** The model order (stream, declared, args,
+  `ANTHROPIC_MODEL` on claude only) is read in `Accountant.Bind`, in the
+  accountant's session-started handler and in the heartbeat resolver
+  (`internal/usage/limits.go:443`, `internal/api/store.go`).
+- **Observed model.** `ctxforward` sends `model.id` as `ModelID`; the store
+  keeps `Session.ObservedModelID` and returns the change in
+  `HeartbeatResult`; `handleHeartbeat` emits `model.mismatch`
+  (`internal/daemon/daemon.go:2250`) for a session on the default backend,
+  comparing ids only.
+- **Describe.** `describe session` prints the session as JSON, so
+  `Runtime.Model` and `ObservedModelID` appear with no renderer change.
