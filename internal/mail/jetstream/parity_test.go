@@ -44,8 +44,8 @@ type parityRow struct {
 // case reads another's mail.
 func buildParityState(t *testing.T, b *scratchBroker) {
 	t.Helper()
-	subj := func(id string) string { return "agent.aae.squad." + id + ".inbox" }
-	role := "agent.aae.squad.role.worker.inbox"
+	subj := func(id string) string { return "agent.ws.squad." + id + ".inbox" }
+	role := "agent.ws.squad.role.worker.inbox"
 
 	// 1. one live durable: three messages, two fetched, one acked.
 	for i := 0; i < 3; i++ {
@@ -342,7 +342,7 @@ func TestSeatMailOverTheAdapterAgreesWithTheGoldenRows(t *testing.T) {
 		{"c4", []string{"mcp_c4_gone"}, 2},
 	} {
 		t.Run(c.id, func(t *testing.T) {
-			seat := api.Session{Name: c.id, Workspace: "aae", Team: "squad"}
+			seat := api.Session{Name: c.id, Workspace: "ws", Team: "squad"}
 			st, err := sm.Read(context.Background(), seat)
 			if err != nil {
 				t.Fatal(err)

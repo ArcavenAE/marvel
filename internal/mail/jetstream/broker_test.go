@@ -16,9 +16,9 @@ import (
 
 const (
 	testStream = "AGENT_INBOX"
-	subjA      = "agent.aae.squad.alpha.inbox"
-	subjB      = "agent.aae.squad.role.worker.inbox"
-	subjOther  = "agent.aae.squad.beta.inbox"
+	subjA      = "agent.ws.squad.alpha.inbox"
+	subjB      = "agent.ws.squad.role.worker.inbox"
+	subjOther  = "agent.ws.squad.beta.inbox"
 )
 
 // scratchBroker runs a loopback nats-server with JetStream and a stream holding

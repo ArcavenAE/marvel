@@ -111,7 +111,7 @@ func TestOldestIsTheFirstAboveTheSequenceOnTheGivenSubjectsOnly(t *testing.T) {
 		{"the earlier of two subjects", 0, []string{subjB, subjA}, 2, true},
 		{"the other subject when the first has none above", 2, []string{subjA, subjB}, 4, true},
 		{"above is exclusive", 5, []string{subjA}, 0, false},
-		{"no message on the subject", 0, []string{"agent.aae.squad.nobody.inbox"}, 0, false},
+		{"no message on the subject", 0, []string{"agent.ws.squad.nobody.inbox"}, 0, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -147,7 +147,7 @@ func TestCountSumsTheStreamsCountOnTheSubjects(t *testing.T) {
 	}{
 		{"one subject", []string{subjA}, 3},
 		{"two subjects", []string{subjA, subjB}, 4},
-		{"none published", []string{"agent.aae.squad.nobody.inbox"}, 0},
+		{"none published", []string{"agent.ws.squad.nobody.inbox"}, 0},
 		{"a repeated subject counts once", []string{subjA, subjA}, 3},
 	} {
 		got, err := q.Count(context.Background(), testStream, c.subjects)

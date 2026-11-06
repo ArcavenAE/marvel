@@ -2,7 +2,7 @@
   {
     "durable": "mcp_c10_i1",
     "filters": [
-      "agent.aae.squad.c10.inbox"
+      "agent.ws.squad.c10.inbox"
     ],
     "depth": 0,
     "ack_pending": 0,
@@ -13,7 +13,7 @@
   {
     "durable": "mcp_c1_i1",
     "filters": [
-      "agent.aae.squad.c1.inbox"
+      "agent.ws.squad.c1.inbox"
     ],
     "depth": 2,
     "ack_pending": 1,
@@ -24,7 +24,7 @@
   {
     "durable": "mcp_c2_a",
     "filters": [
-      "agent.aae.squad.c2.inbox"
+      "agent.ws.squad.c2.inbox"
     ],
     "depth": 1,
     "ack_pending": 1,
@@ -35,7 +35,7 @@
   {
     "durable": "mcp_c2_b",
     "filters": [
-      "agent.aae.squad.c2.inbox"
+      "agent.ws.squad.c2.inbox"
     ],
     "depth": 3,
     "ack_pending": 3,
@@ -46,7 +46,7 @@
   {
     "durable": "mcp_c3_new",
     "filters": [
-      "agent.aae.squad.c3.inbox"
+      "agent.ws.squad.c3.inbox"
     ],
     "depth": 2,
     "ack_pending": 0,
@@ -57,7 +57,7 @@
   {
     "durable": "mcp_c3_old",
     "filters": [
-      "agent.aae.squad.c3.inbox"
+      "agent.ws.squad.c3.inbox"
     ],
     "depth": 2,
     "ack_pending": 0,
@@ -68,7 +68,7 @@
   {
     "durable": "mcp_c4_gone",
     "filters": [
-      "agent.aae.squad.c4.inbox"
+      "agent.ws.squad.c4.inbox"
     ],
     "depth": 2,
     "ack_pending": 1,
@@ -79,8 +79,8 @@
   {
     "durable": "mcp_c5_i1",
     "filters": [
-      "agent.aae.squad.c5.inbox",
-      "agent.aae.squad.role.worker.inbox"
+      "agent.ws.squad.c5.inbox",
+      "agent.ws.squad.role.worker.inbox"
     ],
     "depth": 3,
     "ack_pending": 0,
@@ -91,7 +91,7 @@
   {
     "durable": "mcp_c6_i1",
     "filters": [
-      "agent.aae.squad.c6.inbox"
+      "agent.ws.squad.c6.inbox"
     ],
     "depth": 2,
     "ack_pending": 2,
@@ -102,7 +102,7 @@
   {
     "durable": "mcp_c7_i1",
     "filters": [
-      "agent.aae.squad.c7.inbox"
+      "agent.ws.squad.c7.inbox"
     ],
     "depth": 2,
     "ack_pending": 2,
@@ -113,7 +113,7 @@
   {
     "durable": "mcp_c8_i1",
     "filters": [
-      "agent.aae.squad.c8.inbox"
+      "agent.ws.squad.c8.inbox"
     ],
     "depth": 1,
     "ack_pending": 1,
