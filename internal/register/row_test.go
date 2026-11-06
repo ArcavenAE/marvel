@@ -189,3 +189,56 @@ func TestCoordinationWordMatchesWholeSegmentsOnly(t *testing.T) {
 		}
 	}
 }
+
+func builtInput() Input {
+	return Input{
+		Seat:   "ws/squad-worker-g1-0",
+		Duties: []string{"first-turn", "ack"},
+		Declared: Declared{
+			HarnessReader: "claude-composer", InterruptKey: "Escape", EmptyCCExits: "false",
+			BusPublishScope: "director.inbox", At: renderNow.Add(-time.Hour),
+		},
+	}
+}
+
+// Build turns the declared values into declared cells: they carry the source
+// "declared", are observed at the build's time, and never expire.
+func TestBuildMakesDeclaredCellsFromBuildValues(t *testing.T) {
+	row := Build(builtInput())
+	for name, c := range map[string]Cell{
+		"harness.reader": row.HarnessReader, "interrupt.key": row.InterruptKey,
+		"empty_c_c_exits": row.EmptyCCExits, "bus.publish_scope": row.BusPublishScope,
+	} {
+		if c.Source != SourceDeclared || c.Value == "" || !c.ObservedAt.Equal(renderNow.Add(-time.Hour)) || !c.ValidUntil.IsZero() {
+			t.Errorf("%s = %+v, want a declared cell observed at the build time with no expiry", name, c)
+		}
+	}
+	if row.Role.Source != SourceUnmeasured || row.Alive.Source != SourceUnmeasured {
+		t.Errorf("a checked cell was filled from a declared value: role %+v alive %+v", row.Role, row.Alive)
+	}
+}
+
+// With nothing declared for a cell it stays unmeasured: the declared word is
+// never printed for a cell the build says nothing about.
+func TestBuildLeavesAnUndeclaredCellUnmeasured(t *testing.T) {
+	in := builtInput()
+	in.Declared.InterruptKey, in.Declared.EmptyCCExits = "", ""
+	row := Build(in)
+	for name, c := range map[string]Cell{"interrupt.key": row.InterruptKey, "empty_c_c_exits": row.EmptyCCExits} {
+		if c.Source != SourceUnmeasured || c.State(renderNow) != asof.None {
+			t.Errorf("%s = %+v, want an unmeasured cell", name, c)
+		}
+	}
+}
+
+// The render of a built row prints the declared word for the declared cells
+// and "- unmeasured" for every cell no check has read.
+func TestBuiltRowRenderGolden(t *testing.T) {
+	want, err := os.ReadFile("testdata/built-row.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Build(builtInput()).Render(renderNow); got != string(want) {
+		t.Errorf("render differs from testdata/built-row.golden:\n%s\nwant:\n%s", got, want)
+	}
+}
