@@ -135,7 +135,7 @@ func TestGetTeamsLoadReadsTheDaemonsRows(t *testing.T) {
 		t.Errorf("requests = %d, want one", got)
 	}
 	rows := tableRows(out)
-	if len(rows) != 2 || !reflect.DeepEqual(rows[1], []string{"ws", "squad", "5/7", "62% (4 of 5)", "1"}) {
+	if len(rows) != 3 || !reflect.DeepEqual(rows[1], []string{"ws", "squad", "5/7", "62% (4 of 5)", "1"}) {
 		t.Errorf("output:\n%s", out)
 	}
 }
