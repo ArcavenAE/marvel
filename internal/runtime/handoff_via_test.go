@@ -13,16 +13,17 @@ import (
 // handoff_via = "tool" (docs/design/read-only-seat-handoff.md section 6): only
 // a harness that can be given the submit_handoff tool may be asked to use it.
 
-// codex has a seeder that renders the marvel-handoff entry. opencode reaches
-// an MCP server through its role's environment (section 2), so the entry needs
-// no seeder. Every other harness has no way to be given the tool: crush has no
-// seeder yet and resolves to the generic adapter, and claude, goose and
-// forestage are not seeded with it.
+// codex has a seeder that renders the marvel-handoff entry. Every other harness
+// is refused until it can be given the tool: crush has no seeder yet and
+// resolves to the generic adapter, claude, goose and forestage are not seeded
+// with it, and opencode's half is not built before the section 5 check 2 runs
+// (it must be shown that the MCP call is not prompted for), so it is refused as
+// crush is.
 func TestOnlyHarnessesThatCanBeGivenTheHandoffToolSayYes(t *testing.T) {
 	reg := NewRegistry()
 	for name, want := range map[string]bool{
 		"codex":     true,
-		"opencode":  true,
+		"opencode":  false,
 		"crush":     false,
 		"claude":    false,
 		"goose":     false,

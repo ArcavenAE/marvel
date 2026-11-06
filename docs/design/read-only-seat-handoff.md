@@ -22,10 +22,11 @@ seeded into a live config until a role declares `handoff_via = "tool"`. That
 declaration is now built (marvel#1308): the shift table takes it, `apply`
 refuses it for a harness that cannot be given the tool, the request notice names
 the tool, and the codex seeder renders the `marvel-handoff` entry for it. Not
-built yet: crush seeding (deferred to the crush adapter, aae-orc-6c2r; the
-section 5 checks have not run, so `apply` refuses `tool` for crush meanwhile),
-retention and expiry with the nonce line (7.1), `handoff get` (7.2), and the
-escalation legs of #1309. A seat can run the verb only if its allowlist admits that
+built yet: crush seeding (deferred to the crush adapter, aae-orc-6c2r), the
+opencode half, retention and expiry with the nonce line (7.1), `handoff get`
+(7.2), the escalation legs of #1309, and the retire notice, which still asks for
+a file. The section 5 checks have not run, so `apply` refuses `tool` for crush
+and opencode meanwhile. A seat can run the verb only if its allowlist admits that
 one command; that grant is role configuration outside marvel. The pull request
 for slice 1 is #1050.
 

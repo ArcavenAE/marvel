@@ -918,9 +918,11 @@ shift table, beside `handoff` and `handoff_marker`, which it needs because marve
 writes the declared file. The request notice then names the tool and the window,
 and no path: `shift: max age reached; call submit_handoff with your handoff; you
 have 5m0s`. For a codex role marvel seeds the `marvel-handoff` server into the
-seat's config; opencode takes it from the role's environment. `apply` refuses the
-key for a harness that cannot be given the tool, crush today, naming the role and
-the runtime. A value other than `"tool"` is refused.
+seat's config. `apply` refuses the key for a harness that cannot be given the
+tool, naming the role and the runtime: crush and opencode today (opencode's half
+is not built before its section 5 check has run), as well as claude, goose and
+the generic adapter. A value other than `"tool"` is refused. A retirement still
+asks for a file, not the tool.
 
 ```toml
 [team.role.shift]
