@@ -6,6 +6,12 @@ marvel `409593c` and director `813c595`. V4's gate was tightened in review
 after the vote (a second read before Enter, and copy mode); the panel voted
 the single-read form.
 
+Naming note, 2026-11-06: the `marvel wake` verb in fleet hibernate
+(marvel#1271, open when this note was written) means a team's return from
+hibernation. The slot "wake" in V4 below is a line typed into an idle seat's
+pane. Before V4 is built, this design picks its own term for it, so the two do
+not share a word. This note records the collision and renames nothing.
+
 Build status: T2 (the V6 spawn token, `DIRECTOR_CLUSTER`) is merged in #1049;
 the role half of V6 is withdrawn there by operator ruling, 2026-10-24
 (option 1, ruling 4 in section 7). T1 (the

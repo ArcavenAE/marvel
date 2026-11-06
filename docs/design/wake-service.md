@@ -5,6 +5,12 @@
   below is at those commits.
 - **Scope:** records the operator's direction and the questions it opens.
   What ships under #580 and what follows is the operator's call (section 9).
+- **Naming note, 2026-11-06:** the `marvel wake` verb in fleet hibernate
+  (marvel#1271, open when this note was written) means a team's return from
+  hibernation. "Wake" in this design means a cue typed into an idle seat's
+  pane. Before either is built, this design picks its own term for the cue, so
+  the two do not share a word. This note records the collision and renames
+  nothing.
 
 ## 1. Why
 
