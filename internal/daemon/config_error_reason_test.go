@@ -37,7 +37,9 @@ func TestConfigErrorReasonShowsInGetAndDescribe(t *testing.T) {
 	if err := json.Unmarshal(resp.Result, &rows); err != nil {
 		t.Fatal(err)
 	}
+	seen := map[string]bool{}
 	for _, r := range rows {
+		seen[r.Name] = true
 		hasReason := strings.Contains(r.Reason, "configuration error")
 		if r.Name == held.Name && !hasReason {
 			t.Errorf("get sessions: exit-78 row reason = %q, want a configuration error", r.Reason)
@@ -45,6 +47,9 @@ func TestConfigErrorReasonShowsInGetAndDescribe(t *testing.T) {
 		if r.Name == other.Name && r.Reason != "" {
 			t.Errorf("get sessions: exit-1 row reason = %q, want none", r.Reason)
 		}
+	}
+	if !seen[held.Name] || !seen[other.Name] {
+		t.Fatalf("get sessions returned %v, want both %s and %s", seen, held.Name, other.Name)
 	}
 
 	resp = d.handleDescribe(mustMarshal(t, map[string]string{"resource_type": "session", "name": held.Key()}))
