@@ -8,6 +8,7 @@ import (
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/hostvitals"
+	"github.com/arcavenae/marvel/internal/procstat"
 )
 
 func TestHostVitalsEnabledFromCluster(t *testing.T) {
@@ -113,5 +114,57 @@ func TestAVitalsCrossingLandsInTheEventsRing(t *testing.T) {
 	got := ring.Snapshot(events.Filter{}, 10)
 	if len(got) != 1 || got[0].Kind != events.KindHostVitalsCrossed {
 		t.Fatalf("ring = %+v, want one host.vitals.crossed", got)
+	}
+}
+
+// metricsPass is where the sampler is driven. Removing the call from it must
+// fail here, since the tests above call vitalsTick directly.
+func TestMetricsPassDrivesTheVitalsSampler(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := New()
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	reads := 0
+	d.vitals = hostvitals.New(true, func() hostvitals.Reading { reads++; return hostvitals.Reading{} }, d.events)
+
+	d.metricsPass(procstat.NewSampler(), &metricsHold{})
+
+	if reads != 1 {
+		t.Errorf("one metrics pass took %d vitals readings, want 1", reads)
+	}
+}
+
+// Start is where the cluster's switch is read. Removing loadHostVitals from it
+// must fail here, since the tests above call it directly. The socket sits under
+// the scratch TMPDIR, not a fixed path, so the test needs no write outside it.
+func TestStartTurnsTheSamplerOnFromTheClusterConfig(t *testing.T) {
+	skipIfNoTmux(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir, err := os.MkdirTemp("", "vt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "v.sock")
+	if err := os.MkdirAll(filepath.Join(home, ".marvel"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "clusters:\n  - name: mine\n    socket: " + sock + "\n    host_vitals: true\n"
+	if err := os.WriteFile(filepath.Join(home, ".marvel", "config.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := New()
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	t.Cleanup(d.Stop)
+	if err := d.Start(sock); err != nil {
+		t.Fatalf("start daemon: %v", err)
+	}
+	if !d.vitals.Enabled() {
+		t.Fatal("a daemon started under a cluster with host_vitals: true has the sampler off")
 	}
 }

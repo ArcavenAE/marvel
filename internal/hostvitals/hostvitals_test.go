@@ -133,3 +133,36 @@ func TestACrossingActsOnNothing(t *testing.T) {
 		t.Errorf("a host crossing names a seat: %+v", rec.got[0])
 	}
 }
+
+// Exactly half is not over the line, and a sample that lands on it from under
+// says nothing. The row that reaches 50 from above (the edge test) cannot tell
+// ">" from ">=" because the clear that follows hides it.
+func TestExactlyHalfFromUnderIsNotACrossing(t *testing.T) {
+	readings := []Reading{swapReading(40, 100), swapReading(50, 100), swapReading(40, 100)}
+	i := 0
+	rec := &recorder{}
+	s := New(true, func() Reading { r := readings[i]; i++; return r }, rec)
+	for range readings {
+		s.Sample()
+	}
+	if len(rec.got) != 0 {
+		t.Errorf("events = %v, want none for a sample that reaches exactly 50%%", rec.kinds())
+	}
+}
+
+// A gap while swap is over the line leaves the crossing standing: the next
+// reading that is still over says nothing, because nothing was cleared. A gap
+// that quietly cleared the crossing would report a second one here.
+func TestAGapDoesNotClearACrossingThatTheNextReadingRepeats(t *testing.T) {
+	readings := []Reading{swapReading(90, 100), {}, swapReading(90, 100)}
+	i := 0
+	rec := &recorder{}
+	s := New(true, func() Reading { r := readings[i]; i++; return r }, rec)
+	for range readings {
+		s.Sample()
+	}
+	got := rec.kinds()
+	if len(got) != 1 || got[0] != events.KindHostVitalsCrossed {
+		t.Fatalf("events = %v, want exactly one crossing and no clear", got)
+	}
+}
