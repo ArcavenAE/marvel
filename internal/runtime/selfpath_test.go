@@ -1,9 +1,12 @@
 package runtime
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -98,5 +101,55 @@ func TestMarvelHookPathPrefersTheFirstPathMarvelOnlyWhenItIsThisBinary(t *testin
 	got, err := MarvelHookPath()
 	if err != nil || got != keg {
 		t.Errorf("MarvelHookPath = %q, %v, want the running binary %q when the first PATH marvel is another file", got, err, keg)
+	}
+}
+
+// logged runs f with the standard logger writing to a buffer and returns what
+// it wrote. No t.Parallel in the callers: it swaps the process logger.
+func logged(t *testing.T, f func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(old) })
+	f()
+	return buf.String()
+}
+
+// A seeded command that names a versioned keg path breaks after a cleanup, so
+// when no PATH link matches and the running binary is such a path, the
+// fallback says so, once per path.
+func TestMarvelHookPathWarnsOnceWhenItFallsBackToAKegPath(t *testing.T) {
+	keg, link := fakeInstall(t)
+	cellarWarned = sync.Map{}
+
+	runningAs(t, keg, t.TempDir())
+	out := logged(t, func() {
+		for i := 0; i < 3; i++ {
+			if got, err := MarvelHookPath(); err != nil || got != keg {
+				t.Fatalf("MarvelHookPath = %q, %v, want %q", got, err, keg)
+			}
+		}
+	})
+	if n := strings.Count(out, "warning:"); n != 1 || !strings.Contains(out, keg) {
+		t.Errorf("fallback to a keg path logged %d warning(s), want exactly one naming %q:\n%s", n, keg, out)
+	}
+
+	// The link resolves, so there is nothing to warn about.
+	runningAs(t, keg, filepath.Dir(link))
+	cellarWarned = sync.Map{}
+	if out := logged(t, func() { _, _ = MarvelHookPath() }); out != "" {
+		t.Errorf("a PATH link that reaches the binary logged %q, want nothing", out)
+	}
+
+	// A path that is not a keg path is not a version-pinned install.
+	plain := filepath.Join(t.TempDir(), "marvel")
+	if err := os.WriteFile(plain, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runningAs(t, plain, t.TempDir())
+	cellarWarned = sync.Map{}
+	if out := logged(t, func() { _, _ = MarvelHookPath() }); out != "" {
+		t.Errorf("a non-keg fallback logged %q, want nothing", out)
 	}
 }

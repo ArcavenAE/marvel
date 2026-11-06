@@ -1,9 +1,12 @@
 package runtime
 
 import (
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 )
 
 // selfExecutable and lookPath are seams so a test can say where the running
@@ -12,6 +15,23 @@ var (
 	selfExecutable = os.Executable
 	lookPath       = exec.LookPath
 )
+
+// cellarWarned holds the keg paths already reported, so a seat launch loop
+// names a path once and not on every launch.
+var cellarWarned sync.Map
+
+// fallbackPath returns the running binary's own path. When that is a
+// version-pinned Homebrew keg path (it has a /Cellar/ element) and no PATH link
+// reached it, a seeded command that names it stops working once the keg is
+// cleaned up, so it is reported, once per path, and not silently accepted.
+func fallbackPath(exe string) string {
+	if strings.Contains(filepath.ToSlash(exe), "/Cellar/") {
+		if _, seen := cellarWarned.LoadOrStore(exe, true); !seen {
+			log.Printf("warning: the marvel on the PATH is not the running binary, so a command seeded into a harness's files names the version-pinned path %s, which a package cleanup removes after an upgrade; put a marvel link that reaches this binary on the daemon's PATH", exe)
+		}
+	}
+	return exe
+}
 
 // MarvelHookPath is the path a command seeded into a harness's files names to
 // run this marvel binary. Those files outlive the daemon that wrote them, and
@@ -29,15 +49,15 @@ func MarvelHookPath() (string, error) {
 	}
 	link, err := lookPath("marvel")
 	if err != nil {
-		return exe, nil
+		return fallbackPath(exe), nil
 	}
 	if link, err = filepath.Abs(link); err != nil {
-		return exe, nil
+		return fallbackPath(exe), nil
 	}
 	a, aerr := os.Stat(link)
 	b, berr := os.Stat(exe)
 	if aerr != nil || berr != nil || !os.SameFile(a, b) {
-		return exe, nil
+		return fallbackPath(exe), nil
 	}
 	return link, nil
 }
