@@ -2,6 +2,7 @@ package mail
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -60,6 +61,18 @@ func forbiddenDeps(t *testing.T, pkg string) []string {
 	return bad
 }
 
+// boundaryViolation is the assertion itself: it returns the complaint for a
+// package that breaks the boundary, and "" for one that keeps it. The real
+// check and its planted control both go through it, so a change to what it
+// accepts changes both.
+func boundaryViolation(t *testing.T, pkg string) string {
+	t.Helper()
+	if bad := forbiddenDeps(t, pkg); len(bad) != 0 {
+		return fmt.Sprintf("%s depends on %v; only internal/mail/jetstream may import NATS", pkg, bad)
+	}
+	return ""
+}
+
 // Only internal/mail/jetstream may import NATS. The packages the watcher is
 // built from must not, and must not reach the adapter either, so marvel keeps
 // working with the broker adapter swapped for another queue.
@@ -72,24 +85,18 @@ func TestTheWatcherPackagesImportNoNATS(t *testing.T) {
 				// watcher; the check covers each from the commit that adds it.
 				t.Skipf("%s does not exist yet", pkg)
 			}
-			if bad := forbiddenDeps(t, pkg); len(bad) != 0 {
-				t.Errorf("%s depends on %v; only internal/mail/jetstream may import NATS", pkg, bad)
+			if v := boundaryViolation(t, pkg); v != "" {
+				t.Error(v)
 			}
 		})
 	}
 }
 
-// The control: a package that does import NATS must be flagged, so a check
-// that reads nothing cannot pass.
-func TestThePlantedNATSImportIsFlagged(t *testing.T) {
-	bad := forbiddenDeps(t, "./internal/mail/testdata/plantednats")
-	var sawNATS bool
-	for _, d := range bad {
-		if strings.HasPrefix(d, natsPrefix) {
-			sawNATS = true
-		}
-	}
-	if !sawNATS {
-		t.Fatalf("the planted package imports NATS and the check flagged %v", bad)
+// The control: a package that does import NATS must draw the same complaint
+// from the same assertion, so a check that reads nothing cannot pass.
+func TestThePlantedNATSImportDrawsTheBoundaryComplaint(t *testing.T) {
+	v := boundaryViolation(t, "./internal/mail/testdata/plantednats")
+	if !strings.Contains(v, natsPrefix) {
+		t.Fatalf("the planted package imports NATS and the boundary assertion said %q", v)
 	}
 }
