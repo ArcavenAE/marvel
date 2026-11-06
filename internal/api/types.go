@@ -822,6 +822,11 @@ const ShiftTriggerContextPressure = "context-pressure"
 // and shifts only on an observed one (marvel#437, docs/design/shift-trigger-list.md).
 const ShiftTriggerMaxAge = "max-age"
 
+// HandoffCauseHibernate is the cause of a handoff request made by a hibernate.
+// It is not a shift trigger a role declares: a request of this cause ends the
+// seat on its marker and starts no successor.
+const HandoffCauseHibernate = "hibernate"
+
 // Defaults and floor for the max-age trigger (design D4, D5; ruling 3).
 const (
 	DefaultShiftQuietFor      = 2 * time.Minute
@@ -1113,8 +1118,18 @@ type Team struct {
 	// session key (docs/design/work-prune.md section 6). Status, persisted, so
 	// a daemon restart inside the window resumes each one. A retiring seat is
 	// not counted as actual for its role.
-	Retiring  map[string]RetireRequest `toml:"-"`
-	CreatedAt time.Time
+	Retiring map[string]RetireRequest `toml:"-"`
+	// Hibernate is the team's hibernate mark, nil when it has none. Status,
+	// not spec (toml:"-", as Pruning): apply never sets or clears it, only
+	// hibernate and wake do (docs/design/fleet-hibernate.md sections 4 and 6).
+	Hibernate *HibernateMark `toml:"-"`
+	// HibernateRequests holds the open handoff requests of a hibernate, keyed
+	// by session key, one per seat, so a role with several replicas signs off
+	// all at once under one window. It is separate from ShiftRequests, which is
+	// keyed by role name and read by the shift triggers. Status, persisted like
+	// ShiftRequests, so a restart inside the window resumes each one.
+	HibernateRequests map[string]ShiftRequest `toml:"-"`
+	CreatedAt         time.Time
 }
 
 // RetireRequest is one seat's pending retirement: when it was asked, for how

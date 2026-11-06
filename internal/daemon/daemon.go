@@ -1325,6 +1325,10 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return d.handleSuspend(req.Params)
 	case "resume":
 		return d.handleResume()
+	case "team.hibernate":
+		return d.handleHibernate(req.Params)
+	case "team.wake":
+		return d.handleWake(req.Params)
 	case "view.refresh":
 		return d.handleViewRefresh(req.Params)
 	case "bus.leaf.connect":
@@ -1750,6 +1754,12 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	for _, mt := range m.Teams {
 		teamNames = append(teamNames, mt.Name)
 	}
+	var held []string
+	for _, mt := range m.Teams {
+		if live, err := d.store.GetTeam(m.Workspace.Name + "/" + mt.Name); err == nil && live.Hibernate != nil && live.Hibernate.State == api.HibernateHibernated {
+			held = append(held, live.Key())
+		}
+	}
 	out := map[string]any{
 		"status":     "applied",
 		"workspace":  m.Workspace.Name,
@@ -1758,6 +1768,10 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		// role's. Information, not a warning: under operator ruling D4 this
 		// is the normal state right after an apply.
 		"behind": d.behindCount(m.Workspace.Name, teamNames),
+	}
+	if len(held) > 0 {
+		out["held"] = held
+		out["held_line"] = api.HibernateHeldLine
 	}
 	if pruned != nil {
 		pruned.addTo(out)
@@ -2072,12 +2086,18 @@ func (d *Daemon) handleScale(params json.RawMessage) daemonrpc.Response {
 
 	d.teamCtrl.ReconcileOnce()
 
-	return respond(map[string]any{
+	out := map[string]any{
 		"status":   "scaled",
 		"team":     p.TeamKey,
 		"role":     p.Role,
 		"replicas": p.Replicas,
-	})
+	}
+	// The change is recorded and a wake honours it, but nothing starts while the
+	// mark covers the role, so the reply says the success spawned nothing.
+	if live, err := d.store.GetTeam(p.TeamKey); err == nil && live.Hibernate != nil && live.Hibernate.State == api.HibernateHibernated && live.HibernateCovers(p.Role) {
+		out["held"] = api.HibernateHeldLine
+	}
+	return respond(out)
 }
 
 // convergeParams selects which team(s) to move and which way. An empty TeamKey

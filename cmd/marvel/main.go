@@ -275,6 +275,8 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(statusCmd())
 	root.AddCommand(suspendCmd())
 	root.AddCommand(resumeCmd())
+	root.AddCommand(hibernateCmd())
+	root.AddCommand(wakeCmd())
 	root.AddCommand(doctorCmd())
 	root.AddCommand(credentialCmd())
 	root.AddCommand(busCmd())
@@ -1204,12 +1206,15 @@ longer names, as the prune set stands when the apply runs. marvel plan -f
 				Workspace  string   `json:"workspace"`
 				Advisories []string `json:"advisories"`
 				Behind     int      `json:"behind"`
+				Held       []string `json:"held"`
+				HeldLine   string   `json:"held_line"`
 			}
 			_ = json.Unmarshal(resp.Result, &result)
 			for _, a := range result.Advisories {
 				fmt.Fprintf(os.Stderr, "warning: %s\n", a)
 			}
 			fmt.Printf("workspace/%s ready\n", result.Workspace)
+			fmt.Print(heldLines(result.Held, result.HeldLine))
 			if line := behindLine(result.Behind); line != "" {
 				fmt.Println(line)
 			}
@@ -1832,13 +1837,36 @@ func scaleCmd() *cobra.Command {
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
-			fmt.Printf("team/%s role/%s scaled to %d replicas\n", args[0], role, replicas)
+			fmt.Print(scaledLines(args[0], role, replicas, resp.Result))
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&replicas, "replicas", 1, "desired replica count")
 	cmd.Flags().StringVar(&role, "role", "", "role to scale (required)")
 	return cmd
+}
+
+// scaledLines is what scale prints: the change, then the hold line when the
+// team is hibernated and nothing started.
+func scaledLines(team, role string, replicas int, result json.RawMessage) string {
+	out := fmt.Sprintf("team/%s role/%s scaled to %d replicas\n", team, role, replicas)
+	var scaled struct {
+		Held string `json:"held"`
+	}
+	_ = json.Unmarshal(result, &scaled)
+	if scaled.Held != "" {
+		out += scaled.Held + "\n"
+	}
+	return out
+}
+
+// heldLines is one hold line per hibernated team an apply touched.
+func heldLines(teams []string, line string) string {
+	var b strings.Builder
+	for _, k := range teams {
+		fmt.Fprintf(&b, "team/%s %s\n", k, line)
+	}
+	return b.String()
 }
 
 func convergeCmd() *cobra.Command {

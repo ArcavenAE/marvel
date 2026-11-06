@@ -31,7 +31,7 @@ Suspend and hibernate stay two verbs. Suspend freezes processes for minutes or h
 
 Both verbs follow suspend's surface: a `[y/N]` confirm on a TTY, a refusal without a TTY unless `--yes`, and exit codes 0 for done, 3 for partial (a seat reported without a handoff, or a resume that fell back) and 1 for error. That is `marvel resume`'s set; `marvel suspend` itself exits 0 or 1. The verb names are the operator's to change (section 10).
 
-**Refused together.** Hibernate refuses while a suspend record exists, and suspend refuses while a hibernate is in progress. Hibernate also refuses a team already mid-shift, as `marvel shift` does.
+**Refused together.** Hibernate refuses while a suspend record exists, and suspend refuses while a hibernate is in progress. Hibernate also refuses a team already mid-shift, as `marvel shift` does. In the other direction, a shift is refused for a role the hibernated mark covers.
 
 ## 4. Sign-off, in order
 
@@ -71,10 +71,10 @@ bolt already holds the teams and sessions across a reboot, so this is the only n
 
 1. **A preflight** runs before any seat starts. It stops with a named failure on any of these:
    - the daemon cannot be reached;
-   - a hub or leaf bus link that a woken team declares is down;
-   - a worktree lock a seat's workdir needs is held by another session;
-   - free disk is under the cluster's floor;
-   - a harness binary is missing, or is below the version its resume form needs.
+   - a bus link the cluster config declares is down (with none declared, the check passes and says so);
+   - a harness binary is missing.
+
+   Three more checks come later: the worktree lock and the harness version with resume mode (phase 3), and a free-disk floor once a setting for it exists.
 
    The operator may skip a named check with `--skip-check <name>`, which is recorded on the wake event. Credentials are checked only by presence, never by use or by reading them.
 
@@ -85,6 +85,8 @@ bolt already holds the teams and sessions across a reboot, so this is the only n
    - **Handoff mode:** start a fresh successor, with `MARVEL_PREDECESSOR` naming the hibernated session, as a shift does.
    - **A resume that fails falls back to handoff mode** for that seat. The failure is the harness exiting before its first stream event, or reporting that the id names nothing. A failed resume costs context, never the seat. Each fallback is reported by name.
 4. **The hibernated mark clears** per team when its last seat has started, and `team.woken` is emitted with the seats resumed, the seats started fresh and the fallbacks.
+
+**Wake is safe to run again.** A daemon that restarts during a wake, before any seat of a team is live, resets that team to the hold while its mark still reads waking. Running `wake` again on a waking team sets converge again and goes on with the roles not yet started; it starts no seat twice.
 
 **After an unplanned stop**, the same `wake --all` reads the journal's last entries. A seat that wrote no fresh handoff before the crash resumes by id if it can. Otherwise it falls back to the last handoff on disk, and the wake reports that handoff's age.
 

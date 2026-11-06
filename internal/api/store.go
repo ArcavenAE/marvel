@@ -239,6 +239,10 @@ func cloneTeam(t *Team) Team {
 	if len(t.Retiring) > 0 {
 		out.Retiring = maps.Clone(t.Retiring)
 	}
+	out.Hibernate = t.Hibernate.Clone()
+	if len(t.HibernateRequests) > 0 {
+		out.HibernateRequests = maps.Clone(t.HibernateRequests)
+	}
 	return out
 }
 
