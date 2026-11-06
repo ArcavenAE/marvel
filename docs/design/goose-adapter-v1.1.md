@@ -195,6 +195,15 @@ These reach past the adapter, so this brief did not decide them. Director decide
      the sandbox-exec profile the launch runs under (empty for none). The fault fires when the
      placement is not container and the profile path is empty. An adapter that finds both
      unset treats the launch as unsandboxed, so a missing field refuses rather than launches.
+   - **Temp files under a profile (marvel#1315).** The shipped profile lets a seat write only to
+     its private home and its working directory, so goose's first temp file under the daemon's
+     inherited per-user temp directory is refused and goose panics. When a sandbox-exec profile
+     is in force and the seat's home is an absolute path, `Prepare` sets `TMPDIR` to `<home>/tmp`
+     and the home seeder makes that directory at 0700; the directory persists across launches
+     and is never cleared. A role that sets `TMPDIR` in its own env keeps its value; the
+     daemon's inherited `TMPDIR` is not the role's and is replaced. With no profile, nothing is
+     set. The tests cover `TMPDIR` only; no run under the profile was made when this was
+     written, so other writes outside the allowed trees are not ruled out.
    - **No container by default.** The goose adapter does not implement `SandboxRecommender` as
      true in v1, so it does not move goose workspaces to container. A container placement with
      no image is refused (`ErrPlacementRefused`), so a default to container would refuse every
