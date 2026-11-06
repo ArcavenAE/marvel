@@ -786,3 +786,50 @@ func TestRetireEndsASeatThatExitsWithNoHandoffByTheWindow(t *testing.T) {
 		t.Error("the ended seat is still stored")
 	}
 }
+
+// plantStaleMarker writes a handoff that already ends in the marker and dates
+// it before the request, as an earlier holder of the seat's name would have left
+// it. It is the predecessor's record, not the answer to this ask.
+func plantStaleMarker(t *testing.T, path string, at time.Time) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("old notes\n"+putMarker+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A handoff file older than the retire request does not count as written: the
+// seat is not killed on it, and the window ends in handoff-missing as for no
+// file at all (aae-orc-4k41b, the retire half of the stale-handoff bug).
+//
+// Falsification: a probe that reads only the marker kills the seat one tick
+// after the first read and reports handoff-written.
+func TestRetireIgnoresAHandoffOlderThanTheRequest(t *testing.T) {
+	role := handoffRole(realTempDir(t))
+	f := newRetireFixture(t, "test-retire-stale", role)
+	sess := f.seat(testShiftRole, 0)
+	path, _ := api.ExpandHandoffPath(role.Shift.Handoff, sess.Name)
+	plantStaleMarker(t, path, f.clock.Now().Add(-3*time.Hour))
+	f.retire(sess)
+
+	for range 3 {
+		f.clock.Advance(time.Second)
+		f.advance()
+		if f.gone(sess) {
+			t.Fatal("the seat was killed on a handoff older than the request")
+		}
+	}
+	f.clock.Advance(api.DefaultShiftHandoffWindow)
+	f.advance() // a read begun after the deadline
+	f.clock.Advance(time.Second)
+	f.advance()
+	if !f.gone(sess) {
+		t.Fatal("alive past the window")
+	}
+	got := f.outcomes()
+	if len(got) != 1 || !strings.Contains(got[0], "outcome=handoff-missing") || strings.Contains(got[0], "handoff-written") {
+		t.Fatalf("session.retired = %q, want handoff-missing and no handoff-written", got)
+	}
+}

@@ -480,3 +480,41 @@ func TestHibernateNoticeFollowsTheRolesHandoffVia(t *testing.T) {
 		t.Errorf("a file role's notice = %q, want the path ask", g.notices)
 	}
 }
+
+// A handoff file older than the hibernate request does not end the seat: a
+// hibernated seat returns as a successor that reads that file, so a stale one
+// would hand it a dead seat's notes (aae-orc-4k41b). The request waits out its
+// window and escalates, as for no file.
+func TestHibernateIgnoresAHandoffOlderThanTheRequest(t *testing.T) {
+	role := hibernateRole("worker", realTempDir(t), 1)
+	f := newRetireFixture(t, "test-hib-stale", role)
+	sess := f.seat("worker", 0)
+	path, _ := api.ExpandHandoffPath(role.Shift.Handoff, sess.Name)
+	plantStaleMarker(t, path, f.clock.Now().Add(-3*time.Hour))
+	f.hibernate(HibernateOptions{Actor: "op", Source: "cli"})
+
+	for range 3 {
+		f.tick()
+		f.clock.Advance(time.Second)
+		if f.gone(sess) {
+			t.Fatal("the seat was ended on a handoff older than the request")
+		}
+	}
+	f.clock.Advance(api.DefaultShiftHandoffWindow)
+	f.tick() // starts the read that can show a fresh marker absent
+	f.clock.Advance(time.Second)
+	f.tick()
+
+	if f.gone(sess) {
+		t.Fatal("a seat with only a stale handoff was ended")
+	}
+	if req := f.team().HibernateRequests[sess.Key()]; !req.Escalated {
+		t.Fatalf("request = %+v, want it escalated", req)
+	}
+	if got := f.eventsOf(events.KindShiftHandoffMissing); len(got) != 1 {
+		t.Fatalf("team.shift-handoff-missing = %q, want one", got)
+	}
+	if got := f.outcomes(); len(got) != 0 {
+		t.Fatalf("session.retired = %q, want none: nothing ended the seat", got)
+	}
+}
