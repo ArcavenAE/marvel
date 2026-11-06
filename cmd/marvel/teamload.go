@@ -48,8 +48,10 @@ func renderTeamLoad(data json.RawMessage, now time.Time) (string, error) {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "WORKSPACE\tTEAM\tSEATS\tACTIVE%%\tLIMITED\n")
+	var all allTeams
 	for _, r := range rows {
 		cell := asof.Cell[api.TeamLoad]{Value: r, ObservedAt: r.ObservedAt, ValidUntil: r.ValidUntil}
+		all.add(r, cell.State(now) == asof.Fresh)
 		seats := cell.Render(now, func(r api.TeamLoad) string { return fmt.Sprintf("%d/%d", r.Running, r.Declared) })
 		active := cell.Render(now, func(r api.TeamLoad) string {
 			if r.ActiveMeasured == 0 {
@@ -60,8 +62,51 @@ func renderTeamLoad(data json.RawMessage, now time.Time) (string, error) {
 		limited := cell.Render(now, func(r api.TeamLoad) string { return fmt.Sprintf("%d", r.Limited) })
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", tally.key(r.Workspace), tally.key(r.Team), seats, active, limited)
 	}
+	_, _ = fmt.Fprintf(w, "%s\n", all.row())
 	if err := w.Flush(); err != nil {
 		return "", err
 	}
 	return b.String() + tally.line(), nil
+}
+
+// allTeams is the `all teams` row: the cluster's teams summed, over the rows
+// that are fresh. An expired row adds nothing, and the row says how many teams
+// it covers when that is fewer than all of them. ACTIVE% is the mean over
+// seats, so each team weighs by the seats it measured, not one vote a team.
+type allTeams struct {
+	teams, fresh               int
+	declared, running, limited int
+	measured                   int
+	activeSum                  float64
+}
+
+func (a *allTeams) add(r api.TeamLoad, fresh bool) {
+	a.teams++
+	if !fresh {
+		return
+	}
+	a.fresh++
+	a.declared += r.Declared
+	a.running += r.Running
+	a.limited += r.Limited
+	a.measured += r.ActiveMeasured
+	a.activeSum += r.ActiveMeanPct * float64(r.ActiveMeasured)
+}
+
+// row is the table row: the label in the WORKSPACE column, the "(n of m teams)"
+// mark in the TEAM column when any team row is expired, and a dash in every
+// derived cell when no team row is fresh.
+func (a *allTeams) row() string {
+	mark := ""
+	if a.fresh < a.teams {
+		mark = fmt.Sprintf("(%d of %d teams)", a.fresh, a.teams)
+	}
+	if a.fresh == 0 {
+		return fmt.Sprintf("all teams\t%s\t%s\t%s\t%s", mark, asof.DashNone, asof.DashNone, asof.DashNone)
+	}
+	active := asof.DashNone
+	if a.measured > 0 {
+		active = fmt.Sprintf("%.0f%% (%d of %d)", a.activeSum/float64(a.measured), a.measured, a.running)
+	}
+	return fmt.Sprintf("all teams\t%s\t%d/%d\t%s\t%d", mark, a.running, a.declared, active, a.limited)
 }

@@ -1260,6 +1260,17 @@ total drops), and a ? once the feed has been silent past the window or went sile
 for over three minutes inside it, as RATE does. Every other seat keeps the tick
 reading above, and --load averages whatever each seat shows.
 
+The totals line sits under the daemon header, on a terminal or with --header. It gives
+the row count and, for cpu, rss, tout and rate, the sum of the cells the table shows as
+values, each with the number of rows it summed. cpu is the plain sum of the CPU% cells,
+so it can pass 100% on a multicore host. rss is the sum of resident set sizes, not memory
+used: shared pages count once for each process. tout and rate keep tokens and ~$ estimates
+apart and never add them. A row with no value is left out and not counted as zero, and a
+field no row has a value for prints -. A read across clusters prints one totals line for
+each cluster that answered, led by its name, and a totals fleet line over them. With --load,
+a last row, all teams, sums seats and limited seats over the fresh team rows. Its ACTIVE% is
+the mean over seats, and it reads (n of m teams) when an expired team row was left out.
+
 TOUT and RATE fill from the token stream of a headless seat. An interactive seat has
 no such stream, so both show a - for it, with two exceptions. An interactive codex seat
 fills TOUT from the output total in its rollout, and RATE stays a -. An interactive
@@ -3782,8 +3793,7 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 	res := fitSessionTable(sessions, drawableColumns(cols), fit)
 	// The totals line rides with the header: it prints where the header does,
 	// directly under its last line and above the source legend, on the cell
-	// clock, and breaks to the terminal width. Its place against the legend is
-	// a placeholder at the recommended option, pending Desk card 6et12-4.
+	// clock, and breaks to the terminal width.
 	if header != "" {
 		header = strings.TrimSuffix(header, "\n") + renderTotalsLine(sessions, rateClock(), "totals", fit.width) + "\n"
 		if fit.width > 0 && sourceMarkOnScreen(sessions, res.cols) {

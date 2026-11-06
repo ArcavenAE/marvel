@@ -259,7 +259,19 @@ type Display struct {
 	// The name `rest` stands for every column not named elsewhere in the
 	// list, and `wide` for the wide set.
 	SessionColumns []string `yaml:"session_columns,omitempty"`
+	// TotalsPerCluster shows one `totals <cluster>` line for each cluster a
+	// fan-out `get sessions` read answered from. Absent means shown.
+	TotalsPerCluster *bool `yaml:"totals_per_cluster,omitempty"`
+	// TotalsFleet shows the one `totals fleet` line that sums every cluster
+	// the per-cluster lines cover. Absent means shown.
+	TotalsFleet *bool `yaml:"totals_fleet,omitempty"`
 }
+
+// ShowTotalsPerCluster reports whether the per-cluster totals lines print.
+func (d Display) ShowTotalsPerCluster() bool { return d.TotalsPerCluster == nil || *d.TotalsPerCluster }
+
+// ShowTotalsFleet reports whether the fleet totals line prints.
+func (d Display) ShowTotalsFleet() bool { return d.TotalsFleet == nil || *d.TotalsFleet }
 
 // Watchdog is the harness-state watchdog's own settings.
 type Watchdog struct {

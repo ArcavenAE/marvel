@@ -301,16 +301,17 @@ func renderFanFrame(ws *watchSort, cfg fanWatchConfig, states []*fanState, now t
 	}
 	buf.WriteString("\n")
 
-	// One totals line for each cluster whose last read was good, from its own
-	// rows, before the merged table. A cluster that repeats another's address
-	// gets none, so the same rows are never totaled twice.
+	// One totals line for each cluster whose last read was good and that is
+	// answering now, from its own rows, before the merged table. A cluster that
+	// failed, or is late after a good read, gets none, and so does one that
+	// repeats another's address, so the same rows are never totaled twice.
 	var counted []clusterRecord
 	for i, s := range states {
-		if s.repeatOf == "" && s.have && !s.failed {
+		if s.repeatOf == "" && s.have && !s.failed && !s.late {
 			counted = append(counted, records[i])
 		}
 	}
-	buf.WriteString(renderClusterTotals(counted, flattenRows(rowSets), rateClock(), terminalWidth()))
+	buf.WriteString(renderClusterTotals(counted, flattenRows(rowSets), rateClock(), terminalWidth(), loadTotalsShown()))
 
 	var rows []api.Session
 	for i, s := range states {

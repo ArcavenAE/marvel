@@ -446,7 +446,7 @@ func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, no
 		lead:     []sessionColumn{fanOutKeyColumn()},
 	}
 	if header {
-		fmt.Print(renderClusterTotals(records, rows, rateClock(), fit.width))
+		fmt.Print(renderClusterTotals(records, rows, rateClock(), fit.width, loadTotalsShown()))
 	}
 	fmt.Print(renderSessionsView(rows, cols, "", fit))
 	return fanOutExitError(cmd, records)

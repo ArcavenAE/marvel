@@ -97,8 +97,8 @@ func tableRows(out string) [][]string {
 func TestRenderTeamLoadNeverObservedPrintsDashes(t *testing.T) {
 	out := renderRows(t, loadAt, loadRow(func(r *api.TeamLoad) { r.ObservedAt, r.ValidUntil = time.Time{}, time.Time{} }))
 	rows := tableRows(out)
-	if len(rows) != 2 {
-		t.Fatalf("want a header and the team's row, got:\n%s", out)
+	if len(rows) != 3 {
+		t.Fatalf("want a header, the team's row and the all teams row, got:\n%s", out)
 	}
 	want := []string{"ws", "squad", "-", "-", "-"}
 	if !reflect.DeepEqual(rows[1], want) {
@@ -113,7 +113,7 @@ func TestRenderTeamLoadLimitedCellIsTheLimitedCount(t *testing.T) {
 		loadRow(nil),
 		loadRow(func(r *api.TeamLoad) { r.Team, r.Declared, r.Running, r.Limited = "other", 9, 8, 3 }))
 	rows := tableRows(out)
-	if len(rows) != 3 {
+	if len(rows) != 4 {
 		t.Fatalf("table:\n%s", out)
 	}
 	if rows[1][4] != "1" || rows[2][4] != "3" {

@@ -345,7 +345,7 @@ func fakeRows(ws string, names ...string) []api.Session {
 func TestFanOutTotalsOneLinePerAnsweredCluster(t *testing.T) {
 	a := startFake(t, fakeAnswers, fakeRows("wa", "a1", "a2"))
 	b := startFake(t, fakeAnswers, fakeRows("wb", "b1", "b2", "b3"))
-	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "b", Socket: b.sock})
+	clusterConfigShowing(t, config.Display{TotalsFleet: off()}, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "b", Socket: b.sock})
 	_, stdout, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b", "--header")
 	lines := totalsLineRE.FindAllString(stdout, -1)
 	if len(lines) != 2 {
@@ -366,7 +366,7 @@ func TestFanOutTotalsSkipUnansweredCluster(t *testing.T) {
 	fastTimer(t, 500*time.Millisecond)
 	a := startFake(t, fakeAnswers, fakeRows("wa", "a1"))
 	h := startFake(t, fakeHung, nil)
-	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "h", Socket: h.sock})
+	clusterConfigShowing(t, config.Display{TotalsFleet: off()}, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "h", Socket: h.sock})
 	_, stdout, _ := runFanGet(t, "get", "sessions", "--cluster", "a,h", "--header")
 	lines := totalsLineRE.FindAllString(stdout, -1)
 	if len(lines) != 1 || !strings.HasPrefix(lines[0], "totals a ") {
