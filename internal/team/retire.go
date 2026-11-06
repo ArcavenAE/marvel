@@ -186,7 +186,7 @@ func (c *Controller) advanceRetirement(t *api.Team, req api.RetireRequest, now t
 	var read handoffProbeResult
 	var haveRead bool
 	if req.Path != "" {
-		read, haveRead = c.handoffProbes.complete(req.Session, req.Path, req.Marker, time.Time{}, now)
+		read, haveRead = c.handoffProbes.complete(req.Session, req.Path, req.Marker, req.RequestedAt, now)
 	}
 	if !sess.State.CountsAsAlive() {
 		switch {
@@ -258,7 +258,7 @@ func retireMissingReason(req api.RetireRequest) string {
 	if req.Path == "" {
 		reason += "; no handoff path is declared, so the window was a plain grace"
 	} else {
-		reason += fmt.Sprintf("; no regular file at %s ends in the marker", req.Path)
+		reason += fmt.Sprintf("; no fresh regular file at %s, written after the request, ends in the marker", req.Path)
 	}
 	if req.NoticeUndelivered != "" {
 		reason += fmt.Sprintf("; the notice was never delivered (%s)", req.NoticeUndelivered)
