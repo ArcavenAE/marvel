@@ -235,7 +235,10 @@ func (c *Controller) askHibernate(t *api.Team, role *api.Role, sess api.Session,
 		return
 	}
 	rr := withShift(role)
-	prep := prepareHandoffNotice(hibernateNotice+extra, rr.Shift.Handoff, rr.Shift.HandoffMarker, rr.Shift.HandoffWindowOrDefault(), sess)
+	// A seat that declares handoff_via = "tool" cannot write the file, so it is
+	// asked to call submit_handoff, as a shift asks it (shift_handoff.go).
+	viaTool := rr.Shift.HandoffVia == api.ShiftHandoffViaTool
+	prep := prepareHandoffNotice(hibernateNotice+extra, rr.Shift.Handoff, rr.Shift.HandoffMarker, rr.Shift.HandoffWindowOrDefault(), viaTool, sess)
 	if prep.heldDir != nil {
 		_ = prep.heldDir.Close()
 	}

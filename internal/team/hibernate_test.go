@@ -443,3 +443,40 @@ func TestHibernateNoticeSaysTheSeatReturnsAsASuccessor(t *testing.T) {
 		t.Fatalf("notice = %q, want it to say the seat returns as a successor reading its handoff", f.notices[0])
 	}
 }
+
+// A role that hands off by tool is asked to call submit_handoff on hibernate,
+// as a shift asks it: a path in the notice would ask for a write the seat
+// cannot make. The successor clause survives the rewrite.
+func TestHibernateNoticeFollowsTheRolesHandoffVia(t *testing.T) {
+	tool := hibernateRole("worker", realTempDir(t), 1)
+	tool.Shift = &api.ShiftPolicy{Handoff: tool.Shift.Handoff, HandoffMarker: tool.Shift.HandoffMarker, HandoffVia: api.ShiftHandoffViaTool}
+	f := newRetireFixture(t, "test-hib-via-tool", tool)
+	f.seat("worker", 0)
+	f.hibernate(HibernateOptions{Actor: "op", Source: "cli"})
+	f.tick()
+
+	if len(f.notices) != 1 {
+		t.Fatalf("notices = %q, want one", f.notices)
+	}
+	n := f.notices[0]
+	if !strings.Contains(n, "call submit_handoff with your handoff; you have ") {
+		t.Errorf("notice = %q, want the tool ask", n)
+	}
+	if !strings.Contains(n, "you return as a successor that reads your handoff") {
+		t.Errorf("notice = %q, want the successor clause", n)
+	}
+	for _, w := range []string{"END HANDOFF", "write your handoff", " to /"} {
+		if strings.Contains(n, w) {
+			t.Errorf("notice %q names %q", n, w)
+		}
+	}
+
+	file := hibernateRole("worker", realTempDir(t), 1)
+	g := newRetireFixture(t, "test-hib-via-file", file)
+	g.seat("worker", 0)
+	g.hibernate(HibernateOptions{Actor: "op", Source: "cli"})
+	g.tick()
+	if len(g.notices) != 1 || strings.Contains(g.notices[0], "submit_handoff") || !strings.Contains(g.notices[0], "write your handoff now to ") {
+		t.Errorf("a file role's notice = %q, want the path ask", g.notices)
+	}
+}
