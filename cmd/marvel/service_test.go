@@ -258,9 +258,40 @@ func TestGetHelpSaysServiceIsDiagnosticOnly(t *testing.T) {
 	if i := strings.Index(para, "\n\n"); i >= 0 {
 		para = para[:i]
 	}
-	for _, want := range []string{"declared", "diagnostic only"} {
+	for _, want := range []string{"The label is declared", "diagnostic only"} {
 		if !strings.Contains(para, want) {
 			t.Errorf("the SERVICE paragraph lacks %q:\n%s", want, para)
 		}
+	}
+}
+
+// Plain ambient has two readings under V2, and the help says both: none were
+// seen, or the session was spawned before the record existed and nothing was
+// looked at.
+func TestGetHelpPlainAmbientNamesBothReadings(t *testing.T) {
+	_, para, ok := strings.Cut(getCmd().Long, "SERVICE (opt-in")
+	if !ok {
+		t.Fatal("the get help has no SERVICE paragraph")
+	}
+	if i := strings.Index(para, "\n\n"); i >= 0 {
+		para = para[:i]
+	}
+	// The help wraps lines by hand, so compare with the whitespace collapsed.
+	para = strings.Join(strings.Fields(para), " ")
+	if !strings.Contains(para, "before it was recorded") {
+		t.Errorf("the SERVICE paragraph does not say plain ambient also covers a session spawned before the record:\n%s", para)
+	}
+}
+
+// ACCT folds the cluster in on any cluster-set read, including --all-clusters
+// with one configured cluster, so the help says "cluster-set read" and not
+// "several clusters".
+func TestGetHelpAcctFoldNamesAClusterSetRead(t *testing.T) {
+	long := getCmd().Long
+	if !strings.Contains(long, "cluster-set read") {
+		t.Error("the get help does not name the cluster-set read for the ACCT fold")
+	}
+	if strings.Contains(long, "read of several clusters") {
+		t.Error("the get help still says \"read of several clusters\"; one configured cluster under --all-clusters also folds")
 	}
 }

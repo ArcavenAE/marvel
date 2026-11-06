@@ -1243,7 +1243,7 @@ the row has no creation time.
 ACCT (opt-in, --columns acct) is a short key for the account a session spends against and
 that account's limit reading: 87% (seven_day) while fresh, stale once the reading
 is old, a - when none was read. Sessions on one account repeat the same cell; it is
-never summed or averaged across rows. On a read of several clusters ACCT folds in the
+never summed or averaged across rows. On a cluster-set read ACCT folds in the
 cluster, so its keys differ from a single-cluster read.
 
 SERVICE (opt-in, --columns service) says in words which account a session spends
@@ -1257,7 +1257,8 @@ Example: 'claude subscription ambient alt-ultra ultra'. It is the first column
 cut on a narrow terminal when it came from rest.
 For a session on the operator's own login the source reads ambient:api-key+oauth-token
 when those variable names were set in the tmux environment at spawn (names only, never
-values); plain ambient means none were seen, and ambient:? means tmux could not say.
+values); plain ambient means none were seen or the session was spawned before it was
+recorded, and ambient:? means tmux could not say.
 Absence is not proof of no key. To list seats that inherited a key:
   marvel get sessions -o json | jq '.[] | select(.ambient_bearer // "" | test("^(api-key|auth-token|oauth-token)"))'
 

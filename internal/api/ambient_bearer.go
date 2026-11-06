@@ -43,7 +43,9 @@ func ValidAmbientBearer(v string) bool {
 }
 
 // SetAmbientBearer stores v, or refuses it and leaves the record as it was.
-// It is the only writer, so a free string cannot reach the table or the JSON.
+// It is the only writer on the spawn path. The store copies a checked record
+// whole and JSON decode also writes the field, so the cell treats a stored value
+// outside the set as unknown; a free string never prints.
 func (s *Session) SetAmbientBearer(v string) error {
 	if !ValidAmbientBearer(v) {
 		return fmt.Errorf("ambient bearer record: value is outside the closed set")

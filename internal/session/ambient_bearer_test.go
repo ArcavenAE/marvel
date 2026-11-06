@@ -150,3 +150,38 @@ func TestAdoptKeepsAmbientBearer(t *testing.T) {
 		t.Errorf("AmbientBearer after adoption = %q, want auth-token", live.AmbientBearer)
 	}
 }
+
+// Names tmux could not read do not hide names it did: with some present and
+// the rest unreadable the record keeps the present kinds, and "unknown" is for
+// when nothing was present (low 1 of the review of #1322).
+func TestSpawnPartialUnreadableRecordsPresentKinds(t *testing.T) {
+	skipIfNoTmux(t)
+	for _, tc := range []struct {
+		name  string
+		state map[string]tmux.BearerPresence
+		want  string
+	}{
+		{"one present, two unreadable", map[string]tmux.BearerPresence{
+			"ANTHROPIC_API_KEY": tmux.BearerPresent, "ANTHROPIC_AUTH_TOKEN": tmux.BearerUnknown, "CLAUDE_CODE_OAUTH_TOKEN": tmux.BearerUnknown,
+		}, "api-key"},
+		{"one present, one absent, one unreadable", map[string]tmux.BearerPresence{
+			"ANTHROPIC_API_KEY": tmux.BearerUnknown, "ANTHROPIC_AUTH_TOKEN": tmux.BearerAbsent, "CLAUDE_CODE_OAUTH_TOKEN": tmux.BearerPresent,
+		}, "oauth-token"},
+		{"none present, one unreadable", map[string]tmux.BearerPresence{
+			"ANTHROPIC_API_KEY": tmux.BearerAbsent, "ANTHROPIC_AUTH_TOKEN": tmux.BearerUnknown, "CLAUDE_CODE_OAUTH_TOKEN": tmux.BearerAbsent,
+		}, "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sess, _, store := spawnForBearer(t, "test-bearer-partial", nil, func(m *Manager) {
+				m.BearerReader = func(_, name string) tmux.BearerPresence { return tc.state[name] }
+			})
+			live, err := store.GetSession(sess.Key())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if live.AmbientBearer != tc.want {
+				t.Errorf("AmbientBearer = %q, want %q", live.AmbientBearer, tc.want)
+			}
+		})
+	}
+}

@@ -14,8 +14,8 @@ const defaultHomeWord = "default-home"
 
 // serviceHomes counts, per cluster, which cleaned account homes share each last
 // element. It is built once over a whole reply and handed to every row, so a
-// collision reads the same in the table, the legend scan and the tally, and a
-// client filter that narrows the rows cannot change a cell.
+// collision reads the same in the table, the legend scan and the tally, and the
+// width fit that trims and re-renders cannot change a cell.
 type serviceHomes map[string]map[string]map[string]bool
 
 // countServiceHomes records every home in the reply by cluster and last element.
