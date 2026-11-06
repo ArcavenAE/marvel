@@ -15,14 +15,15 @@ import (
 // shim creates (docs/design/marvel-watcher.md section 11.3, A2). The agent id
 // is split from the instance at the last underscore, as director does.
 const (
-	localStream   = "AGENT_INBOX"
-	localPrefix   = "mcp_"
-	globalPrefix  = "mcp_global_"
-	seatMailTag   = "seatmail"
-	readersClock  = "age on the reader's clock"
-	noGlobalNote  = "no global address"
-	noLiveNote    = "no live durable"
-	noDurableNote = "no durable"
+	localStream    = "AGENT_INBOX"
+	localPrefix    = "mcp_"
+	globalPrefix   = "mcp_global_"
+	seatMailTag    = "seatmail"
+	readersClock   = "age on the reader's clock"
+	noGlobalNote   = "no global address"
+	noLiveNote     = "no live durable"
+	noDurableNote  = "no durable"
+	perDurableNote = "per durable"
 )
 
 // subjectToken is the address schema's character class for one subject
@@ -68,33 +69,42 @@ func (s *SeatMail) now() time.Time {
 	return time.Now()
 }
 
-// tier is one tier's reading of a seat.
+// tier is one tier's reading of a seat: the rows read, the clock the ages run
+// on, the latest ack, and the tier's note.
 type tier struct {
-	depth, ackPending int64
-	age               time.Duration
-	oldestSeq, floor  uint64
-	lastAck           time.Time
-	note              string
+	rows    []DurableRow
+	at      time.Time
+	lastAck time.Time
+	note    string
 }
 
-// Read implements MailReader. A tier that cannot be read makes the whole seat
-// unknown and returns its error; a seat with no global address reads that tier
-// unsupported and is read on the local tier alone.
+// Read implements MailReader. It is the state of ReadRows.
 func (s *SeatMail) Read(ctx context.Context, seat api.Session) (MailState, error) {
+	_, st, err := s.ReadRows(ctx, seat)
+	return st, err
+}
+
+// ReadRows reads the seat and returns the rows it read, one per durable (tier,
+// name, live or inherited, pending, ack pending, ack floor, oldest sequence and
+// its stored time), with the MailState computed from those rows. A tier that
+// cannot be read makes the whole seat unknown and returns its error; a seat
+// with no global address reads that tier unsupported and is read on the local
+// tier alone.
+func (s *SeatMail) ReadRows(ctx context.Context, seat api.Session) ([]DurableRow, MailState, error) {
 	observed := s.now()
 	if err := ctx.Err(); err != nil {
-		return UnknownState(seatMailTag, observed, err), err
+		return nil, UnknownState(seatMailTag, observed, err), err
 	}
 	filters, err := localFilters(seat)
 	if err != nil {
-		return UnknownState(seatMailTag, observed, err), err
+		return nil, UnknownState(seatMailTag, observed, err), err
 	}
 
 	var notes []string
-	local, err := s.readTier(ctx, localStream, localPrefix, seat.Name, filters)
+	local, err := s.readTier(ctx, TierLocal, localStream, localPrefix, seat.Name, filters)
 	if err != nil {
 		err = fmt.Errorf("local tier: %w", err)
-		return UnknownState(seatMailTag, observed, err), err
+		return nil, UnknownState(seatMailTag, observed, err), err
 	}
 	tiers := []tier{local}
 	if local.note != "" {
@@ -108,10 +118,10 @@ func (s *SeatMail) Read(ctx context.Context, seat api.Session) (MailState, error
 	if g == nil {
 		notes = append(notes, "global: "+noGlobalNote)
 	} else {
-		gt, err := s.readTier(ctx, g.Stream, globalPrefix, seat.Name, []string{g.Subject})
+		gt, err := s.readTier(ctx, TierGlobal, g.Stream, globalPrefix, seat.Name, []string{g.Subject})
 		if err != nil {
 			err = fmt.Errorf("global tier: %w", err)
-			return UnknownState(seatMailTag, observed, err), err
+			return nil, UnknownState(seatMailTag, observed, err), err
 		}
 		tiers = append(tiers, gt)
 		if gt.note != "" {
@@ -119,7 +129,14 @@ func (s *SeatMail) Read(ctx context.Context, seat api.Session) (MailState, error
 		}
 	}
 
-	return aggregate(tiers, observed, strings.Join(notes, "; ")), nil
+	var rows []DurableRow
+	for _, t := range tiers {
+		rows = append(rows, t.rows...)
+	}
+	if len(rows) > 1 {
+		notes = append(notes, perDurableNote)
+	}
+	return rows, aggregate(tiers, rows, observed, strings.Join(notes, "; ")), nil
 }
 
 // localFilters is the filter set a seat's local durable reads: its own inbox,
@@ -163,7 +180,7 @@ func sameSet(a, b []string) bool {
 }
 
 // readTier reads one tier of one seat.
-func (s *SeatMail) readTier(ctx context.Context, stream, prefix, id string, filters []string) (tier, error) {
+func (s *SeatMail) readTier(ctx context.Context, which Tier, stream, prefix, id string, filters []string) (tier, error) {
 	ds, err := s.Queue.Durables(ctx, stream)
 	if err != nil {
 		return tier{}, err
@@ -188,7 +205,7 @@ func (s *SeatMail) readTier(ctx context.Context, stream, prefix, id string, filt
 
 	switch {
 	case len(live) > 0:
-		return s.readDurables(ctx, stream, filters, at, note, live)
+		return s.readDurables(ctx, which, stream, filters, at, note, live)
 	case len(departed) > 0:
 		// A successor resumes where its predecessor left off, so the departed
 		// durable that acked furthest holds the floor and supplies the counts.
@@ -198,7 +215,7 @@ func (s *SeatMail) readTier(ctx context.Context, stream, prefix, id string, filt
 				best = d
 			}
 		}
-		return s.readDurables(ctx, stream, filters, at, join(note, noLiveNote), []Durable{best})
+		return s.readDurables(ctx, which, stream, filters, at, join(note, noLiveNote), []Durable{best})
 	default:
 		// No durable at all: a successor would read everything the inbox holds
 		// on the seat's subjects, from floor 0.
@@ -206,41 +223,36 @@ func (s *SeatMail) readTier(ctx context.Context, stream, prefix, id string, filt
 		if err != nil {
 			return tier{}, err
 		}
-		t := tier{depth: n, note: join(note, noDurableNote)}
+		row := DurableRow{Tier: which, Pending: n}
 		first, found, err := s.Queue.Oldest(ctx, stream, 0, filters)
 		if err != nil {
 			return tier{}, err
 		}
 		if found {
-			t.oldestSeq, t.age = first.Seq, ageAt(at, first.Stored)
+			row.OldestSeq, row.OldestStored = first.Seq, first.Stored
 		}
-		return t, nil
+		return tier{rows: []DurableRow{row}, at: at, note: join(note, noDurableNote)}, nil
 	}
 }
 
-// readDurables reads each durable from its own floor and takes, within the
-// tier, the maximum depth and age: two live sessions of one seat each hold
-// their own copy of the mail, so their counts are never summed and their
-// floors never merged.
-func (s *SeatMail) readDurables(ctx context.Context, stream string, filters []string, at time.Time, note string, ds []Durable) (tier, error) {
-	t := tier{note: note}
+// readDurables reads each durable from its own floor and returns a row for
+// each. aggregate takes the tier's depth and age from the rows: two live
+// sessions of one seat each hold their own copy of the mail, so their counts
+// are never summed and their floors never merged.
+func (s *SeatMail) readDurables(ctx context.Context, which Tier, stream string, filters []string, at time.Time, note string, ds []Durable) (tier, error) {
+	t := tier{at: at, note: note}
 	for _, d := range ds {
-		depth := d.Pending + d.AckPending
 		first, found, err := s.Queue.Oldest(ctx, stream, d.AckFloor, filters)
 		if err != nil {
 			return tier{}, err
 		}
-		t.depth = max(t.depth, depth)
-		t.ackPending = max(t.ackPending, d.AckPending)
-		t.floor = max(t.floor, d.AckFloor)
+		row := DurableRow{Tier: which, Name: d.Name, Live: d.Live, Pending: d.Pending, AckPending: d.AckPending, AckFloor: d.AckFloor}
+		if found {
+			row.OldestSeq, row.OldestStored = first.Seq, first.Stored
+		}
+		t.rows = append(t.rows, row)
 		if d.LastAck.After(t.lastAck) {
 			t.lastAck = d.LastAck
-		}
-		if found {
-			t.age = max(t.age, ageAt(at, first.Stored))
-			if t.oldestSeq == 0 || first.Seq < t.oldestSeq {
-				t.oldestSeq = first.Seq
-			}
 		}
 	}
 	return t, nil
@@ -260,18 +272,27 @@ func join(a, b string) string {
 	return a + "; " + b
 }
 
-// aggregate combines the tiers that were read: depth is summed and the oldest
-// age is the maximum. The two tiers are two streams, whose sequence numbers
-// do not compare, so with both counted the floor and the oldest sequence are
-// unsupported; with the local tier alone they are its own.
-func aggregate(tiers []tier, observed time.Time, note string) MailState {
+// aggregate computes the seat's state from the rows of the tiers that were
+// read. Within a tier the depth, the ack-pending count and the oldest age are
+// the maximum over its rows; across tiers the depth and the ack-pending count
+// are summed and the oldest age is the maximum. The floor and the oldest
+// sequence belong to one durable, so they carry a value only when exactly one
+// row was read.
+func aggregate(tiers []tier, rows []DurableRow, observed time.Time, note string) MailState {
 	var depth, ackPending int64
 	var age time.Duration
 	var lastAck time.Time
 	for _, t := range tiers {
-		depth += t.depth
-		ackPending += t.ackPending
-		age = max(age, t.age)
+		var d, a int64
+		for _, r := range t.rows {
+			d = max(d, r.Pending+r.AckPending)
+			a = max(a, r.AckPending)
+			if r.OldestSeq != 0 {
+				age = max(age, ageAt(t.at, r.OldestStored))
+			}
+		}
+		depth += d
+		ackPending += a
 		if t.lastAck.After(lastAck) {
 			lastAck = t.lastAck
 		}
@@ -288,9 +309,9 @@ func aggregate(tiers []tier, observed time.Time, note string) MailState {
 	if !lastAck.IsZero() {
 		st.LastAckAt = TimeOf(lastAck)
 	}
-	if len(tiers) == 1 {
-		st.AckFloor = SeqOf(tiers[0].floor)
-		st.OldestSeq = SeqOf(tiers[0].oldestSeq)
+	if len(rows) == 1 {
+		st.AckFloor = SeqOf(rows[0].AckFloor)
+		st.OldestSeq = SeqOf(rows[0].OldestSeq)
 	} else {
 		st.AckFloor = UnsupportedSeq()
 		st.OldestSeq = UnsupportedSeq()

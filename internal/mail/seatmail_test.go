@@ -119,8 +119,16 @@ func TestTwoLiveDurablesReportTheLargerDepthAndTheOlderAge(t *testing.T) {
 	if v := need[time.Duration](t, "OldestAge", got.OldestAge); v != 57*time.Minute {
 		t.Errorf("OldestAge = %v, want 57m (message 3, the older durable's)", v)
 	}
-	if v := need[uint64](t, "OldestSeq", got.OldestSeq); v != 3 {
-		t.Errorf("OldestSeq = %d, want 3", v)
+	// A maximum floor and a minimum oldest taken from two durables would
+	// describe neither, so the seat reads them unsupported, per durable.
+	if k := got.OldestSeq.Kind(); k != mail.KindUnsupported {
+		t.Errorf("OldestSeq reads %v with two durables read, want unsupported", k)
+	}
+	if k := got.AckFloor.Kind(); k != mail.KindUnsupported {
+		t.Errorf("AckFloor reads %v with two durables read, want unsupported", k)
+	}
+	if !strings.Contains(got.Note, "per durable") {
+		t.Errorf("Note = %q, want it to carry \"per durable\"", got.Note)
 	}
 }
 
@@ -456,5 +464,170 @@ func TestTheFurthestAckedDepartedDurableSuppliesTheInheritedFloor(t *testing.T) 
 	}
 	if v := need[uint64](t, "AckFloor", got.AckFloor); v != 5 {
 		t.Errorf("AckFloor = %d, want 5", v)
+	}
+}
+
+// Within a tier the ack-pending count is, like the depth, the maximum over the
+// live durables: each holds its own copy of the mail, so their held messages
+// are not one pool to add up.
+func TestAckPendingWithinATierIsTheMaximumNotTheSum(t *testing.T) {
+	f := newFixture(t)
+	f.publish(inbox, 1, 2, 3, 4, 5, 6)
+	f.q.AddDurable(stream, mailtest.DurableSpec{Name: "mcp_builder-0_a", Live: true, Floor: 0, Filters: []string{inbox, roleInbox}, AckPending: 2})
+	f.q.AddDurable(stream, mailtest.DurableSpec{Name: "mcp_builder-0_b", Live: true, Floor: 0, Filters: []string{inbox, roleInbox}, AckPending: 5})
+
+	got := read(t, f.reader(nil))
+
+	if v := need[int64](t, "AckPending", got.AckPending); v != 5 {
+		t.Errorf("AckPending = %d, want 5 (the larger of 2 and 5, not their sum 7)", v)
+	}
+	if v := need[int64](t, "Depth", got.Depth); v != 6 {
+		t.Errorf("Depth = %d, want 6 (Pending + AckPending, the same for both durables)", v)
+	}
+}
+
+func rows(t *testing.T, r *mail.SeatMail) ([]mail.DurableRow, mail.MailState) {
+	t.Helper()
+	rs, st, err := r.ReadRows(context.Background(), seat)
+	if err != nil {
+		t.Fatalf("ReadRows: %v", err)
+	}
+	return rs, st
+}
+
+// Two live durables of one seat give two rows, each with its own floor and
+// oldest sequence, in the order the queue lists them.
+func TestTwoLiveDurablesGiveTwoRowsEachWithItsOwnFloorAndOldest(t *testing.T) {
+	f := newFixture(t)
+	f.publish(inbox, 1, 2, 3, 4, 5, 6)
+	f.durable("mcp_builder-0_a", true, 2, inbox, roleInbox)
+	f.durable("mcp_builder-0_b", true, 5, inbox, roleInbox)
+
+	rs, st := rows(t, f.reader(nil))
+
+	if len(rs) != 2 {
+		t.Fatalf("rows = %d, want 2: %+v", len(rs), rs)
+	}
+	want := []struct {
+		name          string
+		floor, oldest uint64
+		pending       int64
+		stored        time.Time
+	}{
+		{"mcp_builder-0_a", 2, 3, 4, t0.Add(3 * time.Minute)},
+		{"mcp_builder-0_b", 5, 6, 1, t0.Add(6 * time.Minute)},
+	}
+	for i, w := range want {
+		r := rs[i]
+		if r.Tier != mail.TierLocal || r.Name != w.name || !r.Live {
+			t.Errorf("row %d = tier %q name %q live %v, want local %q live", i, r.Tier, r.Name, r.Live, w.name)
+		}
+		if r.AckFloor != w.floor || r.OldestSeq != w.oldest {
+			t.Errorf("row %d floor %d oldest %d, want floor %d oldest %d", i, r.AckFloor, r.OldestSeq, w.floor, w.oldest)
+		}
+		if r.Pending != w.pending || r.AckPending != 0 {
+			t.Errorf("row %d pending %d ack pending %d, want %d and 0", i, r.Pending, r.AckPending, w.pending)
+		}
+		if !r.OldestStored.Equal(w.stored) {
+			t.Errorf("row %d oldest stored %v, want %v", i, r.OldestStored, w.stored)
+		}
+	}
+	if k := st.AckFloor.Kind(); k != mail.KindUnsupported {
+		t.Errorf("AckFloor reads %v, want unsupported", k)
+	}
+	if !strings.Contains(st.Note, "per durable") {
+		t.Errorf("Note = %q, want \"per durable\"", st.Note)
+	}
+}
+
+// A seat read on both tiers gives a row per tier, each naming its tier, and
+// the seat's floor and oldest sequence read unsupported with the same note.
+func TestASeatReadOnBothTiersGivesARowPerTier(t *testing.T) {
+	f := newFixture(t)
+	f.publish(inbox, 1, 2, 3)
+	f.durable("mcp_builder-0_a", true, 1, inbox, roleInbox)
+	f.q.AddStream(globalStr)
+	f.q.Publish(globalStr, "global.kinu.supervisor.inbox", 1, t0.Add(10*time.Minute))
+	f.q.AddDurable(globalStr, mailtest.DurableSpec{
+		Name: "mcp_global_builder-0_a", Live: true, Floor: 0, Filters: []string{"global.kinu.supervisor.inbox"},
+	})
+
+	rs, st := rows(t, f.reader(globalOf("kinu")))
+
+	if len(rs) != 2 || rs[0].Tier != mail.TierLocal || rs[1].Tier != mail.TierGlobal {
+		t.Fatalf("rows = %+v, want a local row then a global row", rs)
+	}
+	if rs[0].Name != "mcp_builder-0_a" || rs[1].Name != "mcp_global_builder-0_a" {
+		t.Errorf("row names = %q, %q", rs[0].Name, rs[1].Name)
+	}
+	if k := st.AckFloor.Kind(); k != mail.KindUnsupported {
+		t.Errorf("AckFloor reads %v, want unsupported", k)
+	}
+	if k := st.OldestSeq.Kind(); k != mail.KindUnsupported {
+		t.Errorf("OldestSeq reads %v, want unsupported", k)
+	}
+	if !strings.Contains(st.Note, "per durable") {
+		t.Errorf("Note = %q, want \"per durable\"", st.Note)
+	}
+}
+
+// A seat with no durable gets one row with no name, at floor 0, and the
+// seat's own floor and oldest sequence are that row's.
+func TestASeatWithNoDurableGivesOneUnnamedRowAtFloorZero(t *testing.T) {
+	f := newFixture(t)
+	f.publish(inbox, 1, 3)
+	f.publish(roleInbox, 2)
+
+	rs, st := rows(t, f.reader(nil))
+
+	if len(rs) != 1 {
+		t.Fatalf("rows = %d, want 1: %+v", len(rs), rs)
+	}
+	r := rs[0]
+	if r.Name != "" || r.Live || r.AckFloor != 0 || r.OldestSeq != 1 || r.Pending != 3 {
+		t.Errorf("row = %+v, want no name, not live, floor 0, oldest 1, pending 3", r)
+	}
+	if !r.OldestStored.Equal(t0.Add(time.Minute)) {
+		t.Errorf("oldest stored %v, want t0+1m", r.OldestStored)
+	}
+	if v := need[uint64](t, "AckFloor", st.AckFloor); v != 0 {
+		t.Errorf("AckFloor = %d, want 0", v)
+	}
+	if strings.Contains(st.Note, "per durable") {
+		t.Errorf("Note = %q: one row was read", st.Note)
+	}
+}
+
+// A departed durable that supplies the inherited floor is one row, marked as
+// not live.
+func TestAnInheritedFloorIsOneRowMarkedNotLive(t *testing.T) {
+	f := newFixture(t)
+	f.publish(inbox, 1, 2, 3, 4, 5, 6)
+	f.durable("mcp_builder-0_old1", false, 3, inbox, roleInbox)
+	f.durable("mcp_builder-0_old2", false, 5, inbox, roleInbox)
+
+	rs, st := rows(t, f.reader(nil))
+
+	if len(rs) != 1 || rs[0].Name != "mcp_builder-0_old2" || rs[0].Live {
+		t.Fatalf("rows = %+v, want the one furthest departed durable, not live", rs)
+	}
+	if v := need[uint64](t, "AckFloor", st.AckFloor); v != 5 {
+		t.Errorf("AckFloor = %d, want 5", v)
+	}
+}
+
+// Read gives the same state as ReadRows: the watcher and the parity fixture
+// read one computation.
+func TestReadIsTheStateOfReadRows(t *testing.T) {
+	f := newFixture(t)
+	f.publish(inbox, 1, 2, 3, 4)
+	f.durable("mcp_builder-0_a", true, 1, inbox, roleInbox)
+	r := f.reader(nil)
+
+	_, want := rows(t, r)
+	got := read(t, r)
+
+	if got != want {
+		t.Errorf("Read = %+v, ReadRows state = %+v", got, want)
 	}
 }
