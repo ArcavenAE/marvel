@@ -230,6 +230,11 @@ type Runtime struct {
 	// against the backend the constructed environment actually resolves to
 	// and fail loudly when they disagree. Empty means no declared intent.
 	Backend string `toml:"backend,omitempty"`
+	// AccountLabel is the login the operator says this role runs on, one word
+	// such as a tier name. It is declared, never checked: marvel does not ask
+	// the harness who is logged in. It is display text for the SERVICE column
+	// and takes no part in the account key.
+	AccountLabel string `toml:"account_label,omitempty" json:"account_label,omitempty"`
 	// Goose is the runtime.goose table, read only by the goose adapter. Nil
 	// means the role declared none.
 	Goose *GooseRuntime `toml:"goose,omitempty"`
@@ -541,8 +546,16 @@ type Session struct {
 	// loud-failure gate asks whether an expiring session can renew itself.
 	// Empty for a session marvel never classified. Status, not spec.
 	BackendCredentialSource BackendCredentialSource `toml:"-" json:"backend_credential_source,omitempty"`
-	SessionMetrics          `toml:"-"`
-	SessionContext          `toml:"-"`
+	// AmbientBearer records which bearer variable NAMES the tmux environment
+	// held when an ambient session was spawned: "" never checked, "none",
+	// "unknown" (tmux could not say), or kinds joined by "+" in the fixed order
+	// api-key, auth-token, oauth-token. Names only, never a value. It is written
+	// through SetAmbientBearer, which refuses anything outside that set. Absence
+	// is not proof of no key: a harness setting or a later environment change is
+	// outside what was read. Status, not spec; it takes no part in AccountKey.
+	AmbientBearer  string `toml:"-" json:"ambient_bearer,omitempty"`
+	SessionMetrics `toml:"-"`
+	SessionContext `toml:"-"`
 }
 
 // SessionContext is one context-window reading for a session.

@@ -23,7 +23,7 @@ func acctCell(s api.Session) string {
 	if s.LimitReading == "" {
 		return "-"
 	}
-	return acctKey(clientAccountKey(s)) + " " + acctReading(s)
+	return acctKeyIn(clientAccountKey(s), s.Cluster) + " " + acctReading(s)
 }
 
 // clientAccountKey is the account key with the home left as recorded. The
@@ -50,10 +50,18 @@ func clientAccountKey(s api.Session) api.AccountKey {
 // of AccountKey.String: String spells an empty home "default-home", so a home
 // literally named that would hash like the default row. It is for people to
 // compare, not an identity to act on.
-func acctKey(k api.AccountKey) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		k.Harness, string(k.Backend), string(k.CredentialSource), k.ConfigHome,
-	}, "\x00")))
+func acctKey(k api.AccountKey) string { return acctKeyIn(k, "") }
+
+// acctKeyIn is acctKey for a row read from a cluster. cluster is set only on a
+// read of several clusters. It is the fifth field only when non-empty, so a
+// plain read hashes exactly as before; on a set read the same home path on two
+// clusters is two accounts, and the key says so.
+func acctKeyIn(k api.AccountKey, cluster string) string {
+	fields := []string{k.Harness, string(k.Backend), string(k.CredentialSource), k.ConfigHome}
+	if cluster != "" {
+		fields = append(fields, cluster)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(fields, "\x00")))
 	return hex.EncodeToString(sum[:3])
 }
 
