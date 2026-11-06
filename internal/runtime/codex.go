@@ -102,6 +102,9 @@ func (c *Codex) SessionHome(ctx *LaunchContext) (SessionHomeSpec, bool) {
 	}, true
 }
 
+// OffersHandoffTool reports true: codex's seeder renders the marvel-handoff entry.
+func (c *Codex) OffersHandoffTool() bool { return true }
+
 func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	binary := resolveCommand(&ctx.Session.Runtime)
 	if binary == "" {

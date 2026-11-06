@@ -32,6 +32,12 @@ const handoffNotice = "shift: max age reached; write your handoff now"
 // notice, so a recognizer keyed on that clause matches both.
 const pressureNotice = "shift: context nearly full; write your handoff now"
 
+// toolNotice is the request for a seat that hands off by tool: the lead up to
+// its "write your handoff now" clause, then the tool, then the window.
+func toolNotice(lead string, window time.Duration) string {
+	return fmt.Sprintf("%scall submit_handoff with your handoff; you have %s", strings.TrimSuffix(lead, "write your handoff now"), window)
+}
+
 // handoffAsk is what differs between the causes of a handoff request: the
 // notice lead, the inject origin, and the event's account of why.
 type handoffAsk struct {
@@ -109,7 +115,7 @@ func lastWorked(s api.Session) time.Time {
 // requestHandoff asks sess for its handoff and records the pending request on
 // the team, durably, so a daemon restart inside the window resumes it.
 func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftCondition, sess api.Session, ask handoffAsk, now time.Time) {
-	prep := prepareHandoffNotice(ask.notice, role.Shift.Handoff, role.Shift.HandoffMarker, role.Shift.HandoffWindowOrDefault(), sess)
+	prep := prepareHandoffNotice(ask.notice, role.Shift.Handoff, role.Shift.HandoffMarker, role.Shift.HandoffWindowOrDefault(), role.Shift.HandoffVia == api.ShiftHandoffViaTool, sess)
 	text, dirError, dirDev, dirIno, heldDir := prep.text, prep.dirError, prep.dirDev, prep.dirIno, prep.heldDir
 	delivery, undelivered := "delivered", ""
 	if c.Notify == nil {
@@ -171,7 +177,7 @@ type handoffNoticePrep struct {
 // marker and the window, and makes the file's directory. Every handoff ask, a
 // shift's or a retirement's, is built here, so everything from "write your
 // handoff now" on reads the same for each.
-func prepareHandoffNotice(lead, template, marker string, window time.Duration, sess api.Session) handoffNoticePrep {
+func prepareHandoffNotice(lead, template, marker string, window time.Duration, viaTool bool, sess api.Session) handoffNoticePrep {
 	prep := handoffNoticePrep{text: lead}
 	if template == "" {
 		return prep
@@ -181,7 +187,12 @@ func prepareHandoffNotice(lead, template, marker string, window time.Duration, s
 		return prep
 	}
 	prep.path = path
-	prep.text += fmt.Sprintf(" to %s, ending with the line %q; you have %s", path, marker, window)
+	if viaTool {
+		// The seat cannot write the file; marvel does, on its submit_handoff.
+		prep.text = toolNotice(lead, window)
+	} else {
+		prep.text += fmt.Sprintf(" to %s, ending with the line %q; you have %s", path, marker, window)
+	}
 	// {session} carries the generation, so each successor's handoff
 	// directory is new and nothing else would create it (marvel#608).
 	// MkdirAll leaves an existing directory's mode alone. A failure does not
