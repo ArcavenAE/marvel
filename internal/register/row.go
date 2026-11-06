@@ -17,15 +17,6 @@ const dutyCellPrefix = "duty."
 // DeclaredWord is what a declared cell renders as in place of its value.
 const DeclaredWord = "declared"
 
-// Sources a cell may carry when this package sets it. The full reason
-// vocabulary for a "-" belongs to a later step.
-const (
-	// SourceDeclared marks a cell recording what the build declares.
-	SourceDeclared = "declared"
-	// SourceUnmeasured marks a cell no check has produced a reading for.
-	SourceUnmeasured = "unmeasured"
-)
-
 // Cell is one reading of the register: a string value with its age and source.
 type Cell = asof.Cell[string]
 
