@@ -319,6 +319,10 @@ func (c *Controller) noteStuckRequest(t *api.Team, role *api.Role, req api.Shift
 		c.stuckEmitted = make(map[string]time.Time)
 	}
 	c.stuckEmitted[sess.Key()] = req.RequestedAt
+	if c.stuckAt == nil {
+		c.stuckAt = make(map[string]time.Time)
+	}
+	c.stuckAt[sess.Key()] = now
 	events.Emit(c.Events, events.Event{
 		Kind:       events.KindShiftRequestStuck,
 		Severity:   events.SeverityWarning,
@@ -327,8 +331,8 @@ func (c *Controller) noteStuckRequest(t *api.Team, role *api.Role, req api.Shift
 		Role:       role.Name,
 		Session:    sess.Key(),
 		Generation: t.Generation,
-		Message: fmt.Sprintf("cause=%s: the handoff request for %s, made %s, is %s old, past %s of %s, and %s; nothing has told the supervisor, so the seat may never have been asked (marvel#608, marvel#955)",
-			req.Cause, sess.Key(), req.RequestedAt.Format(time.RFC3339), age.Truncate(time.Second), boundName, bound, state),
+		Message: fmt.Sprintf("cause=%s: the handoff request for %s, made %s, is %s old, past %s of %s, and %s; nothing has told the supervisor, so the seat may never have been asked (marvel#608, marvel#955)%s",
+			req.Cause, sess.Key(), req.RequestedAt.Format(time.RFC3339), age.Truncate(time.Second), boundName, bound, state, directorNote(req)),
 	})
 }
 
@@ -355,6 +359,15 @@ func handoffMissingReason(role *api.Role, sess api.Session, req api.ShiftRequest
 		return never + fmt.Sprintf("the handoff path cannot be resolved (%v)", err)
 	}
 	return never + fmt.Sprintf("no regular file at %s ends in the marker", path)
+}
+
+// directorNote says how many notices the director has had for this request, so
+// "0 escalations delivered" is read beside it and not as "nobody was told".
+func directorNote(req api.ShiftRequest) string {
+	if req.DirectorSent == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; the director has been sent %d of %d notices", req.DirectorSent, directorSendCap)
 }
 
 // emitHandoffMissing emits the escalation and starts the repeat clock.
@@ -413,6 +426,7 @@ func (c *Controller) dropShiftRequest(t *api.Team, role string) {
 		c.handoffProbes.forget(req.Session)
 		delete(c.missingEmitted, req.Session)
 		delete(c.stuckEmitted, req.Session)
+		delete(c.stuckAt, req.Session)
 		delete(c.publishRecords, req.Session)
 	}
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {

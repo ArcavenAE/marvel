@@ -974,6 +974,11 @@ type ShiftRequest struct {
 	// supervisor role had no live seat, so the first holder gets an immediate
 	// send instead of waiting out a window.
 	LastDeliveryQueued bool
+	// DirectorSent is how many escalation notices marvel has published to the
+	// director for this request, at most two: one at escalation and one when the
+	// request is reported stuck. DirectorSentAt is when the last one went.
+	DirectorSent   int
+	DirectorSentAt time.Time
 	// Escalated is set once the window expired with no marker and marvel
 	// emitted shift.handoff-missing. From then on the team's supervisor
 	// decides; marvel neither re-requests nor shifts on its own.
