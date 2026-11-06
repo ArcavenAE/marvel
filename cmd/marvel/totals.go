@@ -23,8 +23,8 @@ const totalsGap = "   "
 // which rows count. A row with no value is left out and not counted as zero,
 // and a field with no value in any row prints "-".
 //
-// cpu is the plain sum of the CPU% cells, so it can pass 100% on a multicore
-// host. tout and rate keep tokens and dollars apart: token rows sum to a token
+// cpu is the plain sum of the CPU% cells, labelled "sum" in the line, so it can
+// pass 100% on a multicore host. tout and rate keep tokens and dollars apart: token rows sum to a token
 // figure, statusline rows to a ~$ figure, each with its own count, and the two
 // are never added. A field with only one kind prints only that kind.
 //
@@ -32,6 +32,13 @@ const totalsGap = "   "
 // it is wider than width; width 0 keeps it on one line. Every line ends in a
 // newline.
 func renderTotalsLine(rows []api.Session, now time.Time, label string, width int) string {
+	return renderTotalsLineMarked(rows, now, label, "", width)
+}
+
+// renderTotalsLineMarked is renderTotalsLine with a mark, such as
+// "(2 of 3 clusters)", as the first field after the label when mark is not
+// empty.
+func renderTotalsLineMarked(rows []api.Session, now time.Time, label, mark string, width int) string {
 	var cpuN, rssN int
 	var cpuSum float64
 	var rssSum int64
@@ -63,10 +70,14 @@ func renderTotalsLine(rows []api.Session, now time.Time, label string, width int
 	}
 	var cpu, rss string
 	if cpuN > 0 {
-		cpu = fmt.Sprintf("%.1f%%", cpuSum)
+		cpu = fmt.Sprintf("sum %.1f%%", cpuSum)
 		rss = formatBytes(rssSum)
 	}
-	fields := []string{
+	var fields []string
+	if mark != "" {
+		fields = append(fields, mark)
+	}
+	fields = append(fields,
 		fmt.Sprintf("%d sessions", len(rows)),
 		totalsField("cpu", []totalsFigure{{cpu, cpuN}}),
 		totalsField("rss", []totalsFigure{{rss, rssN}}),
@@ -78,7 +89,7 @@ func renderTotalsLine(rows []api.Session, now time.Time, label string, width int
 			{figureText(tokRateN, formatTokenRate(tokRate)+" tok/s"), tokRateN},
 			{figureText(usdRateN, fmt.Sprintf("~$%.2f/m", usdRate)), usdRateN},
 		}),
-	}
+	)
 	return wrapTotals(label, fields, width)
 }
 
@@ -201,17 +212,23 @@ func loadTotalsShown() totalsShown {
 
 // renderClusterTotals is the block of "totals <cluster>" lines for a fan-out
 // read, one for each cluster that answered, in the order of records, each from
-// the rows whose Cluster field names it, then a "totals fleet" line over the
-// rows of those same clusters when two or more answered. Each kind of line
+// the rows whose Cluster field names it, then a "totals (fleet)" line over the
+// rows of those same clusters when two or more answered. The parentheses cannot
+// be part of a cluster name, so the fleet line never reads as a cluster's. When
+// a configured cluster did not answer, the fleet line says "(n of m clusters)"
+// so a sum that left one out does not read as the whole fleet. Each kind of line
 // prints only where its preference shows it.
 func renderClusterTotals(records []clusterRecord, rows []api.Session, now time.Time, width int, show totalsShown) string {
 	var b strings.Builder
 	var counted []api.Session
-	answered := 0
+	answered, configured := 0, 0
 	// A cluster merged into another's daemon has no line of its own: the rows it
 	// kept belong to the cluster it merged into.
 	lineOf := map[string]string{}
 	for _, rec := range records {
+		if rec.Outcome != outcomeSameDaemon {
+			configured++
+		}
 		lineOf[rec.Cluster] = rec.Cluster
 		if rec.Outcome == outcomeSameDaemon && rec.SameDaemonAs != "" {
 			lineOf[rec.Cluster] = rec.SameDaemonAs
@@ -234,7 +251,11 @@ func renderClusterTotals(records []clusterRecord, rows []api.Session, now time.T
 		}
 	}
 	if show.fleet && answered >= 2 {
-		b.WriteString(renderTotalsLine(counted, now, "totals fleet", width))
+		mark := ""
+		if answered < configured {
+			mark = fmt.Sprintf("(%d of %d clusters)", answered, configured)
+		}
+		b.WriteString(renderTotalsLineMarked(counted, now, "totals (fleet)", mark, width))
 	}
 	return b.String()
 }

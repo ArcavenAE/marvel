@@ -126,8 +126,8 @@ func TestTotalsCPUIsThePlainSum(t *testing.T) {
 	base := api.Session{Name: "a", Workspace: "ws", Team: "squad", Role: "worker", State: api.SessionRunning}
 	rows := []api.Session{withMetrics(base, 10, gib), withMetrics(base, 140.5, gib), inState(base, api.SessionRunning)}
 	line := renderTotals(t, rows)
-	if got := totalsFieldText(line, "cpu"); !strings.HasPrefix(got, "150.5%") || got != "150.5% (2)" {
-		t.Errorf("cpu = %q, want the sum 150.5%% over 2 rows", got)
+	if got := totalsFieldText(line, "cpu"); !strings.HasPrefix(got, "sum 150.5%") || got != "sum 150.5% (2)" {
+		t.Errorf("cpu = %q, want the labelled sum 150.5%% over 2 rows", got)
 	}
 }
 
@@ -221,21 +221,21 @@ func TestFanOutFleetLineSumsAnsweredClusters(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("got %d totals lines, want 3 (a, b, fleet): %q", len(lines), lines)
 	}
-	if !strings.HasPrefix(lines[2], "totals fleet ") || sessionsCount(lines[2]) != "5" {
+	if !strings.HasPrefix(lines[2], "totals (fleet) ") || sessionsCount(lines[2]) != "5" {
 		t.Errorf("fleet line = %q, want 5 sessions", lines[2])
 	}
 }
 
 func TestFanOutTotalsPerClusterPreferenceHidesItsLines(t *testing.T) {
 	lines := twoClusterLines(t, config.Display{TotalsPerCluster: off()})
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "totals fleet ") {
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "totals (fleet) ") {
 		t.Errorf("totals lines = %q, want only the fleet line", lines)
 	}
 }
 
 func TestFanOutTotalsFleetPreferenceHidesItsLine(t *testing.T) {
 	lines := twoClusterLines(t, config.Display{TotalsFleet: off()})
-	if len(lines) != 2 || strings.Contains(strings.Join(lines, "\n"), "fleet") {
+	if len(lines) != 2 || strings.Contains(strings.Join(lines, "\n"), "(fleet)") {
 		t.Errorf("totals lines = %q, want the two cluster lines only", lines)
 	}
 }
@@ -413,5 +413,46 @@ func TestTeamLoadAllTeamsFreshOnlyMarked(t *testing.T) {
 	}
 	if strings.Contains(allTeamsRE.FindString(out), "?") {
 		t.Errorf("the all teams row printed a question mark: %q", allTeamsRE.FindString(out))
+	}
+}
+
+// A fleet line that leaves out a configured cluster that did not answer says
+// so, and one that covers every configured cluster carries no mark.
+func TestFanOutFleetLineMarksAnUnansweredCluster(t *testing.T) {
+	fastTimer(t, 500*time.Millisecond)
+	a := startFake(t, fakeAnswers, fakeRows("wa", "a1"))
+	b := startFake(t, fakeAnswers, fakeRows("wb", "b1", "b2"))
+	h := startFake(t, fakeHung, nil)
+	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "b", Socket: b.sock}, config.Cluster{Name: "h", Socket: h.sock})
+	_, stdout, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b,h", "--header")
+	var fleet string
+	for _, l := range totalsLineRE.FindAllString(stdout, -1) {
+		if strings.HasPrefix(l, "totals (fleet)") {
+			fleet = l
+		}
+	}
+	if !strings.Contains(fleet, "(2 of 3 clusters)") || sessionsCount(fleet) != "3" {
+		t.Errorf("fleet line = %q, want the mark (2 of 3 clusters) over 3 sessions:\n%s", fleet, stdout)
+	}
+	for _, l := range twoClusterLines(t, config.Display{}) {
+		if strings.Contains(l, "clusters)") {
+			t.Errorf("a fleet over every configured cluster carries a mark: %q", l)
+		}
+	}
+}
+
+// With no fresh team the all teams row still says how many teams it covers.
+func TestTeamLoadAllTeamsNoFreshTeamKeepsItsMark(t *testing.T) {
+	expired := func(team string) api.TeamLoad {
+		return loadRow(func(r *api.TeamLoad) {
+			r.Team = team
+			r.ObservedAt = loadAt.Add(-time.Hour)
+			r.ValidUntil = loadAt.Add(-time.Hour + api.TeamLoadValidity)
+		})
+	}
+	got := allTeamsFields(t, renderRows(t, loadAt, expired("one"), expired("two")))
+	want := []string{"all teams", "(0 of 2 teams)", "-", "-", "-"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("all teams row = %q, want %q", got, want)
 	}
 }

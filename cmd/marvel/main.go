@@ -1262,12 +1262,12 @@ reading above, and --load averages whatever each seat shows.
 
 The totals line sits under the daemon header, on a terminal or with --header. It gives
 the row count and, for cpu, rss, tout and rate, the sum of the cells the table shows as
-values, each with the number of rows it summed. cpu is the plain sum of the CPU% cells,
-so it can pass 100% on a multicore host. rss is the sum of resident set sizes, not memory
+values, each with the number of rows it summed. cpu is the plain sum of the CPU% cells and
+reads "cpu sum", so it can pass 100% on a multicore host. rss is the sum of resident set sizes, not memory
 used: shared pages count once for each process. tout and rate keep tokens and ~$ estimates
 apart and never add them. A row with no value is left out and not counted as zero, and a
 field no row has a value for prints -. A read across clusters prints one totals line for
-each cluster that answered, led by its name, and a totals fleet line over them. With --load,
+each cluster that answered, led by its name, and a totals (fleet) line over them, marked (n of m clusters) when a configured cluster did not answer. With --load,
 a last row, all teams, sums seats and limited seats over the fresh team rows. Its ACTIVE% is
 the mean over seats, and it reads (n of m teams) when an expired team row was left out.
 

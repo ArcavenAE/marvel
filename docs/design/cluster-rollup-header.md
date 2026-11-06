@@ -167,9 +167,9 @@ Each carries a default the author recommends. Valid until 2026-11-13.
 
 The operator ruled the open decisions in section 7. Where this section and the text above differ, this section governs.
 
-- **Two lines across clusters.** A fan-out read prints one `totals <cluster>` line for each answered cluster and, when two or more answered, one `totals fleet` line over the rows those clusters gave. Section 2.5's "no grand total" no longer holds. Each line has its own display preference, both shown by default: `display.totals_per_cluster` and `display.totals_fleet` in the client config's `display:` block.
+- **Two lines across clusters.** A fan-out read prints one `totals <cluster>` line for each answered cluster and, when two or more answered, one `totals (fleet)` line over the rows those clusters gave, marked `(n of m clusters)` when a configured cluster did not answer. The parentheses cannot occur in a cluster name, so the line is never mistaken for a cluster's. Section 2.5's "no grand total" no longer holds. Each line has its own display preference, both shown by default: `display.totals_per_cluster` and `display.totals_fleet` in the client config's `display:` block.
 - **Two figures.** tout and rate print tokens and `~$` estimates apart, each with its row count, and never add them (section 2.2 as written).
-- **cpu is the plain sum**, so it can pass 100% on a multicore host. It is not a host share.
+- **cpu is the plain sum**, printed as `cpu sum 146.0% (35)`, so it can pass 100% on a multicore host. It is not a host share.
 - **Position.** The line sits after the daemon header's last line and before the source legend.
 - **No totals while disconnected.** The disconnected watch frame prints its last known rows and no totals line.
 - **Merged daemons.** A cluster merged into another's daemon gets no line, and the rows it kept count in the line of the cluster it merged into.
