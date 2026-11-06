@@ -67,12 +67,39 @@ func AccountKeyOf(s Session) AccountKey {
 	if b == "" {
 		b = BackendDefaultName
 	}
+	home := canonicalConfigHome(s.Runtime.Name, s.AccountHome)
+	if s.AccountHome == "" {
+		if dir := ClaudeConfigDirEnv(s); dir != "" {
+			home = canonicalConfigDir(s.Runtime.Name, dir)
+		}
+	}
 	return AccountKey{
 		Harness:          s.Runtime.Name,
 		Backend:          b,
 		CredentialSource: s.BackendCredentialSource,
-		ConfigHome:       canonicalConfigHome(s.Runtime.Name, s.AccountHome),
+		ConfigHome:       home,
 	}
+}
+
+// ClaudeConfigDirEnv is the config directory a claude seat's role names in its
+// runtime env, as written, or "" when the seat is not claude or names none.
+// marvel prepares no account home for claude (only codex and goose have that
+// hook), so the variable the harness itself reads is the only record of which
+// login the seat is on. A view that must not fold the path with its own home
+// reads it here.
+func ClaudeConfigDirEnv(s Session) string {
+	if s.Runtime.Name != "claude" {
+		return ""
+	}
+	return s.Runtime.Env["CLAUDE_CONFIG_DIR"]
+}
+
+func canonicalConfigDir(harness, dir string) string {
+	userHome, err := os.UserHomeDir()
+	if err != nil {
+		userHome = ""
+	}
+	return CanonicalConfigDir(harness, dir, userHome)
 }
 
 // defaultHomeDirs is each harness's own default state directory, relative to

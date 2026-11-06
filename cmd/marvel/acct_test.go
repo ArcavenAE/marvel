@@ -201,3 +201,32 @@ func TestAcctKeyDiffersWhenAnyOneFieldDiffers(t *testing.T) {
 		t.Errorf("claude default and claude bedrock with no home print one key %s", acctKey(a))
 	}
 }
+
+// acctEnvSession is a claude session with no recorded account home whose role
+// names dir as its config directory.
+func acctEnvSession(name, dir string) api.Session {
+	s := acctSession(name, "", api.ReadingFresh, "fresh 10% (five_hour)")
+	if dir != "" {
+		s.Runtime.Env = map[string]string{"CLAUDE_CONFIG_DIR": dir}
+	}
+	return s
+}
+
+// Two claude seats on different config directories are two logins, so the
+// column must not print one key for both: it is how an operator sees which
+// rows share a limit.
+func TestAcctKeyFollowsAClaudeSeatsConfigDir(t *testing.T) {
+	got, _ := acctCells(t,
+		acctEnvSession("a-none", ""),
+		acctEnvSession("b-one", "/home/d/.claude-a"),
+		acctEnvSession("c-one-again", "/home/d/.claude-a/"),
+		acctEnvSession("d-two", "/home/d/.claude-b"),
+	)
+	key := func(n string) string { k, _, _ := strings.Cut(got[n], " "); return k }
+	if key("a-none") == key("b-one") || key("b-one") == key("d-two") || key("a-none") == key("d-two") {
+		t.Errorf("distinct logins share a key: none %q, a %q, b %q", key("a-none"), key("b-one"), key("d-two"))
+	}
+	if key("b-one") != key("c-one-again") {
+		t.Errorf("one directory spelled two ways prints %q and %q", key("b-one"), key("c-one-again"))
+	}
+}
