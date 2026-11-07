@@ -18,13 +18,25 @@ func TestStatuslineVersionFromLiveCapture(t *testing.T) {
 	}
 }
 
+// PROVENANCE, stated because it is weaker than the live capture above. For
+// Claude Code 2.1.319 (build 2026-11-05) the key is READ FROM THE BINARY, NOT
+// CAPTURED: the statusline payload builder in the shipped binary returns an
+// object whose siblings are model, workspace, version, output_style, cost and
+// context_window, and its version member is the build's VERSION string
+// "2.1.319". So the key is top level in that build by construction. No 2.1.319
+// payload was observed in traffic.
+//
 // Only a bare x.y.z is forwarded. A missing key, a non-string and anything
 // else is nil, which the daemon reads as "leave the stored value".
 func TestStatuslineVersion(t *testing.T) {
 	for _, tc := range []struct {
 		name, payload, want string
 	}{
-		{"plain", `{"version":"2.1.319"}`, "2.1.319"},
+		// 2.1.319 is the leading token of what `claude --version` printed on the
+		// day this was written ("2.1.319 (Claude Code)"). It is the binary's own
+		// version flag, not a statusline value; the full line is not a version.
+		{"claude --version token", `{"version":"2.1.319"}`, "2.1.319"},
+		{"claude --version full line", `{"version":"2.1.319 (Claude Code)"}`, ""},
 		{"missing key", `{"model":{"display_name":"m"}}`, ""},
 		{"empty", `{"version":""}`, ""},
 		{"null", `{"version":null}`, ""},
