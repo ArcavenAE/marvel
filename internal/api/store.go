@@ -1021,6 +1021,7 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	}
 	sess.LastHeartbeat = time.Now().UTC()
 	recordTotals(sess, r, dropped)
+	recordHarnessVersion(sess, r)
 	// A cooperative reporter that knows its model names it (the
 	// statusline feed does); one that doesn't sends "" and any
 	// prior reading stands. ContextModel is promoted from the embedded
@@ -1066,6 +1067,19 @@ func recordTotals(sess *Session, r HeartbeatRequest, dropped bool) {
 	if moved && !dropped {
 		sess.TotalsChangedAt = sess.LastHeartbeat
 	}
+}
+
+// recordHarnessVersion stores the harness version a beat carried, with its own
+// observed_at: the beat that carried it, which is when marvel saw the claim.
+// A beat with no version, or one outside HarnessVersionPattern, changes neither
+// the value nor the stamp, so an old reading is never refreshed by a beat that
+// said nothing about it (register row R7).
+func recordHarnessVersion(sess *Session, r HeartbeatRequest) {
+	if r.HarnessVersion == nil || !ValidHarnessVersion(*r.HarnessVersion) {
+		return
+	}
+	sess.HarnessVersion = *r.HarnessVersion
+	sess.HarnessVersionAt = sess.LastHeartbeat
 }
 
 // UpdateSessionContext records one context-window reading.

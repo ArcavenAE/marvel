@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -172,7 +173,22 @@ type HeartbeatRequest struct {
 	// declared none", never a declared zero: a beat without it leaves what
 	// the session already holds.
 	OutputTokens *int `json:"output_tokens,omitempty"`
+	// HarnessVersion is the harness build the reporter names, as the
+	// statusline feed carries it. Nil is "the payload declared none": a beat
+	// without it leaves the held value and its observed_at as they were. A
+	// value outside HarnessVersionPattern is dropped by the store whoever sent
+	// it. It is seat-reported, so a reader treats it as a claim, not a probe.
+	HarnessVersion *string `json:"harness_version,omitempty"`
 }
+
+// HarnessVersionPattern is the shape a forwarded harness version must have: a
+// bare x.y.z of ASCII digits. A pre-release suffix, a leading v, a missing
+// part or surrounding space does not match, so the register never shows a
+// version it could not compare (register row R7).
+var HarnessVersionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+
+// ValidHarnessVersion reports whether v matches HarnessVersionPattern.
+func ValidHarnessVersion(v string) bool { return HarnessVersionPattern.MatchString(v) }
 
 // NewHeartbeatRequest builds a heartbeat, reading the session token from
 // the environment marvel constructed at spawn.

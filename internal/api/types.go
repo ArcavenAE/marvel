@@ -316,6 +316,12 @@ type Session struct {
 	// inside the window.
 	CostGapAt     time.Time `json:"cost_gap_at,omitempty" toml:"-"`
 	APIDurationMS *int64    `json:"api_duration_ms,omitempty" toml:"-"`
+	// HarnessVersion is the harness build the seat's statusline reported, and
+	// HarnessVersionAt is the beat that carried it. Both are zero until a beat
+	// carries a version matching HarnessVersionPattern. Seat-reported; a reader
+	// treats it as a claim (register row R7).
+	HarnessVersion   string    `json:"harness_version,omitempty" toml:"-"`
+	HarnessVersionAt time.Time `json:"harness_version_at,omitempty" toml:"-"`
 	// APISamples, APISeenAt and APIGapAt are the API-time total's ring, last
 	// beat and last return from a silence, kept by the same rules as the cost
 	// ring. ACTIVE% reads them for a seat with a statusline feed
