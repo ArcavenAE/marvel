@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
@@ -28,9 +29,25 @@ func (d *Daemon) registerRows() []register.Row {
 // session both read it here, so the two cannot differ.
 func (d *Daemon) registerRowFor(s api.Session) register.Row {
 	return register.Build(register.Input{
-		Seat:   s.Key(),
-		Duties: config.ResolvedDuties(d.roleOfSession(s)),
+		Seat:           s.Key(),
+		Duties:         config.ResolvedDuties(d.roleOfSession(s)),
+		ObservedDuties: d.observedDuties(s.Key()),
 	})
+}
+
+// observedDuties is the seat's stored duty readings, the duty.<name> family
+// only. The withdrawn family is not built (api.ErrWithdrawalNotBuilt) and stays
+// out of the row. Each cell is the record's own value, times and source: the
+// store closes the source vocabulary at write, so no free text can arrive here.
+func (d *Daemon) observedDuties(seat string) map[string]register.Cell {
+	all := d.store.SeatReadiness(seat)
+	out := make(map[string]register.Cell, len(all))
+	for name, c := range all {
+		if strings.HasPrefix(name, "duty.") {
+			out[name] = c
+		}
+	}
+	return out
 }
 
 // roleOfSession is the role a session belongs to, or the zero role when its

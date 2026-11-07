@@ -10,6 +10,11 @@ type Input struct {
 	// Declared holds what the build declares for the seat's harness. A cell
 	// with no value here stays unmeasured.
 	Declared Declared
+	// ObservedDuties holds the readings the store has for the seat, keyed by
+	// full cell name (duty.<name>). Build takes the reading for each duty in
+	// Duties and ignores every other key, so a reading for a duty the role no
+	// longer declares, or for another cell family, never reaches the row.
+	ObservedDuties map[string]Cell
 }
 
 // Declared is the build-derived values of a row (design section 4): the
@@ -43,7 +48,12 @@ func Build(in Input) Row {
 	if len(in.Duties) > 0 {
 		row.Duties = make(map[string]Cell, len(in.Duties))
 		for _, d := range in.Duties {
-			row.Duties[dutyCellPrefix+d] = unmeasured()
+			name := dutyCellPrefix + d
+			if c, ok := in.ObservedDuties[name]; ok {
+				row.Duties[name] = c
+				continue
+			}
+			row.Duties[name] = unmeasured()
 		}
 	}
 	return row
