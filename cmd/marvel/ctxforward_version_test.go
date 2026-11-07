@@ -1,8 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
+	"sync/atomic"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 // The 2.1.226 live capture carries a top-level "version", which the
@@ -58,5 +62,63 @@ func TestStatuslineVersion(t *testing.T) {
 		case tc.want != "" && (got == nil || *got != tc.want):
 			t.Errorf("%s: got %v, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// withVersion returns the 2.1.226 rate-limits fixture with its top-level
+// "version" set to v, or removed when v is nil. The fixture is the one payload
+// here that carries a context figure, so it is the one that sends a beat.
+func withVersion(t *testing.T, v any, present bool) []byte {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(readTestdata(t, "statusline-2.1.226-rate-limits-synthetic.json"), &m); err != nil {
+		t.Fatal(err)
+	}
+	if present {
+		m["version"] = v
+	} else {
+		delete(m, "version")
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// The command puts the version on the heartbeat it sends the daemon. This is
+// the wiring statuslineVersion's own tests cannot see: without the forward the
+// parsing is correct and nothing arrives.
+func TestCtxForwardSendsTheHarnessVersionOnTheHeartbeat(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload func(*testing.T) []byte
+		want    string
+	}{
+		{"valid", func(t *testing.T) []byte { return withVersion(t, "2.1.319", true) }, "2.1.319"},
+		{"outside the pattern", func(t *testing.T) []byte { return withVersion(t, "2.1.319-beta", true) }, ""},
+		{"key absent", func(t *testing.T) []byte { return withVersion(t, nil, false) }, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lastHeartbeat = atomic.Value{}
+			socket, methods, _ := fakeDaemon(t)
+			seatEnv(t, socket)
+			withStdin(t, tc.payload(t), func() {
+				if err := newCtxForwardCmd().RunE(newCtxForwardCmd(), nil); err != nil {
+					t.Fatalf("hook: %v", err)
+				}
+			})
+			waitForMethods(t, methods, 2)
+			hb, ok := lastHeartbeat.Load().(api.HeartbeatRequest)
+			if !ok {
+				t.Fatalf("no heartbeat reached the daemon; methods = %v", methods())
+			}
+			switch {
+			case tc.want == "" && hb.HarnessVersion != nil:
+				t.Errorf("heartbeat carried version %q, want none", *hb.HarnessVersion)
+			case tc.want != "" && (hb.HarnessVersion == nil || *hb.HarnessVersion != tc.want):
+				t.Errorf("heartbeat version = %v, want %q", hb.HarnessVersion, tc.want)
+			}
+		})
 	}
 }
