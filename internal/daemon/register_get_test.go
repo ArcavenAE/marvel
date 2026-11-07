@@ -168,23 +168,7 @@ func TestGetRegisterRowsMatchTheRowSchema(t *testing.T) {
 	registerFixture(t, d)
 	_, raw := getRegister(t, d)
 
-	schemaBytes, err := os.ReadFile("../../contracts/register/seat-row.schema.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaBytes))
-	if err != nil {
-		t.Fatal(err)
-	}
-	const id = "https://schema.arcaven.com/marvel/register-seat-row/v1"
-	c := jsonschema.NewCompiler()
-	if err := c.AddResource(id, doc); err != nil {
-		t.Fatal(err)
-	}
-	sch, err := c.Compile(id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	sch := compileRegisterSchema(t)
 	var rows []json.RawMessage
 	if err := json.Unmarshal(raw, &rows); err != nil || len(rows) == 0 {
 		t.Fatalf("result is not a non-empty array: %v", err)
@@ -287,4 +271,28 @@ func TestRegisterPullPassIsOffWithoutADirectory(t *testing.T) {
 	if err := d.writeRegisterPull(time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// compileRegisterSchema compiles the seat-row schema the register chain
+// publishes.
+func compileRegisterSchema(t *testing.T) *jsonschema.Schema {
+	t.Helper()
+	schemaBytes, err := os.ReadFile("../../contracts/register/seat-row.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "https://schema.arcaven.com/marvel/register-seat-row/v1"
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(id, doc); err != nil {
+		t.Fatal(err)
+	}
+	sch, err := c.Compile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sch
 }

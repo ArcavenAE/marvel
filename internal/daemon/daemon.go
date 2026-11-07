@@ -1905,7 +1905,7 @@ func (d *Daemon) handleDescribe(params json.RawMessage) daemonrpc.Response {
 			if one[0].Reason == "" {
 				one[0].Reason = api.ConfigErrorReason(one[0])
 			}
-			result = one[0]
+			result = describedSession{Session: one[0], Register: d.registerRowFor(one[0])}
 		}
 	case "team":
 		result, err = d.describeTeam(p.Name)

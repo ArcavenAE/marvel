@@ -18,13 +18,19 @@ func (d *Daemon) registerRows() []register.Row {
 	live := d.store.ListSessions()
 	rows := make([]register.Row, 0, len(live))
 	for i := range live {
-		rows = append(rows, register.Build(register.Input{
-			Seat:   live[i].Key(),
-			Duties: config.ResolvedDuties(d.roleOfSession(live[i])),
-		}))
+		rows = append(rows, d.registerRowFor(live[i]))
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Seat < rows[j].Seat })
 	return rows
+}
+
+// registerRowFor is the register row of one session. get register and describe
+// session both read it here, so the two cannot differ.
+func (d *Daemon) registerRowFor(s api.Session) register.Row {
+	return register.Build(register.Input{
+		Seat:   s.Key(),
+		Duties: config.ResolvedDuties(d.roleOfSession(s)),
+	})
 }
 
 // roleOfSession is the role a session belongs to, or the zero role when its
@@ -40,4 +46,11 @@ func (d *Daemon) roleOfSession(s api.Session) api.Role {
 		}
 	}
 	return api.Role{}
+}
+
+// describedSession is what describe session returns: the session as before,
+// flattened, and its register row under one new key.
+type describedSession struct {
+	api.Session
+	Register register.Row `json:"register"`
 }
