@@ -141,10 +141,10 @@ sandbox-exec -p '(version 1)(allow default)' /bin/ps -o pid= -p $$
 
 prints `sandbox-exec: execvp() of '/bin/ps' failed: Operation not permitted`
 and exits 71, where `/bin/echo` under the same profile runs. Marvel execs `ps`
-in four places (the tmux driver, its absence check and its test sweep, and the
-process-stat reader), so
-tmux-backed tests such as those in `internal/session` fail under the profile for
-a reason that has nothing to do with the change being tested.
+in five places (the tmux driver, its absence check and its test-support sweep,
+the process-stat reader and the suspend collector), so tmux-backed tests such
+as those in `internal/session` fail under the profile for a reason that has
+nothing to do with the change being tested.
 
 A `ps` stub in a scratch directory, placed first on `PATH`, gets past it:
 
@@ -154,11 +154,14 @@ chmod 755 "$SCRATCH/stub/ps"
 PATH="$SCRATCH/stub:$PATH"     # for the command that runs under sandbox-exec
 ```
 
-The stub prints nothing, so a test that needs real process data still fails
-and should be run outside the profile. Point `TMUX_TMPDIR` at a scratch
-directory and create `$TMUX_TMPDIR/tmux-$(id -u)` with mode 0700 first;
-without that directory the tmux client reports a different error and a test
-that expects "no server running" fails.
+The stub prints nothing. Tests that stay red under the profile with the stub fall
+into three kinds: a `mkdir` under `/tmp` outside the scratch directory, which the
+profile refuses; a test that needs real process data, which the empty stub cannot
+give; and the codex control-socket length test, which fails when the scratch
+directory is long enough to push the socket path past 104 bytes, so keep the
+scratch path short. The first and third come from the profile and the path, not
+from the change under test. Run the second outside the profile. Point
+`TMUX_TMPDIR` at a scratch directory, since tmux keeps its sockets there.
 
 ## What NOT to Contribute
 
