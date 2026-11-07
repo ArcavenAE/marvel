@@ -129,6 +129,40 @@ Why: on 2026-10-03 a test meant for a throwaway daemon reached the live
 one, because the seat running it inherited `MARVEL_SOCKET`. It was the
 client that crossed over, and no harm came of it (#504).
 
+## Running tests under sandbox-exec (macOS)
+
+A `sandbox-exec` profile can limit a test run to writes under one scratch
+directory and a network that reaches only localhost. It cannot run `ps`. This
+was measured: `ps` is setuid root, and under a profile that allows everything,
+
+```sh
+sandbox-exec -p '(version 1)(allow default)' /bin/ps -o pid= -p $$
+```
+
+prints `sandbox-exec: execvp() of '/bin/ps' failed: Operation not permitted`
+and exits 71, where `/bin/echo` under the same profile runs. Marvel execs `ps`
+in five places (the tmux driver, its absence check and its test-support sweep,
+the process-stat reader and the suspend collector), so tmux-backed tests such
+as those in `internal/session` fail under the profile for a reason that has
+nothing to do with the change being tested.
+
+A `ps` stub in a scratch directory, placed first on `PATH`, gets past it:
+
+```sh
+mkdir -p "$SCRATCH/stub" && printf '#!/bin/sh\nexit 0\n' > "$SCRATCH/stub/ps"
+chmod 755 "$SCRATCH/stub/ps"
+PATH="$SCRATCH/stub:$PATH"     # for the command that runs under sandbox-exec
+```
+
+The stub prints nothing. Tests that stay red under the profile with the stub fall
+into three kinds: a `mkdir` under `/tmp` outside the scratch directory, which the
+profile refuses; a test that needs real process data, which the empty stub cannot
+give; and the codex control-socket length test, which fails when the scratch
+directory is long enough to push the socket path past 104 bytes, so keep the
+scratch path short. The first and third come from the profile and the path, not
+from the change under test. Run the second outside the profile. Point
+`TMUX_TMPDIR` at a scratch directory, since tmux keeps its sockets there.
+
 ## What NOT to Contribute
 
 - Heavy dependencies where the standard library suffices
