@@ -21,6 +21,9 @@ import (
 // lastObserved is the observed_at of the last account.limits the fake daemon saw.
 var lastObserved atomic.Value
 
+// lastHeartbeat is the last heartbeat request the fake daemon decoded.
+var lastHeartbeat atomic.Value
+
 func fakeDaemon(t *testing.T) (socket string, methods func() []string, tokens func() []string) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "mx")
@@ -54,6 +57,12 @@ func fakeDaemon(t *testing.T) (socket string, methods func() []string, tokens fu
 					if json.Unmarshal(req.Params, &body) == nil {
 						toks = append(toks, body.SessionToken)
 						lastObserved.Store(body.ObservedAt)
+					}
+				}
+				if req.Method == "heartbeat" {
+					var hb api.HeartbeatRequest
+					if json.Unmarshal(req.Params, &hb) == nil {
+						lastHeartbeat.Store(hb)
 					}
 				}
 				mu.Unlock()

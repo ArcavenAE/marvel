@@ -424,6 +424,21 @@ func statuslineTotals(raw []byte) (costUSD *float64, apiMS *int64) {
 	return p.Cost.TotalCostUSD, p.Cost.TotalAPIDurationMS
 }
 
+// statuslineVersion reads the harness build from a statusline payload's top-level
+// "version" key. It returns nil unless the value is a string matching
+// api.HarnessVersionPattern, so a missing key, a non-string or an odd build
+// string forwards nothing and the daemon leaves the stored value. Only the top
+// level is read: a "version" nested under another object is not the build.
+func statuslineVersion(raw []byte) *string {
+	var p struct {
+		Version *string `json:"version"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil || p.Version == nil || !api.ValidHarnessVersion(*p.Version) {
+		return nil
+	}
+	return p.Version
+}
+
 func orUnknown(s string) string {
 	if s == "" {
 		return "agent"
@@ -493,6 +508,9 @@ func newCtxForwardCmd() *cobra.Command {
 			// The running totals ride the same beat. They are presence-aware,
 			// so a payload without them leaves what the daemon holds.
 			p.CostTotalUSD, p.APIDurationMS = statuslineTotals(raw)
+			// The build rides the same beat, under the same rule: no key, or a
+			// value outside the pattern, forwards nothing.
+			p.HarnessVersion = statuslineVersion(raw)
 			params, _ := json.Marshal(p)
 			// Best-effort by design; see the failure posture above.
 			_, _ = daemonrpc.SendRequest(socket, daemonrpc.Request{
