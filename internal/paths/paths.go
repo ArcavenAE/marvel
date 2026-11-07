@@ -118,6 +118,12 @@ func (l Layout) StateDir() string { return filepath.Join(l.Home, "state") }
 // session key (docs/design/readonly-view.md section 3).
 func (l Layout) ViewsDir() string { return filepath.Join(l.StateDir(), "views") }
 
+// RegisterDir is where the seat register's pull file lives: the one file a
+// supervisor with no marvel CLI reads (docs/design/seat-register.md, R15). It
+// sits beside ViewsDir under the state directory, and the daemon creates it
+// 0700.
+func (l Layout) RegisterDir() string { return filepath.Join(l.StateDir(), "register") }
+
 // HarnessHomesDir is the base for the per-session private harness homes. The
 // name is "h" on purpose: a harness may open a unix socket under its home
 // (codex puts its app-server control socket there), and the whole path has to

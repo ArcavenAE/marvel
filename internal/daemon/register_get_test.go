@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
@@ -203,5 +205,86 @@ func TestGetUnknownResourceTypeStillErrors(t *testing.T) {
 	resp := d.handleGet(mustMarshal(t, map[string]string{"resource_type": "registers-of-all-seats"}))
 	if resp.Error == "" {
 		t.Fatal("an unknown resource type was served")
+	}
+}
+
+// The pull file carries the rows get register serves, byte for byte, under the
+// one pass-time key, in a directory made 0700 and a file made 0600.
+func TestRegisterPullPassWritesWhatGetRegisterServes(t *testing.T) {
+	d := newHandlerDaemon(t)
+	registerFixture(t, d)
+	d.registerDir = filepath.Join(t.TempDir(), "register")
+	at := time.Date(2026, 11, 6, 18, 0, 0, 0, time.UTC)
+	if err := d.writeRegisterPull(at); err != nil {
+		t.Fatal(err)
+	}
+
+	dirInfo, err := os.Stat(d.registerDir)
+	if err != nil || dirInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("directory: %v, %v; want mode 0700", dirInfo, err)
+	}
+	path := filepath.Join(d.registerDir, register.PullFileName)
+	fileInfo, err := os.Stat(path)
+	if err != nil || fileInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("file: %v, %v; want mode 0600", fileInfo, err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		WrittenAt time.Time       `json:"written_at"`
+		Rows      json.RawMessage `json:"rows"`
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	_, rpc := getRegister(t, d)
+	if !bytes.Equal(file.Rows, rpc) {
+		t.Fatalf("pull file rows differ from get register:\nfile %s\nrpc  %s", file.Rows, rpc)
+	}
+	if !file.WrittenAt.Equal(at) {
+		t.Errorf("written_at = %v, want the pass time %v", file.WrittenAt, at)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil || len(top) != 2 {
+		t.Errorf("top-level keys = %v, want rows and written_at only", top)
+	}
+}
+
+// A pass that cannot write returns an error and leaves the earlier file alone;
+// the loop logs it and carries on.
+func TestRegisterPullPassFailureKeepsTheEarlierFile(t *testing.T) {
+	d := newHandlerDaemon(t)
+	registerFixture(t, d)
+	dir := filepath.Join(t.TempDir(), "register")
+	d.registerDir = dir
+	if err := d.writeRegisterPull(time.Date(2026, 11, 6, 18, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, register.PullFileName)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if err := d.writeRegisterPull(time.Date(2026, 11, 6, 18, 1, 0, 0, time.UTC)); err == nil {
+		t.Fatal("a pass into a read-only directory reported success")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("the earlier file changed after a failed pass: %v", err)
+	}
+}
+
+// With no layout the pass is off: it writes nothing and reports nothing.
+func TestRegisterPullPassIsOffWithoutADirectory(t *testing.T) {
+	d := newHandlerDaemon(t)
+	d.registerDir = ""
+	if err := d.writeRegisterPull(time.Now().UTC()); err != nil {
+		t.Fatal(err)
 	}
 }
