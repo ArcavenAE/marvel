@@ -129,6 +129,37 @@ Why: on 2026-10-03 a test meant for a throwaway daemon reached the live
 one, because the seat running it inherited `MARVEL_SOCKET`. It was the
 client that crossed over, and no harm came of it (#504).
 
+## Running tests under sandbox-exec (macOS)
+
+A `sandbox-exec` profile can limit a test run to writes under one scratch
+directory and a network that reaches only localhost. It cannot run `ps`. This
+was measured: `ps` is setuid root, and under a profile that allows everything,
+
+```sh
+sandbox-exec -p '(version 1)(allow default)' /bin/ps -o pid= -p $$
+```
+
+prints `sandbox-exec: execvp() of '/bin/ps' failed: Operation not permitted`
+and exits 71, where `/bin/echo` under the same profile runs. Marvel execs `ps`
+in four places (the tmux driver, its absence check and its test sweep, and the
+process-stat reader), so
+tmux-backed tests such as those in `internal/session` fail under the profile for
+a reason that has nothing to do with the change being tested.
+
+A `ps` stub in a scratch directory, placed first on `PATH`, gets past it:
+
+```sh
+mkdir -p "$SCRATCH/stub" && printf '#!/bin/sh\nexit 0\n' > "$SCRATCH/stub/ps"
+chmod 755 "$SCRATCH/stub/ps"
+PATH="$SCRATCH/stub:$PATH"     # for the command that runs under sandbox-exec
+```
+
+The stub prints nothing, so a test that needs real process data still fails
+and should be run outside the profile. Point `TMUX_TMPDIR` at a scratch
+directory and create `$TMUX_TMPDIR/tmux-$(id -u)` with mode 0700 first;
+without that directory the tmux client reports a different error and a test
+that expects "no server running" fails.
+
 ## What NOT to Contribute
 
 - Heavy dependencies where the standard library suffices

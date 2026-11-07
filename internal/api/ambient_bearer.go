@@ -43,9 +43,11 @@ func ValidAmbientBearer(v string) bool {
 }
 
 // SetAmbientBearer stores v, or refuses it and leaves the record as it was.
-// It is the only writer on the spawn path. The store copies a checked record
-// whole and JSON decode also writes the field, so the cell treats a stored value
-// outside the set as unknown; a free string never prints.
+// The spawn path records through it. Two other places write the field without
+// it: the post-create update in session.Manager copies the value that was
+// already checked onto the stored record, and JSON decode fills the field from
+// a daemon reply. A reply value can be anything, which is why the SERVICE cell
+// treats a stored value outside the set as unknown and never prints it.
 func (s *Session) SetAmbientBearer(v string) error {
 	if !ValidAmbientBearer(v) {
 		return fmt.Errorf("ambient bearer record: value is outside the closed set")
