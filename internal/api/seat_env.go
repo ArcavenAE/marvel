@@ -6,7 +6,7 @@ import (
 )
 
 // InheritedSessionEnv lists the variables a Claude Code session exports to
-// its children that no seat may inherit (aae-orc-31mlk, aae-orc#418). A
+// its children that no seat may inherit (aae-orc-31mlk, marvel#381). A
 // daemon started from such a session carries them, and a tmux server started
 // by that daemon hands them to every pane, so any harness, Claude or not,
 // could act on the parent session's messaging channel.

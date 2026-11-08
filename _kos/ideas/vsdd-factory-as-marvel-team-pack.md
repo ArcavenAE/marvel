@@ -7,13 +7,13 @@ Source: operator, relayed by director.
 
 ## The operator's words
 
-> "kos idea wardrobe and sideshow we could create a wardrobe/marvel
+> "kos idea role library and sideshow we could create a role library/marvel
 > team+workflows/lifecycles/other primitives version of vsdd-factory for use
 > on marvel, an adaptor that converts any vsdd-factory into a pack that is
 > suitable to run in marvel and works similar to how that version of
 > vsdd-factory works, but with true parallel agents rather than the agent
 > switching and fanout that happens and we could run a test load of
-> vsdd-factory in one agent session, and run the marvel/sideshow/wardrobe
+> vsdd-factory in one agent session, and run the marvel/sideshow/role library
 > version and have critic measure them side by side on a test project/test
 > spec, see how they perform for cost, cache amortization, throughput, speed
 > and other factors"
@@ -21,20 +21,20 @@ Source: operator, relayed by director.
 ## Where this lives, and why
 
 The idea has two parts. One is an adapter that turns any vsdd-factory
-release into a pack marvel can run: wardrobe definitions for its roles,
+release into a pack marvel can run: role library definitions for its roles,
 team manifests, workflows and lifecycles, delivered by sideshow. The other
 is a side-by-side run that critic measures.
 
 It is filed in marvel's graph by the subject test. If marvel did not exist,
 there would be no arm B: the idea is a factory run as a marvel team, with
 true parallel seats, and the comparison is of that run against the single
-session. wardrobe, sideshow and critic are objects it uses: wardrobe supplies
+session. role library, sideshow and critic are objects it uses: role library supplies
 the role definitions, sideshow delivers the pack, critic measures. This is
 the shape of "pack management in marvel", which belongs to marvel however
-many components it names. Director's first guess was wardrobe, and this was
-first drafted at the orc (aae-orc#481); review pointed at marvel, and
+many components it names. Director's first guess was role library, and this was
+first drafted at the orc (in a private tracker issue); review pointed at marvel, and
 working the subject test agrees. sideshow and critic have their own graphs,
-and wardrobe has none yet; each gets a pointer below.
+and role library has none yet; each gets a pointer below.
 
 ## The two arms
 
@@ -64,7 +64,7 @@ speed, and other factors.**
 - **orc `_kos/ideas/marvel-agentic-resource-matrix.md`.** "marvel is the substrate that
   vsdd-factory #410's `replatform` disposition asks for." Arm B is a
   replatformed run.
-- **orc finding-168, wardrobe roles for dark-factory operations.** The role
+- **orc finding-168, role library roles for dark-factory operations.** The role
   library a converted factory would be cast from. That subject (the role
   library itself) is the composition and sits at the orc; this idea's
   subject is the marvel run.
@@ -80,7 +80,7 @@ speed, and other factors.**
 
 ## Pointers
 
-- **wardrobe** (no graph yet): the role, team and lifecycle definitions an
+- **role library** (no graph yet): the role, team and lifecycle definitions an
   adapter would emit.
 - **sideshow** (its own graph): the pack format and the install mechanism
   for the converted factory.

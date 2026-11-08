@@ -1,6 +1,6 @@
 # Probe brief: what a first-class goose adapter needs, and whether a goose seat can work in a team
 
-**Status:** OPEN 2026-10-30. Opened by the operator, ruling I-51 ("goose: yes"), relayed by arcaven-supervisor (ask I-51:goose-probe, bus message 01M66V1S1GG63W5QH36J7DDCQ5). The operator's words: "how to we promote getting goose as an agent with a first class adaptor, and in the teams, working?" CARRIED FORWARD 2026-11-01: arm 1 closes Q1's chunked-message question (at v1.57.0, one event per chunk, same id). Arm 2 and P6 stay open, and the finding is due after arm 2. The node for this brief is `question-goose-adapter`.
+**Status:** OPEN 2026-10-30. Opened by the operator, ruling of 2026-10-30 ("goose: yes"), relayed by arcaven-supervisor. The operator's words: "how to we promote getting goose as an agent with a first class adaptor, and in the teams, working?" CARRIED FORWARD 2026-11-01: arm 1 closes Q1's chunked-message question (at v1.57.0, one event per chunk, same id). Arm 2 and P6 stay open, and the finding is due after arm 2. The node for this brief is `question-goose-adapter`.
 
 Finding: to be minted with `kos id finding goose-adapter` when the finding is written, never hand-allocated.
 
@@ -10,10 +10,10 @@ The orchestrator graph's harness survey (finding 2w6k, 2026-10-08) already ranks
 
 ## Overlap check
 
-- Prior art: `docs/design/goose-adapter-v1.md` (written at goose v1.54.0, 2026-10-10) and its tickets, including aae-orc-q13fv (goose A, the v1.54.0 characterization probe, P1 to P6). This brief extends that work to v1.57.0 and does not replace it. Research arm 1 of I-51 at v1.57.0 partly answers P4 and P5; P1 to P3 and P6 are still open.
+- Prior art: `docs/design/goose-adapter-v1.md` (written at goose v1.54.0, 2026-10-10) and its tickets, including aae-orc-q13fv (goose A, the v1.54.0 characterization probe, P1 to P6). This brief extends that work to v1.57.0 and does not replace it. Research arm 1 of that ruling at v1.57.0 partly answers P4 and P5; P1 to P3 and P6 are still open.
 - The harness survey (finding 2w6k) ranks harnesses; it does not measure goose. This probe builds on its citations and does not repeat the survey.
 - `internal/runtime/opencode.go` and `internal/runtime/opencode/mapping.md` are the pattern for a non-Claude headless adapter: run mode, a JSON stream parser, a composer contract. The goose adapter is expected to follow that shape. This probe checks the expectation; it does not assume it.
-- finding-020 (crush context-pressure channel) and the interactive context-remainder probe set the bar for context and token reporting. The operator's I-47 rollup idea consumes the same signal.
+- finding-020 (crush context-pressure channel) and the interactive context-remainder probe set the bar for context and token reporting. The operator's rollup idea consumes the same signal.
 
 ## What the v1.54.0 design already answers
 
@@ -23,7 +23,7 @@ The orchestrator graph's harness survey (finding 2w6k, 2026-10-08) already ranks
 |---|---|---|
 | Q1, H1 | G1 (four line types), G2 (`complete` only without a terminal error), G3 (no per-request usage); section 3 parser and the three run outcomes | whether `message` events are whole messages or chunks (arm 1 at v1.57.0: one event per chunk, same id) |
 | Q2, H2 | G11 (goose mints the id; `--session-id` is accepted only with `--resume`; names are not unique; a bare `--resume` takes the newest), G12, M4; `SessionIDAssigner` is no, and `-n` is a label, never a pin | H2 holds in source: an id cannot be set before launch, and resume by id works with `--resume`. Section 3 and M4 rule out pinning a launch by name, not resume by id. P5 (two launches in one root, the newest row is this launch's) is partly answered by arm 1 and still open |
-| Q3, H3 | G3, M5, M6; section 5: level only from `sessions.db` (ticket H), no OTLP receiver | P6 (per-request usage in the stream, and the row's level columns against the `complete` totals) is still open. Whether the reading feeds the I-47 rollup is not in the design |
+| Q3, H3 | G3, M5, M6; section 5: level only from `sessions.db` (ticket H), no OTLP receiver | P6 (per-request usage in the stream, and the row's level columns against the `complete` totals) is still open. Whether the reading feeds the operator's rollup is not in the design |
 | Q4 | `ComposerCapable` is no in v1 (headless only) | out of v1 scope; arm 1 recorded the composer anyway |
 | Q5, H4 | not covered; extensions are narrowed with `--no-profile --with-builtin` | all of it: director-mcp as an extension and the 120 s wait |
 | Q6, H5 | section 6 and the operator's ruling of 2026-10-10, "(a) with (c) as future option". The design reads that ruling as v1 keeping the keyring and projecting no `GOOSE_DISABLE_KEYRING`; that reading is the design's. Auth paths: section 8 sets the probe provider to an API key or Bedrock, not ACP, and the "Not in v1" line lists ACP providers | H5 is restated below to match the ruling. Arm 1's keyring-off run was a scratch measurement, not the v1 posture, so P4's keyring half (the key still found through the keyring under an absolute `GOOSE_PATH_ROOT`) is open. Vertex is not covered by the design |
@@ -36,7 +36,7 @@ The design's pin (v1.54.0, valid until 2026-10-24) has passed; this probe runs a
 
 1. **Headless run.** What does `goose run` emit in its json and stream-json modes? Which lines carry turn boundaries, tool calls, errors and usage, and how do they map onto marvel's event vocabulary (the opencode mapping table is the template)?
 2. **Session identity.** Where does goose write a session id and history? Can marvel pin or read the id at launch, and can a session be resumed by id after a shift or restart?
-3. **Context and tokens.** Does goose report context-window use and token counts per turn in a form marvel can read live, from the stream, a file or OTLP, without screen scraping? Does that reading feed the I-47 rollup?
+3. **Context and tokens.** Does goose report context-window use and token counts per turn in a form marvel can read live, from the stream, a file or OTLP, without screen scraping? Does that reading feed the operator's rollup?
 4. **Composer.** In interactive mode: how does a draft submit (paste plus Enter, or a literal newline), what clears a draft, does a clear exit the program when the composer is empty or mid-turn, and what interrupts a turn? These are the fields of marvel's `ComposerContract`, and composer-check and inject depend on them.
 5. **MCP and the bus.** Does goose load director-mcp as an extension, so that `wait_for_message` and `send_message` work as the seat's bus channel? What does it do with a long-blocking tool call (the 120 s wait)?
 6. **Auth under SOUL section 3.** Which auth paths work for a seat: the ACP handoff to a vendor CLI, an API key, or Bedrock or Vertex? Can a provider key stay in memory only, read from the operator's store at launch and never written to disk by goose (goose's docs say secrets go to the OS keyring by default)?

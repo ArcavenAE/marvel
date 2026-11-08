@@ -699,7 +699,7 @@ one where the payload is executable rather than merely readable.
 
 Any Crush adapter needs a position on this before it launches anything. The
 options are to refuse `crushrc` (there is no documented flag for it, so this
-would need an upstream ask), to sandbox the launch under curtain, or to
+would need an upstream ask), to sandbox the launch under the sandbox tool, or to
 declare it accepted and say so. Naming it as undecided is the honest state;
 picking silently is not.
 

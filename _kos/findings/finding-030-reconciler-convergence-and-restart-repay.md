@@ -1,8 +1,6 @@
 # finding-030 — the reconciler converges; a converged team is not a working team, and cxdf's premise is narrower than filed
 
-Probe: recon tasks [D] and [B], commissioned in
-[ArcavenAE/aae-orc#244](https://github.com/ArcavenAE/aae-orc/issues/244) and
-[#245](https://github.com/ArcavenAE/aae-orc/issues/245). Run back-to-back in one
+Probe: recon tasks [D] and [B], commissioned in two private tracker issues. Run back-to-back in one
 continuous session by operator ruling, so the live team was never unwatched.
 Operator: Claude (Opus 5), no human at the keyboard.
 Date: 2026-08-25 (16:29–16:43Z). **Spend: $0.06.**
@@ -69,8 +67,7 @@ board over a team that will never do anything.
 
 ### 2b. Convergence proper, once the agents could work
 
-Cleared the three gates with `inject "" -e` (the marvel#202 two-invocation
-workaround), gave them the filler task; all three wrote their notes. Then:
+With the three first-run gates cleared, gave them the filler task; all three wrote their notes. Then:
 
 ```
 16:33:46Z desired=3 marvel_actual=3 ground_truth=3 converged=YES

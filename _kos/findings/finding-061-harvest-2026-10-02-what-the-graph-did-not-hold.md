@@ -1,6 +1,6 @@
 # finding-061: the running daemon's build is unobservable, an inherited model reaches every seat, and a lone orphan row is not a rival
 
-Harvest of 2026-10-02 (director 6244, step 2). Source: the step-1 replies
+Harvest of 2026-10-02 (director, step 2). Source: the step-1 replies
 of every seat on team arcaven, collected by the supervisor. Code claims
 verified by this seat against marvel origin/main ee7666d.
 

@@ -239,7 +239,7 @@ settings). `Policy` projection is the single mode marvel built first
 - **redact-and-mint**: hide the secret, present a working tool (the credential
   case).
 
-Curtain is the kernel enforcer of these; the projection layer describes them.
+The sandbox tool is the kernel enforcer of these; the projection layer describes them.
 Settings management and sandboxing are the same primitive in different modes.
 
 ### The write path (an edge worth stating)
@@ -310,7 +310,7 @@ runtime-request.
 - **callbook** (task-graph provider standup and identity enrollment): stands up
   the Dolt service shape and enrolls humans and agents under durable names. Feeds
   the trust plane.
-- **curtain** (sandbox profile install): installs the kernel-enforced containment
+- **the sandbox tool** (sandbox profile install): installs the kernel-enforced containment
   profile a workspace's agents run under.
 
 Conflating the two lifecycles is a category error: do not build a runtime API for
@@ -383,7 +383,7 @@ indicative:
   a name registry.
 - `capability`: the class interfaces and provider drivers.
 - `binding`: the resolution (route, trust exchange, projection shape, policy).
-- `projection`: the one-hat mechanism and its modes; hands curtain the
+- `projection`: the one-hat mechanism and its modes; hands the sandbox tool the
   kernel-enforcement spec.
 - `service`: the registry and the request dropbox (the seam itself).
 - the **backplane**: register, route, supervise, meter, extracted from the

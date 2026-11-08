@@ -51,7 +51,7 @@ The correction count is `correct` plus `reject` plus `add`. It is computed after
 | C-033 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
 | C-034 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
 | C-035 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
-| C-036 | OBSERVED | accept-reworded | Operator: "C-036 but we've shifted from BYOA to BYOH (harness) although BYOA is still valid (bring your own harness, bring your own agent definitions or get them with sideshow or wardrobe, or bmad or vsdd-factory or gastown (future))". Claim text now frames BYOH and keeps BYOA valid. |
+| C-036 | OBSERVED | accept-reworded | Operator: "C-036 but we've shifted from BYOA to BYOH (harness) although BYOA is still valid (bring your own harness, bring your own agent definitions or get them with sideshow or role library, or bmad or vsdd-factory or gastown (future))". Claim text now frames BYOH and keeps BYOA valid. |
 | C-037 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
 | C-038 | OBSERVED | accept | Operator: "All the reset are good, reword and accept those above". |
 | C-039 | RULED | add | Operator: "1 add them 2 b" (add them). Claim added to `brs.md` from the operator's answer to Q-001. |

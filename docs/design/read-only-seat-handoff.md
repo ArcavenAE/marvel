@@ -156,7 +156,7 @@ refuses otherwise, with an event naming the reason:
      The gate makes marvel's own write land only in the directory it
      recorded, and a forced refusal shows up as a named event rather than a
      misplaced write. Isolating seats from each other is a sandbox question
-     (curtain), not this design.
+     (the sandbox tool), not this design.
    - **One portability note.** `EvalSymlinks` refuses a handoff directory
      under `$TMPDIR`, `/tmp` or a test's `t.TempDir()` on macOS, where `/var`
      and `/tmp` are links into `/private`. No live template is affected,
@@ -399,7 +399,7 @@ days".
     handoff cannot expire before its successor could read it.
 - **A conflict, stated rather than resolved here.** The succession text the
   seats carry says "Never expire the handoff bytes". The operator's ruling
-  supersedes it for the file marvel writes. The seats' text, a wardrobe and
+  supersedes it for the file marvel writes. The seats' text, a role library and
   director contract and not marvel's to edit, still says otherwise until its
   owners change it. A reader of both should take the ruling as current for
   marvel's copy.
@@ -432,7 +432,7 @@ operator.
   the host's disk can read any handoff file, whatever its team. Peer
   credentials would not help, since they also report that one uid. This is
   the same residual as in section 2: seat-to-seat isolation belongs to a
-  sandbox (curtain), not to marvel.
+  sandbox (the sandbox tool), not to marvel.
 
 ### 7.3 Scope: max-age rotations first (ruled)
 

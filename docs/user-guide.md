@@ -135,7 +135,7 @@ model entirely rather than choosing a mode within it. It is orthogonal to
 to keep the harness's permission machinery engaged (still auditable, still
 hookable) while auto-allowing within it; pick `dangerous_permissions: true`
 for autonomous fleet agents where no approver exists and enforcement is
-delegated to a sandbox (curtain).
+delegated to a sandbox (the sandbox tool).
 
 **When to use:** Multi-agent teams where different roles need different
 trust levels. The supervisor can execute freely; workers ask before acting.

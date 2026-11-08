@@ -189,7 +189,7 @@ which is where the fleet already is.
 
 ### What this probe does not claim
 
-- It does not test slotefs or the curtain mount; those are separate work.
+- It does not test slotefs or the sandbox tool mount; those are separate work.
 - It does not test the seat's harness rules (permission prompts, sandbox
   settings); only filesystem behavior.
 - A result on one Linux distribution is reported for that distribution and

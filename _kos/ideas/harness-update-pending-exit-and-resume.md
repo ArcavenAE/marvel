@@ -18,7 +18,7 @@ discarding its work, and a shift change is kept for the case that needs it.
 
 ## The operator's words
 
-> "kos idea marvel stagekeeper some health conditions for harnesses include a pending update of that harness session and if the context is good, may not warrent/prefer a shiftchange. instead, if marvel/stagekeeper detects this condition, it may be possible to exit the harness with marvel-native tmux exit and then resume the session, allowing faster recovery from the health conditions of harness pending update (which should itself be a thing, different health conditions)"
+> "kos idea marvel [pattern store] some health conditions for harnesses include a pending update of that harness session and if the context is good, may not warrent/prefer a shiftchange. instead, if marvel/[pattern store] detects this condition, it may be possible to exit the harness with marvel-native tmux exit and then resume the session, allowing faster recovery from the health conditions of harness pending update (which should itself be a thing, different health conditions)"
 
 ## Director's gloss (director's reading, not the operator's words)
 
@@ -31,10 +31,10 @@ discarding its work, and a shift change is kept for the case that needs it.
 
 Filed in marvel's graph by the subject test. The condition is a seat health
 state and the recovery is a marvel action on a seat's tmux pane; without
-marvel there is nothing to detect or recover. stagekeeper is named by the
+marvel there is nothing to detect or recover. The pattern store is named by the
 operator as a detector, so it is an object here: the idea is that marvel or
-stagekeeper observes the condition, and marvel owns the action. Whether the
-detector lives in marvel or in stagekeeper is an open question below, not a
+the pattern store observes the condition, and marvel owns the action. Whether the
+detector lives in marvel or in the pattern store is an open question below, not a
 decision.
 
 ## Sketch, with the unverified parts marked
@@ -64,7 +64,7 @@ each harness and is the first thing to measure.
   key must not become a way to answer an update menu by accident.
 - How is "pending update" detected without typing into the pane? The pane
   reader that places a harness screen (`internal/panestate`, which today
-  recognizes a logged-out screen) is one candidate; stagekeeper's own
+  recognizes a logged-out screen) is one candidate; the pattern store's own
   patterns are another.
 - What counts as "the context is good"? The context-pressure idea below says
   pressure is an operating point and not a fill level, so the threshold is not

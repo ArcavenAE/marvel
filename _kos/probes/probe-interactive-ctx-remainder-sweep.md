@@ -1136,9 +1136,9 @@ So marvel does not assign identity here; it assigns the CONTAINER and codex
 reports the identity into it. Functionally equivalent for binding, and
 strictly weaker only if a stable id across restarts were needed.
 
-Two operational caveats, both measured. Hooks need persisted trust or
-`--dangerously-bypass-hook-trust` per invocation, so pre-seeding trust is on
-the critical path and marvel cannot ship a design requiring the flag. And
+Two operational caveats, both measured. Hooks need persisted trust,
+so pre-seeding trust is on the critical path and marvel cannot ship a
+design requiring a hook-review bypass. And
 `CODEX_*` variables are NOT propagated to hook subprocesses (a hook running
 `env | grep ^CODEX_` produced an empty file), so agent identity has to ride
 the hook command line.

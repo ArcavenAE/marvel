@@ -2,8 +2,8 @@
 
 Design for review. No code lands until this doc is reviewed.
 
-**Status: ratified 2026-09-30** (operator via director 01M3RBGXEW, relayed by
-arcaven-supervisor-g5-0 01M3RBMMW2), verbatim "defaults":
+**Status: ratified 2026-09-30** (operator via director, relayed by
+the arcaven supervisor), verbatim "defaults":
 
 - Q1, build it: yes, per-role broker users in the marvel#312 shape.
 - Section 4: Option A. Workers hold no global grant.
@@ -13,9 +13,9 @@ arcaven-supervisor-g5-0 01M3RBMMW2), verbatim "defaults":
 - The kinu hub probe stays unrun until the operator says yes or a scratch
   hub exists (section 10).
 
-- Commission: arcaven-supervisor-g5-0, msg 01M3N6WSZC (2026-09-28T23:51Z).
+- Commission: the arcaven supervisor (2026-09-28T23:51Z).
 - Author: arcaven-architect-g5-0 (successor seat, started 2026-09-28T23:58Z).
-- Ruling relay: arcaven-supervisor-g5-0, msg 01M3RBMMW2 (2026-09-30T05:12Z).
+- Ruling relay: the arcaven supervisor (2026-09-30T05:12Z).
 
 ## 1. The problem, verified
 

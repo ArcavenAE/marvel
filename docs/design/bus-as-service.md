@@ -6,11 +6,11 @@
 - **Author seat:** architect (fleet, workspace ops2), subagent, on the
   operator's workstream C relayed by the director.
 - **Evidence:** party J report and grounding under
-  `aae-orc/_bmad-output/party-mode/bus-as-service-2026-09-16/` (delta table,
+  `<orchestrator>/_bmad-output/party-mode/bus-as-service-2026-09-16/` (delta table,
   ranked shortfalls, ordered changes, three transcripts with inline checks).
 - **Scope:** the NATS broker marvel supervises or consumes, described in the
   vocabulary of `docs/design/service-provider/02-architecture.md`. Not
-  addressing (`aae-orc/docs/design/bus-address-hierarchy.md`, adopted), not
+  addressing (`<orchestrator>/docs/design/bus-address-hierarchy.md`, adopted), not
   marvel's in-process bus (marvel-builder's thread; the `internal` mode
   below is a reserved word for it), not hub operations (`aae-orc-qu88n`,
   `aae-orc-4vx98` stay director's).
@@ -111,7 +111,7 @@ mints the passwords, can rewrite and reload them, and no third party's
 console is involved. An `adopted` or `external` record carries no
 marvel-minted secret. The one credential marvel holds for an external broker
 is the hub leaf seed, and that is already ruled: the hub operator mints,
-marvel distributes (`aae-orc/docs/design/fleet-ca-and-bus-auth.md` section
+marvel distributes (`<orchestrator>/docs/design/fleet-ca-and-bus-auth.md` section
 4). Handing marvel a credential for an adopted broker it did not configure
 would be custody, and the record has no field for it on purpose. Moving a
 `managed` broker out of marvel's supervision is the ADR-009 tripwire, and
@@ -248,7 +248,7 @@ Declared {
 - The health check iterates `Objects` of scope `service`.
 
 The existing three objects keep their exact parameters (`AGENT_INBOX`: two
-inbox subjects, file, limits, 7 days (24h until operator ruling I-65,
+inbox subjects, file, limits, 7 days (24h until the operator's ruling of
 2026-10-30), 64 KiB, 2m dedupe; `AGENT_AUDIT`: 720h;
 `AGENT_STATE`: 90s TTL). `EVENTS_GH` and `EVENTS_MARVEL` join under
 `aae-orc-aubd6` with the event-plane parameters (limits, 24h, dedupe equal to
@@ -278,7 +278,7 @@ carried in the code, so a reader of `provision.go` a year from now knows why
   `marvel bus status` rather than discovered at an upgrade.
 - **Upgrade:** the vision says rolling a broker upgrade is the Shift
   primitive applied to a part. Marvel's staged-activation model
-  (`aae-orc/_kos/ideas/marvel-staged-activation-upgrades.md`) is the frame:
+  (`<orchestrator>/_kos/ideas/marvel-staged-activation-upgrades.md`) is the frame:
   mise as the image plane that pre-stages a version, `marvel update` as the
   cluster plane that activates it. For the broker the activation primitive
   is what the supervisor already half-has: adopt across reexec, `--keep-bus`
@@ -411,7 +411,7 @@ user; the local tier has none. So the row exists and the user does not, and
 R-95 row.** Not the team credential, for three reasons. The team credential
 is confined to `agent.<ws>.<team>.>`, and the seat's job is the one
 cross-workspace publish the asymmetry permits: the fleet's sessions live in
-workspace `ops2` while the seat's home is `aae-orc/ops`, so a team
+workspace `ops2` while the seat's home is `<orchestrator>/ops`, so a team
 credential cannot do the seat's job at all. The team credential rides into
 every session of that team, so giving it to the human erases the line
 between the human and the agents on the audit trail, and R-82 says the

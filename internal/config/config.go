@@ -162,7 +162,7 @@ func DaemonHomeWarning(addr, daemonHome, clientHome string) string {
 //
 // A name lets a dial site end its own outage when the host moves: the
 // resolver hands back the new address. A literal keeps dialing the old one
-// and fails until a person edits the config (aae-orc#576, the network-move
+// and fails until a person edits the config (the network-move
 // recovery design). So the docs say to use a name, and this says so at the
 // moment a literal is written.
 //

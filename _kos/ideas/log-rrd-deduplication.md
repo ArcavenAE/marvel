@@ -23,7 +23,7 @@ lines) is vulnerable to noisy repetition in at least three observed
 cases:
 
 1. **SSH connect polls** — Skippy's monitor loop hits the daemon at
-   0.5 Hz. `ssh: client connected: michael.pursifull (SHA256:…)` dominates
+   0.5 Hz. `ssh: client connected: <user> (SHA256:…)` dominates
    the ring. 10k lines cover ~5.5 hours before any interesting event
    scrolls off. Filed as `aae-orc-1d2`.
 2. **CrashLoopBackOff chatter** — before this PR (#21), a failing
@@ -66,7 +66,7 @@ win over plain server logging:
 1. **Agents can fail identically forever.** A shell with a typo in
    `~/.zshrc` crashes the same way, `N` restarts in a row. A claude
    subprocess with a broken permission-mode config fails the same
-   way. A curtain sandbox that denies an access a tool needs fails
+   way. A kernel sandbox that denies an access a tool needs fails
    the same way. Dedup captures "305 identical failures in 8 minutes"
    as one informative line and preserves the original error verbatim
    without repeating it.

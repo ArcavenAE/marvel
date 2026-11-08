@@ -51,7 +51,7 @@ reasoned from a write test on that directory, not measured as an attack.
 |---|---|---|
 | (i) | Seats read the view only by absolute path through the symlink | A rule nothing enforces; a seat's Bash keeps its cwd by default |
 | (ii) | Each refresh tells the seats holding a cwd in the view to re-enter it, and the seat checks `VIEW_SHA` against the path's | Needs marvel to know which seats hold a cwd there and a way to tell them; the seat must act on it |
-| (iii) | Mechanism 3, a read-only mount where content changes under a held cwd | The strongest option and the furthest away (curtain or slotefs) |
+| (iii) | Mechanism 3, a read-only mount where content changes under a held cwd | The strongest option and the furthest away (the sandbox tool or slotefs) |
 
 **Recommended: (ii).** It turns a silent stale read into a check the seat
 can make (`cat VIEW_SHA` against the path's), and it needs nothing that does

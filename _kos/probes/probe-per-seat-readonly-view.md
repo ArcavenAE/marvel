@@ -24,7 +24,7 @@ reads that landed on the wrong branch this way, and the only guard today is
 discipline (check HEAD in the same command). If marvel could hand each seat
 a view that nobody else can move and the seat's own tools cannot edit, the
 reading half of that defect goes away without waiting for slotefs or the
-curtain mount.
+the sandbox tool mount.
 
 This probe tests the cheapest mechanism in the idea file, before anyone
 builds the spawn step or argues for the expensive one.
@@ -134,7 +134,7 @@ to a tree without `.git`:
 The seat runs as the same user that owns the view, so `chmod u+w` by the
 seat undoes the guard. This probe measures protection against accident, not
 against a seat that sets out to write. The idea's question C (is that
-enough until curtain) is answered by the operator, using this result; the
+enough until the sandbox tool) is answered by the operator, using this result; the
 probe does not answer it.
 
 ### The rig

@@ -316,7 +316,7 @@ func TestManagerSeatPassFileAndRecovery(t *testing.T) {
 	}
 }
 
-// AGENT_INBOX keeps a message 7 days (operator ruling I-65, 2026-10-30). A
+// AGENT_INBOX keeps a message 7 days (operator ruling of 2026-10-30). A
 // 24h value let an idle seat's mail expire unread, so the number is pinned by
 // itself: a change must name the ruling that moves it.
 func TestInboxRetentionIsSevenDays(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 )
 
-// aae-orc-mdr0n, spec S1 to S13 (operator ruling I-35): marvel stamps the
+// aae-orc-mdr0n, spec S1 to S13 (operator ruling of 2026-11-01): marvel stamps the
 // seat's identity into OTEL_RESOURCE_ATTRIBUTES at launch for the harnesses
 // whose telemetry reads it, so a harness's own telemetry says which seat it
 // came from.

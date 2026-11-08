@@ -760,8 +760,8 @@ type Role struct {
 	// append --dangerously-skip-permissions (or equivalent) to the spawned
 	// agent. Intended for autonomous marvel-managed teams where no
 	// interactive approver exists. Per orc finding-023, the permission UI
-	// is a cooperative contract; real enforcement belongs to curtain.
-	// Combined with a curtain profile, this is the default sensible shape
+	// is a cooperative contract; real enforcement belongs to the sandbox tool.
+	// Combined with a sandbox-tool profile, this is the default sensible shape
 	// for autonomous fleet agents.
 	//
 	// DangerousPermissions is orthogonal to Permissions and combines with
@@ -795,7 +795,7 @@ type Role struct {
 	// the contract half of finding-024: a Claude Code settings fragment
 	// marvel writes to a per-session file the harness reads. Empty means
 	// no projection. Resolved within the role's workspace. The sandbox
-	// half (a curtain profile) stays parked with aae-orc-10x.
+	// half (a sandbox-tool profile) stays parked with aae-orc-10x.
 	Policy      string       `toml:"policy,omitempty"`
 	HealthCheck *HealthCheck `toml:"-"`
 	// Shift declares when marvel automatically shifts this role. Nil (unset)
@@ -1270,7 +1270,7 @@ type Host struct {
 // It is the contract half only: Settings is written verbatim as JSON to
 // the file the harness reads (permissions.allow/deny, hooks, and the rest
 // of the Claude Code settings surface). Marvel owns the truth and does not
-// interpret the contents. The sandbox half (a curtain profile) is a
+// interpret the contents. The sandbox half (a sandbox-tool profile) is a
 // separate resource parked with aae-orc-10x; tamper-proofing the projected
 // file is aae-orc-wbqi. Scoped to a workspace and referenced by a Role's
 // Policy field.

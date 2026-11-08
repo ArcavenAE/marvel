@@ -15,7 +15,7 @@
   mechanism is marvel's.
 - **Reconciles with, does not replace:** [[shift-change-succession-protocol]]
   (the handoff slot, marker gate, `MARVEL_HANDOFF_IN`; this study adds seat,
-  lease, and election on top of it) and wardrobe
+  lease, and election on top of it) and role library
   `contents/fragments/succession.md` (the authored content contract, unchanged
   here). Also [[identity-at-launch-and-managed-nats]] (identity projected at
   spawn), director design briefs `director-seat-lease.md` (SEAT-A..G) and
@@ -295,7 +295,7 @@ acting tenure is the exception, opt-in per manifest.
 | 4b. Opt-in: if the manifest declares the order AND enables acting tenure AND the lease store offers the four primitives, an acting tenure starts with a narrowed grant | machine, executing frozen operator intent |
 | 5. Acquire the lease create-only; a new, higher fencing token | machine |
 | 6. Announce the holder and generation change to workers and director as a delivered event, not a discovered one (R-144) | machine |
-| 7. Successor first acts per wardrobe `succession.md`, including the singleton query and hold-and-escalate on a live rival | agent |
+| 7. Successor first acts per role library `succession.md`, including the singleton query and hold-and-escalate on a live rival | agent |
 | 8. Confirm reachable (R-143: first turn, seat file and handoff read) | agent, observed by director |
 | 9. Ratify acting to confirmed, or override, or revoke | **human** |
 | 10. Close the succession record | **human** |
@@ -397,7 +397,7 @@ is a party condition.
   R-144); deferred ack; custody claims and their states; token checks in the
   shim; named refusal for permission violations; the proposal card; the
   generation-change event.
-- **wardrobe:** unchanged; `succession.md` already carries the successor's
+- **role library:** unchanged; `succession.md` already carries the successor's
   first acts, including the singleton query this design relies on.
 - **human:** manifest fields (order, bounds, delegable set, acting grant
   exclusions, acting opt-in); every proposal-path decision; ratifying or

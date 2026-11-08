@@ -93,7 +93,7 @@ prompt.
 
 The reviewer's output reaching teammates depends on the unbuilt per-team bus.
 The reviewer as a merge-gate is deliberately not built: it stays advisory (SOUL
-section 8; the wardrobe `reviewer` role draft carries the authority model). A
+section 8; the role library `reviewer` role draft carries the authority model). A
 write-capable reviewer (one that lands its review as a file or a patch) needs
 codex's sandbox widened by the operator. None of these block the standing-role
 result: a codex adversarial reviewer runs as a role in a mixed-harness marvel
@@ -104,4 +104,4 @@ Related: finding-001 (heterogeneous team model, claude-only), finding-043
 contrast), finding-015 + ADR-010 (headless completion semantics),
 `elem-runtime-adapter-framework` (the adapters composed here), and orc
 `question-atelier-team-lineup` (the reviewer-seat gap this unblocks; the
-wardrobe `reviewer` role is the seat).
+role library `reviewer` role is the seat).

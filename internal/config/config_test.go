@@ -230,7 +230,7 @@ func TestLoadReportsEveryBadNameAndStillReturnsConfig(t *testing.T) {
 
 func TestValidateBus(t *testing.T) {
 	t.Parallel()
-	hub := &Hub{URL: "nats-leaf://192.168.100.110:7442"}
+	hub := &Hub{URL: "nats-leaf://192.0.2.110:7442"}
 	cases := []struct {
 		name string
 		bus  *Bus
@@ -316,7 +316,7 @@ func TestLoadCarriesBusSectionAndReportsBadBus(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, ".marvel"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := "clusters:\n  - name: kinu\n    bus:\n      managed: true\n      listen: 127.0.0.1:4222\n      hub:\n        url: nats-leaf://192.168.100.110:7442\n  - name: broken\n    bus:\n      managed: true\ncurrent_cluster: kinu\n"
+	body := "clusters:\n  - name: kinu\n    bus:\n      managed: true\n      listen: 127.0.0.1:4222\n      hub:\n        url: nats-leaf://192.0.2.110:7442\n  - name: broken\n    bus:\n      managed: true\ncurrent_cluster: kinu\n"
 	if err := os.WriteFile(filepath.Join(dir, ".marvel", "config.yaml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestLoadCarriesBusSectionAndReportsBadBus(t *testing.T) {
 		t.Fatalf("Load() did not return the parsed config beside the error: %+v", cfg)
 	}
 	b := cfg.Clusters[0].Bus
-	if b == nil || !b.Managed || b.Listen != "127.0.0.1:4222" || b.Hub == nil || b.Hub.URL != "nats-leaf://192.168.100.110:7442" {
+	if b == nil || !b.Managed || b.Listen != "127.0.0.1:4222" || b.Hub == nil || b.Hub.URL != "nats-leaf://192.0.2.110:7442" {
 		t.Errorf("bus section not parsed intact: %+v", b)
 	}
 }

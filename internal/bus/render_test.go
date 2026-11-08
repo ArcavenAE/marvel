@@ -67,7 +67,7 @@ func TestRenderConfLeafBlockOnlyWithHubAndSeed(t *testing.T) {
 		t.Error("local-only cluster rendered a leafnodes block")
 	}
 
-	s.HubURL = "nats-leaf://192.168.100.110:7442"
+	s.HubURL = "nats-leaf://192.0.2.110:7442"
 	conf, _ = RenderConf(s)
 	if strings.Contains(conf, "leafnodes") {
 		t.Error("hub with no seed rendered a leafnodes block; it must start local-only and say so")
@@ -75,7 +75,7 @@ func TestRenderConfLeafBlockOnlyWithHubAndSeed(t *testing.T) {
 
 	s.LeafSeed = true
 	conf, _ = RenderConf(s)
-	if !strings.Contains(conf, `urls: ["nats-leaf://192.168.100.110:7442"], nkey: $DIRECTOR_LEAF_NKEY }`) {
+	if !strings.Contains(conf, `urls: ["nats-leaf://192.0.2.110:7442"], nkey: $DIRECTOR_LEAF_NKEY }`) {
 		t.Errorf("leaf remote not rendered with an unquoted whole-value nkey variable:\n%s", conf)
 	}
 	if strings.Contains(conf, `"$DIRECTOR_LEAF_NKEY"`) {
@@ -391,7 +391,7 @@ func TestRenderedConfPassesNatsServerCheck(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nats")
 	s := baseSpec()
 	s.StoreDir = dir
-	s.HubURL = "nats-leaf://192.168.100.110:7442"
+	s.HubURL = "nats-leaf://192.0.2.110:7442"
 	s.LeafSeed = true
 	conf, err := RenderConf(s)
 	if err != nil {

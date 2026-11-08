@@ -141,7 +141,7 @@ const (
 	KindWatchdogUncovered Kind = "watchdog.uncovered"
 	// KindDaemonEnvScrubbed records the parent Claude Code session variables
 	// the daemon removed from its own environment at start, names only, so
-	// nothing it execs inherits them (aae-orc#418).
+	// nothing it execs inherits them (marvel#381).
 	KindDaemonEnvScrubbed Kind = "daemon.env-scrubbed"
 	// KindDaemonReexec records a reexec into a binary the client named
 	// (exec_path): the old and new path and version and who asked. The ring

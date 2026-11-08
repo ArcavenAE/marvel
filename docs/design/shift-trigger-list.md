@@ -137,7 +137,7 @@ already budgets the handoff and the shift (see D5, as amended).
 
 The written succession contract rules out an automatic shift without a
 handoff:
-- wardrobe `contents/roles/supervisor.md`, CANNOT: "shift without a handoff
+- role library `contents/roles/supervisor.md`, CANNOT: "shift without a handoff
   naming what is dropped (none)";
 - `contents/ask-classes.yaml`: `shift-call` is "a shift to be called for a
   worker past its threshold, on a handoff that already exists";

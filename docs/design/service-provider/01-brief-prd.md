@@ -140,7 +140,7 @@ architecture doc; this is the product view of what each capability is for.
   provider and enroll humans and agents under durable names. Should feed the
   trust plane. Should not be conflated with the runtime task-graph service that
   uses the provider.
-- **Sandbox profile (curtain)**: install the kernel-enforced containment a
+- **Sandbox profile (the sandbox tool)**: install the kernel-enforced containment a
   workspace runs under. Should be declared per role or workspace and enforced by
   the kernel. Should not put the policy language in the trusted path.
 

@@ -3,8 +3,8 @@
 Design for review. No code lands until this doc is reviewed.
 
 - Author: arcaven-architect-g5-0.
-- Commission: operator request via director, relayed by arcaven-supervisor-g5-0
-  (msg 01M3REAWWN, 2026-09-30): assess, then design, scheduled work in marvel.
+- Commission: operator request via director, relayed by the arcaven supervisor
+  (2026-09-30): assess, then design, scheduled work in marvel.
 - Answers, in part: `question-scheduled-cues` (marvel frontier).
 - Checked against marvel `origin/main` 3cb6101.
 
@@ -411,7 +411,7 @@ S-2 before S-3 is deliberate: the alarm is useful on its own and costs least.
 ## 11. Rulings (all made)
 
 All four rulings are made. The operator's words for the first three, via
-director and arcaven-supervisor (msg 01M3S7M3MP, 2026-09-30), verbatim: "(a)
+director and arcaven-supervisor (2026-09-30), verbatim: "(a)
 amend ADR-010 (b) option A (c) required with no default, include the DST issue
 in docs and trap/detect DST-based timezones in runtime and offer alternative
 fixed time but allow user to ack and use DST anyways".
@@ -426,7 +426,7 @@ fixed time but allow user to ack and use DST anyways".
   detection, a refusal that offers a fixed alternative, and `dst_ack = true`
   to keep a DST zone. Section 2a.
 - **A failed run: RULED 2026-09-30** (operator via director, relayed by
-  arcaven-supervisor-g5-0 msg 01M3RHVMT1), verbatim: "they should do any of
+  the arcaven supervisor), verbatim: "they should do any of
   those, a setting, but default retry is 0 so it just tries again next time
   unless other options are set". Recorded in section 2 and the schedule
   block:

@@ -89,7 +89,7 @@ func TestBusRegeneratesOnTeamApplyAndDelete(t *testing.T) {
 
 func TestBusLeafBlockFollowsTheSeedCredential(t *testing.T) {
 	d := newHandlerDaemon(t)
-	dir := attachTestBus(t, d, "nats-leaf://192.168.100.110:7442")
+	dir := attachTestBus(t, d, "nats-leaf://192.0.2.110:7442")
 	d.regenerateBus("start")
 	conf, _ := os.ReadFile(filepath.Join(dir, bus.ConfName))
 	if strings.Contains(string(conf), "leafnodes") {
