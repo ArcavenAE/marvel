@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -19,11 +20,39 @@ import (
 var workWords = []string{"Lease", "MarryStop", "MarryItem"}
 
 // workCommand is the command text marvel does not read: it has no work queue.
+// It is held as the program and its subcommand so a call that passes them as
+// separate arguments is caught as well as the one-string form.
+var workCommandWords = [2]string{"bd", "ready"}
+
 const workCommand = "bd ready"
 
+// splitWorkCommand reports whether the expressions hold the program and the
+// subcommand as two string literals in a row, as in exec.Command("bd", "ready")
+// or []string{"bd", "ready"}.
+func splitWorkCommand(exprs []ast.Expr) (token.Pos, bool) {
+	lit := func(e ast.Expr) (string, bool) {
+		b, ok := e.(*ast.BasicLit)
+		if !ok || b.Kind != token.STRING {
+			return "", false
+		}
+		v, err := strconv.Unquote(b.Value)
+		return v, err == nil
+	}
+	for i := 0; i+1 < len(exprs); i++ {
+		a, aok := lit(exprs[i])
+		b, bok := lit(exprs[i+1])
+		if aok && bok && a == workCommandWords[0] && b == workCommandWords[1] {
+			return exprs[i].Pos(), true
+		}
+	}
+	return token.NoPos, false
+}
+
 // workVocabularyViolations lists, for the non-test Go files under root, each
-// declaration of a work word and each string literal that holds the work
-// command. Files ending in _test.go and any testdata directory are skipped.
+// declaration of a work word, each string literal that holds the work command
+// and each call or list that passes it as two arguments. Files ending in
+// _test.go, any testdata directory and directories that start with . or _ are
+// skipped.
 func workVocabularyViolations(root string) ([]string, error) {
 	var out []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -31,7 +60,8 @@ func workVocabularyViolations(root string) ([]string, error) {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == "testdata" {
+			name := d.Name()
+			if path != root && (name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -63,6 +93,14 @@ func workVocabularyViolations(root string) ([]string, error) {
 				if n.Recv == nil && slices.Contains(workWords, n.Name.Name) {
 					report(n.Pos(), "declares func "+n.Name.Name)
 				}
+			case *ast.CallExpr:
+				if pos, ok := splitWorkCommand(n.Args); ok {
+					report(pos, "reads "+workCommand+" as separate arguments")
+				}
+			case *ast.CompositeLit:
+				if pos, ok := splitWorkCommand(n.Elts); ok {
+					report(pos, "reads "+workCommand+" as separate arguments")
+				}
 			case *ast.BasicLit:
 				if n.Kind == token.STRING && strings.Contains(n.Value, workCommand) {
 					report(n.Pos(), "reads "+workCommand)
@@ -78,7 +116,7 @@ func workVocabularyViolations(root string) ([]string, error) {
 
 // workVocabularyRoot is the directory the guard walks: the module root, so the
 // commands under cmd/ are held to it as well as the packages under internal/.
-func workVocabularyRoot() string { return ".." }
+func workVocabularyRoot() string { return filepath.Join("..", "..") }
 
 // The guard walks the module root, not internal/ alone.
 func TestWorkVocabularyRootIsModuleRoot(t *testing.T) {
