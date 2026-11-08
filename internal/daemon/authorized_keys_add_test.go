@@ -214,3 +214,55 @@ func TestAddAuthorizedKeyBOM(t *testing.T) {
 		t.Fatalf("BOM input accepted: %+v", entries)
 	}
 }
+
+// A refused input creates nothing: not authorized_keys, and not the marvel home
+// either (marvel#1330).
+func TestAddAuthorizedKeyRefusalLeavesNoHome(t *testing.T) {
+	layout := addKeyEnv(t)
+	home := filepath.Dir(layout.AuthorizedKeys())
+	two := append(testPubKeyLine(t), testPubKeyLine(t)...)
+
+	if err := AddAuthorizedKey(two, "two", ScopeCredentialPush); err == nil {
+		t.Fatal("a two-key file was accepted")
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("a refused file created the marvel home %s (stat err %v)", home, err)
+	}
+}
+
+// An authorized_keys that cannot be read must fail the enroll, never skip the
+// duplicate check and append. The file is write-only here, so the read fails
+// while an append would succeed (marvel#1330).
+func TestAddAuthorizedKeyUnreadableFileFailsAndWritesNothing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a write-only file")
+	}
+	layout := addKeyEnv(t)
+	if err := layout.EnsureHome(); err != nil {
+		t.Fatal(err)
+	}
+	path := layout.AuthorizedKeys()
+	key := testPubKeyLine(t)
+	seed := append([]byte(`marvel-scope="admin" `), key...)
+	if err := os.WriteFile(path, seed, paths.ModeAuthorized); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o200); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, paths.ModeAuthorized) })
+
+	if err := AddAuthorizedKey(key, "again", ScopeCredentialPush); err == nil {
+		t.Fatal("an unreadable authorized_keys let the enroll proceed")
+	}
+	if err := os.Chmod(path, paths.ModeAuthorized); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(seed) {
+		t.Fatalf("authorized_keys changed:\nbefore %q\nafter  %q", seed, got)
+	}
+}
