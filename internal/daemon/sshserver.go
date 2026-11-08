@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"os"
@@ -251,6 +253,12 @@ func AddAuthorizedKey(pubKeyData []byte, comment string, scope Scope) error {
 // the parsed key; the input bytes are never copied. A refused input writes
 // nothing.
 func EnrollAuthorizedKey(pubKeyData []byte, comment string, scope Scope) (string, error) {
+	key, keyComment, err := parseEnrollmentKey(pubKeyData)
+	if err != nil {
+		return "", err
+	}
+	fp := ssh.FingerprintSHA256(key)
+
 	layout, err := paths.Default()
 	if err != nil {
 		return "", err
@@ -259,15 +267,12 @@ func EnrollAuthorizedKey(pubKeyData []byte, comment string, scope Scope) (string
 		return "", err
 	}
 
-	key, keyComment, err := parseEnrollmentKey(pubKeyData)
-	if err != nil {
-		return "", err
-	}
-	fp := ssh.FingerprintSHA256(key)
-
 	path := layout.AuthorizedKeys()
 
-	existing, _ := os.ReadFile(path)
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
 	if len(existing) > 0 {
 		rest := existing
 		for len(rest) > 0 {
