@@ -86,7 +86,7 @@ func (g *Goose) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 	// A headless role with no prompt gets the refusal stub, never ErrNoPrompt: a
 	// Prepare error is answered by the manager with the raw command, which would
 	// launch goose at the host's GOOSE_MODE with none of the seeded files. This
-	// guard stands on its own (ruling I-51:goose-empty-prompt-durable). Apply
+	// guard stands on its own (operator ruling on goose empty prompts). Apply
 	// refuses the same role earlier (api.ManifestRuntime, runtime.prompt).
 	if headless && ctx.Session.Runtime.Prompt == "" {
 		return gooseRefusalResult(ctx, env, stderrFile, gooseRefuseNoPrompt), nil

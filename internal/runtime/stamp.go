@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// The seat stamp (aae-orc-mdr0n, operator ruling I-35): a harness's own
+// The seat stamp (aae-orc-mdr0n, operator ruling of 2026-11-01): a harness's own
 // telemetry says which harness session it came from and nothing about which
 // seat, so marvel writes the seat's identity into OTEL_RESOURCE_ATTRIBUTES at
 // launch, where a harness that reads the variable picks it up. marvel sets no

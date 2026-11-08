@@ -4,7 +4,7 @@ Verified against real fixtures from codex-cli 0.146.0 on 2026-07-31
 (`testdata/hello.jsonl`, `testdata/tool_call.jsonl`, captured live via
 `codex exec --json --skip-git-repo-check -s read-only <prompt> </dev/null`).
 Compares what codex actually emits with the sketch in
-`aae-orc/docs/design/director-envelope-and-adapter-events.md` §3.3.
+`<orchestrator>/docs/design/director-envelope-and-adapter-events.md` §3.3.
 
 ## Verified mappings
 

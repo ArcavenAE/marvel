@@ -9,7 +9,7 @@ import (
 
 // TestInheritedSessionEnvKeepsBackendSelectors fails if the denylist ever
 // takes a backend selector or a config-shaped name. Stripping those would
-// silently unpin the backend the overlay chose (aae-orc#418).
+// silently unpin the backend the overlay chose (marvel#381).
 func TestInheritedSessionEnvKeepsBackendSelectors(t *testing.T) {
 	keep := []string{
 		"CLAUDE_EFFORT",
@@ -77,7 +77,7 @@ func TestUnsetInheritedSessionEnv(t *testing.T) {
 // credential, capability address and parent-session identity name observed
 // on a live daemon started from a Claude Code session (kinu, 2026-09-28,
 // names only). CLAUDE_CODE_BRIDGE_SESSION_ID was on that daemon and missing
-// from the list (aae-orc#418).
+// from the list (marvel#381).
 func TestInheritedSessionEnvCoversObservedDaemonIdentity(t *testing.T) {
 	for _, n := range []string{
 		"CLAUDE_CODE_MESSAGING_TOKEN",

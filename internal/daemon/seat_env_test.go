@@ -14,7 +14,7 @@ import (
 )
 
 // TestSeatUnderDirtyDaemonIsCleanAndHeartbeats is BA1's positive and negative
-// case at the daemon (aae-orc#418): a daemon started from a Claude Code
+// case at the daemon (marvel#381): a daemon started from a Claude Code
 // session, starting its own tmux server, spawns a seat that
 //   - holds none of the denylisted names (checked by name, never value),
 //   - keeps its CLAUDE_CODE_USE_* backend selector,

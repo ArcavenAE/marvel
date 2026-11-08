@@ -6,7 +6,7 @@ and from opencode 1.18.15 on 2026-08-08 (`testdata/caching_first_turn.jsonl`,
 `testdata/caching.jsonl`, turns 1 and 2 of one session), all captured live
 via `opencode run --format json -m <model> <prompt> </dev/null`.
 Compares what opencode actually emits with the sketch in
-`aae-orc/docs/design/director-envelope-and-adapter-events.md` §3.3.
+`<orchestrator>/docs/design/director-envelope-and-adapter-events.md` §3.3.
 
 Every event is a top-level frame `{type, timestamp, sessionID, part}` (the
 `error` frame carries `error` instead of `part`). `sessionID` is present on

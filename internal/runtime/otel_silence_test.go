@@ -11,7 +11,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 )
 
-// aae-orc-0uhdm, I-100 P1: marvel sends no telemetry unless a user configured
+// aae-orc-0uhdm, P1: marvel sends no telemetry unless a user configured
 // it. A seat marvel launches never carries an OTEL_EXPORTER_* variable that
 // marvel put there, for any harness, so no harness starts exporting because of
 // marvel. The three that read the stamped OTEL_RESOURCE_ATTRIBUTES (and goose,
@@ -179,7 +179,7 @@ func withPrefix(deps []string, prefix string) []string {
 // connection beyond the daemon socket and the bus, is not proven here (the dial
 // sites are spread over several packages and subprocesses, and Go has no
 // process-wide dial hook). When marvel gains an exporter behind
-// telemetry.otlp_endpoint (I-100 P3), this test changes on purpose.
+// telemetry.otlp_endpoint (P3), this test changes on purpose.
 func TestMarvelBinaryLinksNoOTLPExporter(t *testing.T) {
 	// The positive control: the simulator links the OpenTelemetry API, so an
 	// empty or failed listing cannot read as a pass.

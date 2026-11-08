@@ -10,7 +10,7 @@ import (
 )
 
 // Names a Claude Code session exports to its children that a seat must never
-// inherit (aae-orc#418). The test values are placeholders; assertions read
+// inherit (marvel#381). The test values are placeholders; assertions read
 // names only.
 var leakNames = []string{
 	"CLAUDE_CODE_MESSAGING_TOKEN",
