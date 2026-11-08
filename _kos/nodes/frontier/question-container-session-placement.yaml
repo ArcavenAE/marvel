@@ -36,7 +36,7 @@ content: |
     outlives any one container.
 
   The container is the commodity answer to the containment half of
-  that list while curtain (kernel sandbox) is design-only and
+  that list while the sandbox tool (kernel sandbox) is design-only and
   aae-orc-10x waits on it. This question asks whether marvel can host
   one without losing its supervision surface, and where the container
   sits in the ratified kxce substrate (tmux is the terminal and
@@ -206,8 +206,8 @@ edges:
     type: implements
     note: "credential custody across the container boundary is the SOUL section 3 test; the harness auth stays the operator's"
 notes: |
-  Related bd (read, not extended): aae-orc-10x (marvel + curtain,
-  sandbox by default; waits on a curtain MVP), aae-orc-ww33y (ADR-009
+  Related bd (read, not extended): aae-orc-10x (marvel + the sandbox tool,
+  sandbox by default; waits on a sandbox-tool MVP), aae-orc-ww33y (ADR-009
   same-uid residual; a container is one candidate vehicle, check 10x
   first), aae-orc-t77rr, aae-orc-iejcx, aae-orc-4unyk (director bus
   defects a per-run container multiplies).

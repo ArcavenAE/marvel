@@ -255,7 +255,7 @@ content: |
   (marvel.workspace, .team, .role and .session always; .seat and .cluster when
   they exist; the sha256 of the system prompt and of the first prompt when
   marvel passed them), so a run record can attribute a session to a seat
-  without scraping (aae-orc-mdr0n, operator ruling I-35). Its measurement
+  without scraping (aae-orc-mdr0n, operator ruling, 2026-11-01). Its measurement
   corrects finding-037 for one version: on codex-cli 0.160.1 the variable is
   honored and marvel.role and marvel.session appear on every exported record,
   where finding-037 found it ignored on 0.153.4. So "codex ignores OTEL

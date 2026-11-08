@@ -14,7 +14,7 @@ content: |
   | (none) | Role | One kind of agent within a team |
   | Service | Endpoint | Stable name for an agent capability |
   | CronJob | Schedule | Timed agent tasks |
-  | ConfigMap | Pack | Content packs (spectacle, bmad) mounted into sessions |
+  | ConfigMap | Pack | Content packs (spec templates, bmad) mounted into sessions |
   | Secret | Vault | Auth delegation references |
   | PVC | Volume | Workspace storage |
   | Probe | Healthcheck / Readycheck | Liveness / readiness |

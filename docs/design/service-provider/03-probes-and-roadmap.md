@@ -39,7 +39,7 @@ different levels of adaptation. A single measurement fabric may be the wrong
 unification. Probe: sketch the emit contract (OTEL) and the consumer needs
 (admission throttling, caretaker watch, critic scoring) and see whether one
 pipeline or several fall out. Relates to the vision's measurement gap and to
-usher's telemetry vision.
+the onboarding tool's telemetry vision.
 
 ### Q3. The reference work-unit (the "official kilogram")
 

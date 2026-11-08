@@ -10,7 +10,7 @@ content: |
   subject. An orc copy under the same id exists as a mis-file from the
   session and is marked relocation-pending there (see finding-131 id
   collision, finding-132 move-with-forwarding, finding-133 cross-graph
-  awareness in aae-orc/_kos; the orc copy is retained as a pointer until the
+  awareness in <orchestrator>/_kos; the orc copy is retained as a pointer until the
   move primitive exists).
 
   THE QUESTION. How should marvel be structured so it can extend services
@@ -71,7 +71,7 @@ content: |
     reconciler invalidation), NATS (message-bus).
   - Provisioning capabilities (shape the workspace before the agent):
     sideshow (behavior packs), callbook (provider standup and identity
-    enrollment), curtain (sandbox profile). Conflating the two lifecycles is
+    enrollment), the sandbox tool (sandbox profile). Conflating the two lifecycles is
     a category error.
 
   Credential boundary: marvel is not the long-term secret store. It brokers

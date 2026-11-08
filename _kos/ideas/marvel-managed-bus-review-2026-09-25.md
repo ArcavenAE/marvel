@@ -44,15 +44,15 @@ The operator's framing departs from what exists in three places:
    that another broker could fill. Section 4 says that seam should be a
    document now, not code.
 
-Managed mode has a live user: mokuzai (192.168.100.196, the `skippy`
+Managed mode has a live user: mokuzai (the `skippy`
 cluster). The reviewer's `marvel bus status` there reports managed, ready,
 leaf up, provisioned and authorized, and the hub's `/leafz` on kinu shows a
-leaf from 192.168.100.196 in account FLEET. The known live defect on that path
+leaf from that host in account FLEET. The known live defect on that path
 is marvel#339 (a reexec drops the leaf).
 
 kinu is the other shape. Its `~/.marvel/config.yaml` has no `bus:` or
-`services:` entry, and its phase-0 broker (127.0.0.1:4222, no auth, no domain)
-and the global hub (4242/7442/8242) are both started by hand. Every
+`services:` entry, and its phase-0 broker (loopback only, phase-0 configuration)
+and the global hub are both started by hand. Every
 observation below names its host; nothing here rests on managed mode being
 untried.
 

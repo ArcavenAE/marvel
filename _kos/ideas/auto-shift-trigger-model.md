@@ -266,7 +266,7 @@ identity doc), and the signed-principal verdict envelope (director R-01/R-05).
 
 Flat tasks with depends-on edges, no invented epic; they relate to the M4
 umbrella `aae-orc-hpeu` (operator-owned) and to `aae-orc-i8ern`. Labels
-`aae-orc`, `marvel` (plus `director` or `wardrobe` where noted), `source:session`.
+`aae-orc`, `marvel` (plus `director` or `role library` where noted), `source:session`.
 
 1. marvel: shift-policy resolution ladder across workspace/team/role with a
    per-role override and an explicit `enabled` field (A, defect 3).
@@ -293,7 +293,7 @@ umbrella `aae-orc-hpeu` (operator-owned) and to `aae-orc-i8ern`. Labels
 11. director + marvel: inbound peer/supervisor verdict channel carrying a signed
     principal, consumed by marvel as an emergency-shift input (F.2, defect 7).
     [depends 10; gated on the director identity plane, relates finding-003]
-12. wardrobe + marvel: handoff content marks the runaway-triggering prompt
+12. role library + marvel: handoff content marks the runaway-triggering prompt
     poisoned so the successor does not replay it (F, defect 7 recovery-guard).
     [relates aae-orc-8fxj0, aae-orc-at7jm in the #295 set]
 13. test: a mixed-model team (a 1M-window model, a 200k-window model, and a

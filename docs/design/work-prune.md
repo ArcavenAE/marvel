@@ -1,8 +1,8 @@
 # Opt-in prune for `marvel work`, with a handoff before every delete
 
 - **Status:** design for review, 2026-10-27. No code lands until this is
-  reviewed. Commissioned by the operator (ruling mw1027-1, "let's design and
-  build 3"), relayed by the arcaven supervisor as ask ws:marvel-work-prune.
+  reviewed. Commissioned by the operator ("let's design and
+  build 3"), relayed by the arcaven supervisor.
 - **Author:** the arcaven team's architect seat.
 - **Checked at:** marvel `origin/main` 25bdccf. Every line cite below is at
   that commit.

@@ -1,7 +1,6 @@
 # finding-029 — mrvl:// remote first-use: fail-closed auth behind an all-interfaces bind, with a circular trust handshake
 
-Probe: recon task [C], commissioned in
-[ArcavenAE/aae-orc#243](https://github.com/ArcavenAE/aae-orc/issues/243).
+Probe: recon task [C], commissioned in a private tracker issue.
 Operator: Claude (Opus 5), no human at the keyboard.
 Date: 2026-08-25 (16:17–16:22Z). **Spend: $0.00.** Setup only — no agents, no
 team, no workload.
@@ -44,15 +43,15 @@ run measures.
 
 ```
 $ lsof -nP -iTCP -sTCP:LISTEN | grep marvel
-marvel  51098 skippy  8u  IPv6 0xc106...  TCP *:6785 (LISTEN)
+marvel  51098 <user>  8u  IPv6 0xc106...  TCP *:6785 (LISTEN)
 ```
 
 `*:6785`, not `127.0.0.1:6785`. Verified reachable from the host's own LAN
 address, which is what a third party on the same network would target:
 
 ```
-$ nc -z -w2 192.168.100.196 6785
-Connection to 192.168.100.196 port 6785 [tcp/dgpf-exchg] succeeded!
+$ nc -z -w2 <lan-ip> 6785
+Connection to <lan-ip> port 6785 [tcp/dgpf-exchg] succeeded!
 ```
 
 The flag's help text — *"start mrvl:// listener (use `--mrvl=:<port>` for a
@@ -99,8 +98,8 @@ convention exists in the wild (empty allowlist meaning "no restrictions").
 First contact from a client with no `known_hosts`:
 
 ```
-Error: ssh connect skippy@192.168.100.196:6785: ssh: handshake failed:
-  host key for 192.168.100.196:6785 is not trusted
+Error: ssh connect <user>@<lan-ip>:6785: ssh: handshake failed:
+  host key for <lan-ip>:6785 is not trusted
   (SHA256:jwCKLQhHORjuaqSK2+m8/gqxFkKpe4f4blyiLlUI2K8);
   run 'marvel keys trust <cluster>' to accept non-interactively
 ```
@@ -128,8 +127,8 @@ about a second identity, and the answer is that it is stopped at the door.
 ### Daemon-side logging is honest about rejections
 
 ```
-11:20:26 ssh handshake failed: [ssh: no auth passed yet, unknown key for user skippy: SHA256:kh+n...]
-11:20:35 ssh: client connected: skippy@192.168.100.196 (SHA256:kh+n...)
+11:20:26 ssh handshake failed: [ssh: no auth passed yet, unknown key for user <user>: SHA256:kh+n...]
+11:20:35 ssh: client connected: <user>@<lan-ip> (SHA256:kh+n...)
 ```
 
 Failed attempts are logged **with the offending fingerprint**, and successes
@@ -167,7 +166,7 @@ The way out is daemon-side authorization first, after which trust succeeds:
 $ marvel keys authorize ~/.marvel/keys/client_ed25519.pub
 authorized key added: SHA256:kh+n... 
 $ marvel keys trust lan
-Host key for mrvl://192.168.100.196:6785 trusted and recorded.
+Host key for mrvl://<lan-ip>:6785 trusted and recorded.
 $ marvel --cluster lan get sessions
 WORKSPACE  TEAM  ROLE  GEN  AGENT NAME  STATE  ...        # works
 ```
@@ -245,8 +244,8 @@ with OpenSSH and the exact `chmod` remedy in its error text.
 clusters:
     - name: local
     - name: lan
-      server: mrvl://192.168.100.196:6785
-      identity: /Users/skippy/.marvel/keys/client_ed25519
+      server: mrvl://<lan-ip>:6785
+      identity: ~/.marvel/keys/client_ed25519
 current_cluster: local
 ```
 

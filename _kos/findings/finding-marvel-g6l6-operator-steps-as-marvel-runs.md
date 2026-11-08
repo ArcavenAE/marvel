@@ -169,6 +169,6 @@ The ranking puts first what blocks the first case, then counts how many of the c
 
 1. **Who may answer an informational prompt?** A supervisor seat by inject, or no seat at all in the first case (read and report only)? The recommendation is no seat in the first case. This recommendation is valid until 2026-11-10, or until aae-orc-bs3x lands, whichever comes first. The research seat that wrote it re-checks it then.
 2. **Is `marvel attach` by the operator an acceptable approval path for a reserved prompt?** Or does every `--apply` stay a command the operator types in their own shell, as today?
-3. **The classifier case (01M5YSZDEZ) is with you.** Does the ruling there also cover a follower's inject into a running step? This study assumes it does.
+3. **The classifier case is with you.** Does the ruling there also cover a follower's inject into a running step? This study assumes it does.
 4. **Should a run start on a remote cluster over a remote admin key?** Or must each cluster start its own steps?
 5. **Where does the durable run record live?** In the seat holding area, under `~/.marvel` on the target host, or in a tracked repo?

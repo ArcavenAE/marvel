@@ -12,7 +12,7 @@ so every `marvel ... --cluster <name>` failed with a dial timeout that did not
 suggest a move. After a hand edit to the new address, host key trust refused,
 because trust is keyed by host and port: a moved cluster looks the same as a
 different machine. Filed as marvel#434 (cluster identity and key trust) and
-aae-orc#451 (who in the fleet records a cluster's address, and how a cluster
+a private tracker issue (who in the fleet records a cluster's address, and how a cluster
 dropping off reaches the operator).
 
 ## The idea
@@ -38,7 +38,7 @@ and pins self-signed certificates.
   as it does today.
 - **Scope.** mDNS is link-local. Remote clusters, and clusters behind another
   subnet, still need an address from somewhere else; the bus already sees a
-  cluster's leaf peer address (aae-orc#451). Is discovery a LAN convenience
+  cluster's leaf peer address (a private tracker issue covers this). Is discovery a LAN convenience
   layered on that, or is the bus-announced address enough on its own?
 - **Independence.** It must be optional (SOUL section 2): marvel with no
   mDNS responder, or on a network that blocks multicast, works exactly as it
@@ -51,6 +51,6 @@ and pins self-signed certificates.
 
 ## Not this idea
 
-Fleet-wide address tracking and cluster-gone alerts are aae-orc#451's
-subject. Binding trust to identity is marvel#434's. This idea is only local
+Fleet-wide address tracking and cluster-gone alerts are that private
+tracker issue's subject. Binding trust to identity is marvel#434's. This idea is only local
 discovery, and it depends on #434's identity binding to be safe.

@@ -24,7 +24,7 @@ A SOC-analyst evaluation team is about to run ephemeral analyst seats that
 set their software up from nothing each run, next to two long-term analyst
 seats. Their requirements (a clean room per run, three MCP tools and no
 more, no live credentials, reach limited to the vendor clones and the
-supervisor) are containment requirements. Curtain is design-only. A
+supervisor) are containment requirements. The sandbox tool is design-only. A
 container is the commodity containment available today, and nobody has
 checked whether marvel can supervise a session inside one.
 
@@ -205,5 +205,5 @@ per marvel code change the probe shows is needed, filed flat.
 - Building a container field on `Runtime`. Decided after the finding.
 - The fabric (addresses, retention, per-seat credentials, presence
   aggregation). That is director#77.
-- Curtain. aae-orc-10x stays the record for kernel sandboxing; the finding
+- The sandbox tool. aae-orc-10x stays the record for kernel sandboxing; the finding
   says whether a container changes its priority.

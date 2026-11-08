@@ -8,7 +8,7 @@ content: |
   interests for any of them (Q-003, partly answered). Rows STREQ-020 to
   STREQ-025 and section 2 cannot weight the groups until this is answered.
 provenance:
-  created_by: spectacle.reverse-prd
+  created_by: reverse-prd
   session: 9b948f8e-a64e-43f7-87d7-401e0816204a
   created_at: 2026-10-13T21:37:08Z
   derived_from:

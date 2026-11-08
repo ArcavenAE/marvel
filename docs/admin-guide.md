@@ -682,7 +682,7 @@ A list does not make the leaf re-resolve a name when a dial fails: the record
 above (marvel#575) shows a restart can still dial stale addresses.
 
 A cluster written in the older `bus:` block spelling puts the same `hub:` key
-under its `bus:` block instead; the third cluster's bring-up (aae-orc#461)
+under its `bus:` block instead; the third cluster's bring-up
 used that spelling. Use one spelling per cluster, never both: a cluster that
 declares a `bus:` block and a message-bus Services entry is refused at load
 ("keep one spelling"), and a `hub:` key at the top of the file is ignored.
@@ -1095,7 +1095,7 @@ marvel --cluster <name> stop --keep-bus     # agents keep running; the broker st
 ```
 
 The new daemon adopts the running sessions and the broker. On the third
-cluster's bring-up (aae-orc#461) that path took one second between the stop
+cluster's bring-up that path took one second between the stop
 and the start, adopted all four sessions and the running broker, and the
 daemon then reported the new version. Start it from the same working
 directory and with the same flags as before. A stop and start does not carry

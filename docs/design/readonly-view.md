@@ -78,7 +78,7 @@ checkout):
   aae-orc's `.agents/skills/*` links (`../../.claude/skills/...`) need.
   Relaxing absolute links (kept dangling, or rewritten, never followed) is
   deferred until a viewed repository needs it; on 2026-10-06 none of marvel,
-  director, kos or wardrobe tracked a symlink at all.
+  director, kos or role library tracked a symlink at all.
 - **The swap** writes `cur.new -> trees/<sha>` and renames it over `cur`
   (`rename(2)`; BSD `mv -h`, GNU `mv -T`). A read through the path returns
   content from the old tree or the new one, never a mix and never the wrong

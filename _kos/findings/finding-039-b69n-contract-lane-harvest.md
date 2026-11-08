@@ -184,7 +184,7 @@ record.
 
 - Shas: #248 @415d65e (frozen), #249 @19efa39, #250 @28eeca6 (verified clean
   merge onto #249, tree f0793be). director#13 (shim emitter). beadle#62 (Rust
-  envelope). aae-orc #313 (role party).
+  envelope). a private tracker issue (role party).
 - Source of truth and rationale in the marvel repo: `contracts/README.md`
   (decisions, A2A mapping, the event-twin section, the R-87 caveat, the
   principal identity-lane note); `contracts/schema/director-envelope.schema.json`

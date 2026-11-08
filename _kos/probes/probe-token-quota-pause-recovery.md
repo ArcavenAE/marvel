@@ -1,7 +1,7 @@
 # probe-token-quota-pause-recovery
 
 **Date:** 2026-09-30
-**Asked by:** the operator, via director (commission 01M3R6YG47), routed by
+**Asked by:** the operator, via director, routed by
 arcaven-supervisor-g5-0.
 **Parent:** `probe-backend-usage-limit-observability.md` (finding-050). That
 probe asked what limit state marvel can *observe*; this one asks what happens

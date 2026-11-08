@@ -117,7 +117,7 @@ This brief treats the kos nodes as authoritative over charter prose where the tw
 
 ### 8.1 Glossary
 
-- **C-036** [OBSERVED] BYOH: Bring Your Own Harness. The user brings the harness, and marvel manages what they bring. BYOA (Bring Your Own Agent) stays valid: the user brings agent definitions, or gets them from sideshow, wardrobe, bmad, vsdd-factory or, in future, gastown. {src: README, NODE:elem-console-agnostic}
+- **C-036** [OBSERVED] BYOH: Bring Your Own Harness. The user brings the harness, and marvel manages what they bring. BYOA (Bring Your Own Agent) stays valid: the user brings agent definitions, or gets them from sideshow, role library, bmad, vsdd-factory or, in future, gastown. {src: README, NODE:elem-console-agnostic}
 - **C-037** [OBSERVED] Shift: a rolling replacement of agent sessions with fresh ones. {src: README}
 - **C-038** [OBSERVED] Harness: the agent program a session runs, such as claude, codex or opencode, named by a role's `runtime` field. {src: NODE:elem-runtime-names-harness}
 

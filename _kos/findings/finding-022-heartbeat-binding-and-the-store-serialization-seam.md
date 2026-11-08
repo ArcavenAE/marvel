@@ -97,7 +97,7 @@ agent that goes looking can read a sibling pane's environment and take
 its token. The binding defeats forgery from a guessed key, which is the
 confused-deputy case and the one an injected agent falls into; it does
 not defeat an agent that deliberately hunts. Closing that is enforcement
-locus 3 and curtain, not this ticket.
+locus 3 and the sandbox tool, not this ticket.
 
 **Ring pressure.** A process spamming refused heartbeats fills the
 bounded event ring and evicts other events. The refusals are visible,

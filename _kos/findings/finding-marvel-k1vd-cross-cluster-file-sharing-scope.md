@@ -1,7 +1,7 @@
 # finding-marvel-k1vd: cross-cluster file sharing is snapshots pulled into a read-only view, not sync
 
 **Date:** 2026-11-02
-**Asks:** I-139, which extends I-101 (marvel#1193)
+**Asks:** an operator ask that extends an earlier one (marvel#1193)
 **Status:** study; nothing built, nothing run against a daemon
 
 The operator asked for a study of file sharing between marvel clusters that is wider than `marvel cp`: rsync-like transfer, a read-only view of a directory such as `~/.director` on each cluster, and local copies of remote files. The operator named the risks: agents poisoning the pool, instability, data loss, damage to ongoing work, and performance. This finding scopes that ask. It recommends one composition of two designs marvel already has, and it rules out two-way sync and live mirrors.

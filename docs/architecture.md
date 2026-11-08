@@ -111,7 +111,7 @@ Projection is `ProjectionFor(ctx, dir).Supported`.
    advisory rather than silently dropped.
 
 Enforcement is spawn-time environment construction. Real containment
-belongs to curtain.
+belongs to the sandbox tool.
 
 ## Reconciliation loop
 

@@ -19,7 +19,7 @@
 A marvel Crush adapter **may be built and may launch**, but only when the
 workspace's Crush config files match an operator-approved allowlist (the
 direnv model), with Crush's observability socket **off by default** and no
-secret in the constructed environment whenever it is on; until curtain can
+secret in the constructed environment whenever it is on; until the sandbox tool can
 sandbox the launch (and isolate that per-uid socket) it must **not** be
 pointed at untrusted (factory-tier) workspaces at all — and because marvel
 today ships no Crush adapter and its model has no per-workspace checkout
@@ -368,11 +368,11 @@ hazards have different owners and different time horizons.
    malicious — approval means the operator vouches for it, which is only
    meaningful when the operator controls the workspace's contents.
 3. **CURTAIN.** Launch only sandboxed. *Correct in principle; loses as the
-   near-term gate.* curtain is design-only; gating the adapter on it is
+   near-term gate.* the sandbox tool is design-only; gating the adapter on it is
    refuse-with-a-promise. But it is the **only** option that neutralizes
    hazard A for *untrusted* repositories, because for a repo whose contents
    no human vouches for, a config hash allowlist has nothing to check
-   against. So curtain is the required gate for the factory tier, later.
+   against. So the sandbox tool is the required gate for the factory tier, later.
 4. **DOCUMENT AND SHIP.** *Loses outright.* The abuse needs only a hostile
    repository, which is the platform's core use case; a note in the adapter
    docs does not stop code from executing, and "the weakest of the four for
@@ -395,7 +395,7 @@ hazards have different owners and different time horizons.
 - **Guard 1 (hazard A), REQUIRED before any launch:** the direnv-model
   config allowlist (option 2). No launch in a workspace whose Crush config
   files are not operator-approved. This is the *only* thing that bounds
-  Hazard A's blast radius short of curtain — see the next point.
+  Hazard A's blast radius short of the sandbox tool — see the next point.
 - **Guard 2 (hazard B), REQUIRED whenever the socket is enabled:** **no
   secret in the constructed environment.** Keep secrets out of
   `baseEnv`/adapter env for a Crush launch that sets `CRUSH_CLIENT_SERVER=1`.
@@ -407,12 +407,12 @@ hazards have different owners and different time horizons.
   keychain (`security`), cloud metadata endpoints, and the whole filesystem
   — none of which live in the env and none of which Guard 2 removes.
   Guard 2 is not a mitigation for Hazard A. Only Guard 1 (don't run
-  unapproved config) and curtain (sandbox the process) bound that surface.
+  unapproved config) and the sandbox tool (sandbox the process) bound that surface.
 - **Factory-tier carve-out:** for workspaces whose contents marvel or the
   operator do **not** control (the factory tier — the case marvel most wants
   a second harness for), Guard 1 has nothing trustworthy to check against.
-  Such workspaces require **curtain** (option 3) and must not get a Crush
-  launch until curtain can sandbox it — and that sandbox must **also isolate
+  Such workspaces require **the sandbox tool** (option 3) and must not get a Crush
+  launch until the sandbox tool can sandbox it — and that sandbox must **also isolate
   the per-uid socket** (a mount/PID/`TMPDIR` namespace, or no socket),
   because same-uid factory agents sharing one `/tmp` re-open Hazard B among
   themselves even when each repo is sandboxed for Hazard A. Naming the tier
@@ -505,11 +505,11 @@ func InspectConfig(cwd string, approved map[string]string) (verdict, error) { ..
   is bypassable by first poisoning the global config.
 - Hazard B (the socket) — that is Guard 0 + Guard 2.
 - Hazard A's ambient credential surface once approved config *does* run —
-  that is curtain (see §6 Guard 2 scope limit).
+  that is the sandbox tool (see §6 Guard 2 scope limit).
 - An approved-but-malicious config (approval = operator vouches, only
   meaningful for controlled workspaces).
 - A Crush that discovers config by a path this set misses.
-- Anything for untrusted/factory-tier workspaces (that is curtain).
+- Anything for untrusted/factory-tier workspaces (that is the sandbox tool).
 
 ### 7b. Guard 2 — spawn-env hygiene
 
@@ -558,7 +558,7 @@ true, split cleanly:
   instances: Crush, codex). Build Guard 1 for Crush when the adapter lands;
   extract the shared admission check when a third adapter needs it. Recommend
   filing a frontier node `question-workspace-admission` (or folding it into
-  the existing curtain / credential-plane frontier) so the generalization is
+  the existing sandbox tool / credential-plane frontier) so the generalization is
   tracked rather than reinvented per adapter.
 
 ### 7d. Why no code ships in this PR

@@ -114,7 +114,7 @@ Items 1, 2 and 3 are fixes against filed issues and can go now. Items 4 and 5 ne
 
 - tests: `elem-staged-activation-upgrades` (bedrock). The two-plane model is unrealized in code, and this names the order to realize it.
 - extends: finding-042 (activation primitive), finding-061 (running build unobservable).
-- informs: marvel#485, #486, #495, #339, #482; aae-orc#461 (S4-3, S4-4).
+- informs: marvel#485, #486, #495, #339, #482; the third cluster's bring-up (S4-3, S4-4).
 
 ## Review note (architect, 2026-10-03)
 

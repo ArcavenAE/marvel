@@ -23,7 +23,7 @@ once director rules whether the window evidence is enough.
 **Pre-cut record.** The questions and hypotheses were written before the
 cut, but the file stayed uncommitted until 22:25Z and no hash was taken
 then. The only record from before the cut is this seat's bus message to its
-supervisor at 19:58:10Z (message 01M447XKF4WJV9A1TPH5MHYP8R), which says
+supervisor at 19:58:10Z (a bus message), which says
 the brief was written with "six questions, four pre-registered
 hypotheses". Read the hypotheses as pre-registered on that message's
 word, not on a commit.

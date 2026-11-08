@@ -567,8 +567,8 @@ This study is a *permission* schema. They must not merge.
 But they should converge at one point, and it is free. mq76's own
 premise-check found that bd already ships `--actor`, resolving
 `$BEADS_ACTOR > git user.name > $USER`, with an `events.actor` column that is
-100% populated and — before that probe — 100% the single value
-`Michael Pursifull`. **The gap is an unused field, not a missing capability.**
+100% populated and — before that probe — 100% the single value, the
+operator's git name. **The gap is an unused field, not a missing capability.**
 
 Recommendation: **the thin principal's string form is exactly what marvel
 writes into `BEADS_ACTOR` in the session environment at spawn.** Marvel
@@ -718,7 +718,7 @@ same information, no null:
 
 ```jsonc
 "principal": {
-  "name":       "marvel://kinu/aae-orc/ops/reviewer/aae-orc-ops-reviewer-g3-0",
+  "name":       "marvel://kinu/<workspace>/ops/reviewer/aae-orc-ops-reviewer-g3-0",
   "confidence": "attested",        // attested | authenticated | unattested
   "assertor":   "marvel://kinu"    // who says so
 }
@@ -746,7 +746,7 @@ Three properties earn their place:
 | RPC admission | who may call which method | grade check in `dispatch` | **RECOMMENDED — the core ask** |
 | Session write path | that a session's writes are its own | token check inside the store's write signature | **BUILT** (mr5c; heartbeat only) |
 | Bus | nothing | — | **deliberately none in v1** |
-| Tool path (locus 2) | what a running agent may *do* | curtain / gateway interposition | **NOT THIS LANE** |
+| Tool path (locus 2) | what a running agent may *do* | the sandbox tool / gateway interposition | **NOT THIS LANE** |
 | Mid-flight revocation (locus 3) | withdrawing authority in flight | — | **NOT THIS LANE** |
 
 **The RPC table.** Nineteen methods, three buckets — a table, not a language.
@@ -924,7 +924,7 @@ exist), or anything that presumes a ruling on `aae-orc-dqhf`.
   the daemon turns out not to be the binding constraint — for example if the
   first real multi-agent workload's failure is an agent reading a sibling's
   environment rather than calling a sibling's RPC — then §9 solves the wrong
-  half and `question-credential-adjacency` (locus 2/3, curtain) outranks this
+  half and `question-credential-adjacency` (locus 2/3, the sandbox tool) outranks this
   lane. finding-022 names that limit explicitly: an agent that hunts can take
   a sibling's token from the environment, and no amount of RPC authorization
   reaches it.

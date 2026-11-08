@@ -50,7 +50,7 @@ passes the instructions and the trust entry.
 - `:minimal`.
 - `/opt/homebrew`: gh, glab, jq.
 - `~/.local/bin` and `~/.codex/packages`: P8, or codex cannot start.
-- The workspace tree (`~/work/aae-orc`).
+- The workspace tree (`<orchestrator>`).
 - `~/.marvel/manifests/<workspace>`: the seat file it re-reads after a restart.
 - `~/.config/gh`.
 - `~/Library/Keychains`: P6.
@@ -187,7 +187,7 @@ If neither works, the GitLab seat runs the proxy-off profile (3, fallback) with
 the reasons recorded, or GitLab reviews stay with a claude seat. Decide after
 the probe; one scratch command each.
 
-## 5. Seat file and wardrobe role text
+## 5. Seat file and role library role text
 
 **Seat file** (`aae/seat-arcaven-reviewer.md`). Replace the "Post a
 real GitHub review ... where your sandbox allows it" bullet and add a Tools
@@ -204,7 +204,7 @@ section:
 approve|changes <count> findings [paper approval: author is <you>, not counted]
 [posted|not posted: <error>]`.
 
-**Wardrobe `role/reviewer`** (proposed text; wardrobe is operator-owned, so this
+**Role library `role/reviewer`** (proposed text; role library is operator-owned, so this
 seat does not write it). Add three invariants:
 1. The verdict is a posted forge review at the dispatched head, or an explicit
    "not posted" with the error. A comment-only verdict never stands in for a
@@ -246,7 +246,7 @@ seat does not write it). Add three invariants:
    flags and prints the sandbox and approval lines, so a cast can be verified
    without a model turn.
 3. **Seat files:** section 5 text.
-4. **Wardrobe `role/reviewer`:** section 5 invariants, a proposal to the operator.
+4. **Role library `role/reviewer`:** section 5 invariants, a proposal to the operator.
 5. **marvel issue (to file on approval):** seed a role's exec-policy rules and
    permission profile into the private CODEX_HOME from the manifest, so the
    launcher stops writing into a marvel-owned home. Relates to marvel#359.
@@ -286,7 +286,7 @@ seat does not write it). Add three invariants:
 - I2, the GitLab reviewing account and the verification project.
 - I3: DONE 2026-09-28 (forge tokens live in the OS keyring, never in
   plaintext config; the file-stored token was removed).
-- Approval of the wardrobe text and of the marvel issue in 7.5.
+- Approval of the role library text and of the marvel issue in 7.5.
 
 ## 10. Addendum: operator ruling applied (2026-09-26)
 
@@ -346,7 +346,7 @@ per adapter) is the home for the general form.
 
 What stays the same:
 - the identity selection by config dir (section 4);
-- the seat and wardrobe text (section 5), with gh and glab spelled through the
+- the seat and role library text (section 5), with gh and glab spelled through the
   wrapper;
 - bus reach (section 6);
 - verification (section 8), with one added negative control: plain `gh pr view`

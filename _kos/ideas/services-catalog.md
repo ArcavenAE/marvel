@@ -44,7 +44,7 @@ remains the unit a seat sees.
 | switchyard (router) | `model-endpoint` | external, by URL | reserved; the operator calls it a router, the record files it as an endpoint, worth reconciling |
 | bd (tasks) | `task-graph` | managed or adopted, per topology | name on record (dolt sql-server); see the bd question |
 | vault | `secret-manager` | open | the open sub-question in services-list.md section 4 |
-| stagekeeper | undecided | undecided | today an error-patterns store; its class is not yet named |
+| the pattern store | undecided | undecided | today an error-patterns store; its class is not yet named |
 | a scheduler | `scheduler` (new) | managed | not on record |
 | push notifications, plus registration of special services for efficient notification | `notification` (new) | managed or external | not on record |
 | a cluster-wide GitHub and GitLab event watcher (a future Rust tool) | `forge-events` (new) | managed | not on record |
