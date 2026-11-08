@@ -76,10 +76,24 @@ func workVocabularyViolations(root string) ([]string, error) {
 	return out, err
 }
 
-// Marvel's non-test Go under internal/ declares no work word and never names
-// the work command.
+// workVocabularyRoot is the directory the guard walks: the module root, so the
+// commands under cmd/ are held to it as well as the packages under internal/.
+func workVocabularyRoot() string { return ".." }
+
+// The guard walks the module root, not internal/ alone.
+func TestWorkVocabularyRootIsModuleRoot(t *testing.T) {
+	root := workVocabularyRoot()
+	for _, rel := range []string{"go.mod", filepath.Join("cmd", "marvel"), filepath.Join("internal", "api")} {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			t.Errorf("guard root %q lacks %s: %v", root, rel, err)
+		}
+	}
+}
+
+// Marvel's non-test Go, under cmd/ and internal/, declares no work word and
+// never names the work command.
 func TestMarvelHoldsNoWorkVocabulary(t *testing.T) {
-	got, err := workVocabularyViolations("..")
+	got, err := workVocabularyViolations(workVocabularyRoot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +121,12 @@ func TestWorkVocabularyCheckFlagsWhatItShould(t *testing.T) {
 	write("a/stop.go", "package a\n\nconst MarryStop = \"stop\"\n")
 	write("a/fn.go", "package a\n\nfunc Lease() {}\n")
 	write("a/cmd.go", "package a\n\nvar c = []string{\"bd ready\", \"--json\"}\n")
+	write("internal/x/split.go", "package x\n\nimport \"os/exec\"\n\nvar _ = exec.Command(\"bd\", \"ready\")\n")
+	write("cmd/marvel/lit.go", "package main\n\nvar c = \"bd ready\"\n")
+	write("cmd/marvel/argv.go", "package main\n\nvar argv = []string{\"bd\", \"ready\", \"--json\"}\n")
 	write("b/clean.go", "package b\n\n// Lease and bd ready are named in this comment only.\ntype Seat struct{}\n\nfunc (Seat) Lease() {}\n")
 	write("b/clean_test.go", "package b\n\ntype Lease struct{}\n\nvar c = \"bd ready\"\n")
+	write("b/split_ok.go", "package b\n\nvar _ = []string{\"bd\", \"list\"}\n\nfunc f(a, b string) {}\n\nvar _ = f(\"ready\", \"bd\")\n")
 	write("b/testdata/x/x.go", "package x\n\ntype Lease struct{}\n")
 
 	got, err := workVocabularyViolations(dir)
@@ -117,6 +135,7 @@ func TestWorkVocabularyCheckFlagsWhatItShould(t *testing.T) {
 	}
 	want := map[string]bool{
 		"a/lease.go": false, "a/item.go": false, "a/stop.go": false, "a/fn.go": false, "a/cmd.go": false,
+		"internal/x/split.go": false, "cmd/marvel/lit.go": false, "cmd/marvel/argv.go": false,
 	}
 	for _, line := range got {
 		matched := false
