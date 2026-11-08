@@ -119,7 +119,7 @@ content: |
 
   METHOD HAZARD WORTH KEEPING, because it will recur on any consent
   surface: first-run gates are ONE-SHOT PER SCOPE. Cell 2's first
-  attempt was a false negative — an earlier run
+  attempt was a false negative: an earlier run
   had permanently set `hasTrustDialogAccepted` for the working-directory path,
   disarming the gate under test. Marvel reported `running` and the
   pane sat at an empty prompt: genuinely idle, not blocked, so the row

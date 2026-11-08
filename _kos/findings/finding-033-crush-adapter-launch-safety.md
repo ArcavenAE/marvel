@@ -395,7 +395,7 @@ hazards have different owners and different time horizons.
 - **Guard 1 (hazard A), REQUIRED before any launch:** the direnv-model
   config allowlist (option 2). No launch in a workspace whose Crush config
   files are not operator-approved. This is the *only* thing that bounds
-  Hazard A's blast radius short of the sandbox tool — see the next point.
+  Hazard A's blast radius short of the sandbox tool; see the next point.
 - **Guard 2 (hazard B), REQUIRED whenever the socket is enabled:** **no
   secret in the constructed environment.** Keep secrets out of
   `baseEnv`/adapter env for a Crush launch that sets `CRUSH_CLIENT_SERVER=1`.
@@ -412,7 +412,7 @@ hazards have different owners and different time horizons.
   operator do **not** control (the factory tier — the case marvel most wants
   a second harness for), Guard 1 has nothing trustworthy to check against.
   Such workspaces require **the sandbox tool** (option 3) and must not get a Crush
-  launch until the sandbox tool can sandbox it — and that sandbox must **also isolate
+  launch until the sandbox tool can sandbox it, and that sandbox must **also isolate
   the per-uid socket** (a mount/PID/`TMPDIR` namespace, or no socket),
   because same-uid factory agents sharing one `/tmp` re-open Hazard B among
   themselves even when each repo is sandboxed for Hazard A. Naming the tier

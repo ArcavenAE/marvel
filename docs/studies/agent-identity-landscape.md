@@ -567,7 +567,7 @@ This study is a *permission* schema. They must not merge.
 But they should converge at one point, and it is free. mq76's own
 premise-check found that bd already ships `--actor`, resolving
 `$BEADS_ACTOR > git user.name > $USER`, with an `events.actor` column that is
-100% populated and — before that probe — 100% the single value, the
+100% populated and, before that probe, 100% the single value, the
 operator's git name. **The gap is an unused field, not a missing capability.**
 
 Recommendation: **the thin principal's string form is exactly what marvel
