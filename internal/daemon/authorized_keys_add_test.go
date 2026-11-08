@@ -91,11 +91,126 @@ func TestAddAuthorizedKeyDuplicateSecondKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("a buffer holding an already authorized key was accepted")
 	}
-	if want := keyFingerprint(t, b); !strings.Contains(err.Error(), want) {
-		t.Errorf("error %q does not name the duplicate %s", err, want)
-	}
 	after, _ := os.ReadFile(layout.AuthorizedKeys())
 	if string(after) != string(before) {
 		t.Errorf("file changed by a refused add:\nbefore %q\nafter  %q", before, after)
+	}
+}
+
+// A single key that is already authorized, wherever it sits in the existing
+// file, is refused with its fingerprint and the file is left as it was.
+func TestAddAuthorizedKeyDuplicateNamesTheFingerprint(t *testing.T) {
+	layout := addKeyEnv(t)
+	a, b := testPubKeyLine(t), testPubKeyLine(t)
+	for _, k := range [][]byte{a, b} {
+		if err := AddAuthorizedKey(k, "seed", ScopeAdmin); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	before, _ := os.ReadFile(layout.AuthorizedKeys())
+
+	err := AddAuthorizedKey(b, "again", ScopeCredentialPush)
+	if err == nil || !strings.Contains(err.Error(), keyFingerprint(t, b)) {
+		t.Fatalf("err = %v, want one naming %s", err, keyFingerprint(t, b))
+	}
+	after, _ := os.ReadFile(layout.AuthorizedKeys())
+	if string(after) != string(before) {
+		t.Errorf("file changed by a refused add")
+	}
+}
+
+func TestAddAuthorizedKeyRefusesWhatItCannotPlaceAtOneScope(t *testing.T) {
+	key := strings.TrimSpace(string(testPubKeyLine(t)))
+	cases := map[string]struct {
+		input string
+		want  string
+	}{
+		"trailing text":    {key + "\nnot a key\n", "unexpected text"},
+		"text before key":  {"not a key\n" + key + "\n", "unexpected text"},
+		"input option":     {`command="x" ` + key + "\n", `"command"`},
+		"input scope":      {`marvel-scope="admin" ` + key + "\n", `"marvel-scope"`},
+		"only comments":    {"# nothing here\n\n", "no key found"},
+		"empty":            {"", "no key found"},
+		"two keys on file": {key + "\n" + string(testPubKeyLine(t)), "2 keys"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			layout := addKeyEnv(t)
+			err := AddAuthorizedKey([]byte(tc.input), "x", ScopeCredentialPush)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want one containing %q", err, tc.want)
+			}
+			if _, serr := os.Stat(layout.AuthorizedKeys()); !os.IsNotExist(serr) {
+				t.Errorf("a refused input left authorized_keys behind (%v)", serr)
+			}
+		})
+	}
+}
+
+// The parser's own leniency (CRLF, no final newline, blank lines, comments)
+// still gives one key at the requested scope, and the line written is rebuilt
+// from the parsed key: the key's comment is kept, the input's comment lines
+// and carriage returns are not.
+func TestAddAuthorizedKeyAcceptsPlainVariants(t *testing.T) {
+	key := strings.TrimSpace(string(testPubKeyLine(t)))
+	for name, input := range map[string]string{
+		"crlf":             "# c\r\n\r\n" + key + " alice@laptop\r\n",
+		"no final newline": key + " alice@laptop",
+		"blank lines":      "\n\n# c\n" + key + " alice@laptop\n\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			layout := addKeyEnv(t)
+			if err := AddAuthorizedKey([]byte(input), "x", ScopeCredentialPush); err != nil {
+				t.Fatalf("add: %v", err)
+			}
+			entries, err := loadAuthorizedKeys(layout)
+			if err != nil || len(entries) != 1 || entries[0].scope != ScopeCredentialPush {
+				t.Fatalf("entries = %+v, err %v; want one credential-push key", entries, err)
+			}
+			data, _ := os.ReadFile(layout.AuthorizedKeys())
+			if strings.ContainsAny(string(data), "\r#") {
+				t.Errorf("written file carries input bytes it should not: %q", data)
+			}
+			listed, err := ListAuthorizedKeys()
+			if err != nil || len(listed) != 1 || listed[0].Comment != "alice@laptop" {
+				t.Errorf("listed = %+v, err %v; want the key comment kept", listed, err)
+			}
+		})
+	}
+}
+
+func TestAddAuthorizedKeyAppendsAndKeepsMode(t *testing.T) {
+	layout := addKeyEnv(t)
+	if err := layout.EnsureHome(); err != nil {
+		t.Fatal(err)
+	}
+	seed := strings.TrimSpace(string(testPubKeyLine(t))) + "\n"
+	if err := os.WriteFile(layout.AuthorizedKeys(), []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddAuthorizedKey(testPubKeyLine(t), "x", ScopeCredentialPush); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	entries, err := loadAuthorizedKeys(layout)
+	if err != nil || len(entries) != 2 || entries[0].scope != ScopeAdmin || entries[1].scope != ScopeCredentialPush {
+		t.Fatalf("entries = %+v, err %v; want the seed (admin) then the new key (credential-push)", entries, err)
+	}
+	st, err := os.Stat(layout.AuthorizedKeys())
+	if err != nil || st.Mode().Perm() != paths.ModeAuthorized {
+		t.Errorf("mode = %v (err %v), want %v", st.Mode().Perm(), err, paths.ModeAuthorized)
+	}
+}
+
+// A byte order mark is not text the ssh parser reads past: a key line that
+// starts with one does not parse as a key, so the input is refused rather
+// than written. Pinned by running the parser.
+func TestAddAuthorizedKeyBOM(t *testing.T) {
+	layout := addKeyEnv(t)
+	input := "\ufeff" + strings.TrimSpace(string(testPubKeyLine(t))) + "\n"
+	err := AddAuthorizedKey([]byte(input), "x", ScopeCredentialPush)
+	t.Logf("BOM result: err=%v", err)
+	if err == nil {
+		entries, _ := loadAuthorizedKeys(layout)
+		t.Fatalf("BOM input accepted: %+v", entries)
 	}
 }

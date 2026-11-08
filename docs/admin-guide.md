@@ -332,6 +332,16 @@ echo 'ssh-ed25519 AAAA... alice@laptop' | marvel keys authorize /dev/stdin
 
 `authorize` is aliased as `add` for compatibility with earlier releases.
 
+Each file holds one public key (blank and `#` comment lines are ignored).
+A file with two keys, other text, or options on the key line is refused and
+nothing is written. To hand someone a key that can only push, list and
+delete credentials, add `--scope credential-push`; the command prints
+`authorized <fingerprint> scope=<scope>` when it succeeds.
+
+```bash
+marvel keys authorize --scope credential-push /path/to/client.pub
+```
+
 ### Listing authorized clients
 
 ```bash

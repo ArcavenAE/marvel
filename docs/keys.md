@@ -153,6 +153,19 @@ marvel keys authorize /path/to/client.pub
 
 Adds the public key to `~/.marvel/authorized_keys` (OpenSSH format).
 After this, the client can connect using its matching private key.
+The command prints one line, `authorized <fingerprint> scope=<scope>`.
+
+The file holds exactly one public key. Blank lines and `#` comment lines
+are ignored; a file with two keys, text that is not a key, or options on
+the key line (`command=`, `from=`, and the like) is refused and nothing is
+written, so every key marvel enrolls carries the scope you asked for.
+
+`--scope` sets the authority the key gets: `admin` (the default, every
+method) or `credential-push` (push, list and delete credentials only):
+
+```bash
+marvel keys authorize --scope credential-push /path/to/client.pub
+```
 
 `authorize` is aliased as `add` for muscle memory, but new tooling
 should prefer `authorize`.
