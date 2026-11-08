@@ -98,7 +98,8 @@ EOF
 
 # ---------------------------------------------------------------- scenario 0
 hdr "0. path-length assertion (paths.CheckSocketPath, #122 item 5)"
-LONGHOME=/private/tmp/claude-501/-Users-michael-pursifull-work-aae-orc/8f433f41-bdba-4aba-9454-abdd716cb2ca/scratchpad/rigL
+LONGBASE=$(mktemp -d)
+LONGHOME="$LONGBASE/$(printf 'x%.0s' $(seq 1 100))/rigL"
 mkdir -p "$LONGHOME"
 out=$(HOME="$LONGHOME" "$MARVEL" daemon --state-bolt= --pidfile= --log-file= 2>&1 | head -3)
 if grep -qi "unix socket" <<<"$out" && grep -q "104" <<<"$out"; then
@@ -106,7 +107,7 @@ if grep -qi "unix socket" <<<"$out" && grep -q "104" <<<"$out"; then
 else
   bad "expected a 104-byte refusal, got: $out"
 fi
-rm -rf "$LONGHOME"
+rm -rf "$LONGBASE"
 
 # ---------------------------------------------------------------- scenario 1
 hdr "1. socket lock: two daemons, SAME explicit socket (#122 item 2)"
