@@ -25,8 +25,8 @@ func baseSpec() Spec {
 		LeafAttached: true,
 		Admin:        User{Name: AdminUser, Password: "adminpw"},
 		Teams: []TeamUser{
-			{Workspace: "aae-orc", Team: "ops", Password: "opspw", GlobalRoles: []RoleUser{{Role: "supervisor", Password: "suppw"}}},
-			{Workspace: "aae-orc", Team: "fleet", Password: "fleetpw"},
+			{Workspace: "example", Team: "ops", Password: "opspw", GlobalRoles: []RoleUser{{Role: "supervisor", Password: "suppw"}}},
+			{Workspace: "example", Team: "fleet", Password: "fleetpw"},
 		},
 	}
 }
@@ -110,8 +110,8 @@ func TestRenderAuthConfinesTeamsAndGrantsSupervisorOnlyWithHub(t *testing.T) {
 	for _, want := range []string{
 		`user: marvel_admin, password: "adminpw"`,
 		`user: ops, password: "opspw"`,
-		`"agent.aae-orc.ops.>"`, `"agent.aae-orc.broadcast"`, `"agent.audit"`, `"$JS.API.>"`, `"$KV.AGENT_STATE.>"`, `"_INBOX.>"`,
-		`user: fleet, password: "fleetpw"`, `"agent.aae-orc.fleet.>"`,
+		`"agent.example.ops.>"`, `"agent.example.broadcast"`, `"agent.audit"`, `"$JS.API.>"`, `"$KV.AGENT_STATE.>"`, `"_INBOX.>"`,
+		`user: fleet, password: "fleetpw"`, `"agent.example.fleet.>"`,
 	} {
 		if !strings.Contains(auth, want) {
 			t.Errorf("auth missing %q:\n%s", want, auth)
@@ -122,7 +122,7 @@ func TestRenderAuthConfinesTeamsAndGrantsSupervisorOnlyWithHub(t *testing.T) {
 	}
 	// fleet must not see ops's subtree and vice versa: each own-subject appears
 	// exactly twice (publish and subscribe of its own user).
-	if n := strings.Count(auth, `"agent.aae-orc.ops.>"`); n != 2 {
+	if n := strings.Count(auth, `"agent.example.ops.>"`); n != 2 {
 		t.Errorf("ops subtree appears %d times, want 2 (its own publish and subscribe only)", n)
 	}
 
@@ -235,8 +235,8 @@ func TestManagerRegenerateKeepsPasswordsDropsRemovedAndReloadsOnChange(t *testin
 	dir := filepath.Join(t.TempDir(), "nats")
 	rb := config.ResolvedBus{Managed: true, Listen: "127.0.0.1:4222", StoreDir: dir, HubURL: "nats-leaf://h:7442"}
 	live := &teams{
-		{Name: "ops", Workspace: "aae-orc", Roles: []api.Role{{Name: "supervisor"}}},
-		{Name: "fleet", Workspace: "aae-orc"},
+		{Name: "ops", Workspace: "example", Roles: []api.Role{{Name: "supervisor"}}},
+		{Name: "fleet", Workspace: "example"},
 	}
 	seed := false
 	m, err := NewManager(dir, "kinu", rb, live, func() bool { return seed })

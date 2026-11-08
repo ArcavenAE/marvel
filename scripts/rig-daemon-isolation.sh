@@ -99,6 +99,10 @@ EOF
 # ---------------------------------------------------------------- scenario 0
 hdr "0. path-length assertion (paths.CheckSocketPath, #122 item 5)"
 LONGBASE=$(mktemp -d)
+if [[ -z "$LONGBASE" || ! -d "$LONGBASE" ]]; then
+  bad "scenario 0: mktemp -d failed or returned an empty path"
+  exit 1
+fi
 LONGHOME="$LONGBASE/$(printf 'x%.0s' $(seq 1 100))/rigL"
 mkdir -p "$LONGHOME"
 out=$(HOME="$LONGHOME" "$MARVEL" daemon --state-bolt= --pidfile= --log-file= 2>&1 | head -3)
