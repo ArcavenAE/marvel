@@ -16,8 +16,8 @@
 #   - MARVEL_SESSION, MARVEL_ROLE, MARVEL_TEAM, MARVEL_WORKSPACE env vars
 #
 # Setup:
-#   cd ~/work/aae-orc/forestage && cargo build
-#   cd ~/work/aae-orc/marvel
+#   cd path/to/forestage && cargo build
+#   cd path/to/marvel
 #   ./marvel daemon &
 #   ./marvel work examples/forestage-team.yaml
 
