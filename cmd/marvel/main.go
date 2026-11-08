@@ -2827,7 +2827,12 @@ Daemon-side (on the machine running marvel daemon):
 				return fmt.Errorf("read key file: %w", err)
 			}
 			comment := args[0]
-			return daemon.AddAuthorizedKey(data, comment, scope)
+			fp, err := daemon.EnrollAuthorizedKey(data, comment, scope)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "authorized %s scope=%s\n", fp, scope)
+			return err
 		},
 	}
 	authorize.Flags().StringVar(&authScope, "scope", string(daemon.ScopeAdmin),
