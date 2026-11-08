@@ -8,7 +8,7 @@
 # "statusline" and `marvel ctx-forward`, finding-011).
 #
 # Setup:
-#   cd ~/work/aae-orc/marvel
+#   cd path/to/marvel
 #   ./bin/marvel daemon &
 #   ./bin/marvel work examples/mixed-adapters.yaml
 #
