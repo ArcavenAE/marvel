@@ -58,7 +58,7 @@ func TestDeclaredObjectsKeepPrecondition6Parameters(t *testing.T) {
 func TestDeclaredPrincipalsOrderScopesAndReservedNames(t *testing.T) {
 	t.Parallel()
 	s := baseSpec()
-	s.Seat = &SeatUser{Workspace: "aae-orc", Team: "ops", Password: "seatpw"}
+	s.Seat = &SeatUser{Workspace: "example", Team: "ops", Password: "seatpw"}
 	ps, err := DeclaredPrincipals(s)
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestDeclaredPrincipalsOrderScopesAndReservedNames(t *testing.T) {
 			t.Errorf("seat publish lacks %q: %v", want, seat.Publish)
 		}
 	}
-	for _, want := range []string{"agent.aae-orc.ops.>", "agent.aae-orc.broadcast", "$KV.AGENT_STATE.>", "_INBOX.>"} {
+	for _, want := range []string{"agent.example.ops.>", "agent.example.broadcast", "$KV.AGENT_STATE.>", "_INBOX.>"} {
 		if !contains(seat.Subscribe, want) {
 			t.Errorf("seat subscribe lacks %q: %v", want, seat.Subscribe)
 		}
@@ -93,18 +93,18 @@ func TestDeclaredPrincipalsOrderScopesAndReservedNames(t *testing.T) {
 	// A team by a reserved user name is refused, never merged.
 	for _, r := range config.ReservedBusUsers {
 		bad := baseSpec()
-		bad.Teams = append(bad.Teams, TeamUser{Workspace: "aae-orc", Team: r, Password: "x"})
+		bad.Teams = append(bad.Teams, TeamUser{Workspace: "example", Team: r, Password: "x"})
 		if _, err := DeclaredPrincipals(bad); err == nil || !strings.Contains(err.Error(), "reserved") {
 			t.Errorf("team %q accepted: %v", r, err)
 		}
 	}
 	// A seat outside the token class or without a password is refused.
 	bad := baseSpec()
-	bad.Seat = &SeatUser{Workspace: "aae-orc", Team: "ops.x", Password: "x"}
+	bad.Seat = &SeatUser{Workspace: "example", Team: "ops.x", Password: "x"}
 	if _, err := DeclaredPrincipals(bad); err == nil {
 		t.Error("seat team outside the token class accepted")
 	}
-	bad.Seat = &SeatUser{Workspace: "aae-orc", Team: "ops"}
+	bad.Seat = &SeatUser{Workspace: "example", Team: "ops"}
 	if _, err := DeclaredPrincipals(bad); err == nil {
 		t.Error("seat with no password accepted")
 	}
@@ -131,7 +131,7 @@ func TestRenderAuthRendersTheSeatUser(t *testing.T) {
 	if strings.Contains(auth, "user: director") {
 		t.Error("director user rendered with no seat declared")
 	}
-	s.Seat = &SeatUser{Workspace: "aae-orc", Team: "ops", Password: "seatpw"}
+	s.Seat = &SeatUser{Workspace: "example", Team: "ops", Password: "seatpw"}
 	auth, err = RenderAuth(s)
 	if err != nil {
 		t.Fatal(err)
@@ -148,10 +148,10 @@ func TestRenderAuthRendersTheSeatUser(t *testing.T) {
 	// The seat reads its own subtree; ops's own-subject now appears three
 	// times (ops publish, ops subscribe, seat subscribe), and fleet's still
 	// twice.
-	if n := strings.Count(auth, `"agent.aae-orc.ops.>"`); n != 3 {
+	if n := strings.Count(auth, `"agent.example.ops.>"`); n != 3 {
 		t.Errorf("ops subtree appears %d times, want 3", n)
 	}
-	if n := strings.Count(auth, `"agent.aae-orc.fleet.>"`); n != 2 {
+	if n := strings.Count(auth, `"agent.example.fleet.>"`); n != 2 {
 		t.Errorf("fleet subtree appears %d times, want 2", n)
 	}
 }
@@ -240,9 +240,9 @@ func TestRenderConfLeafRemoteCarriesTheHubCAFile(t *testing.T) {
 func TestManagerSeatPassFileAndRecovery(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "nats")
-	seat := &config.Seat{Workspace: "aae-orc", Team: "ops"}
+	seat := &config.Seat{Workspace: "example", Team: "ops"}
 	rb := config.ResolvedBus{Managed: true, Listen: "127.0.0.1:4222", StoreDir: dir, Seat: seat}
-	live := &teams{{Name: "ops", Workspace: "aae-orc", Roles: []api.Role{{Name: "supervisor"}}}}
+	live := &teams{{Name: "ops", Workspace: "example", Roles: []api.Role{{Name: "supervisor"}}}}
 	m, err := NewManager(dir, "kinu", rb, live, func() bool { return false })
 	if err != nil {
 		t.Fatal(err)
