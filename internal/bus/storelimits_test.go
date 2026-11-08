@@ -86,7 +86,7 @@ func TestRenderedStoreLimitsAreAcceptedByNatsServer(t *testing.T) {
 func TestManagerRendersTheResolvedStoreLimits(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state", "nats")
 	rb := config.ResolvedBus{Managed: true, Listen: "127.0.0.1:" + strconv.Itoa(freePort(t)), URL: "nats://x", StoreDir: dir, MaxFileStore: 1 << 30, MaxMemoryStore: 64 << 20}
-	m, err := NewManager(dir, "t"+strconv.Itoa(freePort(t)), rb, &teams{{Name: "ops", Workspace: "aae-orc"}}, func() bool { return false })
+	m, err := NewManager(dir, "t"+strconv.Itoa(freePort(t)), rb, &teams{{Name: "ops", Workspace: "example"}}, func() bool { return false })
 	if err != nil {
 		t.Fatal(err)
 	}

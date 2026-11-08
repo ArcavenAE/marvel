@@ -109,7 +109,7 @@ func newTestSupervisor(t *testing.T, hub string) (*Supervisor, *Manager, *events
 	dir := filepath.Join(root, "state", "nats")
 	listen := "127.0.0.1:" + strconv.Itoa(freePort(t))
 	rb := config.ResolvedBus{Managed: true, Listen: listen, URL: "nats://" + listen, StoreDir: dir, HubURL: hub}
-	live := &teams{{Name: "ops", Workspace: "aae-orc"}}
+	live := &teams{{Name: "ops", Workspace: "example"}}
 	m, err := NewManager(dir, "t"+strconv.Itoa(freePort(t)), rb, live, func() bool { return false })
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +161,7 @@ func TestSupervisorStartsReloadsAndStopsWithDaemon(t *testing.T) {
 	}
 
 	// A team change regenerates and SIGHUPs the live broker.
-	*m.teams.(*teams) = append(*m.teams.(*teams), api.Team{Name: "fleet", Workspace: "aae-orc"})
+	*m.teams.(*teams) = append(*m.teams.(*teams), api.Team{Name: "fleet", Workspace: "example"})
 	if changed, err := m.Regenerate(); err != nil || !changed {
 		t.Fatalf("regenerate: changed=%v err=%v", changed, err)
 	}
