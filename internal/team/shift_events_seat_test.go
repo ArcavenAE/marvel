@@ -170,3 +170,46 @@ func TestHoldReleasedWhenThePolicyNoLongerDeclaresTheCondition(t *testing.T) {
 		t.Fatalf("shift-hold-released = %+v, want reason policy-removed, cause max-age, session %s", ev, s.Key())
 	}
 }
+
+// The stuck event names the seat's own generation, like the events beside it.
+func TestStuckEventCarriesTheSeatsGeneration(t *testing.T) {
+	f := stuckFixture(t, "test-stuck-seatgen", false,
+		api.ShiftCondition{On: api.ShiftTriggerMaxAge, MaxAge: testMaxAge, MaxDefer: stuckDefer})
+	f.setTeamGeneration(4) // the seat stays at generation 1
+	f.clock.Advance(stuckDefer)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	ev := f.only(events.KindShiftRequestStuck)
+	if ev.Generation != 1 {
+		t.Fatalf("shift-request-stuck generation = %d, want 1: the seat is at generation 1 on a team at 4", ev.Generation)
+	}
+}
+
+// A hibernate asks each seat for a handoff with the same event a shift does,
+// and it names the seat's generation too, not the team's counter.
+func TestHibernateHandoffRequestedCarriesTheSeatsGeneration(t *testing.T) {
+	f := newRetireFixture(t, "test-hib-seatgen", hibernateRole("worker", realTempDir(t), 2))
+	a, b := f.seat("worker", 0), f.seat("worker", 1)
+	if err := f.store.UpdateTeam(f.teamKey, func(live *api.Team) error {
+		live.Generation = 4
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	f.hibernate(HibernateOptions{Actor: "op", Source: "cli"})
+	f.tick()
+
+	got := map[string]int64{}
+	for _, ev := range f.ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffRequested}, 0) {
+		got[ev.Session] = ev.Generation
+	}
+	if len(got) != 2 {
+		t.Fatalf("handoff-requested events by session = %v, want one for each of %s and %s", got, a.Key(), b.Key())
+	}
+	for _, s := range []api.Session{a, b} {
+		if got[s.Key()] != 1 {
+			t.Errorf("handoff-requested for %s: generation %d, want 1, the seat's own on a team at 4", s.Key(), got[s.Key()])
+		}
+	}
+}
