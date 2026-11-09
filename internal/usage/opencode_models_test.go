@@ -266,3 +266,46 @@ func TestOpenCodeCatalogIsNotReadForOtherHarnesses(t *testing.T) {
 		t.Errorf("a claude seat took limit %d from %q; the opencode catalog is for opencode seats only", got.ContextLimit, got.ContextLimitSource)
 	}
 }
+
+// A seat with a private home keeps its own model catalog, and its window is read
+// from that one, not from the daemon's. The seat's catalog names a different
+// limit than the daemon's fixture, so each read is told apart.
+func TestBindReadsTheCatalogOfTheSeatsOwnCacheHome(t *testing.T) {
+	t.Parallel()
+	cache := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cache, "opencode"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seat := `{"opencode":{"models":{"claude-haiku-4-5":{"limit":{"context":64000}}}}}`
+	if err := os.WriteFile(filepath.Join(cache, "opencode", "models.json"), []byte(seat), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"-m", "opencode/claude-haiku-4-5"}
+
+	a, sink, _ := newTestAccountant(t, Table{})
+	a.opencodeModelsPath = opencodeFixture
+	a.Bind(testCoords, Bind{Harness: opencode.Harness, Args: args, CacheHome: cache, Redirection: api.BackendDefault})
+	a.Observe(testCoords, turnEvent(opencode.Harness, additive(6_400, 0, 0)))
+	got, _ := sink.get(testCoords.AgentID)
+	if got.ContextLimit != 64_000 {
+		t.Errorf("limit = %d, want 64000 from the seat's own catalog", got.ContextLimit)
+	}
+
+	// Control: a seat with no cache home of its own reads the daemon's catalog.
+	b, sink2, _ := newTestAccountant(t, Table{})
+	b.opencodeModelsPath = opencodeFixture
+	b.Bind(testCoords, Bind{Harness: opencode.Harness, Args: args, Redirection: api.BackendDefault})
+	b.Observe(testCoords, turnEvent(opencode.Harness, additive(20_000, 0, 0)))
+	if got, _ := sink2.get(testCoords.AgentID); got.ContextLimit != 200_000 {
+		t.Errorf("shared-home limit = %d, want 200000 from the daemon's catalog", got.ContextLimit)
+	}
+
+	// A relative cache home is ignored, as OpenCodeModelsPath ignores one.
+	c, sink3, _ := newTestAccountant(t, Table{})
+	c.opencodeModelsPath = opencodeFixture
+	c.Bind(testCoords, Bind{Harness: opencode.Harness, Args: args, CacheHome: "rel/cache", Redirection: api.BackendDefault})
+	c.Observe(testCoords, turnEvent(opencode.Harness, additive(20_000, 0, 0)))
+	if got, _ := sink3.get(testCoords.AgentID); got.ContextLimit != 200_000 {
+		t.Errorf("relative cache home limit = %d, want the daemon's 200000", got.ContextLimit)
+	}
+}
