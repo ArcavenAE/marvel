@@ -12,7 +12,12 @@
     "stop word",
     "one lapse time",
     "trigger",
-    "client isolation"
+    "client isolation",
+    "3.1 order and caps",
+    "3.1 placement",
+    "3.1 input",
+    "3.1 unmatched",
+    "3.1 seat key"
   ],
   "vectors": [
     {
@@ -2945,6 +2950,7 @@
               {
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c2",
                 "reason": "no sender ruled"
               }
             ],

@@ -48,9 +48,9 @@ parallel-type-drift class, killed by construction). This is bd aae-orc-b69n.
   Decode the file strictly (an unknown field is an error) and compare each
   `want` after decoding it, never as bytes: empty fields are omitted. The
   `grep` steps named marvel's Go source and ran in marvel only; marvel no
-  longer holds that source, so no test runs them. Every pair and every lease
-  names its `cluster`, because a seat is keyed by cluster and address and one
-  address can be on two clusters. Marvel keeps the file and runs only a
+  longer holds that source, so no test runs them. Every pair, lease and unplaced
+  entry names its `cluster`, because a seat is keyed by cluster and address and
+  one address can be on two clusters. Marvel keeps the file and runs only a
   file-shape and consistency check over it (`readiness/marry_vectors_test.go`),
   never the marrying itself.
 - `go/envelope`, `go/event`: the Go halves (types + validator for the envelope;
