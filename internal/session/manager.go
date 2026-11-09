@@ -1830,6 +1830,7 @@ func (m *Manager) attachInstance(sess *api.Session, inst *runtime.TmuxInstance) 
 	if m.Usage != nil {
 		m.Usage.Bind(uc, usage.Bind{
 			Harness:     sess.Runtime.Name,
+			CacheHome:   seatCacheHome(sess),
 			Args:        sess.Runtime.Args,
 			Window:      sess.Runtime.ContextWindow,
 			Redirection: sess.BackendRedirection,
@@ -1843,6 +1844,16 @@ func (m *Manager) attachInstance(sess *api.Session, inst *runtime.TmuxInstance) 
 			events.Emit(m.Events, bridgeEvent(c, ev))
 		}
 	}()
+}
+
+// seatCacheHome is the cache home of a seat that has a private home, which is
+// where its opencode model catalog is. Empty for a seat that shares the
+// daemon's home, and for any harness other than opencode.
+func seatCacheHome(sess *api.Session) string {
+	if sess.HarnessHome == "" || sess.Runtime.Name != "opencode" {
+		return ""
+	}
+	return runtime.OpenCodeCacheHome(sess.HarnessHome)
 }
 
 // takeInstance removes and returns the instance for a session key, with

@@ -174,7 +174,9 @@ func (c *paneCache) stamp(pane composerPane, sessions []api.Session, client func
 
 // refreshPaneReads is the daemon's tick hook.
 func (d *Daemon) refreshPaneReads(now time.Time) {
-	d.paneReads.refresh(d.paneSource(), d.sessionsForPaneRead(now), d.composerClientWorkspace, now)
+	sessions := d.sessionsForPaneRead(now)
+	d.paneReads.refresh(d.paneSource(), sessions, d.composerClientWorkspace, now)
+	d.recordFirstTurns(sessions, now)
 }
 
 // paneSource is what the pane columns read panes through: the tmux driver, unless

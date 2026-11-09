@@ -1,7 +1,7 @@
-# finding-marvel-0qdn: opencode T1 probe, eleven measurements on tool naming, config, provider sign-in, first start and rule matching
+# finding-marvel-0qdn: opencode T1 probe, twelve measurements on tool naming, config, provider sign-in, first start and rule matching
 
 **Date:** 2026-11-09
-**Confidence:** frontier. Eleven measurements on one host, one opencode version
+**Confidence:** frontier. Twelve measurements on one host, one opencode version
 and one 0.6B model. Where a result is inferred, it says so.
 **Placement:** marvel. The subject is how marvel launches and constrains an
 opencode seat; opencode is the object measured.
@@ -12,7 +12,7 @@ opencode seat; opencode is the object measured.
 The opencode chain has three links and one write run that rest on facts only a
 live run can settle: how a director tool is named under a deny-everything rule,
 where provider sign-in lives, and whether a private home needs its own provider
-entry. These eleven measurements let the marvel owner rule on those links from
+entry. These twelve measurements let the marvel owner rule on those links from
 evidence instead of inference, and two of them change what the chain must guard
 against: a private home needs a provider entry or the seat hangs, and an
 ambient provider key chooses the model when none is configured.
@@ -112,6 +112,19 @@ ambient provider key chooses the model when none is configured.
     The host filesystem is case-insensitive, so `A/x` and `a/x` are one file;
     the rows show the matcher compares the requested path string, not the file.
 
+12. **Which provider name is free and local. MEASURED.** No built-in provider is
+    both. An empty private home, with no key and no config, enables only
+    `opencode`: eight models, every one priced 0, every one at the remote
+    `https://opencode.ai/zen/v1`. With no credential it sends `Authorization:
+    Bearer public` and `x-opencode-project` and `x-opencode-session` headers
+    (seen by pointing its base URL at a localhost recorder). `lmstudio` is the
+    one built-in name with a loopback endpoint (`http://127.0.0.1:1234/v1`). It
+    stays off until a config entry names it (`{"provider":{"lmstudio":{}}}` is
+    enough) or `LMSTUDIO_API_KEY` is set; its models are priced 0, and with no
+    key it sends no `Authorization` header. `ollama` is not built in and is
+    local only through a full provider entry (case 5). Price 0 does not mark a
+    provider as local: the remote and the local providers all read 0.
+
 ## What each result unblocks
 
 - **Case 1, widening the policy gate to every opencode role:** the director
@@ -151,6 +164,12 @@ ambient provider key chooses the model when none is configured.
   whole-string anchoring, case-sensitive comparison, and `read` paths without a
   leading slash. Every other form (character classes, braces, negation,
   escapes) returns "unverified".
+- **Case 12, the free-provider test in the private-home step (aae-orc-rurrg):**
+  a test for a free and local provider cannot rest on the name `opencode` or on
+  a catalog price of 0, since the remote default reads 0 too. The two local
+  names are `lmstudio` (built in, loopback, needs an entry or the key variable)
+  and `ollama` (a full entry). Which name a role declares is the marvel owner's
+  to rule.
 - **The end-to-end write run** still waits on the host sandbox profile decision
   and on the earlier steps of the chain.
 

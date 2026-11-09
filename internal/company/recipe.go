@@ -75,19 +75,6 @@ type Recipe struct {
 	NonHolder *When
 }
 
-// credentialKeys are the five keys a role may not override, the credentials
-// marvel or the broker checks to decide whether a session is who it says it
-// is. A recipe may not name them either. They are the values of
-// runtime.roleEnvRefusedKeys, which this package cannot import.
-var credentialKeys = []string{
-	api.HeartbeatTokenEnv, api.CredentialHelperEnv, api.HeartbeatTokenFileEnv,
-	"DIRECTOR_NATS_USER", "DIRECTOR_NATS_PASS",
-}
-
-func isCredentialKey(k string) bool {
-	return slices.Contains(credentialKeys, k) || api.BackendBearerEnv(k)
-}
-
 var (
 	plainNameRE   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	placeholderRE = regexp.MustCompile(`\{[^{}]*\}`)
@@ -341,7 +328,7 @@ func (d *recipeDecoder) names(block, section string, keys []string, set bool) er
 		if !plainNameRE.MatchString(k) {
 			return d.lib("N21", d.ctx.Name, section, k)
 		}
-		if isCredentialKey(k) {
+		if api.IsCredentialKey(k) {
 			return d.rec("N1", block, k)
 		}
 		if k == "DIRECTOR_CLUSTER" || (k == "DIRECTOR_GLOBAL_ROLE" && !set) {
@@ -530,7 +517,9 @@ type value struct {
 	toolOK bool
 }
 
-func (d *recipeDecoder) values(rec *Recipe) error {
+// valueList is every string the recipe carries, with the key it is read at, in
+// the order the decoder checks them and Check reads them.
+func (rec *Recipe) valueList() []value {
 	var vs []value
 	if rec.Command != "" {
 		vs = append(vs, value{"command", rec.Command, true})
@@ -571,6 +560,11 @@ func (d *recipeDecoder) values(rec *Recipe) error {
 	if rec.NonHolder != nil {
 		block("when.global.non_holder", rec.NonHolder)
 	}
+	return vs
+}
+
+func (d *recipeDecoder) values(rec *Recipe) error {
+	vs := rec.valueList()
 	for _, v := range vs {
 		if strings.HasPrefix(v.s, "tool:") && !v.toolOK {
 			return d.rec("N4", v.key)

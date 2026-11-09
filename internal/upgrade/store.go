@@ -58,6 +58,27 @@ type Record struct {
 	Prior  *Build `json:"prior,omitempty"`
 }
 
+// Fallback names a kept copy of a running build that a daemon can exec when
+// its successor does not start: where it is, its sha256, and the store schema
+// it reads, so a fallback is not aimed at a store newer than it understands.
+//
+// Owner reading, proposed for review before merge: the type name and its three
+// fields.
+type Fallback struct {
+	Path   string
+	Sum    string
+	Schema int
+}
+
+// KeepRunning keeps a copy of the running build, at running, for a fallback.
+// This is the seam only: it keeps nothing and returns the zero Fallback, and
+// nothing calls it yet. The zero-downtime upgrade chain gives it a body.
+//
+// Owner reading, proposed for review before merge: the name and the signature.
+func KeepRunning(l paths.Layout, running string) (Fallback, error) {
+	return Fallback{}, nil
+}
+
 // ReadRecord reads the version record under the layout's home. found is false
 // when there is no record yet, which is not an error.
 func ReadRecord(l paths.Layout) (rec Record, found bool, err error) {
