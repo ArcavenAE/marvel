@@ -36,12 +36,36 @@ var pinnedRoleEnvProbe = []struct {
 	{"EDITOR", false, ""},
 }
 
+// captureLog sends the standard logger to the returned buffer until the test
+// ends, then puts back the writer it found.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	return &buf
+}
+
+// The control for captureLog: after a subtest that captured the log has ended,
+// the logger writes where it wrote before.
+func TestCaptureLogPutsBackTheWriter(t *testing.T) {
+	var sentinel bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&sentinel)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	t.Run("capture", func(t *testing.T) { captureLog(t) })
+
+	if log.Writer() != &sentinel {
+		t.Errorf("the logger was left writing to %T, not to the writer it had", log.Writer())
+	}
+}
+
 func TestMergeRoleEnvRefusesThePinnedCredentialSet(t *testing.T) {
 	for _, p := range pinnedRoleEnvProbe {
 		t.Run(p.key, func(t *testing.T) {
-			var buf bytes.Buffer
-			log.SetOutput(&buf)
-			t.Cleanup(func() { log.SetOutput(log.Writer()) })
+			buf := captureLog(t)
 
 			ctx := testContext()
 			ctx.Role.Runtime.Env = map[string]string{p.key: "a-literal-value"}
