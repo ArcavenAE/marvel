@@ -90,11 +90,12 @@ const (
 // HealthState, so that the restart path (which keys on HealthUnhealthy and
 // FailureCount) can never read it: a stalled session is never restarted.
 //
-// The reading reuses SessionContext.ContextAt, which both activity
-// producers marvel has already stamp — the usage accountant on each
-// token-bearing stream sample (headless) and the cooperative heartbeat RPC
-// (interactive statusline/codex feeds and the simulator). No stream
-// scraping is added. See team.evaluateActivity.
+// The reading is api.WorkAt: SessionContext.ReadingChangedAt where a producer
+// stamps it, else SessionContext.ContextAt. Both activity producers marvel
+// already has write them: the usage accountant on each token-bearing stream
+// sample (headless) and the cooperative heartbeat RPC (interactive
+// statusline/codex feeds and the simulator). No stream scraping is added. See
+// team.evaluateActivity.
 type ActivityState string
 
 const (
@@ -349,7 +350,7 @@ type Session struct {
 	TotalsChangedAt time.Time   `json:"totals_changed_at,omitempty" toml:"-"`
 	HealthState     HealthState `toml:"-"`
 	// ActivityState is the restart-neutral staleness advisory (aae-orc-9box).
-	// Recomputed every evaluateHealth tick from ContextAt/CreatedAt against
+	// Recomputed every evaluateHealth tick from WorkAt/CreatedAt against
 	// the role's ActivityTimeout; orthogonal to HealthState and never read
 	// by the restart path. Status, not spec (toml:"-"), same as HealthState.
 	ActivityState ActivityState `toml:"-"`

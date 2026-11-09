@@ -60,7 +60,9 @@ func (f *listFixture) deliver() api.Team {
 func (f *listFixture) quietSince(sess api.Session, at time.Time) {
 	f.t.Helper()
 	if err := f.store.UpdateSession(sess.Key(), func(live *api.Session) error {
-		live.ContextAt = at // UpdateSessionContext stamps wall time, not the fake clock
+		// UpdateSessionContext stamps wall time, not the fake clock. Last active is a
+		// reading change, so both stamps are set.
+		live.ContextAt, live.ReadingChangedAt = at, at
 		return nil
 	}); err != nil {
 		f.t.Fatal(err)

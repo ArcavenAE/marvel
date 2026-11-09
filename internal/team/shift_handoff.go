@@ -99,15 +99,15 @@ func (c *Controller) firstSessionOverAge(t *api.Team, role *api.Role, cond api.S
 // lastWorked is when the seat last did work, for the pause test. Where the seat
 // forwards cost and API-time totals it is the last move of either, because the
 // statusline beats on an idle seat and ContextAt moves with every beat
-// (marvel#936). A seat with no stamp keeps the context feed's time, and a seat
-// with neither counts from spawn.
+// (marvel#936). A seat with no totals stamp keeps its WorkAt, the last reading
+// change, and a seat with neither counts from spawn.
 func lastWorked(s api.Session) time.Time {
 	at := s.CreatedAt
 	switch {
 	case s.TotalsChangedAt.After(at):
 		at = s.TotalsChangedAt
-	case s.TotalsChangedAt.IsZero() && s.ContextAt.After(at):
-		at = s.ContextAt
+	case s.TotalsChangedAt.IsZero() && api.WorkAt(&s).After(at):
+		at = api.WorkAt(&s)
 	}
 	return at
 }

@@ -1635,7 +1635,7 @@ func (c *Controller) evaluateHealth() {
 		if sess.State != api.SessionRunning {
 			continue
 		}
-		c.recordTick(sess.Key(), now, sess.ContextAt)
+		c.recordTick(sess.Key(), now, api.WorkAt(&sess))
 		ringed[sess.Key()] = true
 
 		teamKey := fmt.Sprintf("%s/%s", sess.Workspace, sess.Team)

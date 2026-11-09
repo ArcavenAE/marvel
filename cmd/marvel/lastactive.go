@@ -22,14 +22,15 @@ const (
 // sourceMarkColumns are the columns whose cells can carry the mark. ACTIVE% too.
 var sourceMarkColumns = map[string]bool{"last-active": true, "active": true}
 
-// lastActiveAsOf is the cell's reading: the time since ContextAt, observed at
-// ContextAt, from the producer that wrote it. ValidUntil stays zero on
+// lastActiveAsOf is the cell's reading: the time since the seat last showed work
+// (api.WorkAt: its last reading change, else ContextAt), observed then, from the
+// producer that wrote it. ValidUntil stays zero on
 // purpose: the value is an age, so it grows and never expires, and an expiry
 // would hide the one number the cell shows.
 func lastActiveAsOf(s api.Session, now time.Time) asof.Cell[time.Duration] {
 	return asof.Cell[time.Duration]{
-		Value:      now.Sub(s.ContextAt),
-		ObservedAt: s.ContextAt,
+		Value:      now.Sub(api.WorkAt(&s)),
+		ObservedAt: api.WorkAt(&s),
 		Source:     string(s.ContextSource),
 	}
 }

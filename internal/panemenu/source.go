@@ -256,7 +256,7 @@ func (d *source) setPaneMenu(sess api.Session, readingState api.ReadingState, no
 			if live.Limit != nil {
 				return nil // another source got there first
 			}
-			prov.ActivityAt = live.ContextAt
+			prov.ActivityAt = api.WorkAt(live)
 			live.Condition, live.Limit = api.ConditionLimited, prov
 			set = true
 			return nil
@@ -312,7 +312,7 @@ func (d *source) holdPaneMenu(sess api.Session, reading api.AccountReading, stat
 		d.clearPaneMenu(sess, paneClearFreshReading, now)
 		return
 	}
-	if !sess.ContextAt.IsZero() && sess.ContextAt.After(sess.Limit.ActivityAt) {
+	if w := api.WorkAt(&sess); !w.IsZero() && w.After(sess.Limit.ActivityAt) {
 		d.clearPaneMenu(sess, paneClearActivity, now)
 		return
 	}
