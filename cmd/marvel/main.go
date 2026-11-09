@@ -4040,11 +4040,18 @@ func renderBudgetTable(rows []admission.Row) string {
 // sends no age, and an absent one, read as that word. Never ok.
 func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 	observed := r.Reading
+	// One decimal of the raw value when the daemon sends it, so a reading of 79.6
+	// is not shown as the 80 that would read as at the level. A daemon that
+	// predates the raw value sends only the rounded integer.
+	value := fmt.Sprintf("%d%%", r.Observed)
+	if r.ObservedPercent != nil {
+		value = floorOneDecimal(*r.ObservedPercent) + "%"
+	}
 	switch {
 	case r.Reading == "fresh":
-		observed = fmt.Sprintf("%d%%", r.Observed)
+		observed = value
 	case r.Reading == "stale" && r.ReadingAgeSeconds > 0:
-		observed = fmt.Sprintf("%d%% (%s ago)", r.Observed, formatUntil(time.Duration(r.ReadingAgeSeconds)*time.Second))
+		observed = fmt.Sprintf("%s (%s ago)", value, formatUntil(time.Duration(r.ReadingAgeSeconds)*time.Second))
 	}
 	resets := "-"
 	if r.ResetsAt != nil {
@@ -4056,6 +4063,19 @@ func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 	}
 	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t-\t%s\t-\t%s\t%s\t%s %s; %s\n",
 		tally.key(r.Workspace), tally.key(r.Team), r.Dimension, observed, tally.draw(state), resets, tally.draw(r.Account), tally.draw(r.AccountWindow), tally.draw(r.Note))
+}
+
+// floorOneDecimal prints v with one decimal, dropping the rest instead of
+// rounding it, so a reading under the warning level never prints at or above
+// it: 79.96 is 79.9, not 80.0. It cuts the shortest decimal form of v, so a
+// value such as 62.4 is not read as 62.39999 and cut to 62.3.
+func floorOneDecimal(v float64) string {
+	s := strconv.FormatFloat(v, 'f', -1, 64)
+	whole, frac, _ := strings.Cut(s, ".")
+	if frac == "" {
+		return whole + ".0"
+	}
+	return whole + "." + frac[:1]
 }
 
 // formatUntil renders a time to go, or a time since for a reading's age, as days

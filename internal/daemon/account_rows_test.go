@@ -444,3 +444,24 @@ func TestAccountLimitsTwoSeatsAReRenderingSiblingNeverLiftsALimit(t *testing.T) 
 		t.Fatalf("seat b lost the limit: %q", got.Condition)
 	}
 }
+
+// The raw value rides on the row and STATE compares the raw value: 79.6 against a
+// level of 80 prints 79.6 and is not near the limit, and 80.0 is.
+func TestAccountRowsEdgeOfTheLevelKeepsTheRawValue(t *testing.T) {
+	t.Parallel()
+	key := api.AccountKeyOf(accountSession("a", "claude"))
+	for _, c := range []struct {
+		pct   float64
+		state string
+	}{{79.6, "-"}, {79.96, "-"}, {80.0, accountWarnState}, {80.04, accountWarnState}} {
+		rd := api.NewAccountReadings()
+		rd.Record(key, []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(c.pct), ResetsAt: acctT0.Add(time.Hour)}}, "ws/a", acctT0)
+		rows := accountRowsAt(rd, []api.Session{accountSession("a", "claude")}, acctT0.Add(time.Minute), 80)
+		if len(rows) != 1 || rows[0].ObservedPercent == nil || *rows[0].ObservedPercent != c.pct {
+			t.Fatalf("%.1f: rows = %+v, want observed_percent %.1f", c.pct, rows, c.pct)
+		}
+		if rows[0].State != c.state {
+			t.Errorf("%.1f against level 80: STATE %q, want %q", c.pct, rows[0].State, c.state)
+		}
+	}
+}

@@ -97,7 +97,11 @@ func accountRowsAt(readings *api.AccountReadings, sessions []api.Session, now ti
 				r.ResetsAt = &t
 			}
 			if w.UsedPercent != nil {
-				r.Observed = int(math.Round(*w.UsedPercent))
+				// Observed is the rounded value for a client that reads only it;
+				// ObservedPercent is the raw value, which STATE compares to the level.
+				raw := *w.UsedPercent
+				r.Observed = int(math.Round(raw))
+				r.ObservedPercent = &raw
 				switch {
 				case state == api.ReadingStale:
 					// The last value and how old it is, on this clock; STATE says the
