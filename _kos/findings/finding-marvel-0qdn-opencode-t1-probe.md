@@ -137,7 +137,7 @@ ambient provider key chooses the model when none is configured.
   `env -u` in the pane prefix is needed and sufficient.
 - **Case 4, where `XDG_CONFIG_HOME` moves:** it must move only in the step that
   seeds the director config, since moving it drops the global file.
-- **Case 2, `auto-unsandboxed`:** nothing measured argues against the existing
+- **Case 2, `auto-unsandboxed`:** this supports keeping the existing
   refusal; a deny-first block with no
   `ask` left makes `--auto` harmless on tools.
 - **Case 9, first start:** a pre-seeded config directory is not needed for a
