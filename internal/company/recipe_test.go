@@ -301,3 +301,45 @@ func TestRecipeThatDoesNotParseNamesOnlyTheLine(t *testing.T) {
 		t.Fatalf("refusal = %+v, want N26 naming a line and no content", r)
 	}
 }
+
+// pinnedRecipeCredentialProbe mirrors the table pinned for mergeRoleEnv in
+// internal/runtime: a recipe may not name a key that a role may not set, and
+// the two paths refuse the same set.
+var pinnedRecipeCredentialProbe = []struct {
+	key     string
+	refused bool
+}{
+	{"MARVEL_HEARTBEAT_TOKEN", true},
+	{"MARVEL_CREDENTIAL_HELPER", true},
+	{"MARVEL_HEARTBEAT_TOKEN_FILE", true},
+	{"DIRECTOR_NATS_USER", true},
+	{"DIRECTOR_NATS_PASS", true},
+	{"ANTHROPIC_API_KEY", true},
+	{"ANTHROPIC_AUTH_TOKEN", true},
+	{"CLAUDE_CODE_OAUTH_TOKEN", true},
+	{"AWS_BEARER_TOKEN_BEDROCK", true},
+	{"AWS_SECRET_ACCESS_KEY", true},
+	{"AWS_SESSION_TOKEN", true},
+	{"OPENAI_API_KEY", true},
+	{"SOME_VENDOR_AUTH_TOKEN", true},
+	{"X_BEARER_TOKEN_Y", true},
+	{"MARVEL_BACKEND_API_KEY_HELPER", false},
+	{"DIRECTOR_NATS_URL", false},
+	{"EDITOR", false},
+}
+
+func TestRecipeRefusesThePinnedCredentialSet(t *testing.T) {
+	for _, p := range pinnedRecipeCredentialProbe {
+		t.Run(p.key, func(t *testing.T) {
+			doc := replaceOnce(t, goodRecipe, "[env]\n", "[env]\n"+p.key+" = \"v\"\n")
+			_, err := DecodeRecipe(recipeCtx(), []byte(doc))
+			if p.refused {
+				wantRefusal(t, err, "N1", fmt.Sprintf("%senv: key %s is a credential and may not be named in a recipe", recPrefix, p.key))
+				return
+			}
+			if err != nil {
+				t.Fatalf("%s is not a credential and must decode: %v", p.key, err)
+			}
+		})
+	}
+}
