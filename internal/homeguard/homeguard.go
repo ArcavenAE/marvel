@@ -1,7 +1,7 @@
 // Package homeguard keeps a package's tests out of the operator's real home.
 //
 // Every package with tests calls Run from its TestMain. Run starts by removing
-// every variable but PATH, LANG and TMPDIR from the test binary's environment, so
+// every variable but PATH, LANG, TMPDIR, GOCACHE and GOMODCACHE from the test binary's environment, so
 // a child a test starts inherits no credential variable. It then gives the test
 // binary a scratch HOME and no MARVEL_*, TMUX or TMUX_PANE variables, so a
 // test that forgets t.Setenv resolves ~/.marvel, ~/.codex and ~/.claude.json
