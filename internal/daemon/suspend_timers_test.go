@@ -42,6 +42,7 @@ func newTimersRig(t *testing.T) *timersRig {
 	if err := r.d.store.UpdateSession(s.Key(), func(s *api.Session) error {
 		s.LastHeartbeat = r.now.Add(-100 * time.Minute)
 		s.ContextAt = r.now.Add(-100 * time.Minute)
+		s.ReadingChangedAt = r.now.Add(-100 * time.Minute)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -78,6 +79,9 @@ func (r *timersRig) check(t *testing.T) {
 	}
 	if want := r.now.Add(-10 * time.Minute); !got.ContextAt.Equal(want) {
 		t.Errorf("ContextAt = %v, want %v", got.ContextAt, want)
+	}
+	if want := r.now.Add(-10 * time.Minute); !got.ReadingChangedAt.Equal(want) {
+		t.Errorf("ReadingChangedAt = %v, want %v", got.ReadingChangedAt, want)
 	}
 }
 

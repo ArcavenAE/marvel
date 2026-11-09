@@ -1794,11 +1794,13 @@ func healthFailureMessage(typ api.HealthCheckType, staleFor time.Duration, failu
 // never restarted" guarantee.
 //
 // It answers "has marvel recently seen this harness do work?" without parsing
-// harness output for meaning. The signal is SessionContext.ContextAt, the
-// single "measured" sentinel both of marvel's activity producers already
-// stamp: the usage accountant on each token-bearing stream sample (headless),
-// and the cooperative heartbeat RPC (interactive statusline/codex feeds and
-// the simulator; see api.Store.UpdateSessionContext / UpdateSessionHeartbeat).
+// harness output for meaning. The signal is api.WorkAt: the time the session's
+// reading last changed (SessionContext.ReadingChangedAt), or ContextAt where the
+// producer never wrote that stamp. ContextAt is the "measured" sentinel both of
+// marvel's activity producers stamp, the usage accountant on each token-bearing
+// stream sample (headless) and the cooperative heartbeat RPC (interactive
+// statusline/codex feeds and the simulator), but a heartbeat repeats it every
+// beat, so a seat that only beats reads stalled once the window passes (marvel#801).
 // No stream scraping is added here.
 //
 // Two false-positive guards are the reason this is careful rather than a bare
@@ -1815,9 +1817,10 @@ func healthFailureMessage(typ api.HealthCheckType, staleFor time.Duration, failu
 //     session with a declared activity channel (activityObservable) is a
 //     candidate for "stalled from birth", and only past the startup grace.
 //
-// Once ContextAt is non-zero marvel has demonstrably observed this session
-// work, so staleness is assessable regardless of declared channel — this is
-// the expired-credentials / hung-harness case (worked, then went silent).
+// Once ContextAt is non-zero marvel has demonstrably observed this session,
+// so staleness is assessable regardless of declared channel: this is the
+// expired-credentials / hung-harness case (worked, then went silent, even if
+// the statusline keeps beating).
 //
 // One accepted transient: a headless session's stream-sourced ContextAt is
 // not persisted (UpdateSessionContext does not persist), so a session adopted
