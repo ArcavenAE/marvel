@@ -1658,9 +1658,9 @@ func (c *Controller) evaluateHealth() {
 		}
 
 		var (
-			transitionedToUnhealthy bool
-			shouldApplyRestart      bool
-			staleFor                time.Duration
+			reachedThreshold   bool
+			shouldApplyRestart bool
+			staleFor           time.Duration
 		)
 		var updated api.Session
 
@@ -1690,6 +1690,7 @@ func (c *Controller) evaluateHealth() {
 			// moves. So a seat whose statusline is live and whose bus is dead
 			// goes unhealthy (finding-166).
 			live.LastHealthCheck = now
+			prev := live.FailureCount
 			last := live.LastHeartbeat
 			if role.HealthCheck.Type == api.HealthCheckBus {
 				last = live.LastBusBeat
@@ -1715,8 +1716,11 @@ func (c *Controller) evaluateHealth() {
 			}
 
 			if live.FailureCount >= role.HealthCheck.FailureThreshold {
-				if live.HealthState != api.HealthUnhealthy {
-					transitionedToUnhealthy = true
+				// The tick that reaches the threshold emits, so the event marks
+				// the restart policy's trigger. A seat already unhealthy below
+				// the threshold would otherwise never emit (aae-orc-6zmvw).
+				if prev < role.HealthCheck.FailureThreshold || live.HealthState != api.HealthUnhealthy {
+					reachedThreshold = true
 				}
 				live.HealthState = api.HealthUnhealthy
 				shouldApplyRestart = true
@@ -1749,7 +1753,7 @@ func (c *Controller) evaluateHealth() {
 			obs[key] = o
 		}
 
-		if transitionedToUnhealthy {
+		if reachedThreshold {
 			events.Emit(c.Events, events.Event{
 				Kind:      events.KindHealthCheckFailed,
 				Severity:  events.SeverityWarning,
