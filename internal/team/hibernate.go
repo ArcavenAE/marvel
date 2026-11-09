@@ -262,7 +262,7 @@ func (c *Controller) askHibernate(t *api.Team, role *api.Role, sess api.Session,
 	}
 	events.Emit(c.Events, events.Event{
 		Kind: events.KindShiftHandoffRequested, Severity: events.SeverityInfo,
-		Workspace: t.Workspace, Team: t.Name, Role: role.Name, Session: sess.Key(), Generation: t.Generation,
+		Workspace: t.Workspace, Team: t.Name, Role: role.Name, Session: sess.Key(), Generation: c.seatGeneration(t, sess.Key()),
 		Message: fmt.Sprintf("cause=%s: hibernate by %s; notice %s; handoff window %s", api.HandoffCauseHibernate, t.Hibernate.Actor, delivery, rr.Shift.HandoffWindowOrDefault()),
 	})
 }
