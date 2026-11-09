@@ -15,6 +15,10 @@ import (
 // that nobody has named yet is gone too. HOME is not on it: Run sets it to the
 // scratch home separately.
 //
+// TMUX_TMPDIR is not kept from the parent: Run sets it to a fresh scratch
+// directory (see scratchTmuxDir), because a child that held the parent's value
+// could reach the tmux server the operator's seats run in.
+//
 // GOCACHE and GOMODCACHE are kept, and set from their resolved values when the
 // environment did not carry them (see resolveGoCaches), because a go command that
 // a test runs finds both under HOME otherwise, and the scratch HOME is empty:
@@ -119,4 +123,28 @@ func scrubProcessEnv() error {
 		}
 	}
 	return nil
+}
+
+// tmuxSocketBudget is the room a unix socket path leaves for tmux's own
+// "/tmux-<uid>/<name>" below TMUX_TMPDIR: the limit is 104 bytes on macOS, and
+// the longest name a test uses (marvel-test-session-<pid>) takes about 40.
+const tmuxSocketBudget = 60
+
+// scratchTmuxDir makes the directory TMUX_TMPDIR points a guarded binary's tmux
+// at: a fresh 0700 directory under the temp dir, or under /tmp when the temp dir
+// is too long for a socket path to fit below it.
+func scratchTmuxDir() (string, error) {
+	base := os.TempDir()
+	if len(base) > tmuxSocketBudget-len("mt-123456789") {
+		base = "/tmp"
+	}
+	dir, err := os.MkdirTemp(base, "mt-")
+	if err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	return dir, nil
 }
