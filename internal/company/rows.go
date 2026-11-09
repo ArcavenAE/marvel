@@ -33,6 +33,7 @@ var rows = []row{
 	{"4", `recipes <name>@<version> requires definition_schema = <n>, but company <name>@<version> has definition_schema = <m>`},
 	{"5", `company <name>@<version> requires marvel <v> or newer; this is <w>`},
 	{"6", `team <team> role <role>: parameter <name> does not match its pattern`},
+	{"N27", `team <team> role <role>: required parameter <name> is not set`},
 	{"7", `recipe <name>: tool "<tool>" is not set; run marvel config tools set <tool> <path>`},
 	{"8", `recipe <name>: prompt lists identity, but definition <id> already carries identity <identity>`},
 	{"9", `team <team> role <role>: recipe <name> and runtime.env both name <KEY>`},

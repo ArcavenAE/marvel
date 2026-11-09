@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -228,7 +229,14 @@ func checkDefinition(env Env, req Request, res *Result) error {
 			return refuse("N6", req.Recipe, t, res.Company.Name, res.Company.Version, t)
 		}
 	}
-	for name, p := range rec.Params {
+	names := slices.Sorted(maps.Keys(rec.Params))
+	for _, name := range names {
+		if _, set := req.Params[name]; !set && rec.Params[name].Required {
+			return refuse("N27", req.Team, req.Role, name)
+		}
+	}
+	for _, name := range names {
+		p := rec.Params[name]
 		v, set := req.Params[name]
 		if !set || p.Pattern == "" {
 			continue

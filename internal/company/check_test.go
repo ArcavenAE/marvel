@@ -353,6 +353,23 @@ func TestCheckRefusesAParameterThatFailsItsPattern(t *testing.T) {
 	}
 }
 
+// N27, next to row 6: a required parameter the role leaves unset, naming the
+// parameter. An optional parameter left unset, and a set one, pass.
+func TestCheckRefusesAnUnsetRequiredParameter(t *testing.T) {
+	l := newLaunch(t)
+	l.req.Params = map[string]string{}
+	l.wantRefused("N27", "team core role builder: required parameter scope is not set")
+	// Control: the same launch with the parameter set passes, and the optional
+	// bool parameter cue is never required.
+	ok := newLaunch(t)
+	ok.req.Params = map[string]string{"scope": "alpha"}
+	ok.wantPasses()
+	// A parameter set to the empty string is set; the pattern decides whether it is valid.
+	empty := newLaunch(t)
+	empty.req.Params = map[string]string{"scope": ""}
+	empty.wantRefused("6", "team core role builder: parameter scope does not match its pattern")
+}
+
 // Row 7: a tool the recipe names that the host has not set.
 func TestUnsetToolRefuses(t *testing.T) {
 	l := newLaunch(t)

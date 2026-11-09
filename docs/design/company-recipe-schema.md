@@ -221,6 +221,7 @@ Fixed text, so the tests and the admin guide quote one wording. Angle brackets a
 | the pair disagrees | `recipes <name>@<version> requires definition_schema = <n>, but company <name>@<version> has definition_schema = <m>` |
 | marvel too old | `company <name>@<version> requires marvel <v> or newer; this is <w>` |
 | pattern failed | `team <team> role <role>: parameter <name> does not match its pattern` |
+| a required parameter is not set | `team <team> role <role>: required parameter <name> is not set` |
 | tool not set | `recipe <name>: tool "<tool>" is not set; run marvel config tools set <tool> <path>` |
 | identity listed twice | `recipe <name>: prompt lists identity, but definition <id> already carries identity <identity>` |
 | env named twice | `team <team> role <role>: recipe <name> and runtime.env both name <KEY>` |

@@ -11,8 +11,8 @@ import (
 // dropped is a decision made in this test and not a side effect.
 func TestRegistryHoldsTheRowsOfThisLink(t *testing.T) {
 	t.Parallel()
-	if len(rows) != 40 {
-		t.Fatalf("registry holds %d rows, want 40", len(rows))
+	if len(rows) != 41 {
+		t.Fatalf("registry holds %d rows, want 41", len(rows))
 	}
 	if rows[0].id != "1" || rows[0].doc != `company <name>@<version>: <file>: unknown key "<key>"` {
 		t.Fatalf("first row = %+v, want spec row 1", rows[0])
@@ -85,8 +85,8 @@ func TestEveryRowHasADocRow(t *testing.T) {
 		msg = strings.TrimSuffix(strings.TrimPrefix(msg, "`"), "`")
 		docs = append(docs, msg)
 	}
-	if len(docs) != 42 {
-		t.Fatalf("the spec's refusal table holds %d rows, want 42 (23 spec rows, the 12 rows of the decoders and the 7 rows of the resolver)", len(docs))
+	if len(docs) != 43 {
+		t.Fatalf("the spec's refusal table holds %d rows, want 43 (23 spec rows, the 12 rows of the decoders the 7 rows of the resolver and the required-parameter row)", len(docs))
 	}
 	have := map[string]bool{}
 	for _, d := range docs {
