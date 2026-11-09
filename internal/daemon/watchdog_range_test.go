@@ -43,8 +43,8 @@ func TestWatchdogOutsideTheShippedRangeIsUncoveredAndNamesTheRange(t *testing.T)
 		if hs == nil || hs.State != api.HarnessStateUncovered {
 			t.Fatalf("claude %s: harness state = %+v, want uncovered", v, hs)
 		}
-		if strings.Join(hs.Covered, ",") != "2.1.285-2.1.293" {
-			t.Errorf("claude %s: covered = %v, want the range 2.1.285-2.1.293", v, hs.Covered)
+		if strings.Join(hs.Covered, ",") != "2.1.285-2.1.293,2.1.310-2.1.310" {
+			t.Errorf("claude %s: covered = %v, want the logged-out range and the dev-channels version", v, hs.Covered)
 		}
 	}
 }

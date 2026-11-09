@@ -151,7 +151,13 @@ func TestShippedLoggedOutCoversTheSampledVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := EmbeddedSample(sets[0])
+	var loggedOut Pattern
+	for _, p := range sets {
+		if p.ID == "logged-out" {
+			loggedOut = p
+		}
+	}
+	raw, err := EmbeddedSample(loggedOut)
 	if err != nil {
 		t.Fatal(err)
 	}
