@@ -112,7 +112,7 @@ func (c *Controller) Hibernate(teamKey string, opt HibernateOptions) (HibernateR
 		rep.Seats += len(c.runningSeats(&t, role))
 		if req, ok := t.ShiftRequests[role.Name]; ok {
 			log.Printf("hibernate: %s superseded the open %s handoff request on role %s", teamKey, req.Cause, role.Name)
-			c.dropShiftRequest(&t, role.Name)
+			c.dropShiftRequest(&t, role.Name, "")
 		}
 	}
 	return rep, nil

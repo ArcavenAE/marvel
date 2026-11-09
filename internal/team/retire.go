@@ -101,7 +101,7 @@ func (c *Controller) retireSession(t *api.Team, role *api.Role, sess api.Session
 	}
 	// One slot per seat: a pending shift request on this seat ends here.
 	if req, ok := t.ShiftRequests[sess.Role]; ok && req.Session == sess.Key() {
-		c.dropShiftRequest(t, sess.Role)
+		c.dropShiftRequest(t, sess.Role, "")
 	}
 
 	template, marker, window := "", "", api.DefaultShiftHandoffWindow

@@ -2260,7 +2260,7 @@ roles:
 		req, pending := t.ShiftRequests[role.Name]
 		if pending && !hasCondition(conds, req.Cause) {
 			// The policy that asked no longer declares the cause.
-			c.dropShiftRequest(t, role.Name)
+			c.dropShiftRequest(t, role.Name, holdReasonPolicyRemoved)
 			pending = false
 		}
 		if len(conds) == 0 {
@@ -2329,14 +2329,16 @@ func hasCondition(conds []api.ShiftCondition, on string) bool {
 // autoShift emits the auto-triggered event and initiates a role-scoped shift,
 // reporting whether it started. A concurrent operator shift or a store race
 // can refuse it; that is not fatal, and the next tick re-evaluates.
-func (c *Controller) autoShift(t *api.Team, role *api.Role, sess, msg string) bool {
+func (c *Controller) autoShift(t *api.Team, role *api.Role, sess, cause, msg string) bool {
 	events.Emit(c.Events, events.Event{
 		Kind:       events.KindShiftAutoTriggered,
 		Workspace:  t.Workspace,
 		Team:       t.Name,
 		Role:       role.Name,
 		Session:    sess,
-		Generation: t.Generation,
+		Generation: c.seatGeneration(t, sess),
+		Cause:      shiftEventCause(cause),
+		Reason:     "marker",
 		Message:    msg,
 	})
 	if err := c.initiateShiftLocked(t.Key(), role.Name); err != nil {
