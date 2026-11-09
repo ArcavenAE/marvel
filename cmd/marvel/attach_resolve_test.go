@@ -204,8 +204,8 @@ func TestAttachRefusesAColonKeyBeforeAnyDial(t *testing.T) {
 	a := startFake(t, fakeAnswers, []api.Session{row("aae", "x")})
 	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock})
 
-	const want = `Error: the key "kinu:aae/x" holds ':', which reads as a qualified key; qualified keys are not supported yet (#829), so name the cluster with --cluster` + "\n"
-	for _, arg := range []string{"kinu:aae/x", "a:x"} {
+	const want = `Error: the key "c1:aae/x" holds ':', which reads as a qualified key; qualified keys are not supported yet (#829), so name the cluster with --cluster` + "\n"
+	for _, arg := range []string{"c1:aae/x", "a:x"} {
 		code, stdout, stderr := runFanGet(t, "attach", "--print", arg, "--cluster", "a")
 		if code != 1 {
 			t.Errorf("attach %s: exit = %d, want 1", arg, code)
@@ -213,7 +213,7 @@ func TestAttachRefusesAColonKeyBeforeAnyDial(t *testing.T) {
 		if stdout != "" {
 			t.Errorf("attach %s: stdout = %q, want empty", arg, stdout)
 		}
-		if arg == "kinu:aae/x" && stderr != want {
+		if arg == "c1:aae/x" && stderr != want {
 			t.Errorf("attach %s: stderr = %q, want %q", arg, stderr, want)
 		}
 		if !strings.Contains(stderr, "#829") {
