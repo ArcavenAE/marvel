@@ -158,3 +158,32 @@ func TestFirstTurnUnexpiredProofIsNotRewritten(t *testing.T) {
 		t.Fatalf("an unexpired proof was rewritten: seq %d then %d", old.Seq, got.Seq)
 	}
 }
+
+// A pass that did not read the panes (the cache refresh is rate limited) must
+// not record from a reading left by an earlier pass. Without the freshness
+// guard, a stale mid_turn reading would overwrite a fail that a dialog check
+// wrote after it, until the next refresh.
+func TestFirstTurnIgnoresAReadingFromAnEarlierPass(t *testing.T) {
+	d, sess, now := midTurnTick(t)
+	d.refreshPaneReads(now)
+	if _, ok := firstTurnCell(d, sess.Key()); !ok {
+		t.Fatal("setup: the first pass recorded nothing")
+	}
+	// A dialog check later writes a fail over the proof.
+	failAt := now.Add(2 * time.Second)
+	fail := seedFirstTurn(t, d, sess.Key(), api.DutyFail, "pane:dialog:trust", failAt, time.Hour)
+
+	// The next pass is inside paneRefreshEvery, so the tick reads no pane and the
+	// cache still holds the first pass's mid_turn reading, which is still servable.
+	next := now.Add(5 * time.Second)
+	d.paneReads.want(next)
+	d.refreshPaneReads(next)
+	if r, ok := d.paneReads.get(sess.Key(), next); !ok || !r.at.Equal(now) {
+		t.Fatalf("setup: the cache did not keep the earlier reading (ok=%v)", ok)
+	}
+
+	got, _ := firstTurnCell(d, sess.Key())
+	if got.Seq != fail.Seq || got.State != api.DutyFail {
+		t.Fatalf("a stale reading overwrote the dialog fail: %+v", got)
+	}
+}
