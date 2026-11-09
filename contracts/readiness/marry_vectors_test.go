@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"slices"
 	"testing"
 )
 
@@ -46,8 +47,9 @@ type marryInput struct {
 }
 
 type marryWant struct {
-	Pairs  []json.RawMessage `json:"pairs"`
-	Leases []json.RawMessage `json:"leases"`
+	Pairs    []json.RawMessage `json:"pairs"`
+	Leases   []json.RawMessage `json:"leases"`
+	Unplaced []json.RawMessage `json:"unplaced"`
 }
 
 // pairRow and leaseRow are decoded strictly: an unknown field is an error, so a
@@ -57,6 +59,13 @@ type pairRow struct {
 	Seat    string `json:"seat"`
 	Cluster string `json:"cluster"`
 	Lease   string `json:"lease"`
+}
+
+type unplacedRow struct {
+	Item    string `json:"item"`
+	Seat    string `json:"seat"`
+	Cluster string `json:"cluster"`
+	Reason  string `json:"reason"`
 }
 
 type leaseRow struct {
@@ -105,7 +114,17 @@ func clusterOf(in marryInput) map[string]string {
 	return m
 }
 
-// Every pair and every lease the file wants names the cluster of its seat, and
+// Every vector's row is a row the file's rows list declares.
+func TestMarryVectorsUseDeclaredRows(t *testing.T) {
+	f := loadVectors(t)
+	for _, v := range f.Vectors {
+		if !slices.Contains(f.Rows, v.Row) {
+			t.Errorf("vector %q names row %q, which rows does not list", v.Name, v.Row)
+		}
+	}
+}
+
+// Every pair, lease and unplaced entry the file wants names the cluster of its seat, and
 // where the seat's address is on one cluster only the name matches that seat.
 func TestMarryVectorsCarryTheClusterOnPairsAndLeases(t *testing.T) {
 	f := loadVectors(t)
@@ -136,6 +155,11 @@ func TestMarryVectorsCarryTheClusterOnPairsAndLeases(t *testing.T) {
 				var lr leaseRow
 				strictInto(t, l, &lr)
 				checkCluster(t, v.Name, "lease "+lr.ID, lr.Seat, lr.Cluster, cl)
+			}
+			for _, u := range w.Unplaced {
+				var ur unplacedRow
+				strictInto(t, u, &ur)
+				checkCluster(t, v.Name, "unplaced "+ur.Item, ur.Seat, ur.Cluster, cl)
 			}
 		}
 	}
