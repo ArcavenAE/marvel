@@ -145,25 +145,10 @@ func replaceOnce(t *testing.T, s, old, new string) string {
 	return strings.Replace(s, old, new, 1)
 }
 
-// listing is the sorted names under dir, for assertNothingLeft.
-func listing(t *testing.T, dir string) []string {
-	t.Helper()
-	var out []string
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range ents {
-		out = append(out, e.Name())
-	}
-	slices.Sort(out)
-	return out
-}
-
 // assertNothingLeft is called after a refusal. A refused read returns no
-// value, and it leaves the scratch directory and the process environment as it
-// found them.
-func assertNothingLeft(t *testing.T, scratch string, before []string, env []string, got any) {
+// value and leaves the process environment as it found it. The decoders take
+// bytes and touch no file, so there is no scratch directory to check.
+func assertNothingLeft(t *testing.T, env []string, got any) {
 	t.Helper()
 	switch v := got.(type) {
 	case *Company:
@@ -175,9 +160,6 @@ func assertNothingLeft(t *testing.T, scratch string, before []string, env []stri
 			t.Errorf("a refused recipe decode returned %+v, want nil", v)
 		}
 	}
-	if after := listing(t, scratch); !slices.Equal(before, after) {
-		t.Errorf("scratch directory %v after a refusal, was %v", after, before)
-	}
 	if after := os.Environ(); !slices.Equal(slices.Sorted(slices.Values(env)), slices.Sorted(slices.Values(after))) {
 		t.Error("the process environment changed across a refusal")
 	}
@@ -187,22 +169,20 @@ func assertNothingLeft(t *testing.T, scratch string, before []string, env []stri
 // refusal left nothing; it returns the error.
 func decodeCompanyRefused(t *testing.T, dir Ident, doc string) error {
 	t.Helper()
-	scratch := t.TempDir()
-	before, env := listing(t, scratch), os.Environ()
+	env := os.Environ()
 	c, err := DecodeCompany(dir, []byte(doc))
 	if err != nil {
-		assertNothingLeft(t, scratch, before, env, c)
+		assertNothingLeft(t, env, c)
 	}
 	return err
 }
 
 func decodeRecipeRefused(t *testing.T, ctx RecipeContext, doc string) error {
 	t.Helper()
-	scratch := t.TempDir()
-	before, env := listing(t, scratch), os.Environ()
+	env := os.Environ()
 	r, err := DecodeRecipe(ctx, []byte(doc))
 	if err != nil {
-		assertNothingLeft(t, scratch, before, env, r)
+		assertNothingLeft(t, env, r)
 	}
 	return err
 }
