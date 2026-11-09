@@ -380,3 +380,127 @@ Director's reader already ships (`director-mcp unread --json`, slice M), so it i
 - **Director: lane-ledger's unread column** (aae-orc-p9vdn, 11.4).
 - **Director: the doorbell and supervisor rings use `marvel inject --ring`** (aae-orc-a2pk9), blocked by G1a.
 - **The #399 changes** (the aligned count, and popping by the ack floor) are not filed as tickets. They went to #399 as review notes, and #399 carries both.
+
+## 12. Addendum of 2026-11-06: a seat held at a first-run screen
+
+Code read at marvel `6fb04a33`. Design only; nothing here is built.
+
+A seat held at a first-run screen reads `running`, with health `unknown` and composer `unknown`, for as long as it is held. This was seen on 2026-11-06, with seats at Claude Code's first-run theme picker, and nothing marvel printed said why. This section says how the watcher reports that case. It does not add a second detector: one already runs.
+
+### 12.1 What covers a dialog today, checked
+
+| claim | where | checked |
+|---|---|---|
+| None of the thirteen probe keys detects a dialog. `c1` only asserts that no hook fires at the trust dialog and setup menu | section 6 | read |
+| Section 4 names `blocker_class` `dialog` and keeps masked pane text for it, but says nothing about how a dialog is detected | section 4 | read |
+| The watcher visits only seats with old unread mail and a known turn source, so a seat held since spawn with an empty queue is never visited | section 2, step 3; `seat-readiness.md` premise 4 | read |
+| `seat-readiness.md` does define dialog detection: one plain capture past `ready_by`, matched to a version-ranged pattern, which writes `fail` to `first-turn` with `Source` `pane:dialog:<class>` | `seat-readiness.md` section 4 ("a held dialog"), section 5 ("The visit") | read; ruled 2026-10-10, not built (aae-orc-33985, aae-orc-1gu6g open) |
+| **A detector is built.** The harness-state watchdog visits every running seat every 30 s, for a harness with a foreground rule and a loaded pattern set. Once the seat has been quiet past the window (10 min, from `ContextAt`, or from `CreatedAt` for a seat that never reported), it captures the pane once per window and classifies it with `panestate.Classify` | `internal/daemon/watchdog.go:29`, `:285-351`; `internal/api/quiet.go:10` | read |
+| A matched prompt sets `HarnessState` `parked` with a reason from `trust`, `permission`, `update` and `other`. `get sessions` then prints PANE `prompt`, and the watchdog never answers | `internal/panestate/load.go:119`; `internal/api/types.go:1361-1365`; `internal/daemon/pane_column.go:80` | read |
+| Two claude patterns ship: `logged-out`, covering 2.1.285 to 2.1.293, and `dev-channels-consent`, covering 2.1.310 only. A version outside a pattern's range reads `uncovered` | `internal/panestate/patterns/claude/2.1.290/logged-out.yaml`; `internal/panestate/patterns/claude/2.1.310/dev-channels-consent.yaml` | read |
+| No pattern exists for the theme picker, the trust prompt or the setup menu. One exists for the dev-channels prompt, `dev-channels-consent`, for 2.1.310 only, parked as `other` (marvel#1370) | `git ls-tree internal/panestate/patterns`; `internal/panestate/patterns/claude/2.1.310/dev-channels-consent.yaml` | read; a claude trust pattern is ticketed (aae-orc-e2b5f) |
+| The claude version the fleet ran on 2026-11-06, 2.1.318, is outside the shipped range | `claude --version` | run |
+
+So a held seat is visited by a detector that has nothing to match it against. At 2.1.318 it would read `uncovered`. That is inferred from the code, not read from a held seat.
+
+### 12.2 One detector, two readers
+
+**The rule.** The harness-state watchdog's `panestate.Classify` is the only dialog detector. The watcher never captures a pane to look for a dialog; it reads `Session.HarnessState`. Its one capture stays section 2's step 4, the composer read for an eligible seat, and that capture is never matched against a dialog pattern. A seat whose harness state is `parked` or `logged-out` skips step 4: it is reported as `dialog` from the state, never rung (12.4), so its composer is not needed. The readiness design's "visit" already names the watchdog's capture (`seat-readiness.md` section 5), so readiness and the watcher read the same field from the same capture. Neither defines its own.
+
+**The mapping the watcher applies:**
+
+| `HarnessState` | `blocker_class` | `dialog_class` | note |
+|---|---|---|---|
+| `parked`, reason `r` | `dialog` | `r` | |
+| `logged-out`, `Source` `pane` | `dialog` | `login` | |
+| `logged-out`, `Source` `transcript` | `dialog` | `login` | set by `setTranscript` from the transcript's authentication error, not from a screen; the record says `source transcript` |
+| `unknown`, `Confidence` `low` (the low-confidence branch of `visit`) | none: the seat is read as section 2 reads it, with its composer capture | none | the record notes `low-confidence <pattern id>`; never `dialog`, since only a high-confidence match sets a state |
+| `uncovered` | `unknown` | none | `no-dialog-pattern: uncovered <harness> <version>` |
+| `control-failed` | `unknown` | none | `no-dialog-pattern: control-failed` |
+| none, and no turn since spawn | `no-turn` (as today) | none | never `dialog` without a match |
+
+For a parked seat, `dialog_class` is the reason itself, the same string readiness writes as `pane:dialog:<class>`. `login` is a new name: readiness names no class for the login picker today. Readiness adopts `login` when it reads `logged-out`, so the two keep one list of names and never disagree.
+
+**Which seats.** The watcher stays the watchdog for unread mail. It applies the mapping to the seats it already visits (section 2), so a mail-eligible seat held at a prompt reads `dialog`, not `no-turn` or `turn-no-ack`. A seat with no mail that never reached its first turn is readiness's case: the `ready_by` report (`seat-readiness.md` section 5; aae-orc-1gu6g) reads the same field. Until that ships, the watchdog's own surfaces report it: PANE `prompt` or `logged-out` in `get sessions`, and the harness state in `describe session`. The patterns in 12.3 are what make those surfaces say anything for a seat at a first-run screen.
+
+**Bounds and masking.** The watchdog's existing ones apply, and nothing is added:
+- one capture per seat per window;
+- a screen holding an ESC byte is refused (`panestate.Normalize`);
+- only a high-confidence full match sets a state;
+- each pattern row's variable span is bounded by `var_runes` and renders as `<masked>`.
+
+The text section 4 keeps for `dialog` is the matched pattern's rendered rows, masked, and never a fresh capture. A `logged-out` state from the transcript has no rows: its text is the watchdog's evidence line (the entry id and time, each clipped to 64 runes), and no transcript text. That adds no text retention beyond `seat-readiness.md` section 4.
+
+### 12.3 The known first-run screens
+
+Each pattern is built only from a captured sample, never written by hand (`internal/panestate/patterns/README.md`). Each is captured on a scratch claude (an empty `HOME` and `CLAUDE_CONFIG_DIR`, its own tmux socket, as probe P-WD1 did), at the versions the fleet runs.
+
+| screen | when it shows (as far as read) | reason | pattern | prevention, owned elsewhere |
+|---|---|---|---|---|
+| theme picker | first launch on a config whose onboarding is not complete. The logged-out pattern's comment places the login picker "once past the theme step" | `onboarding` (new) | none | `seat-bootstrap.md` section 5a (`:447`) writes no onboarding flags, on the premise that "the operator's own config has already completed it". A seat given its own config dir does not meet that premise. That was the cause on 2026-11-06: the held seats came from a launcher outside marvel that sets a seat-own `CLAUDE_CONFIG_DIR`, whose config file had no onboarding-complete key (key names read, not values). That launcher's setup now seeds the onboarding and trust flags, and the launcher checks them. marvel's bootstrap still writes none for a seat with its own config dir |
+| trust prompt | a workdir with no `hasTrustDialogAccepted` | `trust` | none; aae-orc-e2b5f | the bootstrap's trust write (built) |
+| setup menu | named by `c1`; which screen it is has not been captured | to be set from the capture: `onboarding` if it belongs to the first-launch sequence, else `other` | none | |
+| dev-channels prompt | a launch with development channels enabled | `consent` (new) | `dev-channels-consent`, 2.1.310 only, parked as `other` until `consent` loads (marvel#1370) | |
+| login picker | no login | `logged-out` | 2.1.285 to 2.1.293; extension ticketed (aae-orc-trtbm) | the login is never touched (`seat-bootstrap.md` section 5a) |
+
+`onboarding` and `consent` join the parked reasons (`internal/panestate/load.go:119`). `seat-readiness.md` section 7 already lists claude `consent` and `trust` as patterns to add, so `consent` is its name, not a new one.
+
+### 12.4 What the report says
+
+A `dialog` record carries section 4's fields plus:
+- `dialog_class`;
+- the pattern id and harness version that matched;
+- `since`, when the watchdog first set this state. `CapturedAt` cannot carry it, because most writers rebuild the record with `CapturedAt: now` on every capture. So `HarnessState` gains `Since time.Time` (`json:"since,omitempty"`). The writers of a non-nil record are four, in `internal/daemon/watchdog.go`:
+  - `set` (a high-confidence `logged-out` or `parked`), every capture;
+  - the low-confidence branch of `visit` (`SetHarnessState(key, harnessState(...))`), every capture;
+  - `setCoverage`, only when the verdict is new or changed: it returns early, leaving the stored record as it was, when state, harness, version and covered list all match;
+  - `setTranscript`, every reading with an authentication failure.
+
+  Each of the four sets `Since` through one helper over the previous record: `Since` is copied from it when it is non-nil with the same `State`, `Reason` and `Source`, and is `now` otherwise. So `setCoverage`'s early return keeps `Since` with the rest of the record, and a write it makes for a changed covered list keeps it too. `clear` writes nil, so a state set after a clear starts a new `Since`. J3 carries the field. A record written before it existed has a zero `Since`, and the report then prints `since unknown`, never the latest capture.
+
+For example: `seat <name>: dialog (onboarding; claude 2.1.318, pattern onboarding) since <time>; marvel does not answer prompts`.
+
+The watcher still only reports:
+- it sends no key to a held seat;
+- it never rings a seat whose harness state is `parked` or `logged-out`, and it does not read that seat's composer (12.2), so the ring's `Empty` condition is never reached for it;
+- the record goes where section 4 sends any record, to the parent if it took a turn in the window, else to director.
+
+### 12.5 Red tests
+
+Watcher (J3):
+- `parked`, reason `trust`, on an eligible seat gives `dialog` with `dialog_class` `trust`, and a capture spy records zero captures by the watcher for that seat; an eligible seat with no harness state still gets section 2's one composer capture;
+- `logged-out` with `Source` `transcript` gives `dialog` with `login`, its text is the evidence line only, and the watcher makes no capture;
+- `Since` stays at the first capture across three captures of the same state and reason, and moves when the reason changes;
+- `logged-out` gives `dialog` with `login`;
+- `uncovered` gives `unknown` with the `no-dialog-pattern` note, never `dialog`;
+- a seat with no harness state and no turn gives `no-turn`, never `dialog`;
+- the record's text is the pattern's rows, and a planted secret in a variable span renders `<masked>`;
+- at G3: a `parked` seat that is otherwise ring-eligible (no turn open, no ceiling, no claim) is not rung, the composer reader is not called for it, and no ring claim is written;
+- `Since` is kept when `setCoverage` returns early, kept when it writes a changed covered list for the same state, and new after `clear`;
+- a low-confidence record (`State` `unknown`) gives no `dialog`, and the seat gets section 2's composer capture;
+
+Patterns (J1, J2):
+- each new pattern matches its own captured sample and does not match a chat-quoted copy of it, as the logged-out control does;
+- a version outside the pattern's range reads `uncovered`;
+- a pattern with a reason outside the list is refused at load;
+- `onboarding` and `consent` load;
+- a seat with zero `ContextAt` at the onboarding sample reads `parked`, reason `onboarding`, after one window, and the watchdog sent no key.
+
+### 12.6 Plan
+
+New tickets, filed flat with these edges:
+
+| id | ticket | blocked by |
+|---|---|---|
+| J1 | capture claude's first-run screens on a scratch claude at the fleet's current versions (theme picker, setup menu), and ship each as a pattern with its range. The dev-channels prompt already has a pattern for 2.1.310 only (marvel#1370); J1 adds its capture at the fleet's current version and extends the range | J2 |
+| J2 | add `onboarding` and `consent` to the parked reasons, with the load test | none |
+| J3 | the watcher reads `HarnessState` for `dialog` and `unknown` per 12.2; no capture of its own | D1 (aae-orc-80tnj), J2 |
+
+Already filed, and not refiled here:
+- the claude trust pattern (aae-orc-e2b5f);
+- the logged-out range extension (aae-orc-trtbm);
+- readiness's deadline capture (aae-orc-33985) and `ready_by` report (aae-orc-1gu6g), which read the same field.
+
+J1 and J2 ship ahead of the watcher. With them alone, a seat held at the theme picker reads PANE `prompt` in `get sessions` after one quiet window.
+
+This recommendation is valid until 2026-11-20, or until D1 merges, whichever comes first. The arcaven architect re-checks it then.
