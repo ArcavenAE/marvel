@@ -1,6 +1,7 @@
 package daemonrpc
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -99,6 +100,16 @@ func SendRequest(socketPath string, req Request) (*Response, error) {
 // this when the caller has a per-cluster identity key or known_hosts
 // file it wants to thread through.
 func SendRequestWith(socketPath string, req Request, opts DialOptions) (*Response, error) {
+	// The encoded request is measured before anything is dialed, so a caller
+	// of any method sees the size error and not a daemon's refusal after the
+	// bytes have gone. The daemon's own bound stays the authority.
+	var encoded bytes.Buffer
+	if err := json.NewEncoder(&encoded).Encode(req); err != nil {
+		return nil, fmt.Errorf("encode request: %w", err)
+	}
+	if limit := maxRequestBytes; int64(encoded.Len()) > limit {
+		return nil, fmt.Errorf("%w: %d bytes encoded, over %s", ErrRequestTooLarge, encoded.Len(), BoundText(limit))
+	}
 	ex := startExchange(opts.Timeout)
 	defer ex.stop()
 	opts.ex = ex
@@ -109,7 +120,7 @@ func SendRequestWith(socketPath string, req Request, opts DialOptions) (*Respons
 	defer func() { _ = conn.Close() }()
 	ex.enter(phaseReply, conn)
 
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
+	if _, err := conn.Write(encoded.Bytes()); err != nil {
 		return nil, ex.wrap(fmt.Errorf("send request: %w", err))
 	}
 

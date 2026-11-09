@@ -1141,8 +1141,18 @@ func (d *Daemon) handleRWCAs(rwc io.ReadWriteCloser, c caller) {
 	defer func() { _ = rwc.Close() }()
 
 	var req daemonrpc.Request
-	if err := json.NewDecoder(rwc).Decode(&req); err != nil {
+	bounded := &boundedReader{r: rwc, limit: maxRequestBytes}
+	err := json.NewDecoder(bounded).Decode(&req)
+	if err == nil && bounded.over() {
+		// The decoder can finish a value on the read that crossed the limit
+		// and drop that read's error, so the count is checked as well.
+		err = errRequestTooLarge
+	}
+	if err != nil {
 		resp := daemonrpc.Response{Error: fmt.Sprintf("decode request: %v", err)}
+		if errors.Is(err, errRequestTooLarge) {
+			resp = daemonrpc.Response{Error: fmt.Sprintf("%v: over %s", errRequestTooLarge, daemonrpc.BoundText(bounded.limit))}
+		}
 		_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
 		return
 	}
