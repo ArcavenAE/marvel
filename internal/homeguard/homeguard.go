@@ -122,13 +122,14 @@ func Check(home string, want paths.Layout, allowed ...string) []string {
 
 // HomeVars is every variable, besides HOME, that marvel or a harness it reaches
 // reads to find a home or config directory: codex relocates its home with
-// CODEX_HOME, claude its config with CLAUDE_CONFIG_DIR, and the XDG variables
-// move the base directories a tool falls back to. They are cleared with
+// CODEX_HOME, claude its config with CLAUDE_CONFIG_DIR, the XDG variables
+// move the base directories a tool falls back to, and DIRECTOR_HOME moves the
+// director home that doctor reads install records from. They are cleared with
 // MARVEL_*, so a test run from a seat pane cannot reach that seat's credential
 // files. The list lives here only; TestEveryHomeLikeVariableTheCodeNamesIsCleared
 // fails when the source names a home-like variable that is missing from it.
 var HomeVars = []string{
-	"CODEX_HOME", "CLAUDE_CONFIG_DIR",
+	"CODEX_HOME", "CLAUDE_CONFIG_DIR", "DIRECTOR_HOME",
 	"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
 }
 
