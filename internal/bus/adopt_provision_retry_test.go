@@ -79,8 +79,28 @@ func TestAnAdoptedBrokerThatStaysUnprovisionableStillFailsTheStart(t *testing.T)
 	if err == nil {
 		t.Fatal("an adopt whose provisioning never succeeds reported a good start")
 	}
-	if got := int(calls.Load()); got != adoptProvisionTries {
-		t.Errorf("provision ran %d times, want %d", got, adoptProvisionTries)
+	if got := int(calls.Load()); got != 5 {
+		t.Errorf("provision ran %d times, want 5", got)
 	}
 	s2.Stop(false)
+}
+
+// A broker this supervisor spawns is provisioned once: the retry is for a
+// broker an adopt has just signalled. A retry on a fresh spawn would hide a
+// real broker fault for the length of the retry window on every start.
+func TestASpawnedBrokerIsProvisionedOnceNotRetried(t *testing.T) {
+	s, _, _ := newTestSupervisor(t, "")
+	s.adoptProvisionWait = time.Millisecond
+	var calls atomic.Int32
+	s.AfterReady = func() error {
+		calls.Add(1)
+		return errors.New("stream AGENT_INBOX: nats: connection closed")
+	}
+	if err := s.Start(context.Background()); err == nil {
+		t.Fatal("a spawn whose provisioning failed reported a good start")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("provision ran %d times on a fresh spawn, want 1", got)
+	}
+	s.Stop(false)
 }
