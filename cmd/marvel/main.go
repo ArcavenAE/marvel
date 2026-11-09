@@ -4040,11 +4040,18 @@ func renderBudgetTable(rows []admission.Row) string {
 // sends no age, and an absent one, read as that word. Never ok.
 func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 	observed := r.Reading
+	// One decimal of the raw value when the daemon sends it, so a reading of 79.6
+	// is not shown as the 80 that would read as at the level. A daemon that
+	// predates the raw value sends only the rounded integer.
+	value := fmt.Sprintf("%d%%", r.Observed)
+	if r.ObservedPercent != nil {
+		value = fmt.Sprintf("%.1f%%", *r.ObservedPercent)
+	}
 	switch {
 	case r.Reading == "fresh":
-		observed = fmt.Sprintf("%d%%", r.Observed)
+		observed = value
 	case r.Reading == "stale" && r.ReadingAgeSeconds > 0:
-		observed = fmt.Sprintf("%d%% (%s ago)", r.Observed, formatUntil(time.Duration(r.ReadingAgeSeconds)*time.Second))
+		observed = fmt.Sprintf("%s (%s ago)", value, formatUntil(time.Duration(r.ReadingAgeSeconds)*time.Second))
 	}
 	resets := "-"
 	if r.ResetsAt != nil {

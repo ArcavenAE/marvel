@@ -765,7 +765,11 @@ It is a report: nothing pauses, sheds, refuses or blocks on it
   `global://director` on the same publisher the shift escalation uses. With no
   bus it is the event only, and the notice is sent later in the same window if
   the leaf comes up. A failed publish is tried again no sooner than five minutes
-  later.
+  later. The publish runs off the call that reported the reading, so a slow bus
+  delays nothing the reporting seat waits on, and the notice can arrive after the
+  reading is acknowledged. A window with no `resets_at` is named in the notice's
+  dedupe id by the time it was armed, so arming it again after it fell under the
+  level is a new notice and a retry of one arming keeps its id.
 - **The STATE word.** `near-limit` for a fresh window at or over the level, and
   `-` otherwise. An account row never reads `ok`.
 
@@ -782,3 +786,14 @@ any reading that is not fresh, and a new client against an older daemon, which
 sends no age, prints the word as before. This replaces section 2's rule that a
 stale reading shows as `stale`, never as a number; the reading is still not
 current, and the page's staleness bound is unchanged.
+
+### 10.2 OBSERVED prints one decimal (marvel#1344)
+
+`get budgets` prints OBSERVED with one decimal of the value STATE compares to the
+level, for example `79.6%`, so a reading under the level is not shown as the
+rounded `80%`. The row's JSON adds `observed_percent`, the raw value, beside
+`observed`, which stays the rounded integer with the same key, type and meaning.
+A new client against an older daemon, which sends no `observed_percent`, prints
+the integer as before. A window with no percentage never reaches a row: the
+reading store drops it when the reading is recorded (`RecordObserved` and
+`RecordUnstamped`), so a row always has a value.
