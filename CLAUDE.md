@@ -371,7 +371,8 @@ answers "has marvel recently seen this harness do work?" — surfaced as a
 `(stalled)` suffix on the HEALTH cell. It is deliberately NOT a health state:
 it never triggers a restart or any destructive path.
 
-- Signal: `SessionContext.ContextAt`, the timestamp both of marvel's activity
+- Signal: the work stamp, `api.WorkAt` (`SessionContext.ReadingChangedAt`,
+  else `ContextAt`), which both of marvel's activity
   producers already stamp — the usage accountant on each token-bearing stream
   sample (headless) and the cooperative heartbeat RPC (interactive
   `statusline` context feed and the simulator). No harness output is scraped
