@@ -18,6 +18,11 @@ import (
 
 // parityDaemon serves the sessions and a daemon.status whose cluster name
 // the test can change between frames.
+// updateGolden is whether UPDATE_GOLDEN was set when the binary started. The
+// test guard removes every variable off its list before the tests run, so the
+// test reads it from here, from before that, and not from the environment.
+var updateGolden = os.Getenv("UPDATE_GOLDEN") != ""
+
 func parityDaemon(t *testing.T, cluster *atomic.Value) {
 	t.Helper()
 	resolveFixture(t, false)
@@ -91,7 +96,7 @@ func TestPlainGetSessionsOutputIsUnchanged(t *testing.T) {
 			setWidth(t, width)
 			got := strings.ReplaceAll(plainSessions(t), os.Getenv(config.SocketEnv), "<socket>")
 			path := filepath.Join("testdata", fmt.Sprintf("get-sessions-plain-%d.golden", width))
-			if os.Getenv("UPDATE_GOLDEN") != "" {
+			if updateGolden {
 				if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
 					t.Fatal(err)
 				}

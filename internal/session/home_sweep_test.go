@@ -27,11 +27,16 @@ import (
 
 const sweepHelperEnv = "SWEEP_STANDIN_HELPER"
 
+// sweepHelperOn is the helper variable as the binary started with it. The test
+// guard removes every variable off its list before the tests run, so the
+// helper test reads it from here, from before that, and not from the environment.
+var sweepHelperOn = os.Getenv(sweepHelperEnv) == "1"
+
 // TestSweepHelperProcess is the stand-in the sweep tests start. It does
 // nothing but wait, and carries the argument "app-server" so it reads like
 // the daemon a pid file names. It is a no-op unless a test started it.
 func TestSweepHelperProcess(t *testing.T) {
-	if os.Getenv(sweepHelperEnv) != "1" {
+	if !sweepHelperOn {
 		t.Skip("helper process, started by the sweep tests")
 	}
 	time.Sleep(2 * time.Minute)
