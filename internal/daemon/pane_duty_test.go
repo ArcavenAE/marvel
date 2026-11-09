@@ -104,3 +104,57 @@ func TestFirstTurnIsWrittenOnceWhileCurrent(t *testing.T) {
 		t.Fatalf("a current proof was rewritten: seq %d then %d", first.Seq, again.Seq)
 	}
 }
+
+// seedFirstTurn stores a duty.first-turn record directly, as an earlier pass
+// or a dialog check would have.
+func seedFirstTurn(t *testing.T, d *Daemon, seat string, state api.DutyState, source string, observed time.Time, ttl time.Duration) api.DutyRecord {
+	t.Helper()
+	rec, err := d.store.RecordDuty(api.DutyRecord{
+		Seat: seat, Duty: "first-turn", State: state, Source: source,
+		ObservedAt: observed, ValidUntil: observed.Add(ttl), SetBy: api.SetByDaemon,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	return rec
+}
+
+// A proof past its lifetime is renewed by the next pass that sees a turn open.
+func TestFirstTurnIsRenewedOnceItHasExpired(t *testing.T) {
+	d, sess, now := midTurnTick(t)
+	old := seedFirstTurn(t, d, sess.Key(), api.DutyProven, "pane:turn", now.Add(-2*firstTurnDutyTTL), firstTurnDutyTTL)
+	d.refreshPaneReads(now)
+	got, ok := firstTurnCell(d, sess.Key())
+	if !ok {
+		t.Fatal("the lapsed record vanished")
+	}
+	if got.Seq == old.Seq || !got.ValidUntil.After(now) {
+		t.Fatalf("a lapsed proof was not renewed: seq %d then %d, valid_until %v, now %v", old.Seq, got.Seq, got.ValidUntil, now)
+	}
+	if got.State != api.DutyProven || got.Source != "pane:turn" {
+		t.Errorf("renewed record = %+v, want proven from pane:turn", got)
+	}
+}
+
+// A later observed turn restores a proof that a dialog check overwrote with a
+// fail, as the readiness design says the newest observation wins.
+func TestFirstTurnIsRestoredAfterAFail(t *testing.T) {
+	d, sess, now := midTurnTick(t)
+	seedFirstTurn(t, d, sess.Key(), api.DutyFail, "pane:dialog:trust", now.Add(-time.Minute), time.Hour)
+	d.refreshPaneReads(now)
+	got, _ := firstTurnCell(d, sess.Key())
+	if got.State != api.DutyProven || got.Source != "pane:turn" {
+		t.Fatalf("a fail was not restored by an observed turn: %+v", got)
+	}
+}
+
+// An unexpired proof is not rewritten, even when it came from another vantage.
+func TestFirstTurnUnexpiredProofIsNotRewritten(t *testing.T) {
+	d, sess, now := midTurnTick(t)
+	old := seedFirstTurn(t, d, sess.Key(), api.DutyProven, "seat:turn", now.Add(-time.Hour), firstTurnDutyTTL)
+	d.refreshPaneReads(now)
+	got, _ := firstTurnCell(d, sess.Key())
+	if got.Seq != old.Seq {
+		t.Fatalf("an unexpired proof was rewritten: seq %d then %d", old.Seq, got.Seq)
+	}
+}
