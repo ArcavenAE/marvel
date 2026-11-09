@@ -132,13 +132,13 @@ const (
 	HealthCheckHeartbeat    HealthCheckType = "heartbeat"
 	HealthCheckProcessAlive HealthCheckType = "process-alive"
 	// HealthCheckBus reads LastBusBeat, the director shim's own liveness beat,
-	// in place of LastHeartbeat. The value is ruled (aae-orc-z63a4, director
-	// ruling 01M6ZJNAVD); it is named once here.
+	// in place of LastHeartbeat. The value is ruled (aae-orc-z63a4, 2026-11-09);
+	// it is named once here.
 	HealthCheckBus HealthCheckType = "bus"
 )
 
 // BusHealthTimeout is the ruled timeout for a bus healthcheck (aae-orc-z63a4,
-// director ruling 01M6ZJNAVD): three beats of the shim's 30 s presence timer,
+// ruled 2026-11-09): three beats of the shim's 30 s presence timer,
 // matching the TTL of its presence record. A bus role that names no timeout
 // gets it; the failure threshold keeps its default. It is the one place the
 // number is written.
