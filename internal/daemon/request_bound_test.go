@@ -264,3 +264,25 @@ func TestRequestBoundDefaultIs24MiB(t *testing.T) {
 		t.Fatalf("request bound = %d, default %d, want 24 MiB (%d)", maxRequestBytes, daemonrpc.DefaultMaxRequestBytes, 24<<20)
 	}
 }
+
+// A request whose encoding is exactly one byte over the bound is refused, and
+// one exactly at the bound is served. The decoder can complete a value on the
+// very read that crosses the limit and drop that read's error, so the count is
+// checked after the decode as well; this pins that check, which no other test
+// reaches (marvel#1197).
+func TestRequestExactlyOneByteOverTheBoundIsRefused(t *testing.T) {
+	lowerRequestBound(t)
+	d := newHandlerDaemon(t)
+	for _, p := range boundCallers {
+		t.Run(p.name, func(t *testing.T) {
+			over, _ := serveBounded(t, d, p.c, requestOfSize(t, 1<<10+1))
+			if over.Error != "request too large: over 1 KiB" || len(over.Result) != 0 {
+				t.Fatalf("bound+1 bytes: error %q result %.40s, want the size error and no dispatch", over.Error, over.Result)
+			}
+			at, _ := serveBounded(t, d, p.c, requestOfSize(t, 1<<10))
+			if at.Error != "" || len(at.Result) == 0 {
+				t.Fatalf("exactly the bound: error %q, want it dispatched", at.Error)
+			}
+		})
+	}
+}
