@@ -1187,6 +1187,9 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 			}
 			if mr.HealthCheck != nil {
 				timeout := 30 * time.Second
+				if HealthCheckType(mr.HealthCheck.Type) == HealthCheckBus {
+					timeout = BusHealthTimeout
+				}
 				if mr.HealthCheck.Timeout != "" {
 					d, err := time.ParseDuration(mr.HealthCheck.Timeout)
 					if err != nil {

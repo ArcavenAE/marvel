@@ -220,3 +220,47 @@ func TestHeartbeatRoleIgnoresLastBusBeat(t *testing.T) {
 		t.Errorf("events %+v, want one with the unchanged heartbeat text", evs)
 	}
 }
+
+// The seat the ticket names (aae-orc-z63a4, finding-166): the harness runs and
+// its statusline beats, but the director shim never reached the bus, so no bus
+// beat ever arrives. Across the timeout the seat must never read healthy, and
+// its State stays running, because running only means the pane exists. This
+// is the case the "health set from running" shortcut would get wrong.
+func TestBusRoleThatNeverConnectedNeverReadsHealthy(t *testing.T) {
+	store, ctrl, _, key := busFixture(t, "test-bus-never", busRole(api.BusHealthTimeout, 3), time.Second,
+		time.Now().UTC(), time.Time{})
+
+	steps := []struct {
+		name string
+		age  time.Duration
+		want api.HealthState
+	}{
+		{"just launched", time.Second, api.HealthUnknown},
+		{"inside the timeout", api.BusHealthTimeout - time.Second, api.HealthUnknown},
+		{"one tick past the timeout", api.BusHealthTimeout + time.Second, api.HealthUnhealthy},
+		{"two ticks past the timeout", api.BusHealthTimeout + 2*time.Second, api.HealthUnhealthy},
+	}
+	for _, st := range steps {
+		if err := store.UpdateSession(key, func(s *api.Session) error {
+			s.CreatedAt = time.Now().UTC().Add(-st.age)
+			s.LastHeartbeat = time.Now().UTC() // the statusline is alive throughout
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		ctrl.evaluateHealth()
+		got, err := store.GetSession(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.HealthState == api.HealthHealthy {
+			t.Fatalf("%s: health healthy with no bus beat ever", st.name)
+		}
+		if got.HealthState != st.want {
+			t.Errorf("%s: health %q, want %q", st.name, got.HealthState, st.want)
+		}
+		if got.State != api.SessionRunning {
+			t.Errorf("%s: state %q, want running (the pane exists)", st.name, got.State)
+		}
+	}
+}
