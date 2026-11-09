@@ -1,5 +1,10 @@
 package company
 
+import (
+	"regexp"
+	"strings"
+)
+
 // Refusal is one refused read: the row of the spec's refusal table it comes
 // from and the message that row fixes, with its fields filled in.
 type Refusal struct {
@@ -43,5 +48,47 @@ var rows = []row{
 	{"N26", `recipe <name>: recipes/<name>.toml does not parse (line <n>)`},
 }
 
-// refuse builds the refusal for a row from its fields in order. STUB.
-func refuse(id string, fields ...string) *Refusal { return &Refusal{} }
+// fieldSlotRE finds one slot of a row's doc text, with the double quotes around it
+// when it has them.
+var fieldSlotRE = regexp.MustCompile(`"<[^<>]+>"|<[^<>]+>`)
+
+// refuse builds the refusal for a row from its fields, in the order the row's
+// slots appear. A slot written "<x>" prints through quoteField always quoted,
+// any other slot prints bare when it is made of safe characters and quoted
+// when it is not, and the slot <form> is fixed text the caller supplies.
+func refuse(id string, fields ...string) *Refusal {
+	for _, r := range rows {
+		if r.id != id {
+			continue
+		}
+		next := 0
+		msg := fieldSlotRE.ReplaceAllStringFunc(r.doc, func(slot string) string {
+			var f string
+			if next < len(fields) {
+				f = fields[next]
+			}
+			next++
+			switch {
+			case slot == "<form>":
+				if hasControl(f) {
+					return quoteField(f, true)
+				}
+				return f
+			case strings.HasPrefix(slot, `"`):
+				return quoteField(f, true)
+			}
+			return quoteField(f, false)
+		})
+		return &Refusal{Row: id, Message: msg}
+	}
+	return &Refusal{Row: id, Message: "company: internal error: no refusal row " + quoteField(id, true)}
+}
+
+func hasControl(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
+}

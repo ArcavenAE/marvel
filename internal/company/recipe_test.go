@@ -107,7 +107,7 @@ func TestRecipeRefusesAParameterThatIsNotDeclared(t *testing.T) {
 func TestRecipeRefusesTwoBlocksThatNameOneKey(t *testing.T) {
 	withDry := goodRecipe + "\n[params.dry]\ntype = \"bool\"\n"
 	cases := []struct{ name, doc, a, b, key string }{
-		{"base env and when.cue", replaceOnce(t, goodRecipe, `BUS_CUE = "1"`, `BUS_CUE = "1"`+"\n"+`BUS_ROLE = "x"`), "env", "when.cue", "BUS_ROLE"},
+		{"base env and when.cue", replaceOnce(t, goodRecipe, `BUS_CUE = "1"`, `BUS_CUE = "1", BUS_ROLE = "x"`), "env", "when.cue", "BUS_ROLE"},
 		{"two when.param blocks", withDry + "\n[when.dry]\nenv = { BUS_CUE = \"2\" }\n", "when.cue", "when.dry", "BUS_CUE"},
 		{"a set and an unset", withDry + "\n[when.dry]\nunset = [\"BUS_CUE\"]\n", "when.cue", "when.dry", "BUS_CUE"},
 		{"two unsets", replaceOnce(t, withDry, "[when.cue]\n", "[when.cue]\nunset = [\"BUS_X\"]\n") + "\n[when.dry]\nunset = [\"BUS_X\"]\n", "when.cue", "when.dry", "BUS_X"},

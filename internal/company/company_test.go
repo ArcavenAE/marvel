@@ -47,7 +47,7 @@ func TestDecodeCompanyAcceptsARoleOnItsOwn(t *testing.T) {
 // Spec row 1: an unknown key anywhere in the file is refused, naming the key.
 func TestCompanyTOMLRefusesAnUnknownKey(t *testing.T) {
 	cases := []struct{ name, doc, key string }{
-		{"top level", goodDefs + "colour = \"red\"\n", "colour"},
+		{"top level", replaceOnce(t, goodDefs, "\n[[definitions]]", "colour = \"red\"\n\n[[definitions]]"), "colour"},
 		{"in source", replaceOnce(t, goodDefs, `commit = "ecc28ac" }`, `commit = "ecc28ac", extra = "x" }`), "source.extra"},
 		{"in an entry", goodDefs + "colour = \"red\"\n", "definitions.colour"},
 	}
@@ -86,7 +86,7 @@ func TestCompanyTOMLRefusesAMissingRequiredKey(t *testing.T) {
 		{"name", "name = \"acme-roles\"\n"},
 		{"version", "version = \"2026-11-01-ecc28ac\"\n"},
 		{"kind", "kind = \"definitions\"\n"},
-		{"schema", "schema = 1\n"},
+		{"schema", "\nschema = 1\n"},
 		{"requires_marvel", "requires_marvel = \"0.9.0\"\n"},
 		{"definition_schema", "definition_schema = 1\n"},
 		{"source", `source = { url = "https://example.invalid/acme-roles.git", contents_tree = "0123456789012345678901234567890123456789", commit = "ecc28ac" }` + "\n"},
@@ -95,7 +95,7 @@ func TestCompanyTOMLRefusesAMissingRequiredKey(t *testing.T) {
 		{"definitions", "\n[[definitions]]"}, // handled below: the whole index
 		{"definitions[0].id", "id = \"role/builder--steady\"\n"},
 		{"definitions[0].version", "version = \"1.2.0\"\n"},
-		{"definitions[0].status", "status = \"ratified\"\n"},
+		{"definitions[0].status", "\nstatus = \"ratified\"\n"},
 		{"definitions[0].sha256", "sha256 = \"" + hex64 + "\"\n"},
 		{"definitions[0].slice", "slice = \"sha256:" + hex64 + "\"\n"},
 		{"definitions[0].border", "border = \"sha256:" + hex64 + "\"\n"},
@@ -106,7 +106,7 @@ func TestCompanyTOMLRefusesAMissingRequiredKey(t *testing.T) {
 			if c.key == "definitions" {
 				doc = goodDefs[:strings.Index(goodDefs, "\n[[definitions]]")] + "\n"
 			} else {
-				doc = replaceOnce(t, goodDefs, c.remove, "")
+				doc = replaceOnce(t, goodDefs, c.remove, keepNewline(c.remove))
 			}
 			err := decodeCompanyRefused(t, defsDir, doc)
 			wantRefusal(t, err, "N19", fmt.Sprintf("%srequired key %q is missing", defsPrefx, c.key))
@@ -116,7 +116,7 @@ func TestCompanyTOMLRefusesAMissingRequiredKey(t *testing.T) {
 		{"name", "name = \"acme-recipes\"\n"},
 		{"version", "version = \"2026-11-01-b41d0e2\"\n"},
 		{"kind", "kind = \"recipes\"\n"},
-		{"schema", "schema = 1\n"},
+		{"schema", "\nschema = 1\n"},
 		{"requires_marvel", "requires_marvel = \"0.9.0\"\n"},
 		{"recipe_schema", "recipe_schema = 1\n"},
 		{"requires", "requires = { definition_schema = 1 }\n"},
@@ -127,7 +127,7 @@ func TestCompanyTOMLRefusesAMissingRequiredKey(t *testing.T) {
 	const recsPrefix = "company acme-recipes@2026-11-01-b41d0e2: company.toml: "
 	for _, c := range recs {
 		t.Run("recipes/"+c.key, func(t *testing.T) {
-			doc := replaceOnce(t, goodRecs, c.remove, "")
+			doc := replaceOnce(t, goodRecs, c.remove, keepNewline(c.remove))
 			wantRefusal(t, decodeCompanyRefused(t, recsDir, doc), "N19", fmt.Sprintf("%srequired key %q is missing", recsPrefix, c.key))
 		})
 	}
@@ -188,7 +188,7 @@ func TestIndexRefusesAMalformedField(t *testing.T) {
 		{"sha256", "sha256 = \"" + hex64 + "\"", "sha256 = \"short\""},
 		{"version", `version = "1.2.0"`, `version = "1.2 0"`},
 		{"identity", `identity = "steady@1.0.0"`, "identity = \"steady@1.0.0\\n\""},
-		{"status", `status = "ratified"`, `status = "approved"`},
+		{"status", "\nstatus = \"ratified\"", "\nstatus = \"approved\""},
 		{"identity_status", `identity_status = "ratified"`, `identity_status = "approved"`},
 	}
 	for _, c := range cases {
@@ -208,7 +208,7 @@ func TestIndexRefusesAMalformedField(t *testing.T) {
 func TestCompanyTOMLRefusesAKeyOfTheWrongForm(t *testing.T) {
 	cases := []struct{ name, old, new, key, form string }{
 		{"kind", `kind = "definitions"`, `kind = "other"`, "kind", `"definitions" or "recipes"`},
-		{"schema type", "schema = 1\n", "schema = \"one\"\n", "schema", "an integer"},
+		{"schema type", "\nschema = 1\n", "\nschema = \"one\"\n", "schema", "an integer"},
 		{"source.url type", `url = "https://example.invalid/acme-roles.git"`, `url = 5`, "source.url", "a string"},
 	}
 	for _, c := range cases {
@@ -230,4 +230,13 @@ func TestCompanyTOMLThatDoesNotParseNamesOnlyTheLine(t *testing.T) {
 	if strings.Contains(r.Message, "SECRET-FILE-CONTENT") {
 		t.Errorf("message %q echoes the file's content", r.Message)
 	}
+}
+
+// keepNewline is what stands in for a removed line that is bracketed by
+// newlines: one newline, so the neighbouring lines stay on their own lines.
+func keepNewline(remove string) string {
+	if strings.HasPrefix(remove, "\n") && strings.HasSuffix(remove, "\n") && len(remove) > 2 && !strings.HasPrefix(remove, "\n[[") {
+		return "\n"
+	}
+	return ""
 }
