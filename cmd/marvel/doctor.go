@@ -59,6 +59,9 @@ type doctorInput struct {
 	// errRemoteNotDialed for a remote daemon that was not asked for, and any
 	// other error when the daemon does not answer. Nil means no read.
 	Sessions func() ([]api.Session, error)
+	// Installs names the installed-copies records doctor reads. The zero
+	// value reads nothing.
+	Installs installSource
 }
 
 const (
@@ -107,6 +110,7 @@ func runDoctor(w io.Writer, in doctorInput) int {
 	checkShim(r, in)
 	checkKeys(r, in)
 	checkSeats(r, in)
+	checkInstalled(r, in)
 	return r.failed
 }
 
