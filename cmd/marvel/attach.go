@@ -140,6 +140,9 @@ func quoteArgv(argv []string) string {
 type attachEnv struct {
 	Getenv func(string) string
 	Exec   func(argv []string) error
+	// Stderr is where the verb says which session a desk resolved to. Nil
+	// means os.Stderr.
+	Stderr io.Writer
 }
 
 func processAttachEnv() attachEnv {
@@ -195,7 +198,7 @@ func fetchDaemonStatus() (daemon.DaemonStatus, error) {
 
 // runAttach resolves the desk against the selected cluster and prints or
 // runs the command. It only reads from the daemon.
-func runAttach(w io.Writer, desk string, printOnly bool, env attachEnv) error {
+func runAttach(w io.Writer, arg string, printOnly bool, env attachEnv) error {
 	addr, _, _, err := resolveDaemonRung()
 	if err != nil {
 		return err
@@ -209,10 +212,22 @@ func runAttach(w io.Writer, desk string, printOnly bool, env attachEnv) error {
 		return err
 	}
 	host, remote := attachHost(addr)
-	plan, err := planAttach(desk, sessions, attachTarget{Socket: st.TmuxSocket, Remote: remote, Host: host}, env.Getenv("TMUX"), printOnly)
+	resolved, err := resolveAttachArg(arg, sessions)
 	if err != nil {
 		return err
 	}
+	plan, err := planAttach(resolved.Desk, sessions, attachTarget{Socket: st.TmuxSocket, Remote: remote, Host: host}, env.Getenv("TMUX"), printOnly)
+	if err != nil {
+		return err
+	}
+	// Said last, after every check has passed and before the command runs or is
+	// printed, so the line never names a session that did not open.
+	stderr := env.Stderr
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	// A failed write to stderr must not stop the attach it only announces.
+	_, _ = fmt.Fprintf(stderr, "%s is desk %s\n", resolved.Key, resolved.Desk)
 	if plan.Exec {
 		return env.Exec(plan.Argv)
 	}
@@ -226,13 +241,25 @@ func runAttach(w io.Writer, desk string, printOnly bool, env attachEnv) error {
 func attachCmd() *cobra.Command {
 	var printOnly bool
 	cmd := &cobra.Command{
-		Use:   "attach <desk>",
-		Short: "Open a session's tmux pane by its desk number",
-		Long: `Open a session's tmux pane by its desk number.
+		Use:   "attach <desk|key|name>",
+		Short: "Open a session's tmux pane by desk number, session key or name",
+		Long: `Open a session's tmux pane by desk number, session key or name.
 
-<desk> is the DESK column of ` + "`marvel get sessions`" + `. The verb finds that row on the
-selected cluster (--cluster), reads the tmux socket from the daemon, and
-attaches to the pane.
+The argument is one of three forms, resolved on the selected cluster
+(--cluster) only:
+
+  - a desk, the DESK column of ` + "`marvel get sessions`" + `, with or without a leading
+    percent sign (23 or %23);
+  - a session key, workspace/name, matched exactly;
+  - a bare session name, accepted only when exactly one session on the cluster
+    has it. A name shared by several sessions is refused and every key is
+    listed.
+
+Digits that are both a desk and a session name are refused as ambiguous: pass
+%23 for the desk or the key for the session. Every successful resolution
+writes one line to stderr naming the session and its desk, so a reused desk
+number shows. The verb reads the tmux socket from the daemon and attaches to
+the pane.
 
   - Outside tmux it replaces itself with ` + "`tmux -L <socket> attach -t %<desk>`" + `.
   - Inside marvel's own tmux server it runs switch-client, so the client moves
