@@ -71,10 +71,20 @@ func TestRequestOverTheBoundIsRefusedBeforeDispatch(t *testing.T) {
 	over := paddedVersionRequest(t, (24<<20)+1)
 	resp, _ := serveBounded(t, d, sshCaller(), over)
 	if !strings.Contains(resp.Error, "request too large") || !strings.Contains(resp.Error, "24 MiB") {
-		t.Fatalf("error = %q, want a size error naming 24 MiB", resp.Error)
+		t.Fatalf("error = %q result=%.80s, want a size error naming 24 MiB", resp.Error, resp.Result)
 	}
 	if len(resp.Result) != 0 {
 		t.Errorf("result = %s, want none: the handler must not run on a refused request", resp.Result)
+	}
+
+	// Control: a request of exactly 24 MiB is served, one byte less than refused.
+	base := len(paddedVersionRequest(t, 0))
+	exact := paddedVersionRequest(t, (24<<20)-base)
+	if len(exact) != 24<<20 {
+		t.Fatalf("exact request is %d bytes, want %d", len(exact), 24<<20)
+	}
+	if at, _ := serveBounded(t, d, sshCaller(), exact); at.Error != "" || len(at.Result) == 0 {
+		t.Fatalf("a request of exactly 24 MiB: error %q result %.60s, want it dispatched", at.Error, at.Result)
 	}
 
 	// Control: a request of the same shape, well under the bound, is served.
@@ -85,7 +95,7 @@ func TestRequestOverTheBoundIsRefusedBeforeDispatch(t *testing.T) {
 }
 
 // The refusal comes while the body is still arriving: a client that offers far
-// more than the bound is cut off near it, so the daemon does not buffer what
+// more than the bound is cut off one byte past it, so the daemon does not buffer what
 // it will refuse.
 func TestRequestOverTheBoundIsCutOffNearTheBound(t *testing.T) {
 	d := newHandlerDaemon(t)
@@ -94,8 +104,8 @@ func TestRequestOverTheBoundIsCutOffNearTheBound(t *testing.T) {
 	if !strings.Contains(resp.Error, "request too large") {
 		t.Fatalf("error = %q, want a size error", resp.Error)
 	}
-	if limit := int64(24<<20) + (1 << 20); taken > limit {
-		t.Errorf("the daemon took %d bytes of %d offered, want it cut off within 1 MiB of 24 MiB (%d)", taken, len(offered), limit)
+	if limit := int64(24<<20) + 1; taken > limit {
+		t.Errorf("the daemon took %d bytes of %d offered, want it cut off one byte past 24 MiB (%d)", taken, len(offered), limit)
 	}
 
 	// Control: a small request is read to its end.
