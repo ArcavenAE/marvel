@@ -226,6 +226,10 @@ type Daemon struct {
 	// accounts holds the newest rate-limit reading per account, in memory.
 	// It is not keyed to a session and is not the heartbeat's data.
 	accounts *api.AccountReadings
+	// accountWarn reports an account window reaching the cluster's warning
+	// level, once per window (marvel#1340).
+	accountWarn      *accountWarner
+	accountWarnLevel int // 0 when the cluster turned the warning off
 	// limitMenu holds the captured limit-menu samples, the one list the inject
 	// refusal (its Menus) and the pane-menu source and limit action read. Production
 	// ships none (limitmenu: no sample, no match), so nothing is refused, no extra
@@ -655,6 +659,7 @@ func (d *Daemon) Start(socketPath string) (err error) {
 	// tmux posture.
 	d.loadScheduleHistoryMax(socketPath)
 	d.loadHostVitals(socketPath)
+	d.loadAccountWarn(socketPath)
 	d.identifyCluster(socketPath)
 	d.loadSuspendRecord(socketPath)
 	d.loadResumeJournal(socketPath)

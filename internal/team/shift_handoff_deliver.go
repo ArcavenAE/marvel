@@ -266,6 +266,9 @@ func handoffMissingEnvelope(t *api.Team, role *api.Role, sess api.Session, req a
 	return env, fmt.Sprintf("%s/%d", corr, req.DeliveredCount)
 }
 
+// NewULID mints a ULID from the clock and crypto/rand, for an envelope's message id.
+func NewULID(now time.Time) string { return newULID(now) }
+
 // crockford is the ULID alphabet.
 const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 

@@ -43,6 +43,12 @@ const (
 // "no number" is shown and never left out. Informs, never gates: nothing here
 // refuses anything (diagnostic-not-gate).
 func accountRows(readings *api.AccountReadings, sessions []api.Session, now time.Time) []admission.Row {
+	return accountRowsAt(readings, sessions, now, 0)
+}
+
+// accountRowsAt is accountRows with the cluster's warning level: a fresh
+// window at or over it reads near-limit in STATE. Level 0 is off.
+func accountRowsAt(readings *api.AccountReadings, sessions []api.Session, now time.Time, warnLevel int) []admission.Row {
 	seen := map[api.AccountKey]bool{}
 	unverified := map[api.AccountKey]bool{}
 	var keys []api.AccountKey
@@ -92,6 +98,9 @@ func accountRows(readings *api.AccountReadings, sessions []api.Session, now time
 			}
 			if state == api.ReadingFresh && w.UsedPercent != nil {
 				r.Observed = int(math.Round(*w.UsedPercent))
+				if warnLevel > 0 && *w.UsedPercent >= float64(warnLevel) {
+					r.State = accountWarnState
+				}
 			}
 			r.Note = fmt.Sprintf("reading from %s at %s", reading.Session, reading.At.UTC().Format(time.RFC3339))
 			out = append(out, r)
@@ -124,6 +133,12 @@ func (d *Daemon) recordAccountLimits(req api.AccountLimitsRequest, now time.Time
 			return daemonrpc.Response{Error: fmt.Sprintf("account.limits: %v", err)}
 		}
 		stored = d.accounts.RecordObserved(key, req.Windows, sess.Key(), observed, now)
+	}
+	if stored {
+		// Only a reading that is current says anything about the window.
+		if reading, state := d.accounts.Reading(key, now); state == api.ReadingFresh {
+			d.accountWarn.observe(key, sess.Workspace, reading.Windows, now)
+		}
 	}
 	return respond(map[string]any{"account": key.String(), "stored": stored})
 }

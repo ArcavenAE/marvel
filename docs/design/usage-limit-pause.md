@@ -742,3 +742,29 @@ matched under 9.4's matcher, may set the `limited` condition (source
 nothing about sending a key; that stays UL-R1's, under 9.4. The earlier
 conflict between this section's adoption line and 9.3's expiry is resolved
 by the ruling.
+
+## 10. The warning level on an account window (marvel#1340)
+
+An account window at or over a level reads `near-limit` in the STATE column of
+`get budgets`, and the first time a window reaches it the daemon says so once.
+It is a report: nothing pauses, sheds, refuses or blocks on it
+(`.claude/rules/diagnostic-not-gate.md`).
+
+- **The level.** The cluster key `account_warn_percent`: unset is 80, `0` turns
+  it off, 1 to 100 is the level, and any other value is logged and read as 80.
+  It applies to every window a reading carries, each on its own.
+- **When it is said.** At the moment a reading is stored, for a fresh reading
+  only, so a value that has gone stale announces nothing.
+- **Once per window.** A window is the account, the window name and `resets_at`.
+  A `resets_at` that moves later by a minute or more is a new window; a smaller
+  move is the same one. A window with no `resets_at` ends when its percentage
+  falls back under the level. The memory is in the daemon process, so a restart
+  or reexec can say it again for a window already announced.
+- **Where it goes.** One ring event, `account.window-near-limit`, always. Where
+  the cluster has a managed bus with its leaf up, one INFORM to
+  `global://director` on the same publisher the shift escalation uses. With no
+  bus it is the event only, and the notice is sent later in the same window if
+  the leaf comes up. A failed publish is tried again no sooner than five minutes
+  later.
+- **The STATE word.** `near-limit` for a fresh window at or over the level, and
+  `-` otherwise. An account row never reads `ok`.
