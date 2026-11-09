@@ -23,7 +23,9 @@ import (
 // The origins a Notify caller names. The daemon records them as
 // injector=marvel:<origin>.
 const (
-	NoticeMaxAge          = "max-age"
+	NoticeMaxAge = "max-age"
+	// NoticeHibernate is a hibernating seat's handoff ask.
+	NoticeHibernate       = "hibernate"
 	NoticeContextPressure = "context-pressure"
 	// NoticeRetire is a retiring seat's handoff ask (docs/design/work-prune.md
 	// section 6.1).

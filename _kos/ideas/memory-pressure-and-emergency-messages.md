@@ -185,3 +185,61 @@ A BUS_LOST notice can never ride the bus, so it always starts at option 2.
 - Draft the vocabulary as an envelope extension beside the director's
   performatives, not a second protocol.
 - Fix #345 and #348 before any policy uses shift.
+
+## 8. Addendum, 2026-11-06: a host-capacity guard, and what is built
+
+### 8.1 The ask
+
+The operator, relayed by director, 2026-11-06, word for word: "kos idea marvel and we might already have part of this, but we need: some kind of resource guard and monitroing for clusters so we do not load so many active agents that we brick or crash a host and 2) didn't we design, plan or suggest adding roll up/summary metrics at the top of the marvel get sessions -w and possibly other views, for memory totals, CPU totals, spend totals, etc? what is the status of that feature(s)?"
+
+In short: a guard that stops marvel from starting more agents than a host can carry, monitoring that would show the risk coming, and the status of the rollup totals. The second part has its own idea file, [[cluster-rollup-header]]; this addendum covers the guard and the monitoring, and section 8.6 points at the rollup.
+
+### 8.2 The evidence since section 1
+
+At the end of October one fleet host ran out of memory headroom. The macOS file-event daemon (fseventsd) had grown for weeks, to 27 to 29 GiB resident, mostly in swap, and it held one core for hours. Swap stood at about 52 of 53 GB and did not drain. The graphical session was lost twice in two days, which logged out the harness logins kept in the keychain. A one-off large job then pushed the host into swap exhaustion. The only warning was a low-memory panel on a screen nobody was watching. The other two fleet hosts read flat over the same weeks.
+
+Most of that load was not marvel's, which is the section 1 point again: host pressure does not mean an agent caused it. But every seat on the host shared what headroom was left, and marvel kept starting seats into it with no reading of its own. `docs/design/host-health-guard.md` (2026-10-31) records the incident in full, with host names edited to roles.
+
+### 8.3 What is built, checked at marvel `ba0ea659`
+
+| piece | where | what it does, and what it does not |
+|---|---|---|
+| admission budgets | `internal/api/budget.go:68-69`; `internal/admission` | refuses a spawn over a team-declared `max_sessions` (count) or `max_tokens` (cumulative). The spend ceiling enforced today is in tokens, not dollars |
+| unbuilt budget rows | `internal/api/budget.go:70-72` | `max_cost_usd`, `max_team_rss_bytes` and `max_session_ctx_pct` are registered with `Implemented: false`, and a manifest that declares one is refused at parse (`internal/api/manifest.go:599-618`), as the header said in September. Still true |
+| per-session CPU and RSS | `internal/procstat/procstat.go:32-48`, summed over the pane's process tree; stored at `internal/daemon/metrics.go:116-117`; served as `internal/api/types.go:661-662` | the input a per-team RSS budget would read. Nothing in admission reads it |
+| host free memory in each spawn event | `internal/session/hostmem.go:21`, appended at `internal/session/manager.go:1143` (#1168) | `kern.memorystatus_level` on darwin, `MemAvailable` over `MemTotal` on linux. The file says it is "a diagnostic and nothing reads it back to decide anything: no cap, no floor, no gate". No swap reading exists in marvel |
+| a report-only host watch | outside marvel, in the fleet's orchestrator tooling, run by each host's scheduler | reads memory pressure, swap, the largest processes and the file-event daemon's slope, and reports to the host's supervisor. It never signals a process |
+| the host vitals sampler | `docs/design/host-vitals.md` (2026-11-02) | swap, pressure, top processes and orphans, once a minute, on the existing metrics pass, off unless the cluster config turns it on. Ruled by director on 2026-11-02 to build before the rc. **Not built:** no vitals code is on main |
+| the per-team load rollup | `marvel get teams --load`, `cmd/marvel/main.go:1282` | seats running of declared, and activity. It is about how busy a team is, not how full a host is |
+
+So marvel can see each seat's memory and the host's free share at spawn time, and it refuses on two budgets. It has no rule that links the two.
+
+### 8.4 The guard: a host-capacity floor in admission
+
+The smallest guard that answers the ask is an admission refusal that reads the host, in the shape `host-health-guard.md` section 4.2 already set out:
+
+- **Operator-declared, or absent.** A cluster-level floor, for example `min_free_memory_percent` and a swap ceiling, declared in the cluster config. Undeclared means no gate, as every admission budget works today.
+- **Growth only.** Checked on apply and scale-up, never on a repair, a restart or a shift. This keeps admission's rule that it never refuses repair, because a host that lost a seat should get it back.
+- **The reading it uses.** The #1168 free-memory reader, called at admission time and not only at spawn. The swap half needs the host vitals sampler, since marvel reads no swap today. A floor on free memory alone could ship first.
+- **Hysteresis.** A band, not one line: refuse below the floor, admit again only above floor plus a margin, so a host near the line does not alternate refusals and spawns every tick.
+- **What a refusal says.** An `admission.refused` event that names the reading, the floor, the time of the reading and whether it was stale, and a `get` and `describe` surface that shows a team held for host capacity. That is different from a team held on its own budget.
+- **Supervisors last.** A floor never refuses a team's only supervisor, in line with section 4's priority classes.
+- **Never acts on what marvel did not create.** The guard refuses new marvel seats. It does not signal anything, and it does not touch non-marvel processes, which in the October incident were most of the load.
+
+**This is a gate on a vital sign.** Free memory is a health metric, and gating on one needs a ratified, written decision; it does not get there by accretion. `host-health-guard.md` section 8, card 1, puts that decision to the operator. Its recommendation was no floor yet: first record the reading in spawn events (now done, #1168), then decide after a week of host-watch readings shows whether a floor would have fired before the incident and stayed quiet otherwise. That recommendation was valid until 2026-11-07. Nothing in this addendum is built before that ruling.
+
+`max_team_rss_bytes` is the per-team sibling. It is registered, the inputs exist (`procstat`), and it still needs the same kind of ruling, since RSS double-counts shared pages (section 2) and a team cap does not see non-marvel load.
+
+### 8.5 What is missing
+
+1. A ruling on a host-capacity floor (card 1 of `host-health-guard.md`).
+2. The host vitals sampler, ruled and not built. It is the monitoring half of the ask, and it carries the swap reading a floor needs.
+3. Enforcement of `max_team_rss_bytes`, or its removal from the registry if the host floor replaces it.
+4. A surface for "held for host capacity", once a floor exists.
+5. The emergency message vocabulary of section 5, which is still an idea. A guard that only refuses spawns gives agents no warning; section 5's WARN on memory pressure is the matching half.
+
+### 8.6 The rollup totals
+
+The totals line at the top of `get sessions -w` is [[cluster-rollup-header]], captured 2026-10-30 with "no design, no ticket and no frontier node". It is a view, so it informs and never gates. It and the guard would read the same per-session numbers, and a host line in that header (`host-health-guard.md` 4.1, "one host line to `marvel get sessions -w`") is where a reader would first see a host near its floor.
+
+Re-check: the arcaven architect re-checks this addendum's guard proposal on 2026-11-13, or when card 1 is ruled, whichever comes first.

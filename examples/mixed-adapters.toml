@@ -24,7 +24,7 @@
 # (finding-011). It needs one injected prompt before CTX% shows a number.
 #
 # Setup:
-#   cd ~/work/aae-orc/marvel
+#   cd path/to/marvel
 #   ./bin/marvel daemon &
 #   ./bin/marvel work examples/mixed-adapters.toml
 #

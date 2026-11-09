@@ -9,7 +9,7 @@ content: |
   work under mise even if the architecture has to change. STREQ-OPS-005 cannot
   pass today.
 provenance:
-  created_by: spectacle.reverse-prd
+  created_by: reverse-prd
   session: 9b948f8e-a64e-43f7-87d7-401e0816204a
   created_at: 2026-10-13T21:37:08Z
   derived_from:

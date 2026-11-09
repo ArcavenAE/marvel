@@ -346,7 +346,8 @@ func scheduleRetryBackoff(attempt int) time.Duration {
 //     backoff. Otherwise the firing settles, and on_failure = freeze
 //     freezes the schedule. An unset starting_deadline does not bound
 //     retries in time: the one-minute grace a first start gets does not
-//     apply to them (operator ruling on default 2, 2026-10-07).
+//     apply to them (operator ruling on default 2, 2026-10-07). A run that
+//     exited 78 takes no retries (ADR-010 Amendment 2).
 //   - A cancelled run settles its firing: the kill was meant to stop it.
 //   - A success, or a run of an earlier firing, changes nothing.
 func (st *ScheduleStatus) SettleRun(r RunRecord, p SchedulePolicy, now time.Time) bool {
@@ -364,7 +365,10 @@ func (st *ScheduleStatus) SettleRun(r RunRecord, p SchedulePolicy, now time.Time
 	}
 	st.Attempts++
 	inDeadline := p.StartingDeadline == 0 || !now.After(st.FiringDueAt.Add(p.StartingDeadline))
-	if st.Attempts <= p.Retries && inDeadline {
+	// Exit 78 declares a configuration error: a retry would only repeat the
+	// refusal, so the firing settles whatever the retries count (ADR-010
+	// Amendment 2).
+	if st.Attempts <= p.Retries && inDeadline && r.ExitStatus != ExitConfig {
 		st.RetryAfter = now.Add(scheduleRetryBackoff(st.Attempts))
 		return false
 	}

@@ -46,7 +46,7 @@ content: |
       config (file, flag, env), whether each does remote OAuth itself, and
       what marvel must write for each.
   (f) The sandbox. Seats run as the daemon's OS user, so a file or env value
-      marvel can read, a seat can read, unless a sandbox profile (curtain)
+      marvel can read, a seat can read, unless a sandbox profile (the sandbox tool)
       denies it. Which shapes keep the secret out of the seat's reach, and
       which only keep it out of the model's context. The same-uid residual
       is already tracked as aae-orc-ww33y (ADR-009's same-uid residual has no

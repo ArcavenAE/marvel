@@ -15,14 +15,14 @@ Both roles run codex on gpt-5.6-luna, to be economical with tokens.
   `permissions auto`, `restart_policy always`, `image claude`,
   `command cast-aae.sh`, `context_feed statusline`. The offline manifest is
   never checked in; it mirrors the running twin. Every role is cast from the
-  wardrobe install root by `cast-aae.sh` then `cast-launch.sh`, which slices
-  the named wardrobe role and passes it as `--append-system-prompt`.
-- **Retrospector and SLAES already exist.** wardrobe `contents/roles/
+  role library install root by `cast-aae.sh` then `cast-launch.sh`, which slices
+  the named role library role and passes it as `--append-system-prompt`.
+- **Retrospector and SLAES already exist.** role library `contents/roles/
   retrospector.md` is a ratifiable proposal that supersedes
-  `multiclaude-enhancements/agents/retrospector.md` (the SLAES prior art). It
+  `earlier-agent-pack/agents/retrospector.md` (the SLAES prior art). It
   is read-only (`permission_floor: read`) and its records
   (`retrospector/finding@1`, `retrospector/recommendation@1`) are described as
-  an append-only findings log and recommendation queue. The wardrobe role is
+  an append-only findings log and recommendation queue. The role library role is
   the thing to EXTEND with a write surface, not a new role to invent.
 - **gpt-5.6-luna is selectable.** It is in codex's model cache (slug
   `gpt-5.6-luna`; the codex default here is `gpt-5.6-sol`), and the codex
@@ -34,7 +34,7 @@ Both roles run codex on gpt-5.6-luna, to be economical with tokens.
 
 Every live role casts through `cast-launch.sh`, which is claude-specific: it
 execs `claude -n <id> --strict-mcp-config --mcp-config <director shim> --append-
-system-prompt <wardrobe slice>`. codex has none of those flags (no
+system-prompt <role library slice>`. codex has none of those flags (no
 `--append-system-prompt`; identity travels only through the environment,
 codex.go). So a codex role cannot reuse `cast-launch.sh`.
 
@@ -43,10 +43,10 @@ A codex role needs a small codex cast path that does three things:
 1. **cwd.** Pin it. For the reviewer, the workspace cwd (read-only anyway). For
    the retrospector, the retro output dir (which defines the write surface, see
    below).
-2. **Role text.** codex has no system-prompt flag, so the wardrobe slice is
-   prepended to the codex prompt. The wrapper slices the wardrobe role (reuse
+2. **Role text.** codex has no system-prompt flag, so the role library slice is
+   prepended to the codex prompt. The wrapper slices the role library role (reuse
    `scripts/slice.sh`, as `cast-launch.sh` does) and sets the codex prompt to
-   `<slice>\n\n<task>`. The durable role definition stays in wardrobe; the
+   `<slice>\n\n<task>`. The durable role definition stays in role library; the
    manifest `prompt` carries only the task.
 3. **Bus (optional for v1).** The claude roles wire the director shim via
    `--mcp-config`. codex configures MCP servers through its own config
@@ -62,24 +62,24 @@ task (below), and it is what the live apply depends on.
 
 ## Workstream 1: adversarial reviewer (read-only)
 
-Proven end to end in finding-046. The role reuses wardrobe `reviewer.md`
+Proven end to end in finding-046. The role reuses role library `reviewer.md`
 (advisory-not-blocking, `permission_floor: read`). Sandbox stays read-only, so
 its output is the event ring, and it cannot write the tree.
 
 Proposed manifest role block (for the live team, held for operator authorization):
 
 ```toml
-  # wardrobe: role/reviewer  (codex, read-only, advisory)
+  # role library: role/reviewer  (codex, read-only, advisory)
   [[team.role]]
   name = "reviewer"
   replicas = 1
   restart_policy = "always"
     [team.role.runtime]
     image = "codex"
-    command = "/Users/michael.pursifull/.marvel/manifests/cast-aae-codex.sh"
+    command = "~/.marvel/manifests/cast-aae-codex.sh"
     mode = "headless"
     args = ["-m", "gpt-5.6-luna", "-s", "read-only"]
-    prompt = "<the review task; the wardrobe reviewer slice is prepended by the cast wrapper>"
+    prompt = "<the review task; the role library reviewer slice is prepended by the cast wrapper>"
 ```
 
 Notes: no `permissions` field (that projects a claude permission-mode, inert for
@@ -121,17 +121,17 @@ is misconfigured and the role must not run write-enabled.
 Proposed manifest role block (held for operator authorization):
 
 ```toml
-  # wardrobe: role/retrospector  (codex, constrained write to the retro dir)
+  # role library: role/retrospector  (codex, constrained write to the retro dir)
   [[team.role]]
   name = "retrospector"
   replicas = 1
   restart_policy = "always"
     [team.role.runtime]
     image = "codex"
-    command = "/Users/michael.pursifull/.marvel/manifests/cast-aae-retro.sh"
+    command = "~/.marvel/manifests/cast-aae-retro.sh"
     mode = "headless"
     args = ["-m", "gpt-5.6-luna", "-s", "workspace-write"]
-    prompt = "<the retro task; the wardrobe retrospector slice is prepended by the cast wrapper>"
+    prompt = "<the retro task; the role library retrospector slice is prepended by the cast wrapper>"
 ```
 
 `cast-aae-retro.sh` is the codex cast wrapper with its cwd pinned to
@@ -139,14 +139,14 @@ Proposed manifest role block (held for operator authorization):
 not the repo. The reviewer's `cast-aae-codex.sh` pins cwd to `TWIN_CWD` (read
 only, so cwd choice is not load-bearing there).
 
-## Migration to curtain (vision Gap 4)
+## Migration to the sandbox tool (vision Gap 4)
 
 The write restriction is expressed today as codex's own sandbox in
 `runtime.args` plus the pinned cwd. That is the interim Layer-1 enforcement for a
 harness marvel does not project into (claude gets a projected settings fragment;
 codex reports no projection surface, so its own sandbox is the lever). Expressed
 as a single named writable-root set (the retro dir, plus any `--add-dir` roots),
-it maps one-to-one onto a later declarative curtain policy (permission-through-
+it maps one-to-one onto a later declarative sandbox-tool policy (permission-through-
 environment, `question-permission-model` Layer 1; aae-orc-10x). Keeping the write
 surface one named parameter, not scattered paths, keeps that a mechanism swap.
 
@@ -193,17 +193,17 @@ precondition of the manifest change above, not a follow-on.
   codex role's writes read as `tool.result` rather than `agent.error` on the
   ring (finding-048, aae-orc-tvlcg).
 - marvel/director: the codex cast wrappers (aae-orc-gz9pd) (`cast-aae-codex.sh`,
-  `cast-aae-retro.sh`): pin cwd, prepend the wardrobe slice, select the model
+  `cast-aae-retro.sh`): pin cwd, prepend the role library slice, select the model
   and sandbox. The live apply depends on these.
-- wardrobe: the retrospector role extension (the write surface) is drafted this
-  round; the reviewer role is already in wardrobe.
-- curtain: the declarative write-policy home for both roles (aae-orc-10x,
-  blocked on curtain), the eventual replacement for the sandbox-in-args
+- role library: the retrospector role extension (the write surface) is drafted this
+  round; the reviewer role is already in role library.
+- the sandbox tool: the declarative write-policy home for both roles (aae-orc-10x,
+  blocked on the sandbox tool), the eventual replacement for the sandbox-in-args
   mechanism.
 
 ## Evidence
 
 finding-046 (the read-only codex reviewer, proven), finding-048 (the codex
 constrained write surface, proven on gpt-5.6-luna), question-permission-model
-(Layer 1), finding-043 (per-team upsert, why the apply is additive), wardrobe
+(Layer 1), finding-043 (per-team upsert, why the apply is additive), role library
 `reviewer.md` and `retrospector.md`.

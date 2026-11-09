@@ -52,11 +52,12 @@ var sessionColumnRegistry = []sessionColumn{
 	{name: "prompt", header: "PROMPT", pick: func(r sessionRow) string { return r.prompt }},
 	{name: "spec", header: "SPEC", pick: func(r sessionRow) string { return r.spec }},
 	{name: "acct", header: "ACCT", pick: func(r sessionRow) string { return r.acct }},
+	{name: "service", header: "SERVICE", pick: func(r sessionRow) string { return r.service }},
 }
 
 // optInColumns are registered and selectable but not in the default table.
 // The width fit's wide tier is where they show by default.
-var optInColumns = map[string]bool{"composer": true, "pane": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-turn": true, "spec": true, "acct": true, "cpu": true, "rss": true, "desk": true, "runtime": true}
+var optInColumns = map[string]bool{"composer": true, "pane": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-turn": true, "spec": true, "acct": true, "service": true, "cpu": true, "rss": true, "desk": true, "runtime": true}
 
 // wantsComposer reports whether the COMPOSER or PANE column is selected. Only
 // then does the listing ask the daemon to read each seat's pane; both are
@@ -255,8 +256,9 @@ func renderSessionTableCols(sessions []api.Session, cols []sessionColumn) string
 	}
 	_, _ = fmt.Fprintln(w, strings.Join(headers, "\t"))
 	cells := make([]string, len(cols))
+	homes := countServiceHomes(sessions)
 	for _, s := range sessions {
-		row := newSessionRow(s)
+		row := newSessionRow(s, homes)
 		for i, c := range cols {
 			cells[i] = c.pick(row)
 		}

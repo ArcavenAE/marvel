@@ -121,7 +121,7 @@ func TestPanesAreReadableWithoutAUTF8Locale(t *testing.T) {
 
 // The fix must not hand a locale to the panes: a server takes the environment
 // of the client that starts it and gives it to every pane, so a variable set
-// for the driver's own exec would reach every seat (aae-orc#418 is the same
+// for the driver's own exec would reach every seat (marvel#381 is the same
 // shape for the session credentials).
 func TestMarvelAddsNoLocaleToThePaneEnvironment(t *testing.T) {
 	d := utf8Driver(t)

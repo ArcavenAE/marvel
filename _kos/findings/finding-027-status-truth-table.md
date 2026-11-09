@@ -1,7 +1,6 @@
 # finding-027 — status truth table: what marvel reports vs what is true
 
-Probe: recon measurement commissioned in
-[ArcavenAE/aae-orc#239](https://github.com/ArcavenAE/aae-orc/issues/239#issuecomment-5389440000)
+Probe: recon measurement commissioned in a private tracker issue
 (the truth-table brief). Operator: Claude (Opus 5), no human at the keyboard.
 Date: 2026-08-24 (00:27–00:49Z). Binary: tree build at `0c59baa` (`marvel dev`),
 chosen so results are directly comparable to run-01's evidence.
@@ -176,7 +175,7 @@ none unless `context_feed` is configured.
 **Cell 2 needed a second attempt, and the first attempt was a false negative I
 caused.** My first cell-2 run pointed the daemon at the aae-orc root and the
 dialog never fired: `~/.claude.json` showed `hasTrustDialogAccepted: true` for
-that path, because **my own `marvel inject "" -e` during run-01 permanently
+that path, because **an earlier run in the same session had permanently
 granted trust there.** Marvel reported `running` and the pane sat at an empty
 prompt — genuinely idle, but not blocked, so the row would have been wrong.
 

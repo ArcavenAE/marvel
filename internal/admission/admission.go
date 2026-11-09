@@ -457,6 +457,14 @@ type Row struct {
 	AccountWindow string     `json:"account_window,omitempty"`
 	Reading       string     `json:"reading,omitempty"`
 	ResetsAt      *time.Time `json:"resets_at,omitempty"`
+	// ReadingAgeSeconds is how old a stale reading is, on the daemon's clock.
+	// It is set only on a stale row, where Observed holds the last value.
+	ReadingAgeSeconds int64 `json:"reading_age_seconds,omitempty"`
+	// ObservedPercent is the used percentage as the daemon read it, for a fresh
+	// or stale row whose window reported one. Observed is that value rounded; this
+	// is the value STATE compares to the warning level, and the table prints one
+	// decimal of it. A daemon that predates it sends only Observed.
+	ObservedPercent *float64 `json:"observed_percent,omitempty"`
 }
 
 // Row states.
@@ -548,8 +556,8 @@ func Rows(t api.Team, s Snapshot) []Row {
 
 // MarshalJSON leaves the numbers an account row does not have out of the wire
 // form: limit and headroom mean nothing for an account, and observed carries a
-// percentage only for a fresh reading, so a stale or none row must not read
-// "observed": 0. A team row marshals exactly as before.
+// percentage only for a fresh or stale reading (a stale one holds the last
+// value, with reading_age_seconds), so a none row must not read "observed": 0. A team row marshals exactly as before.
 func (r Row) MarshalJSON() ([]byte, error) {
 	type plain Row
 	if r.Reading == "" {
@@ -561,7 +569,7 @@ func (r Row) MarshalJSON() ([]byte, error) {
 		Observed *int `json:"observed,omitempty"`
 		Headroom *int `json:"headroom,omitempty"`
 	}{plain: plain(r)}
-	if r.Reading == "fresh" {
+	if r.Reading == "fresh" || r.Reading == "stale" {
 		out.Observed = &r.Observed
 	}
 	return json.Marshal(out)

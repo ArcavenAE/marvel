@@ -5,10 +5,10 @@
 - **Author seat:** architect (fleet, workspace ops2).
 - **Date:** 2026-09-16.
 - **Evidence:** the three re-run party reports under
-  `aae-orc/_bmad-output/party-mode/marvel-services-rerun-2026-09-16/`
+  `<orchestrator>/_bmad-output/party-mode/marvel-services-rerun-2026-09-16/`
   (`litellm/`, `pair/`, `switchyard/`, each with `grounding.md` and four
   round transcripts) and the earlier packet under
-  `aae-orc/_bmad-output/party-mode/marvel-services-2026-09-16/`
+  `<orchestrator>/_bmad-output/party-mode/marvel-services-2026-09-16/`
   (`tech-litellm.md`, `tech-pair.md`, `tech-switchyard.md`, `report.md`).
   Panelist names below are the party personas as the reports name them.
 - **Filed:** pending (section 7).
@@ -61,7 +61,7 @@ names the gateway; the binding is the profile env the daemon inherits.
 Marvel holds nothing for an adopted gateway. The master key stays the
 operator's, passed through the environment marvel never reads by name; the
 upstream vendor key stays in the gateway's own environment. ADR-009
-(`aae-orc/decisions/adr-009-credential-custody-boundary.md`): both are
+(`<orchestrator>/decisions/adr-009-credential-custody-boundary.md`): both are
 bearer authority at a third party or at a process marvel does not
 supervise, so both are custody, and the record has no field for either. The
 bus record makes the same choice for `mode: adopted`
@@ -196,7 +196,7 @@ reads the two counts and decides whether managed phase 0 opens.
 A count is a vital sign, and ADR-007 clause 3 keeps vital signs out of
 gates except "where the gate is clearly defined and ratified: scoped,
 written down, and traceable to a decision"
-(`aae-orc/decisions/adr-007-bainbridge-automation-boundary.md`). Decision 2
+(`<orchestrator>/decisions/adr-007-bainbridge-automation-boundary.md`). Decision 2
 is that written decision: it scopes the gate to managed phase 0, names the
 metric, and rules that no supervisor code is written before the counts
 exist. The gate is a human decision point at a dated review (clause 2,
@@ -269,7 +269,7 @@ accept any loopback process. A Binding to it is visibility, not access;
 marvel can decide which roles are told the URL, and any process on the host
 can find `:11434` without being told. The field is on the class contract so
 a manifest cannot claim to gate what it only informs (`pair/report.md`
-section 4). Enforcement at the consumer is curtain's, design-only.
+section 4). Enforcement at the consumer is the sandbox tool's, design-only.
 
 ### 2.3 The entry as it would look
 
@@ -399,7 +399,7 @@ Replace the comment at `types.go:566` with:
 // a third party is custody, whatever its format and however briefly it is
 // held, and does not belong here. The test is audience, not format, and it
 // applies to the most durable artifact held: see
-// aae-orc/decisions/adr-009-credential-custody-boundary.md and SOUL.md
+// <orchestrator>/decisions/adr-009-credential-custody-boundary.md and SOUL.md
 // section 3. Wanting a kind here for a service marvel adopts or reaches by
 // URL is the tripwire; the answer is a vault the service reads with a token
 // marvel can revoke, not a new member of this set.
@@ -423,7 +423,7 @@ condition that changes the answer has two parts, both required:
 1. **Session-cert verification.** Switchyard, or a proxy in front of it,
    terminates TLS on its inbound listener with client-certificate
    verification against the fleet CA trust bundle (root plus the daemon
-   intermediates of `aae-orc/docs/design/fleet-ca-and-bus-auth.md` section
+   intermediates of `<orchestrator>/docs/design/fleet-ca-and-bus-auth.md` section
    2). A request then carries a verified URI SAN in the fleet grammar,
    `marvel://<fleet>/<cluster>/<ws>/<team>/<slot>`, issued by the daemon at
    spawn as a per-session-generation leaf. Verification alone establishes

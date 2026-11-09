@@ -50,12 +50,13 @@ func lastActiveCell(s api.Session, now time.Time) string {
 // sourceMarkOnScreen says whether any cell of the shown columns carries the
 // mark, which is what earns the legend line.
 func sourceMarkOnScreen(sessions []api.Session, shown []sessionColumn) bool {
+	homes := countServiceHomes(sessions)
 	for _, c := range shown {
 		if !sourceMarkColumns[c.name] {
 			continue
 		}
 		for _, s := range sessions {
-			if strings.HasSuffix(c.pick(newSessionRow(s)), sourceMark) {
+			if strings.HasSuffix(c.pick(newSessionRow(s, homes)), sourceMark) {
 				return true
 			}
 		}

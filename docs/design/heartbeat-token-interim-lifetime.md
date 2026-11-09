@@ -8,8 +8,8 @@ orc's `docs/design/fleet-ca-and-bus-auth.md` section 3.1: "two live
 credentials on one session is a defect"). Section 7 lists what is thrown away
 then and what carries over.
 
-**Status: ruled 2026-09-30** (operator via director 01M3RBGXEW, relayed by
-arcaven-supervisor-g5-0 01M3RBMMW2), verbatim "B-Full": B-min first, then a
+**Status: ruled 2026-09-30** (operator via director, relayed by
+the arcaven supervisor), verbatim "B-Full": B-min first, then a
 TTL with renewal through a pane-scoped file. This reverses the 2026-09-27
 choice of option A (wait for 5yqw3) recorded in 83xu's notes.
 

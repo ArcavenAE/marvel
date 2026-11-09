@@ -30,7 +30,7 @@ const busBlockSpelling = `clusters:
       listen: 127.0.0.1:4222
       store_dir: /var/nats
       hub:
-        url: nats-leaf://192.168.100.110:7442
+        url: nats-leaf://192.0.2.110:7442
 `
 
 const servicesSpelling = `clusters:
@@ -43,7 +43,7 @@ const servicesSpelling = `clusters:
         listen: 127.0.0.1:4222
         store_dir: /var/nats
         hub:
-          url: nats-leaf://192.168.100.110:7442
+          url: nats-leaf://192.0.2.110:7442
 `
 
 // The golden test for services-list.md section 1.3: the two spellings

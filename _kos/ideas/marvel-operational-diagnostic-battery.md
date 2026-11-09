@@ -83,7 +83,7 @@ Marvel's areas, each with the anchor a check would cite:
 - director's `sim/twin/verify-cast-launch.sh` (26 broker-free launcher
   checks), the director-mcp `--preflight`, and the hub acceptance steps in
   director's `sim/design/global-bus-tier.md`, on the director side.
-- The orc's warn-only hygiene check for shared-checkout drift (aae-orc#376).
+- The orc's warn-only hygiene check for shared-checkout drift (a private tracker issue).
 
 ## Tensions
 

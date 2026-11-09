@@ -79,7 +79,7 @@ type TurnReader interface {
 }
 ```
 
-- **The mail half sits behind an adapter.** A per-seat aggregate covers every address on both tiers: the oldest age is the maximum, the depth is the sum, and any `unknown` makes the whole `unknown`. The first adapter is a Go read of JetStream consumer state, the same read director's `probe/nats-phase-0/director-mcp/unread.go` performs. It is not a call into director, so marvel keeps working without director installed. A file-spool double in `internal/mail/mailtest` shows that a non-NATS queue fits the contract. Any queue needs three reads: the unread count for an address, the oldest unread time and the last ack time.
+- **The mail half sits behind an adapter.** A per-seat aggregate covers every address on both tiers: the oldest age is the maximum, the depth is the sum, and any `unknown` makes the whole `unknown`. The first adapter is a Go read of JetStream consumer state, the same read director's `probe/nats-phase-0/director-mcp/unread.go` performs. It is not a call into director, so marvel keeps working without director installed. A file-spool double in `internal/mail/mailtest` shows that a non-NATS queue fits the contract. Any queue needs three reads, per durable as 11.2 defines unread: the consumers on an inbox, each with its unread count, ack floor and last ack time, and the queue's own clock when it answered; the first message above a sequence on a set of subjects; and the count of messages on a set of subjects (`mail.Queue`, A2).
 - **The turn half is per harness.** It is never derived from the queue: a queue can say what was delivered and acknowledged, never what was acted on. `last_ack_at` is never turn evidence.
   - **claude:** hooks marvel would project, `UserPromptSubmit` and `Stop`, through a hook command that prints nothing. They are trusted only after the section 6 probe passes, and only inside the measured version range. Outside that range the seat reads `unobserved (version-unmeasured)`. Feed liveness comes from `LastHeartbeat`, never from `ContextAt`.
   - **codex:** a prompt-submit hook, if codex has one (to be measured). Until then `started_at` is `unsupported`.
@@ -299,7 +299,7 @@ All three are built on the mokuzai marvel lane, because marvel is not pushed fro
 
 **A1, `internal/mail`.**
 - `Count`, `Duration`, `Time` and `Seq` each carry a value or a state: `unknown` (tried and failed), `unsupported` (the queue cannot answer), and, for `Time` only, `never`. The zero value of each is `unknown`, so an unset field never reads as zero.
-- `MailState` holds the section 3 fields, plus `AckPending Count`, `AckFloor Seq` and `OldestSeq Seq`, so the parity fixture can compare them.
+- `MailState` holds the section 3 fields, plus `AckPending Count`, `AckFloor Seq` and `OldestSeq Seq`. `AckFloor` and `OldestSeq` belong to one durable, so they carry a value only when the read covered exactly one durable (A2); the parity fixture compares them per durable.
 - `MailReader` is as in section 3.
 - The spool double in `internal/mail/mailtest` keeps one directory per address, with one file per message (sequence and stored time), a floor file and an ack-time file. It can inject an error per call or `unknown` and `unsupported` per field.
 - The import-boundary test is as in section 3, with its planted-import control.
@@ -312,17 +312,19 @@ All three are built on the mokuzai marvel lane, because marvel is not pushed fro
 **A2, seat addresses and `SeatMail`.**
 - **The local tier.** The seat's durables on `AGENT_INBOX` are the ones named `mcp_<agent id>_<instance>`. The agent id is split from the instance at the last `_`, as director does (`unread.go`). Their filter subjects are `agent.<workspace>.<team>.<id>.inbox`, plus `agent.<workspace>.<team>.role.<role>.inbox` when a role is held.
 - **The global tier.** It exists only for a seat with a global address. That is a cluster supervisor (`global.<cluster>.supervisor.inbox` on `GLOBAL_TO_<cluster>`) or director (`GLOBAL_TO_DIRECTOR`), with durables named `mcp_global_<agent id>_<instance>`. Any other seat's global tier reads `unsupported`, with the note "no global address", and is not counted.
-- **The aggregate.** Each live durable is read from its own floor and reported on its own, as `unread.go` reports per durable. Within a tier, the seat's depth and oldest age are the maximum over its live durables, never a sum and never one merged floor (11.2). Across tiers, depth is the sum and the oldest age is the maximum. `LastAckAt` is the latest. Any `unknown` tier makes the whole `unknown`.
+- **The aggregate.** Each live durable is read from its own floor and reported on its own, as `unread.go` reports per durable: `SeatMail` returns one row per durable read (tier, name, live or inherited, pending, ack pending, ack floor, oldest sequence and its stored time), and `Read` computes the seat's `MailState` from those rows, so the watcher and the parity fixture read the same computation. A seat with no durable gets one row with no name, at floor 0. Within a tier, the seat's depth and oldest age are the maximum over its live durables, never a sum and never one merged floor (11.2). Across tiers, depth is the sum and the oldest age is the maximum. `LastAckAt` is the latest. Any `unknown` tier makes the whole `unknown`. The seat's `AckFloor` and `OldestSeq` are the row's own when exactly one row was read; with more than one row, in one tier or across two, they read `unsupported` with the note "per durable", because a maximum floor and a minimum oldest taken from different durables would describe no durable.
 - **A durable with a different filter set** belongs to another seat sharing the id prefix and is skipped, as `seatAckFloor` skips it.
 - **A seat with no live durable.** Its unread mail is still counted from 11.2's inherited floor, because that is what a successor inherits (the 83-message case in section 0). The departed durable that holds that floor supplies the depth and the oldest message. A seat with no durable at all inherits floor 0: a successor would read everything the inbox holds on its subjects, so depth is the stream's message count on those subjects (`STREAM.INFO` with a subjects filter) and the oldest is the first message on them. The note says "no live durable" or "no durable".
-- Red tests (on the spool):
+- Red tests (on `mailtest.Queue`, an in-memory `mail.Queue`; A1's spool keeps one floor per address and stays the flat `MailReader` double):
   - a successor whose departed predecessor acked further reads from the predecessor's floor;
   - two live durables of one seat, one acked ahead: the other's mail still counts, and the seat reports the larger depth and the older age;
   - a live durable and a departed one acked further: the live durable is read from its own floor, not the departed one's;
   - role mail on the same durable is counted once;
   - a durable with other filters is skipped;
   - one unknown tier makes the seat unknown;
-  - a seat with no global address reads that tier `unsupported` and still reports the local tier.
+  - a seat with no global address reads that tier `unsupported` and still reports the local tier;
+  - two live durables of one seat give two rows, each with its own floor and oldest sequence, and the seat's `AckFloor` and `OldestSeq` read `unsupported`;
+  - a seat read on both tiers gives a row per tier, each naming its tier.
 
 **A3, `internal/mail/jetstream`.**
 - **Reads.** Each tier is read with `ListConsumers` info on the stream, filtered to the seat's durables. For each durable read (each live one, or the one holding the inherited floor), the oldest unread message is read with `GetMsg(start, WithGetMsgSubject(subj))` per filter subject. `start` is that durable's own floor plus one, and never before a resumed durable's `OptStartSeq`: the same reads `unread.go` makes. Age is 11.2's broker-clock age.

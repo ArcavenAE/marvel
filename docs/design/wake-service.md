@@ -18,7 +18,7 @@ as a marvel service, rather than case by case.
 
 The operator, verbatim, from an interview on 2026-10-05. This is the
 operator's ruling of that date, relayed word for word by director to the
-arcaven supervisor (bus message `01M469BEJA`, item 5):
+arcaven supervisor (item 5):
 
 > "this is a service that marvel can expose to authorized systems, marvel bus
 > can be configured to use nats, and director is a user of those. It might
@@ -69,8 +69,7 @@ are two cases #580 needs:
 - **Down and staying down.** It is reported when it starts, and again while
   it lasts.
 - **Unenrolled after a restart.** The cluster has quietly gone local-only
-  because the seed was dropped. This is the case aae-orc#461 hit on a third
-  cluster.
+  because the seed was dropped. This is the case the third cluster's bring-up hit.
 
 There is also one gap to close whatever else is decided: an **enrolled** leaf
 found down at the first poll must still be reported. Today it is silent until
@@ -96,7 +95,7 @@ not add new ones.
   "(c) Accept 30 minutes, one fleet value, as the starting setting,
   changeable as one constant."
   The operator's words, relayed by director in message
-  `01M48QDPXS16M1Q43C6XF968TV`: "4 c". Option (c) means 30 minutes, one fleet
+  the operator's answer: "4 c". Option (c) means 30 minutes, one fleet
   value, changeable as one constant; the arcaven supervisor, who wrote the
   options, confirms it.
 - **Q2.** Are the time-in-state readings stored with the record, so they
@@ -104,7 +103,7 @@ not add new ones.
   over?
 
   **Answered 2026-10-06.** The operator's words, relayed by director in
-  message `01M492CZRX41N4E276G6J6D3Z9`: "it restarts at zero". A leaf's
+  message: "it restarts at zero". A leaf's
   down-for duration is kept in the daemon's memory and starts again from zero
   when the daemon restarts. That is what
   #600 ships and what the admin guide says (the duration is not stored with

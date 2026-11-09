@@ -44,7 +44,7 @@ measures whether a sandbox profile closes it.
    `/proc` or `ps` env, connecting to the socket and asking), and query the
    store directly (`security find-generic-password -w` for the dummy item,
    or the vault's CLI with whatever the seat's user can reach). Repeat under a
-   curtain sandbox profile that denies the store and the daemon's state
+   the sandbox tool sandbox profile that denies the store and the daemon's state
    directory. Record which shapes leak with and without the sandbox.
 4. **Refresh and revoke.** For the OAuth example, with a mock OAuth server:
    who performs the refresh in each shape, and whether marvel ever holds the

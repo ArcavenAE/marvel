@@ -3,8 +3,10 @@ package tmux
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -16,13 +18,61 @@ func scriptedDriver(t *testing.T, body string) (*Driver, string) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls.log")
 	script := filepath.Join(dir, "tmux")
-	src := "#!/bin/sh\necho \"$*\" >> '" + log + "'\n" + body + "\n"
+	src := "#!/bin/sh\n[ \"$1\" = --exec-probe ] && exit 0\necho \"$*\" >> '" + log + "'\n" + body + "\n"
 	if err := os.WriteFile(script, []byte(src), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	waitExecutable(t, script)
 	d := &Driver{binary: script, socket: "unit"}
 	d.SetExecTimeout(5 * time.Second)
 	return d, log
+}
+
+// waitExecutable runs script once, with an argument the script answers before
+// it logs anything, and retries while the kernel says "text file busy". A
+// parallel test that forks between this file's open and close hands the child
+// a write descriptor, and exec of the script fails with ETXTBSY until that
+// child execs and drops it. After one clean run no writer is left, so the
+// calls the test counts cannot hit it.
+func waitExecutable(t *testing.T, script string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := exec.Command(script, "--exec-probe").Run()
+		if err == nil {
+			return
+		}
+		if !errors.Is(err, syscall.ETXTBSY) || time.Now().After(deadline) {
+			t.Fatalf("probe %s: %v", script, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A script that is still open for writing cannot be exec'd; the probe waits
+// for the writer to close instead of failing the test that built the script.
+func TestWaitExecutableOutlastsAnOpenWriter(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "tmux")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n[ \"$1\" = --exec-probe ] && exit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w, err := os.OpenFile(script, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	switch err := exec.Command(script, "--exec-probe").Run(); {
+	case err == nil:
+		_ = w.Close()
+		t.Skip("exec with a writer open succeeded; there is no ETXTBSY to wait out on this OS")
+	case !errors.Is(err, syscall.ETXTBSY):
+		_ = w.Close()
+		t.Fatalf("exec with a writer open: %v, want nil or ETXTBSY", err)
+	}
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = w.Close()
+	}()
+	waitExecutable(t, script)
 }
 
 func callCount(t *testing.T, log string) int {

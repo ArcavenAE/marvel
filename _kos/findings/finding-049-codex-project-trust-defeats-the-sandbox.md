@@ -27,7 +27,7 @@ whether a write was refused cannot be trusted as the verify signal.
 `~/.codex/config.toml` carries per-project trust:
 
 ```
-[projects."/Users/.../work/aae-orc"]
+[projects."<orchestrator>"]
 trust_level = "trusted"
 ```
 
@@ -108,7 +108,7 @@ running at once never clobber each other's config. Disk-verified through the
 actual wrappers on gpt-5.6-luna:
 
 - Retrospector shape (cwd = retro dir, `-s workspace-write`): wrote `RETRO.md`
-  to the retro dir, READ `~/work/aae-orc/charter.md` for context, and the repo
+  to the retro dir, READ `<orchestrator>/charter.md` for context, and the repo
   write was REFUSED (`patch rejected: writing outside of the project`).
 - Reviewer shape (cwd = the repo, `-s read-only`): the repo write was REFUSED
   (`writing is blocked by read-only sandbox`).
@@ -119,12 +119,12 @@ before `exec codex`, exporting `CODEX_HOME` at the role home.
 The operator's global `~/.codex/config.toml` is never touched, so their own
 interactive codex in `aae-orc` keeps its trusted convenience. This is the
 menu's option (c), decoupling trust per role. Options (a) untrust `aae-orc`
-globally and (b) curtain (kernel-enforced, `aae-orc-10x`) remain the operator's
+globally and (b) the sandbox tool (kernel-enforced, `aae-orc-10x`) remain the operator's
 to weigh; (c) is the one that needs no operator config change and no new code
 beyond the wrapper.
 
 director-mcp is preserved under (c): for a codex role the bus MCP comes from
-`CODEX_HOME/config.toml [mcp_servers.director]`, not the wardrobe `tools` field
+`CODEX_HOME/config.toml [mcp_servers.director]`, not the role library `tools` field
 and not claude's launch `--mcp-config`. The role home must keep that block. A
 minimal role config that omits it would silently drop the retrospector's
 reports_to/escalates_to channel.
@@ -160,7 +160,7 @@ finding-048 (the constrained write surface, scoped to untrusted here),
 finding-045 (codex/claude folder-trust gate, the adjacent trust surface),
 question-permission-model (Layer 1 for a non-projecting harness), ADR-009
 (the audience test: symlinking auth into a role home is issuance-adjacent, not
-custody, the seed is not held), aae-orc-10x (curtain, option b), the wardrobe
+custody, the seed is not held), aae-orc-10x (the sandbox tool, option b), the role library
 `retrospector` and `reviewer` roles.
 
 ## Addendum 2026-09-27: marvel's codex seed pre-answers neither the update check nor the seat's own trust

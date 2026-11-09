@@ -33,11 +33,16 @@ the same set of paths, read the same way, is the one marvel cp refuses.
 
 ```
 <name>/<version>/
-  company.toml        name, version, schema = 1, source (the master's URL and commit), definitions index
+  company.toml        name, version, kind, schema, requires_marvel, source (the master's URL and commit), definitions index
   roles/<id>.md       role definitions
+  identities/<id>.md  identity definitions (optional)
+  templates/cast.txt  the sentence that opens a prompt (optional)
   teams/<id>.toml     team templates (optional)
   workflows/<id>.md   workflow definitions (optional)
+  recipes/<name>.toml launch recipes (a library of kind "recipes" holds these and no definitions)
 ```
+
+The keys of `company.toml`, the recipe file format, the two library kinds and the refusal messages are in [company-recipe-schema.md](company-recipe-schema.md).
 
 `company.toml` lists each definition with a `status`: `ratified`, `proposal` or `retired`. marvel refuses to launch a `retired` definition, and launches a `proposal` only when the role sets `allow_proposal = true`.
 
@@ -91,6 +96,7 @@ scope = "marvel"                                  # a parameter, not a role
 ```
 
 - **Exact pin** (`name@version`): reproducible. Apply refuses a pin that is in no root.
+- **A second pin** (`recipes = "name"` or `"name@version"`) names a library of kind `recipes`, checked on its own and then against the `company` pin (company-recipe-schema.md).
 - **Name only:** the team follows that name's `current`, so a library rolls forward with no edit at the host: the owning tool flips `current`, and the next launch or shift picks it up.
 - Either way, the version is **resolved once per launch** and recorded on the session. A running session never changes version.
 - A role with no `definition` behaves as today. Nothing existing changes until a manifest opts in.

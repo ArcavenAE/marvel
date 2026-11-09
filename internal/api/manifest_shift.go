@@ -201,6 +201,16 @@ func (r *ManifestRole) shiftPolicy(where string) (*ShiftPolicy, error) {
 		}
 		p.Handoff, p.HandoffMarker = s.Handoff, s.HandoffMarker
 	}
+	switch s.HandoffVia {
+	case "":
+	case ShiftHandoffViaTool:
+		if s.Handoff == "" {
+			return nil, fmt.Errorf("%s: handoff_via = %q needs handoff and handoff_marker, because marvel writes the declared file for a seat that hands off by tool", prefix, ShiftHandoffViaTool)
+		}
+		p.HandoffVia = s.HandoffVia
+	default:
+		return nil, fmt.Errorf("%s.handoff_via %q is not valid (valid: %q)", prefix, s.HandoffVia, ShiftHandoffViaTool)
+	}
 	if s.HandoffWindow != "" {
 		d, err := positiveDuration(prefix+".handoff_window", s.HandoffWindow)
 		if err != nil {

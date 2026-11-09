@@ -75,7 +75,7 @@ type codexSeed struct {
 	// operator has none configured.
 	Director *codexMCPServer
 	// Handoff, when set, adds the marvel-handoff MCP server beside director.
-	// Nothing sets it yet: a role asks for it with handoff_via = "tool".
+	// codexSeeder sets it for a role that declares shift.handoff_via = "tool".
 	Handoff *codexHandoffSeed
 	// EnvVars names the variables codex forwards to the director server.
 	// Codex does not pass its environment to an MCP child, so without
@@ -372,6 +372,16 @@ func codexBinary(command string) (string, error) {
 	return exec.LookPath("codex")
 }
 
+// codexHookCommand is the command the seeded hooks run: this marvel binary's
+// codex-ctx subcommand.
+func codexHookCommand() (string, error) {
+	exe, err := MarvelHookPath()
+	if err != nil {
+		return "", err
+	}
+	return buildCommand(shellQuote(exe), []string{"codex-ctx"}), nil
+}
+
 // codexSeeder returns the Seed step for one launch. The inputs are resolved
 // here, at spawn, so the file names this daemon's binary and this session's
 // constructed env.
@@ -380,7 +390,7 @@ func codexSeeder(ctx *LaunchContext, source string) func(dir string) error {
 		return nil
 	}
 	return func(dir string) error {
-		exe, err := os.Executable()
+		hook, err := codexHookCommand()
 		if err != nil {
 			return fmt.Errorf("resolve marvel binary for the codex-ctx hook: %w", err)
 		}
@@ -395,11 +405,20 @@ func codexSeeder(ctx *LaunchContext, source string) func(dir string) error {
 		}
 		trust := codexFolderTrust(ctx, start)
 		seed := codexSeed{
-			HookCommand: buildCommand(shellQuote(exe), []string{"codex-ctx"}),
+			HookCommand: hook,
 			Director:    operatorDirector(source),
 			EnvVars:     codexForwardedEnv(ctx),
 			Untrusted:   start,
 			TrustedRoot: trust.Root,
+		}
+		// A role that hands off by tool is given the marvel-handoff server;
+		// no other role is (read-only-seat-handoff.md, section 6).
+		if ctx.Role.Shift != nil && ctx.Role.Shift.HandoffVia == api.ShiftHandoffViaTool {
+			exe, err := MarvelHookPath()
+			if err != nil {
+				return fmt.Errorf("resolve marvel binary for the marvel-handoff server: %w", err)
+			}
+			seed.Handoff = &codexHandoffSeed{Command: exe, EnvVars: codexHandoffEnv(ctx.TokenFile != "")}
 		}
 		bin, err := codexBinary(ctx.Role.Runtime.Command)
 		if err != nil {

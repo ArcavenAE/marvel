@@ -22,7 +22,7 @@ Each claim below was read against the cited artifact on 2026-10-04. Where a clai
    - a put under an unrecognised name is stored, acknowledged and read by nothing (marvel#344, open);
    - values are transient, with no bolt bucket (`store.go:606-612`);
    - reveal is `marvel credential get --reveal`, served on the local socket only (`internal/daemon/scope.go:111-114`).
-   - A password already sits under the seed kind, with a binding that reads "NOT A SEED" and that nothing reads (aae-orc#461).
+   - A password already sits under the seed kind, with a binding that reads "NOT A SEED" and that nothing reads (the third cluster's bring-up).
    - The design question (issuance versus custody for third-party bearer material) is open. See `question-credential-custody-beyond-nkey`.
 
 3. **Under mise, `marvel daemon reexec` restarts the old binary, and the text tells the operator otherwise.** mise installs each version in its own directory, so the running daemon's own path still points at the old one, and `selfExecPath` resolves that path (marvel#523, open; `internal/daemon/daemon.go:639-676`, `cmd/marvel/version_daemon.go:78,108`, at e979fc2). The measured way through is `stop --keep-bus` and a fresh daemon from the new path, which adopted 4 sessions. marvel#525 (merged) documents that path. The Linux package-keg variant and the bbolt read-only open timeout are already in `elem-staged-activation-upgrades` from the 2026-10-03 harvest.
@@ -37,7 +37,7 @@ Each claim below was read against the cited artifact on 2026-10-04. Where a clai
 
 7. **A wire-compat rule for the daemon's JSON.** A released client reads only the fields it knew, so a field's meaning must not change on the wire. New meaning gets a new additive field, and a test decodes the new JSON using the old client's struct. Learned on marvel#510, where an unconfirmed toolchain revision was first placed in `commit` and had to move to a new `revision` field.
 
-8. **The harness sets its own session variables for the processes it starts.** On this seat, measured on 2026-10-04 with a names-only check from the harness's own tool process, nine of the ten names in `api.InheritedSessionEnv` were set, including `CLAUDE_CODE_SESSION_ID`, and its value was the file name of this session's transcript under the harness's projects directory. `CLAUDE_CODE_BRIDGE_SESSION_ID` was unset, and a made-up name was unset as the control. `MARVEL_SESSION` is the seat name, not the transcript id. The denylist strips what the daemon inherited and was checked at the pane (2026-10-03 harvest). The harness adds the names back for its own children, so a tool process cannot test the denylist either way: this measurement neither supports nor refutes that note. Whether the pane process itself holds them before the harness starts was not re-measured. spectacle's reverse-brief command reads the id from this variable only when a transcript of that name exists, which is the safe use.
+8. **The harness sets its own session variables for the processes it starts.** On this seat, measured on 2026-10-04 with a names-only check from the harness's own tool process, nine of the ten names in `api.InheritedSessionEnv` were set, including `CLAUDE_CODE_SESSION_ID`, and its value was the file name of this session's transcript under the harness's projects directory. `CLAUDE_CODE_BRIDGE_SESSION_ID` was unset, and a made-up name was unset as the control. `MARVEL_SESSION` is the seat name, not the transcript id. The denylist strips what the daemon inherited and was checked at the pane (2026-10-03 harvest). The harness adds the names back for its own children, so a tool process cannot test the denylist either way: this measurement neither supports nor refutes that note. Whether the pane process itself holds them before the harness starts was not re-measured. the spec-pack's reverse-brief command reads the id from this variable only when a transcript of that name exists, which is the safe use.
 
 ## Open questions
 
@@ -58,7 +58,7 @@ Each claim below was read against the cited artifact on 2026-10-04. Where a clai
 ## Not placed here
 
 - A model missing from the context-window default table (`internal/usage/limits.go`) and the test-isolation family (marvel#463, #480, #493, #504, #470) are issue material and go through the filer.
-- Tooling friction: the bus flake `TestSupervisorRestartsCrashedBrokerUnderBackoff` and the lost filtered output are captured as aae-orc#469. The `TestHeadlessCompletionHoldsSlotAndIsNotRefilled` sighting on marvel#527 is posted on marvel#470. `TestLinkedWorktree` failing when `TMPDIR` is inside a linked worktree is an existing, unfiled sighting; it is not systemic enough for a finding.
+- Tooling friction: the bus flake `TestSupervisorRestartsCrashedBrokerUnderBackoff` and the lost filtered output are captured in a private tracker issue. The `TestHeadlessCompletionHoldsSlotAndIsNotRefilled` sighting on marvel#527 is posted on marvel#470. `TestLinkedWorktree` failing when `TMPDIR` is inside a linked worktree is an existing, unfiled sighting; it is not systemic enough for a finding.
 
 ## Back-references
 

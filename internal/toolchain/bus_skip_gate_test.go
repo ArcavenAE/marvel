@@ -193,18 +193,23 @@ func linuxGateGaps(jobs map[string]ciJob) []string {
 		return []string{"ci.yml has no quality-gate job"}
 	}
 	if !linuxRunner(job.RunsOn) {
-		return []string{fmt.Sprintf("quality-gate runs on %q, want %s", job.RunsOn, linuxLabel)}
+		return []string{fmt.Sprintf("quality-gate runs on %q, want %s", job.RunsOn, strings.Join(linuxLabels, " or "))}
 	}
 	return busGateGaps(job)
 }
 
-// linuxLabel is the runner quality-gate is held to. It is pinned, not matched
-// by prefix: a self-hosted runner labelled ubuntu-anything would bring its own
-// env and tools, which the guard cannot see.
-const linuxLabel = "ubuntu-24.04"
+// linuxLabels are the runners quality-gate is held to. Each is pinned, not
+// matched by prefix: a self-hosted runner labelled ubuntu-anything would bring
+// its own env and tools, which the guard cannot see (review 5599661990 on
+// marvel#994).
+//
+// The two-label set is transitional. ubuntu-26.04 is listed so the runner bump
+// in marvel#1217 can pass this guard; ubuntu-24.04 stays only until that bump
+// merges, and then drops, leaving ubuntu-26.04 as the single label.
+var linuxLabels = []string{"ubuntu-24.04", "ubuntu-26.04"}
 
-// linuxRunner reports whether a runs-on label is linuxLabel.
-func linuxRunner(label string) bool { return label == linuxLabel }
+// linuxRunner reports whether a runs-on label is one of linuxLabels, exactly.
+func linuxRunner(label string) bool { return slices.Contains(linuxLabels, label) }
 
 // busGateGaps lists why the job's bus skip gate could not fail it: no gate
 // step, a gate before the nats-server install, an if or a continue-on-error

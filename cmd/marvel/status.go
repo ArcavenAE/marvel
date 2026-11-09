@@ -48,6 +48,9 @@ unknown (the stored record could not be read; the mirror is left in place),
 			}
 			resp, sendErr := send(daemonrpc.Request{Method: "suspend.status"})
 			code, err := reportStatus(cmd.OutOrStdout(), addr, resp, sendErr, statusNow())
+			if sendErr == nil {
+				reportHibernated(cmd.OutOrStdout(), send)
+			}
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 			}

@@ -332,6 +332,16 @@ echo 'ssh-ed25519 AAAA... alice@laptop' | marvel keys authorize /dev/stdin
 
 `authorize` is aliased as `add` for compatibility with earlier releases.
 
+Each file holds one public key (blank and `#` comment lines are ignored).
+A file with two keys, other text, or options on the key line is refused and
+nothing is written. To hand someone a key that can only push, list and
+delete credentials, add `--scope credential-push`; the command prints
+`authorized <fingerprint> scope=<scope>` when it succeeds.
+
+```bash
+marvel keys authorize --scope credential-push /path/to/client.pub
+```
+
 ### Listing authorized clients
 
 ```bash
@@ -682,7 +692,7 @@ A list does not make the leaf re-resolve a name when a dial fails: the record
 above (marvel#575) shows a restart can still dial stale addresses.
 
 A cluster written in the older `bus:` block spelling puts the same `hub:` key
-under its `bus:` block instead; the third cluster's bring-up (aae-orc#461)
+under its `bus:` block instead; the third cluster's bring-up
 used that spelling. Use one spelling per cluster, never both: a cluster that
 declares a `bus:` block and a message-bus Services entry is refused at load
 ("keep one spelling"), and a `hub:` key at the top of the file is ignored.
@@ -1095,7 +1105,7 @@ marvel --cluster <name> stop --keep-bus     # agents keep running; the broker st
 ```
 
 The new daemon adopts the running sessions and the broker. On the third
-cluster's bring-up (aae-orc#461) that path took one second between the stop
+cluster's bring-up that path took one second between the stop
 and the start, adopted all four sessions and the running broker, and the
 daemon then reported the new version. Start it from the same working
 directory and with the same flags as before. A stop and start does not carry

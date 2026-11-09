@@ -132,11 +132,17 @@ const (
 	HealthCheckHeartbeat    HealthCheckType = "heartbeat"
 	HealthCheckProcessAlive HealthCheckType = "process-alive"
 	// HealthCheckBus reads LastBusBeat, the director shim's own liveness beat,
-	// in place of LastHeartbeat. The value is a ruling held for the operator
-	// (aae-orc-z63a4); it is named once here so a different ruled name is a
-	// one-line change.
+	// in place of LastHeartbeat. The value is ruled (aae-orc-z63a4, 2026-11-09);
+	// it is named once here.
 	HealthCheckBus HealthCheckType = "bus"
 )
+
+// BusHealthTimeout is the ruled timeout for a bus healthcheck (aae-orc-z63a4,
+// ruled 2026-11-09): three beats of the shim's 30 s presence timer,
+// matching the TTL of its presence record. A bus role that names no timeout
+// gets it; the failure threshold keeps its default. It is the one place the
+// number is written.
+const BusHealthTimeout = 90 * time.Second
 
 // HealthCheck configures health checking for a role's sessions.
 type HealthCheck struct {
@@ -235,6 +241,11 @@ type Runtime struct {
 	// against the backend the constructed environment actually resolves to
 	// and fail loudly when they disagree. Empty means no declared intent.
 	Backend string `toml:"backend,omitempty"`
+	// AccountLabel is the login the operator says this role runs on, one word
+	// such as a tier name. It is declared, never checked: marvel does not ask
+	// the harness who is logged in. It is display text for the SERVICE column
+	// and takes no part in the account key.
+	AccountLabel string `toml:"account_label,omitempty" json:"account_label,omitempty"`
 	// Goose is the runtime.goose table, read only by the goose adapter. Nil
 	// means the role declared none.
 	Goose *GooseRuntime `toml:"goose,omitempty"`
@@ -322,6 +333,12 @@ type Session struct {
 	// inside the window.
 	CostGapAt     time.Time `json:"cost_gap_at,omitempty" toml:"-"`
 	APIDurationMS *int64    `json:"api_duration_ms,omitempty" toml:"-"`
+	// HarnessVersion is the harness build the seat's statusline reported, and
+	// HarnessVersionAt is the beat that carried it. Both are zero until a beat
+	// carries a version matching HarnessVersionPattern. Seat-reported; a reader
+	// treats it as a claim (register row R7).
+	HarnessVersion   string    `json:"harness_version,omitempty" toml:"-"`
+	HarnessVersionAt time.Time `json:"harness_version_at,omitempty" toml:"-"`
 	// APISamples, APISeenAt and APIGapAt are the API-time total's ring, last
 	// beat and last return from a silence, kept by the same rules as the cost
 	// ring. ACTIVE% reads them for a seat with a statusline feed
@@ -345,6 +362,10 @@ type Session struct {
 	RestartCount    int           `toml:"-"`
 	LastHealthCheck time.Time     `toml:"-"`
 	CreatedAt       time.Time     `toml:"-"`
+	// TranscriptGap says why the watchdog's transcript reader has no reading
+	// for this seat, when it has none. Empty while it reads or does not apply.
+	// Status only, never persisted.
+	TranscriptGap string `json:"transcript_gap,omitempty" toml:"-"`
 	// PausedTotal is how long a fleet suspend held this session still. An age
 	// check of the form now.Sub(CreatedAt) reads AgeAt instead, so a seat that
 	// was frozen does not age while it did no work (docs/design/
@@ -548,8 +569,16 @@ type Session struct {
 	// loud-failure gate asks whether an expiring session can renew itself.
 	// Empty for a session marvel never classified. Status, not spec.
 	BackendCredentialSource BackendCredentialSource `toml:"-" json:"backend_credential_source,omitempty"`
-	SessionMetrics          `toml:"-"`
-	SessionContext          `toml:"-"`
+	// AmbientBearer records which bearer variable NAMES the tmux environment
+	// held when an ambient session was spawned: "" never checked, "none",
+	// "unknown" (tmux could not say), or kinds joined by "+" in the fixed order
+	// api-key, auth-token, oauth-token. Names only, never a value. It is written
+	// through SetAmbientBearer, which refuses anything outside that set. Absence
+	// is not proof of no key: a harness setting or a later environment change is
+	// outside what was read. Status, not spec; it takes no part in AccountKey.
+	AmbientBearer  string `toml:"-" json:"ambient_bearer,omitempty"`
+	SessionMetrics `toml:"-"`
+	SessionContext `toml:"-"`
 }
 
 // SessionContext is one context-window reading for a session.
@@ -748,8 +777,8 @@ type Role struct {
 	// append --dangerously-skip-permissions (or equivalent) to the spawned
 	// agent. Intended for autonomous marvel-managed teams where no
 	// interactive approver exists. Per orc finding-023, the permission UI
-	// is a cooperative contract; real enforcement belongs to curtain.
-	// Combined with a curtain profile, this is the default sensible shape
+	// is a cooperative contract; real enforcement belongs to the sandbox tool.
+	// Combined with a sandbox-tool profile, this is the default sensible shape
 	// for autonomous fleet agents.
 	//
 	// DangerousPermissions is orthogonal to Permissions and combines with
@@ -783,7 +812,7 @@ type Role struct {
 	// the contract half of finding-024: a Claude Code settings fragment
 	// marvel writes to a per-session file the harness reads. Empty means
 	// no projection. Resolved within the role's workspace. The sandbox
-	// half (a curtain profile) stays parked with aae-orc-10x.
+	// half (a sandbox-tool profile) stays parked with aae-orc-10x.
 	Policy      string       `toml:"policy,omitempty"`
 	HealthCheck *HealthCheck `toml:"-"`
 	// Shift declares when marvel automatically shifts this role. Nil (unset)
@@ -828,6 +857,11 @@ const ShiftTriggerContextPressure = "context-pressure"
 // meter: once a session is older than its bound, marvel asks it for a handoff
 // and shifts only on an observed one (marvel#437, docs/design/shift-trigger-list.md).
 const ShiftTriggerMaxAge = "max-age"
+
+// HandoffCauseHibernate is the cause of a handoff request made by a hibernate.
+// It is not a shift trigger a role declares: a request of this cause ends the
+// seat on its marker and starts no successor.
+const HandoffCauseHibernate = "hibernate"
 
 // Defaults and floor for the max-age trigger (design D4, D5; ruling 3).
 const (
@@ -884,7 +918,15 @@ type ShiftPolicy struct {
 	// HandoffWindow is how long after a request marvel waits for the marker
 	// before it escalates. Zero means DefaultShiftHandoffWindow.
 	HandoffWindow time.Duration `toml:"-"`
+	// HandoffVia names how a seat that cannot write a file hands off. Empty
+	// means the seat writes the declared file itself; ShiftHandoffViaTool means
+	// it calls the submit_handoff tool and marvel writes the file for it
+	// (docs/design/read-only-seat-handoff.md).
+	HandoffVia string `toml:"-"`
 }
+
+// ShiftHandoffViaTool is the one value handoff_via takes.
+const ShiftHandoffViaTool = "tool"
 
 // ShiftCondition is one entry of a shift policy's list.
 type ShiftCondition struct {
@@ -981,6 +1023,11 @@ type ShiftRequest struct {
 	// supervisor role had no live seat, so the first holder gets an immediate
 	// send instead of waiting out a window.
 	LastDeliveryQueued bool
+	// DirectorSent is how many escalation notices marvel has published to the
+	// director for this request, at most two: one at escalation and one when the
+	// request is reported stuck. DirectorSentAt is when the last one went.
+	DirectorSent   int
+	DirectorSentAt time.Time
 	// Escalated is set once the window expired with no marker and marvel
 	// emitted shift.handoff-missing. From then on the team's supervisor
 	// decides; marvel neither re-requests nor shifts on its own.
@@ -1107,8 +1154,18 @@ type Team struct {
 	// session key (docs/design/work-prune.md section 6). Status, persisted, so
 	// a daemon restart inside the window resumes each one. A retiring seat is
 	// not counted as actual for its role.
-	Retiring  map[string]RetireRequest `toml:"-"`
-	CreatedAt time.Time
+	Retiring map[string]RetireRequest `toml:"-"`
+	// Hibernate is the team's hibernate mark, nil when it has none. Status,
+	// not spec (toml:"-", as Pruning): apply never sets or clears it, only
+	// hibernate and wake do (docs/design/fleet-hibernate.md sections 4 and 6).
+	Hibernate *HibernateMark `toml:"-"`
+	// HibernateRequests holds the open handoff requests of a hibernate, keyed
+	// by session key, one per seat, so a role with several replicas signs off
+	// all at once under one window. It is separate from ShiftRequests, which is
+	// keyed by role name and read by the shift triggers. Status, persisted like
+	// ShiftRequests, so a restart inside the window resumes each one.
+	HibernateRequests map[string]ShiftRequest `toml:"-"`
+	CreatedAt         time.Time
 }
 
 // RetireRequest is one seat's pending retirement: when it was asked, for how
@@ -1230,7 +1287,7 @@ type Host struct {
 // It is the contract half only: Settings is written verbatim as JSON to
 // the file the harness reads (permissions.allow/deny, hooks, and the rest
 // of the Claude Code settings surface). Marvel owns the truth and does not
-// interpret the contents. The sandbox half (a curtain profile) is a
+// interpret the contents. The sandbox half (a sandbox-tool profile) is a
 // separate resource parked with aae-orc-10x; tamper-proofing the projected
 // file is aae-orc-wbqi. Scoped to a workspace and referenced by a Role's
 // Policy field.
@@ -1350,7 +1407,17 @@ type HarnessState struct {
 	// ContextAt is the session's ContextAt when this was seen. A later
 	// ContextAt means the seat did work, which clears the state.
 	ContextAt time.Time `json:"context_at,omitempty"`
+	// Source says which reader set the state: HarnessSourcePane or
+	// HarnessSourceTranscript. Empty reads as pane, so a record written before
+	// the field existed stays what it was.
+	Source string `json:"source,omitempty"`
 }
+
+// The readers that set a HarnessState.
+const (
+	HarnessSourcePane       = "pane"
+	HarnessSourceTranscript = "transcript"
+)
 
 // HarnessStateLoggedOut is the state a matched logged-out screen sets.
 const HarnessStateLoggedOut = "logged-out"

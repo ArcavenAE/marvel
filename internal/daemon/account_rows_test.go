@@ -74,18 +74,44 @@ func TestAccountRowsFreshOneRowPerWindow(t *testing.T) {
 	}
 }
 
-// Test 21: 16 minutes on, the rows are stale and carry no number.
-func TestAccountRowsStaleKeepWindowsAndDropNumbers(t *testing.T) {
+// Test 21: 16 minutes on, the rows are stale, say so in STATE, and keep the last
+// value with the reading's age.
+func TestAccountRowsStaleKeepTheLastValueAndItsAge(t *testing.T) {
 	t.Parallel()
 	rd := api.NewAccountReadings()
 	key := api.AccountKeyOf(accountSession("a", "claude"))
-	rd.Record(key, []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(100), ResetsAt: acctT0.Add(time.Hour)}}, "ws/a", acctT0)
-	rows := accountRows(rd, []api.Session{accountSession("a", "claude")}, acctT0.Add(16*time.Minute))
+	rd.Record(key, []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(62.4), ResetsAt: acctT0.Add(time.Hour)}}, "ws/a", acctT0)
+	rows := accountRows(rd, []api.Session{accountSession("a", "claude")}, acctT0.Add(34*time.Minute))
 	if len(rows) != 1 || rows[0].Reading != "stale" || rows[0].AccountWindow != "seven_day" {
 		t.Fatalf("rows = %+v, want one stale seven_day row", rows)
 	}
-	if rows[0].Observed != 0 {
-		t.Errorf("a stale row carries observed %d; it must not show a number", rows[0].Observed)
+	if rows[0].State != "stale" {
+		t.Errorf("STATE = %q, want stale", rows[0].State)
+	}
+	if rows[0].Observed != 62 {
+		t.Errorf("a stale row carries observed %d, want the last value 62", rows[0].Observed)
+	}
+	if rows[0].ReadingAgeSeconds != int64((34 * time.Minute).Seconds()) {
+		t.Errorf("age = %ds, want %ds", rows[0].ReadingAgeSeconds, int64((34 * time.Minute).Seconds()))
+	}
+}
+
+// A stale reading is not near-limit however full it was, and a row with no
+// reading has neither a value nor an age.
+func TestAccountRowsStaleIsNeverNearLimitAndNoneHasNoAge(t *testing.T) {
+	t.Parallel()
+	rd := api.NewAccountReadings()
+	key := api.AccountKeyOf(accountSession("a", "claude"))
+	rd.Record(key, []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(99), ResetsAt: acctT0.Add(time.Hour)}}, "ws/a", acctT0)
+	for _, r := range accountRowsAt(rd, []api.Session{accountSession("a", "claude")}, acctT0.Add(20*time.Minute), 80) {
+		if r.State != "stale" {
+			t.Errorf("stale 99%% at level 80: STATE = %q, want stale", r.State)
+		}
+	}
+	for _, r := range accountRows(api.NewAccountReadings(), []api.Session{accountSession("b", "claude")}, acctT0) {
+		if r.ReadingAgeSeconds != 0 || r.Observed != 0 || r.State != "-" {
+			t.Errorf("a none row = %+v, want no value, no age, STATE -", r)
+		}
 	}
 }
 
@@ -416,5 +442,26 @@ func TestAccountLimitsTwoSeatsAReRenderingSiblingNeverLiftsALimit(t *testing.T) 
 	}
 	if got, _ := d.store.GetSession("ws/seat-b"); got.Condition != api.ConditionLimited {
 		t.Fatalf("seat b lost the limit: %q", got.Condition)
+	}
+}
+
+// The raw value rides on the row and STATE compares the raw value: 79.6 against a
+// level of 80 prints 79.6 and is not near the limit, and 80.0 is.
+func TestAccountRowsEdgeOfTheLevelKeepsTheRawValue(t *testing.T) {
+	t.Parallel()
+	key := api.AccountKeyOf(accountSession("a", "claude"))
+	for _, c := range []struct {
+		pct   float64
+		state string
+	}{{79.6, "-"}, {79.96, "-"}, {80.0, accountWarnState}, {80.04, accountWarnState}} {
+		rd := api.NewAccountReadings()
+		rd.Record(key, []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(c.pct), ResetsAt: acctT0.Add(time.Hour)}}, "ws/a", acctT0)
+		rows := accountRowsAt(rd, []api.Session{accountSession("a", "claude")}, acctT0.Add(time.Minute), 80)
+		if len(rows) != 1 || rows[0].ObservedPercent == nil || *rows[0].ObservedPercent != c.pct {
+			t.Fatalf("%.1f: rows = %+v, want observed_percent %.1f", c.pct, rows, c.pct)
+		}
+		if rows[0].State != c.state {
+			t.Errorf("%.1f against level 80: STATE %q, want %q", c.pct, rows[0].State, c.state)
+		}
 	}
 }

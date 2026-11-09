@@ -128,11 +128,16 @@ var localOnlyMethods = map[string]bool{
 	// the local socket, so this is the narrowest grant: not the tunnel, and not
 	// a credential-push key (docs/design/read-only-seat-handoff.md, section 2).
 	"handoff.put": true,
-	// suspend and resume freeze and wake the whole fleet. Until the suspend
+	// suspend and resume freeze and resume the whole fleet. Until the suspend
 	// scope exists (docs/design/fleet-suspend-resume.md section 6), neither is
 	// served through the tunnel.
 	"suspend": true,
 	"resume":  true,
+	// team.hibernate and team.wake are local only until the suspend scope
+	// exists, like suspend and resume (docs/design/fleet-hibernate.md section
+	// 10 holds the remote-scope decision).
+	"team.hibernate": true,
+	"team.wake":      true,
 }
 
 // methodRequiresLocal reports whether method may be called only from the local

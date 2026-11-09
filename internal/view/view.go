@@ -313,8 +313,14 @@ func (g ExecGit) Fetch(ctx context.Context, mirror, remote, ref string) error {
 			return err
 		}
 	}
-	_, err := g.run(ctx, "--git-dir", mirror, "fetch", "-q", "--no-tags", remote, "+refs/heads/"+ref+":"+viewRef)
+	_, err := g.run(ctx, fetchArgs(mirror, remote, ref)...)
 	return err
+}
+
+// fetchArgs is the fetch command line. The "--" sits right before the remote
+// so a remote that starts with a dash is an operand and never an option.
+func fetchArgs(mirror, remote, ref string) []string {
+	return []string{"--git-dir", mirror, "fetch", "-q", "--no-tags", "--", remote, "+refs/heads/" + ref + ":" + viewRef}
 }
 
 // Resolve returns the full commit id the mirror holds for the followed branch.

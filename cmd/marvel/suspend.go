@@ -58,12 +58,12 @@ Exit codes: 0 suspended, 1 error.`,
 	return cmd
 }
 
-// resumeCmd is marvel resume: wake a suspended cluster.
+// resumeCmd is marvel resume: continue a suspended cluster.
 func resumeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "resume",
-		Short: "Wake a suspended cluster",
-		Long: `Wake a suspended cluster: send SIGCONT to every recorded process, seats first
+		Short: "Resume a suspended cluster",
+		Long: `Resume a suspended cluster: send SIGCONT to every recorded process, seats first
 and the tmux server last, shift each resumed seat's heartbeat by the length of
 the pause, and lift the daemon's hold. A daemon that started with the cluster
 suspended then adopts the live panes in the background; marvel status shows it
@@ -111,7 +111,7 @@ func runSuspend(out io.Writer, in io.Reader, interactive, yes bool, call rpcCall
 		if err != nil {
 			return 1, err
 		}
-		_, _ = fmt.Fprintf(out, "This freezes the tmux server and every seat process (%d seats); the daemon keeps answering and marvel resume wakes them.\nSuspend the cluster? [y/N] ", seats)
+		_, _ = fmt.Fprintf(out, "This freezes the tmux server and every seat process (%d seats); the daemon keeps answering and marvel resume continues them.\nSuspend the cluster? [y/N] ", seats)
 		answer, err := bufio.NewReader(in).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return 1, fmt.Errorf("read answer: %w", err)

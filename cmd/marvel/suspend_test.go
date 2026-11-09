@@ -167,3 +167,25 @@ func TestSuspendNamesAnOldDaemon(t *testing.T) {
 		t.Errorf("code %d err %v, want a predates-suspend message", code, err)
 	}
 }
+
+// wake names the hibernate verb's return; resume must not borrow it.
+func TestResumeHelpDoesNotCallItselfWake(t *testing.T) {
+	c := resumeCmd()
+	for name, text := range map[string]string{"Short": c.Short, "Long": c.Long} {
+		if strings.Contains(strings.ToLower(text), "wake") {
+			t.Fatalf("resume %s = %q, want no use of wake", name, text)
+		}
+	}
+}
+
+func TestSuspendPromptDoesNotCallResumeWake(t *testing.T) {
+	var out bytes.Buffer
+	f := &verbDaemon{seats: 2}
+	_, _ = runSuspend(&out, strings.NewReader("n\n"), true, false, f.call)
+	if !strings.Contains(out.String(), "Suspend the cluster?") {
+		t.Fatalf("no prompt printed: %q", out.String())
+	}
+	if strings.Contains(strings.ToLower(out.String()), "wake") {
+		t.Fatalf("suspend prompt = %q, want no use of wake", out.String())
+	}
+}

@@ -329,7 +329,7 @@ Before rolling a daemon with ticket 4, check each cluster's manifests for a
 
 ## 9. Party record (3ptdd)
 
-Five seats cast from the bmad-extras pool by competency square:
+Five seats cast from the custom-agent pool by competency square:
 Distributed-systems, Runtime, Observability, Context, Evals. The "Casting
 Call" party group is the ceremony that mints new extras, so the panel was cast
 from the pool, not from that group. Each round had a brief, with one-command

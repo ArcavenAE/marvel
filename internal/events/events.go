@@ -113,6 +113,16 @@ const (
 	// KindViewRefreshFailed records a refresh that failed: the current tree
 	// stays, and the next tick tries again.
 	KindViewRefreshFailed Kind = "view.refresh-failed"
+	// KindHostVitalsCrossed records a host reading passing its line, once, when
+	// it is first passed. It is a report and blocks nothing
+	// (docs/design/host-vitals.md sections 3 to 5).
+	KindHostVitalsCrossed Kind = "host.vitals.crossed"
+	// KindHostVitalsCleared records the same reading no longer passing its line.
+	KindHostVitalsCleared Kind = "host.vitals.cleared"
+	// KindAccountWindowNearLimit records an account's rate-limit window reaching
+	// the cluster's warning level, once per window. It is a report and blocks
+	// nothing (diagnostic-not-gate).
+	KindAccountWindowNearLimit Kind = "account.window-near-limit"
 	// KindViewUnavailable records a view that could not be built when its seat
 	// was spawned, so the seat started without MARVEL_VIEW_<NAME>. Once per
 	// change of cause.
@@ -135,7 +145,7 @@ const (
 	KindWatchdogUncovered Kind = "watchdog.uncovered"
 	// KindDaemonEnvScrubbed records the parent Claude Code session variables
 	// the daemon removed from its own environment at start, names only, so
-	// nothing it execs inherits them (aae-orc#418).
+	// nothing it execs inherits them (marvel#381).
 	KindDaemonEnvScrubbed Kind = "daemon.env-scrubbed"
 	// KindDaemonReexec records a reexec into a binary the client named
 	// (exec_path): the old and new path and version and who asked. The ring
@@ -165,6 +175,19 @@ const (
 	// leaves the seat running and the team's supervisor decides whether to
 	// call the shift. marvel never shifts unwatched (design D5 step 3).
 	KindShiftHandoffMissing Kind = "team.shift-handoff-missing"
+	// KindTeamHibernated records that a hibernate has ended every seat it
+	// covers, or that none was running (docs/design/fleet-hibernate.md
+	// section 4). Message names the roles and any seat that was ended without
+	// a handoff.
+	KindTeamHibernated Kind = "team.hibernated"
+	// KindTeamWaking records that a wake began: the posture is converge and the
+	// team's supervisor roles may spawn (section 6, step 1). Message carries
+	// the checks that were skipped, if any.
+	KindTeamWaking Kind = "team.waking"
+	// KindTeamWoken records that a woken team's last seat started and the
+	// hibernate mark cleared (section 6, step 4). Message names the seats
+	// started fresh, and the supervisors not up by their health timeout.
+	KindTeamWoken Kind = "team.woken"
 	// KindShiftHandoffUndelivered records, once per transition from delivered
 	// to undelivered, that the escalation could not be published to the team's
 	// supervisor. Message carries the error (handoff-missing-delivery.md, H5).
@@ -290,6 +313,11 @@ const (
 	// KindRunCancelled records a live run of a scheduled role ended by a
 	// kill or delete rather than by its own exit (#431 ruling on default 6).
 	KindRunCancelled Kind = "run.cancelled"
+	// KindRunDeadline records a live run of a scheduled role that marvel
+	// killed because it passed its schedule's active_deadline. The run is a
+	// failed run, so it spends an attempt; the event replaces run.failed for
+	// it, never run.cancelled (scheduled-runs section 2).
+	KindRunDeadline Kind = "run.deadline"
 	// KindContextFeedUnsupported records that an applied manifest declares
 	// runtime.context_feed on a role whose harness cannot honour it, so the
 	// declaration is advisory and CTX% will not be fed by it. Fires once
@@ -513,6 +541,9 @@ var allKinds = []Kind{
 	KindAccountLoggedOut,
 	KindViewRefreshed,
 	KindViewRefreshFailed,
+	KindHostVitalsCrossed,
+	KindHostVitalsCleared,
+	KindAccountWindowNearLimit,
 	KindViewUnavailable,
 	KindViewRetentionHeld,
 	KindCodexTrust,
@@ -528,6 +559,9 @@ var allKinds = []Kind{
 	KindShiftAutoTriggered,
 	KindShiftHandoffRequested,
 	KindShiftHandoffMissing,
+	KindTeamHibernated,
+	KindTeamWaking,
+	KindTeamWoken,
 	KindShiftHandoffUndelivered,
 	KindShiftRequestStuck,
 	KindHandoffPut,
@@ -559,6 +593,7 @@ var allKinds = []Kind{
 	KindRunSucceeded,
 	KindRunFailed,
 	KindRunCancelled,
+	KindRunDeadline,
 	KindContextFeedUnsupported,
 	KindAdmissionRefused,
 	KindClusterSuspendInterrupted,

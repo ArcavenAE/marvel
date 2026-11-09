@@ -61,12 +61,12 @@ func TestSupervisorUserCarriesExactlyTheDeclaredGrants(t *testing.T) {
 	if sup.Scope != ScopeBinding || sup.Team != "ops" || sup.Password != "suppw" {
 		t.Errorf("principal = %+v, want a binding-scope user of team ops with the supervisor password", sup)
 	}
-	wantPub := append([]string{"agent.aae-orc.ops.>", "agent.audit"}, plumbingPublish...)
+	wantPub := append([]string{"agent.example.ops.>", "agent.audit"}, plumbingPublish...)
 	wantPub = append(wantPub, "global.director.inbox", "global.*.supervisor.inbox", "$JS.global.API.>")
 	if !slices.Equal(sup.Publish, wantPub) {
 		t.Errorf("publish = %v\nwant      %v", sup.Publish, wantPub)
 	}
-	wantSub := append([]string{"agent.aae-orc.ops.>", "agent.aae-orc.broadcast"}, plumbingSubscribe...)
+	wantSub := append([]string{"agent.example.ops.>", "agent.example.broadcast"}, plumbingSubscribe...)
 	wantSub = append(wantSub, "global.kinu.supervisor.inbox")
 	if !slices.Equal(sup.Subscribe, wantSub) {
 		t.Errorf("subscribe = %v\nwant       %v", sup.Subscribe, wantSub)

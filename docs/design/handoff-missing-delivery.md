@@ -8,9 +8,13 @@ is below.
 ## Build status and changed premises (2026-10-25)
 
 This slice is built (marvel#459): H1 for the same-team supervisor, H2, H4,
-H5 and the reserved sender id `marvel`. Not built yet, each its own chain
-link: the legs for an escalated seat that is itself a supervisor and the
-director leg (tests 11, 12 and 14), then H6 (mute, cancel, abort). The
+H5 and the reserved sender id `marvel`. The legs for an escalated seat that
+is itself a supervisor, the director leg and the director notice for a team
+with no supervisor role are now built (marvel#1309, marvel#1311); see the
+notes under H1. Not built yet: the unaddressable-team warning at `marvel work`
+(test 12), the proof that the director leg crosses the leaf into the hub's
+stream (test 14, which needs a hub: the publish is tested against a local
+JetStream stream, not through a leaf), and H6 (mute, cancel, abort). The
 architect's answers of 2026-10-25 changed these premises:
 
 - **P1 is replaced.** There is no gate on `DIRECTOR_ROLE` and nothing is added
@@ -84,10 +88,11 @@ The role named `supervisor` in the escalated seat's team, as #459 proposes
 `agent.<ws>.<team>.role.supervisor.inbox`. A role address reaches whichever
 seat holds the role now, so a supervisor that shifted still gets it.
 
-- A team with no `supervisor` role: no delivery. The repeating event
-  continues, plus one log line per escalation, `escalation has no
+- A team with no `supervisor` role: no delivery to any seat. The repeating
+  event continues, plus one log line per escalation, `escalation has no
   recipient: team <ws/team> declares no supervisor role`. Never delivered to
-  the escalated seat or to any other role.
+  the escalated seat or to any other role. The director is sent a notice
+  (marvel#1311, under the three conditions below) when the director leg is on.
 - A `supervisor` role with no running seat: publish ONCE, and hold. The
   message waits in the stream, and the next holder's new durable reads it
   (`DeliverAllPolicy`). While no holder is live, marvel does not repeat the
@@ -109,7 +114,22 @@ seat holds the role now, so a supervisor that shifted still gets it.
   3. the director, by `global://director`, published on
      `global.director.inbox` (gated by P2 below).
   Supervisors on other clusters are not included; the director is the
-  cross-cluster recipient. The event lists the legs and what each got
+  cross-cluster recipient.
+
+  **As built (marvel#1309, marvel#1311).** Replicas and other teams are sent
+  on the normal cadence: at escalation and once per window. A team in the same
+  workspace is reached only when its `supervisor` role has a running seat;
+  there is no queue-once for it, so nothing waits 7 days for a holder that may
+  never come. The director leg is on only while the bus supervisor reads the
+  leaf as `up`, and the event says `published`, never `read`. It sends a notice
+  and never an action. The director gets at most two per request: one at
+  escalation, and one repeat when `team.shift-request-stuck` is emitted after
+  the first, and nothing after, however long the request stays stuck. The cap
+  is on the request and survives a restart. A failed send is not counted. The
+  same director leg serves a team with no supervisor role. Every outcome names
+  its reason: `none, no managed bus`, `none, team name not addressable`,
+  `none, no recipient (no supervisor role); director off (leaf not up)`, and
+  `none, no other supervisor and no global tier (director off (leaf not up))`. The event lists the legs and what each got
   (`sent`, `queued`, `off`, `undelivered`). If every leg is unavailable, the
   event says `delivered: none, no other supervisor and no global tier`, and
   the operator decides from the event and `get sessions`.

@@ -1,6 +1,6 @@
 # Host vitals: a per-host sampler in marvel
 
-Proposal, 2026-11-02. Code read at marvel `8587651a`. Nothing here is built.
+Proposal, 2026-11-02. Code read at marvel `8587651a`. Built so far: the swap and memory pressure readings, the cluster `host_vitals` switch (off by default), the in-memory latest sample, and the swap crossing events (`internal/hostvitals`). Not yet built: the widened `ps` pass and the orphan, fseventsd and process-RSS vitals, the weekly `smartctl` read, the `host.vitals` bus envelope, the OTel gauges, and `marvel get vitals`.
 
 - **Author:** the architect seat, team arcaven.
 - **Asked by:** the operator, relayed by director, 2026-11-02.

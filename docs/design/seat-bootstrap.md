@@ -3,7 +3,7 @@
 Design for review. No code lands until this doc is reviewed.
 
 - Author: arcaven-architect-g5-0.
-- Issue: #420. Tracks: aae-orc-sp380 (P1). Blocks the wardrobe step 0 test
+- Issue: #420. Tracks: aae-orc-sp380 (P1). Blocks the role library step 0 test
   (aae-orc-b8ptm). Builds on `docs/design/session-working-directory.md`
   (#255, aae-orc-g71ad and its children) and amends two of its limits
   (section 7).

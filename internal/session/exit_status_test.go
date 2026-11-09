@@ -2,6 +2,7 @@ package session
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -202,5 +203,96 @@ func killProcess(t *testing.T, pid int) {
 	}
 	if err := p.Kill(); err != nil {
 		t.Fatalf("kill %d: %v", pid, err)
+	}
+}
+
+// ADR-010 Amendment 2: a headless run that exits 78 (EX_CONFIG) is a
+// configuration error. It is recorded failed with its status, holds its
+// replica slot, is not reaped as a crash (no backoff charge), and emits
+// session.failed with a configuration-error message. Exit 1 stays a crash
+// under backoff and exit 0 stays succeeded.
+func TestReapDeadExit78IsAConfigurationError(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+	ring := events.NewRing(32)
+	mgr.Events = ring
+
+	ws := "test-reap-exit-78"
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+
+	create := func(name, script string) *api.Session {
+		t.Helper()
+		sess := &api.Session{
+			Name: name, Workspace: ws, Team: "jobs", Role: name,
+			Runtime: api.Runtime{Name: "sh", Command: "sh", Args: []string{"-c", script}, Mode: api.RuntimeModeHeadless},
+		}
+		if err := mgr.Create(sess); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		return sess
+	}
+	cfg := create("cfg", "exit 78")
+	crash := create("crash", "exit 1")
+	done := create("done", "exit 0")
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		a, _ := driver.PaneStatus(cfg.PaneID)
+		b, _ := driver.PaneStatus(crash.PaneID)
+		c, _ := driver.PaneStatus(done.PaneID)
+		if a.Dead && b.Dead && c.Dead {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	keys := map[string]bool{}
+	for _, r := range mgr.ReapDead() {
+		keys[r.Key] = true
+	}
+	if keys[cfg.Key()] {
+		t.Fatalf("exit 78 was reaped as a crash, which charges backoff and relaunches it")
+	}
+	if !keys[crash.Key()] || keys[done.Key()] {
+		t.Fatalf("exit 1 must be reaped as a crash and exit 0 must not: %v", keys)
+	}
+
+	got, err := store.GetSession(cfg.Key())
+	if err != nil {
+		t.Fatalf("exit-78 run must stay in the store: %v", err)
+	}
+	if got.State != api.SessionFailed || got.ExitStatus != "78" || got.PaneID != "" {
+		t.Fatalf("exit-78 run = state %s exit %q pane %q, want failed / 78 / cleared", got.State, got.ExitStatus, got.PaneID)
+	}
+	if !api.OccupiesReplicaSlot(got) || got.State.CountsAsAlive() {
+		t.Fatalf("exit-78 run must hold its slot without reading alive: slot=%v alive=%v",
+			api.OccupiesReplicaSlot(got), got.State.CountsAsAlive())
+	}
+	if got.HealthState == api.HealthUnhealthy {
+		t.Fatalf("exit-78 run health = unhealthy; the restart path keys on that and would relaunch it")
+	}
+	if st, _ := driver.PaneStatus(cfg.PaneID); st.Exists {
+		t.Fatalf("dead pane %s was not reclaimed", cfg.PaneID)
+	}
+
+	if c, _ := store.GetSession(crash.Key()); c.State != api.SessionCrashed || c.ExitStatus != "1" {
+		t.Fatalf("exit-1 run = state %s exit %q, want crashed / 1", c.State, c.ExitStatus)
+	}
+	if d, _ := store.GetSession(done.Key()); d.State != api.SessionSucceeded || d.ExitStatus != "0" {
+		t.Fatalf("exit-0 run = state %s exit %q, want succeeded / 0", d.State, d.ExitStatus)
+	}
+
+	failed := ring.Snapshot(events.Filter{Kind: events.KindSessionFailed}, 0)
+	if len(failed) != 1 || failed[0].Session != cfg.Key() || !strings.Contains(failed[0].Message, "configuration error") {
+		t.Fatalf("session.failed events = %+v, want one for %s naming a configuration error", failed, cfg.Key())
+	}
+	if again := mgr.ReapDead(); len(again) != 0 {
+		t.Fatalf("second ReapDead reaped %v, want nothing", again)
 	}
 }

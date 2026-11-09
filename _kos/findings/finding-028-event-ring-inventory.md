@@ -1,7 +1,6 @@
 # finding-028 — event-ring inventory: a well-observed, well-typed ledger that nothing reads
 
-Probe: recon task [A], commissioned in
-[ArcavenAE/aae-orc#242](https://github.com/ArcavenAE/aae-orc/issues/242).
+Probe: recon task [A], commissioned in a private tracker issue.
 Operator: Claude (Opus 5), no human at the keyboard.
 Date: 2026-08-25 (13:33Z). **Spend: $0.00.**
 

@@ -23,6 +23,9 @@ type teamDescription struct {
 	// supervisor is seen here (docs/design/host-health-guard.md section 4.4).
 	// Omitted when no role has one.
 	PendingShiftRequests []shiftRequestDescription `json:"PendingShiftRequests,omitempty"`
+	// PendingHibernateRequests are the open handoff requests of a hibernate,
+	// one per seat, in the same shape and beside the shift requests above.
+	PendingHibernateRequests []shiftRequestDescription `json:"PendingHibernateRequests,omitempty"`
 }
 
 // shiftRequestDescription is one pending handoff request as describe shows it.
@@ -96,6 +99,19 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 	for _, role := range slices.Sorted(maps.Keys(t.ShiftRequests)) {
 		req := t.ShiftRequests[role]
 		out.PendingShiftRequests = append(out.PendingShiftRequests, shiftRequestDescription{
+			Role: role, Session: req.Session, Cause: req.Cause, RequestedAt: req.RequestedAt,
+			Age: now.Sub(req.RequestedAt).Truncate(time.Second).String(), Escalated: req.Escalated,
+			DeliveredCount: req.DeliveredCount, LastDeliveredAt: req.LastDeliveredAt,
+			NoticeUndelivered: req.NoticeUndelivered,
+		})
+	}
+	for _, session := range slices.Sorted(maps.Keys(t.HibernateRequests)) {
+		req := t.HibernateRequests[session]
+		role := ""
+		if sess, err := d.store.GetSession(session); err == nil {
+			role = sess.Role
+		}
+		out.PendingHibernateRequests = append(out.PendingHibernateRequests, shiftRequestDescription{
 			Role: role, Session: req.Session, Cause: req.Cause, RequestedAt: req.RequestedAt,
 			Age: now.Sub(req.RequestedAt).Truncate(time.Second).String(), Escalated: req.Escalated,
 			DeliveredCount: req.DeliveredCount, LastDeliveredAt: req.LastDeliveredAt,

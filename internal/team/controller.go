@@ -22,9 +22,12 @@ import (
 
 // Controller reconciles desired team state with actual running sessions.
 type Controller struct {
-	store      *api.Store
-	sessMgr    *session.Manager
-	SocketPath string
+	// hibernateSaid is the Since of the hibernate mark team.hibernated was last
+	// emitted for, per team, so it is said once. In memory: a restart says it again.
+	hibernateSaid map[string]time.Time
+	store         *api.Store
+	sessMgr       *session.Manager
+	SocketPath    string
 	// Events receives structured state-transition events. Nil is safe.
 	Events events.Emitter
 	// Suspended reports whether the cluster is suspended. While it is true
@@ -78,6 +81,11 @@ type Controller struct {
 	// once more, which is the point of a report that can be missed. Guarded
 	// by mu.
 	stuckEmitted map[string]time.Time
+	// stuckAt is when the stuck event was last emitted for a session's request,
+	// so the director's one repeat goes only after a stuck event that follows its
+	// first notice. In memory: a restart can re-emit the event, and the cap is
+	// on the request, so the director still gets two at most.
+	stuckAt map[string]time.Time
 	// publishRecords is what the controller remembers, in memory, about
 	// publishing each escalated session's request to the supervisor
 	// (shift_handoff_deliver.go). The count and time are durable on the request.
@@ -114,6 +122,9 @@ type Controller struct {
 	// by the gate is RoleHold with HoldBus and one bus.unavailable per role
 	// per transition, the admission-latch shape (aae-orc-xy1dh).
 	BusGate func() (ready bool, reason string)
+	// LeafUp reports whether the cluster's leaf connection to the hub is up. The
+	// director leg of an escalation is on only while it is. Nil means no leg.
+	LeafUp func() bool
 	// busHolds latches the roles currently held for the bus, so a standing
 	// outage announces itself once per role rather than once per tick.
 	busHolds map[string]bool
@@ -734,11 +745,19 @@ func (c *Controller) SetConvergencePosture(teamKey string, posture api.Convergen
 		if err != nil {
 			return nil, err
 		}
+		if t.Hibernate != nil && t.Hibernate.State == api.HibernateHibernated {
+			return nil, fmt.Errorf("%s is hibernated; run marvel wake", teamKey)
+		}
 		targets = []api.Team{t}
 	}
 
 	var plans []RolePlan
 	for i := range targets {
+		// A converge of every team leaves a hibernated one alone: only a wake
+		// lifts its mark.
+		if targets[i].Hibernate != nil && targets[i].Hibernate.State == api.HibernateHibernated {
+			continue
+		}
 		key := targets[i].Key()
 		if err := c.store.UpdateTeam(key, func(live *api.Team) error {
 			live.ConvergencePosture = posture
@@ -963,6 +982,10 @@ func (c *Controller) reconcileTeam(t *api.Team) {
 	c.resumeRetireDirs(t)
 	c.advanceRetirements(t, c.nowUTC())
 
+	// A hibernate or a wake in progress moves on beside the retirements, a shift
+	// included: the sign-off asks seats for handoffs and ends the ones that wrote.
+	c.advanceHibernate(t, c.nowUTC())
+
 	// Drain sessions whose role no longer exists in the manifest before
 	// anything else. Manifest.Apply replaces live.Roles wholesale, so a
 	// role removed from a re-applied manifest leaves its sessions running:
@@ -1157,6 +1180,10 @@ const (
 	// failed run would be refilled at once, under a restart policy that
 	// does not apply to a scheduled role (ADR-010 Amendment 1).
 	HoldSchedule HoldReason = "schedule"
+	// HoldHibernated means the team's hibernate mark covers the role: nothing
+	// spawns for it, top-ups and crash-loop restarts included, until a wake
+	// (docs/design/fleet-hibernate.md sections 4 and 6).
+	HoldHibernated HoldReason = "hibernated"
 )
 
 // RolePlan is the convergence decision for one role at one generation: what the
@@ -1293,6 +1320,17 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 	case actual < desired && role.Schedule != nil && c.holdForFiring(sched, &plan):
 		return plan
 	case actual < desired:
+		// The hibernate mark runs before every other gate and is stronger than
+		// the convergence hold: the hold stops only a cold start, but a seat a
+		// hibernate just ended must not be topped up or restarted, or its
+		// drain would read as a crash and the team would refill (design
+		// section 4, step 5).
+		if blocked, why := c.hibernateBlocks(t, role); blocked {
+			plan.Action = RoleHold
+			plan.Hold = HoldHibernated
+			plan.HoldDetail = why
+			return plan
+		}
 		// The exposure gate runs before every other: a role that writes a
 		// function its slot has read must not start, whatever else holds or
 		// admits it, and the record it reads survives the row deletes that a
@@ -1476,6 +1514,9 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				}
 			}
 		}
+		// A wake starts each seat as a successor of the seat it replaces, with
+		// MARVEL_PREDECESSOR naming it, as a shift does (design section 6).
+		preds := c.wakePredecessors(t, plan.Role)
 		for i := 0; i < plan.Spawn; i++ {
 			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, plan.Role, plan.Generation, c.nextIndex(t, role, plan.Generation))
 			sess := &api.Session{
@@ -1487,6 +1528,9 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				Runtime:    role.Runtime,
 				WorkDir:    c.placement(t, role),
 				Firing:     plan.Firing,
+			}
+			if i < len(preds) {
+				sess.Predecessor = preds[i]
 			}
 			// A seat whose views are still building waits for a later tick: the
 			// build runs in the background, never under this lock.
@@ -2096,6 +2140,14 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 	} else {
 		roles = shiftOrder(t.Roles)
 	}
+	// A shift launches its successors itself, outside planRole, so the hibernate
+	// mark's spawn gate would not reach it: refuse while the mark covers any
+	// role the shift would drain.
+	for _, name := range roles {
+		if t.Hibernate.Covers(name) {
+			return fmt.Errorf("team %s: role %s is hibernated; run marvel wake before a shift", teamKey, name)
+		}
+	}
 
 	// Admission, before any shift state is written. See admitShift for why
 	// the gate is here and not in shiftLaunch.
@@ -2146,6 +2198,7 @@ func (c *Controller) initiateShiftLocked(teamKey, role string) error {
 			c.handoffProbes.forget(req.Session)
 			delete(c.missingEmitted, req.Session)
 			delete(c.stuckEmitted, req.Session)
+			delete(c.stuckAt, req.Session)
 			delete(c.publishRecords, req.Session)
 		}
 		return nil
@@ -2186,7 +2239,7 @@ func shiftOrder(roles []api.Role) []string {
 	last := make(map[string]bool, len(roles))
 	for _, r := range roles {
 		names = append(names, r.Name)
-		last[r.Name] = r.GlobalRole == api.GlobalRoleSupervisor || (r.GlobalRole == "" && r.Name == "supervisor")
+		last[r.Name] = api.IsSupervisorRole(r)
 	}
 	sort.SliceStable(names, func(i, j int) bool {
 		return !last[names[i]] && last[names[j]]
@@ -2224,6 +2277,11 @@ func (c *Controller) evaluateShiftTriggers(t *api.Team) {
 roles:
 	for i := range t.Roles {
 		role := &t.Roles[i]
+		// A hibernating or hibernated role gets no shift trigger: the hibernate
+		// request supersedes a max-age one, and nothing new opens beside it.
+		if t.Hibernate.Covers(role.Name) {
+			continue
+		}
 		conds := role.Shift.Conditions()
 		req, pending := t.ShiftRequests[role.Name]
 		if pending && !hasCondition(conds, req.Cause) {

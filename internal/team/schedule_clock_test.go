@@ -205,7 +205,12 @@ func TestScheduleOverlap(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.concurrency, func(t *testing.T) {
 			r := newClockRig(t, "test-clock-overlap-"+tc.concurrency, time.Date(2026, 10, 1, 6, 0, 0, 0, time.UTC),
-				clockRole("Etc/UTC", shRuntime("sleep 60"), func(p *api.SchedulePolicy) { p.Concurrency = tc.concurrency }))
+				clockRole("Etc/UTC", shRuntime("sleep 60"), func(p *api.SchedulePolicy) {
+					p.Concurrency = tc.concurrency
+					// A run that stays live across the next firing must not be
+					// past its deadline, or the deadline kill ends it first.
+					p.ActiveDeadline = 48 * time.Hour
+				}))
 			r.ctrl.ReconcileOnce()
 			r.clock.Advance(17*time.Minute + 30*time.Second)
 			r.ctrl.ReconcileOnce()

@@ -23,7 +23,7 @@ the operator says go. Written to assume the cutover goes badly.
 |---|---|---|
 | Phase-0 broker | `nats-server -c director/probe/nats-phase-0/nats-server.conf`, started by `start.sh` on 2026-09-26; 127.0.0.1:4222, monitor 8222, anonymous, store `~/.director/nats/store`, one leaf out to the hub (`include "leaf-kinu.conf"`) | **replaced** |
 | Global hub | `nats-server --config ~/.director/nats-global/nats-server.conf`, started 2026-09-25; 0.0.0.0:4242, monitor 127.0.0.1:8242, leafnodes 0.0.0.0:7442, domain `global`. Three leaves: kinu's phase-0, mokuzai, and a third that may be corporate's (inferred from its address; the checked-in hub conf names only the kinu and mokuzai leaf users) | **not touched**: no stop, reload or edit |
-| marvel daemon | b533ca5 today; the release from the store-migration window by the time this runs. Its cwd is `~/work/aae-orc`; `~/.marvel/config.yaml` has no bus entry; `marvel bus status` says none is configured; `marvel credential list` is empty | gains a bus entry; restarted |
+| marvel daemon | b533ca5 today; the release from the store-migration window by the time this runs. Its cwd is `<orchestrator>`; `~/.marvel/config.yaml` has no bus entry; `marvel bus status` says none is configured; `marvel credential list` is empty | gains a bus entry; restarted |
 | kinu sessions | 32, across 6 teams (arcaven 13) | every one respawned |
 | The operator's director session | its `director-mcp` entry in `~/.claude.json` runs the bare `director-mcp` binary and carries no `DIRECTOR_NATS_*` key (counted, values not read) | switched to the `director-mcp-seat` wrapper at step 8 |
 
@@ -75,7 +75,7 @@ the operator says go. Written to assume the cutover goes badly.
    panes on the marvel tmux server start in the tmux server's cwd, a worktree
    path, is counted at window time and not fixed here, because the count moves
    with the fleet (`tmux -L <socket> list-panes -a -F '#{pane_start_path}'`, with `<socket>`
-   the marvel tmux server's socket name). After the stamp they would start in `~/work/aae-orc` instead.
+   the marvel tmux server's socket name). After the stamp they would start in `<orchestrator>` instead.
    Capture each team's `WorkDir` (`marvel describe team`) into `$W` at step 0.
 7. **Handoffs.** Every kinu seat is told before the window to write its
    handoff at the window's start. A respawn without one loses that seat's
@@ -328,7 +328,7 @@ Then:
    <session>`) and read it. A seat should be at its harness prompt, or working.
    A seat respawned in auto mode can instead stop on a Claude Code onboarding
    dialog with an option already selected. On corporate this was the
-   shell-history scan (aae-orc#461 S12-9). If any pane shows such a dialog,
+   shell-history scan (the third cluster's bring-up, step S12-9). If any pane shows such a dialog,
    stop that team's roll, and stop the teams after it. The dialog is **never
    answered automatically**, by marvel, by a seat, or by an inject: the
    operator reads it and decides each one by hand. That is a choice about what
@@ -368,7 +368,7 @@ until it is pushed again (#339), so the seed push joins kinu's restart steps.
    +%Y%m%d)` and then `cp -Rp ~/.director/nats/store.pre-managed-*
    ~/.director/nats/store`. Mail sent during the window is then lost; say so
    to the senders.
-4. `~/work/aae-orc/director/probe/nats-phase-0/start.sh`, backgrounded as
+4. `<orchestrator>/director/probe/nats-phase-0/start.sh`, backgrounded as
    before. It is the anonymous base only, by design (its header).
 5. Pass: the hub's `/leafz` lists kinu's phase-0 leaf again, through
    `leaf-kinu.conf`, and the two remote leaves.

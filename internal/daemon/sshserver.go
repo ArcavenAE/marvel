@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"os"
@@ -237,24 +239,40 @@ func addrPort(addr string) string {
 
 // AddAuthorizedKey appends a public key to ~/.marvel/authorized_keys with the
 // given scope recorded as a marvel-scope option, so one file carries both the
-// key and the authority it grants.
+// key and the authority it grants. See EnrollAuthorizedKey for what it accepts.
 func AddAuthorizedKey(pubKeyData []byte, comment string, scope Scope) error {
+	_, err := EnrollAuthorizedKey(pubKeyData, comment, scope)
+	return err
+}
+
+// EnrollAuthorizedKey is AddAuthorizedKey that also returns the fingerprint of
+// the key it wrote. The input must hold exactly one public key, optionally
+// among blank and "#" comment lines, and the key line must carry no options of
+// its own: an option applies to one line, so anything else in the file would
+// be enrolled without the requested scope. The line written is rebuilt from
+// the parsed key; the input bytes are never copied. A refused input writes
+// nothing.
+func EnrollAuthorizedKey(pubKeyData []byte, comment string, scope Scope) (string, error) {
+	key, keyComment, err := parseEnrollmentKey(pubKeyData)
+	if err != nil {
+		return "", err
+	}
+	fp := ssh.FingerprintSHA256(key)
+
 	layout, err := paths.Default()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := layout.EnsureHome(); err != nil {
-		return err
-	}
-
-	key, _, _, _, err := ssh.ParseAuthorizedKey(pubKeyData)
-	if err != nil {
-		return fmt.Errorf("invalid public key: %w", err)
+		return "", err
 	}
 
 	path := layout.AuthorizedKeys()
 
-	existing, _ := os.ReadFile(path)
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
 	if len(existing) > 0 {
 		rest := existing
 		for len(rest) > 0 {
@@ -263,29 +281,82 @@ func AddAuthorizedKey(pubKeyData []byte, comment string, scope Scope) error {
 				break
 			}
 			if keysEqual(k, key) {
-				return fmt.Errorf("key already authorized: %s", ssh.FingerprintSHA256(key))
+				return "", fmt.Errorf("key already authorized: %s", fp)
 			}
 			rest = r
 		}
 	}
 
 	// Record the scope as an authorized_keys option ahead of the key line.
-	line := fmt.Sprintf("%s=%q %s", scopeOption, string(scope), strings.TrimSpace(string(pubKeyData)))
+	line := fmt.Sprintf("%s=%q %s", scopeOption, string(scope), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))))
+	if keyComment != "" {
+		line += " " + keyComment
+	}
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, paths.ModeAuthorized)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", path, err)
+		return "", fmt.Errorf("open %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 
 	if _, err := fmt.Fprintf(f, "%s\n", line); err != nil {
-		return fmt.Errorf("write key: %w", err)
+		return "", fmt.Errorf("write key: %w", err)
 	}
 	// Enforce mode in case the file existed with different perms.
 	_ = os.Chmod(path, paths.ModeAuthorized)
 
-	log.Printf("authorized key added: %s scope=%s (%s)", ssh.FingerprintSHA256(key), scope, comment)
-	return nil
+	log.Printf("authorized key added: %s scope=%s (%s)", fp, scope, comment)
+	return fp, nil
+}
+
+// parseEnrollmentKey returns the one public key in data and the comment on its
+// line. It refuses input with no key, with more than one key, with any option
+// on the key line, or with any other text besides blank and "#" lines. The
+// ssh parser skips lines it cannot read, so the lines are counted here too.
+func parseEnrollmentKey(data []byte) (ssh.PublicKey, string, error) {
+	var significant []string
+	for _, l := range strings.Split(string(data), "\n") {
+		l = strings.TrimSpace(l)
+		if l != "" && !strings.HasPrefix(l, "#") {
+			significant = append(significant, l)
+		}
+	}
+
+	var (
+		key     ssh.PublicKey
+		comment string
+		options []string
+		keys    int
+	)
+	for rest := data; len(rest) > 0; {
+		k, c, o, r, err := ssh.ParseAuthorizedKey(rest)
+		if err != nil {
+			break
+		}
+		if keys == 0 {
+			key, comment, options = k, c, o
+		}
+		keys++
+		rest = r
+	}
+
+	switch {
+	case keys == 0:
+		return nil, "", fmt.Errorf("invalid public key: no key found in the file")
+	case keys > 1:
+		return nil, "", fmt.Errorf("the file holds %d keys; authorize one key per file so each carries the requested scope", keys)
+	case len(significant) != 1:
+		for _, l := range significant {
+			if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(l)); err != nil {
+				return nil, "", fmt.Errorf("unexpected text in the key file: %q", l)
+			}
+		}
+		return nil, "", fmt.Errorf("unexpected text in the key file besides the one key")
+	case len(options) > 0:
+		name, _, _ := strings.Cut(options[0], "=")
+		return nil, "", fmt.Errorf("the key line carries the option %q; remove it, marvel records the scope itself", name)
+	}
+	return key, comment, nil
 }
 
 // ListAuthorizedKeys returns the fingerprints and comments of authorized keys.

@@ -137,7 +137,7 @@ the register's Never list (`docs/design/seat-register.md:83`). The watcher's
 own record keeps truncated, masked text for `dialog` and `denial`
 (`docs/design/marvel-watcher.md:98`) for whoever reads that record; this
 design adds no text retention to either. The one copy outside them is a finished
-pattern sent to stagekeeper after the masking test (section 9, ruling 7);
+pattern sent to the pattern store after the masking test (section 9, ruling 7);
 no capture is sent.
 
 ## 5. Spawn and timing
@@ -242,10 +242,10 @@ section 7's tickets are filed from them.
 7. **Dialog patterns:** "Allow it." This is decision 4(iv) as written:
    patterns harvested and masked from the first live detection, after the
    sentinel-secret test. The operator added a note, verbatim: "and capture
-   for stagekeeper also".
+   for the pattern store also".
 
    **The note, ruled (operator, 2026-10-10, relayed by director).** The
-   operator chose "patterns": stagekeeper gets the codes (the harness, its
+   operator chose "patterns": the pattern store gets the codes (the harness, its
    version, and the matched class or `no-dialog-pattern`) plus each new
    finished pattern, once it has passed the planted-fake-secret masking test.
    No raw captures are sent. The pattern text is the same text marvel keeps in

@@ -1147,3 +1147,43 @@ func TestDirectCommandStampsLineage(t *testing.T) {
 		t.Errorf("%s = %q, want RFC 3339 UTC", api.HandoffRequestedAtEnv, got)
 	}
 }
+
+// A label declared at launch stays on the record through adoption: the session
+// keeps the launch label even when the role has since changed (svccol-2).
+func TestAdoptKeepsAccountLabel(t *testing.T) {
+	skipIfNoTmux(t)
+
+	store := api.NewStore()
+	driver, err := tmux.NewDriver()
+	if err != nil {
+		t.Fatalf("new driver: %v", err)
+	}
+	mgr := NewManager(store, driver)
+
+	ws := "test-adopt-label"
+	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	sess := &api.Session{
+		Name:      "t-r-g1-0",
+		Workspace: ws,
+		Team:      "t",
+		Role:      "r",
+		Runtime:   api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}, AccountLabel: "ultra"},
+	}
+	if err := mgr.Create(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.CleanupWorkspace(ws) })
+
+	if _, _, err := mgr.AdoptOrKill(); err != nil {
+		t.Fatalf("AdoptOrKill: %v", err)
+	}
+	live, err := store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if live.Runtime.AccountLabel != "ultra" {
+		t.Errorf("label after adoption = %q, want ultra", live.Runtime.AccountLabel)
+	}
+}

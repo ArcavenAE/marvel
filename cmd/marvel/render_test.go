@@ -567,3 +567,201 @@ func TestRenderSessionTableParkedAdvisory(t *testing.T) {
 		}
 	}
 }
+
+// A running seat the watchdog cannot watch, because no pattern covers its
+// version or every pattern failed its control, reads "(unwatched)" in HEALTH,
+// so a blind seat is not mistaken for a working one. The two states stay
+// distinct in describe (docs/design/watchdog-control-and-uncovered.md section 4).
+func TestRenderSessionTableUnwatchedAdvisory(t *testing.T) {
+	base := api.Session{
+		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "claude"},
+		HealthState: api.HealthHealthy,
+	}
+	cases := []struct {
+		name string
+		hs   *api.HarnessState
+		st   api.SessionState
+		want string
+	}{
+		{"uncovered", &api.HarnessState{State: api.HarnessStateUncovered}, api.SessionRunning, "healthy (unwatched)"},
+		{"control-failed", &api.HarnessState{State: api.HarnessStateControlFailed}, api.SessionRunning, "healthy (unwatched)"},
+		{"uncovered, not running", &api.HarnessState{State: api.HarnessStateUncovered}, api.SessionCrashed, "healthy"},
+		{"control-failed, not running", &api.HarnessState{State: api.HarnessStateControlFailed}, api.SessionFailed, "healthy"},
+		{"logged-out stays its own word", &api.HarnessState{State: api.HarnessStateLoggedOut, Confidence: "high"}, api.SessionRunning, "healthy (logged-out)"},
+	}
+	// (stalled) comes first, then one harness-state suffix; director's
+	// dashboard grammar refuses any other order.
+	stalled := base
+	stalled.ActivityState = api.ActivityStalled
+	stalled.HarnessState = &api.HarnessState{State: api.HarnessStateUncovered}
+	if got := column(t, renderSessionTable([]api.Session{stalled}), "HEALTH"); got != "healthy (stalled) (unwatched)" {
+		t.Errorf("stalled and unwatched: HEALTH = %q, want %q", got, "healthy (stalled) (unwatched)")
+	}
+	for _, c := range cases {
+		s := base
+		s.HarnessState, s.State = c.hs, c.st
+		if got := column(t, renderSessionTable([]api.Session{s}), "HEALTH"); got != c.want {
+			t.Errorf("%s: HEALTH = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// A session that was sampled and then lost its process keeps the sampler's last
+// reading in memory (the sampler skips states that do not count as alive, so
+// nothing clears or refreshes it). A crashed, failed or succeeded row has no
+// process to measure, so it renders absence, not the frozen reading or an
+// idle-looking 0.0 / 0B (aae-orc-wtavi, finding-038 follow-on 4).
+func TestRenderSessionTableEndedRowRendersAbsence(t *testing.T) {
+	for _, st := range []api.SessionState{api.SessionCrashed, api.SessionFailed, api.SessionSucceeded} {
+		t.Run(string(st), func(t *testing.T) {
+			table := renderSessionTableCols([]api.Session{{
+				Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+				State: st, Runtime: api.Runtime{Name: "forestage"},
+				SessionMetrics: api.SessionMetrics{MetricsAt: time.Now().UTC()},
+			}}, columnsOrFatal(t, "name,cpu,rss", nil))
+			if got := column(t, table, "CPU%"); got != "-" {
+				t.Errorf("CPU%% = %q for a %s row, want %q", got, st, "-")
+			}
+			if got := column(t, table, "RSS"); got != "-" {
+				t.Errorf("RSS = %q for a %s row, want %q", got, st, "-")
+			}
+		})
+	}
+}
+
+// An account row that the daemon marked near-limit shows it in the STATE
+// column; a row with no state to report keeps the dash, and never reads ok.
+func TestRenderBudgetTableAccountStateColumn(t *testing.T) {
+	rows := []admission.Row{
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "near-limit",
+			Account: "claude default - /h/a", AccountWindow: "seven_day", Reading: "fresh", Observed: 91,
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-",
+			Account: "claude default - /h/b", AccountWindow: "seven_day", Reading: "fresh", Observed: 12,
+		},
+	}
+	table := renderBudgetTable(rows)
+	var near, quiet string
+	for _, line := range strings.Split(strings.TrimRight(table, "\n"), "\n") {
+		switch {
+		case strings.Contains(line, "/h/a"):
+			near = line
+		case strings.Contains(line, "/h/b"):
+			quiet = line
+		}
+	}
+	if !strings.Contains(near, "91%") || !strings.Contains(near, "near-limit") {
+		t.Errorf("the near-limit row = %q, want 91%% and the word near-limit", near)
+	}
+	if strings.Contains(quiet, "near-limit") || strings.Contains(quiet, " ok ") {
+		t.Errorf("the other row = %q, want no near-limit and no ok", quiet)
+	}
+}
+
+// A stale reading prints its last value with its age instead of the bare word,
+// and says stale in STATE. A stale row from a daemon that sends no age, and a
+// row with no reading, keep the words.
+func TestRenderBudgetTableStaleReadingShowsValueAndAge(t *testing.T) {
+	rows := []admission.Row{
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "stale",
+			Account: "claude default - /h/a", AccountWindow: "seven_day", Reading: "stale", Observed: 62, ReadingAgeSeconds: 34 * 60,
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "stale",
+			Account: "claude default - /h/b", AccountWindow: "seven_day", Reading: "stale", Observed: 0, ReadingAgeSeconds: 65 * 60,
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-",
+			Account: "claude default - /h/c", AccountWindow: "seven_day", Reading: "stale",
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-",
+			Account: "claude default - /h/d", AccountWindow: "-", Reading: "none",
+		},
+	}
+	table := renderBudgetTable(rows)
+	line := func(home string) string {
+		for _, l := range strings.Split(table, "\n") {
+			if strings.Contains(l, home) {
+				return l
+			}
+		}
+		t.Fatalf("no row for %s in:\n%s", home, table)
+		return ""
+	}
+	if l := line("/h/a"); !strings.Contains(l, "62% (34m ago)") || !strings.Contains(l, " stale ") {
+		t.Errorf("stale 62%% row = %q, want \"62%% (34m ago)\" and STATE stale", l)
+	}
+	if l := line("/h/b"); !strings.Contains(l, "0% (1h5m ago)") {
+		t.Errorf("stale 0%% row = %q, want \"0%% (1h5m ago)\"", l)
+	}
+	if l := line("/h/c"); strings.Contains(l, "ago)") || !strings.Contains(l, "stale") {
+		t.Errorf("stale row with no age = %q, want the word stale and no age", l)
+	}
+	if l := line("/h/d"); !strings.Contains(l, "none") {
+		t.Errorf("no-reading row = %q, want the word none", l)
+	}
+}
+
+// The OBSERVED cell prints one decimal of the raw value when the daemon sends it,
+// and the rounded integer from a daemon that predates the raw value.
+func TestRenderBudgetTableObservedOneDecimal(t *testing.T) {
+	pct := func(v float64) *float64 { return &v }
+	acct := func(home, reading string, mod func(*admission.Row)) admission.Row {
+		r := admission.Row{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-",
+			Account: "claude default - /h/" + home, AccountWindow: "seven_day", Reading: reading,
+		}
+		mod(&r)
+		return r
+	}
+	rows := []admission.Row{
+		acct("a", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 80, pct(79.6) }),
+		acct("d", "fresh", func(r *admission.Row) { r.Observed = 87 }),
+		acct("f", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 80, pct(79.96) }),
+		acct("i", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 80, pct(80.04) }),
+		acct("g", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 87, pct(87.3) }),
+		acct("h", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 100, pct(100) }),
+		acct("e", "stale", func(r *admission.Row) {
+			r.State, r.Observed, r.ObservedPercent, r.ReadingAgeSeconds = "stale", 62, pct(62.4), 34*60
+		}),
+	}
+	table := renderBudgetTable(rows)
+	line := func(home string) string {
+		for _, l := range strings.Split(table, "\n") {
+			if strings.Contains(l, "/h/"+home) {
+				return l
+			}
+		}
+		t.Fatalf("no row for %s in:\n%s", home, table)
+		return ""
+	}
+	if l := line("a"); !strings.Contains(l, "79.6%") || strings.Contains(l, "80%") {
+		t.Errorf("fresh with a value = %q, want 79.6%% and not 80%%", l)
+	}
+	if l := line("d"); !strings.Contains(l, "87%") || strings.Contains(l, "87.") {
+		t.Errorf("a row from an older daemon = %q, want 87%% as before", l)
+	}
+	// The value is floored to the decimal, so a reading under the level never
+	// prints at it. 87.3 and 100 are the controls: a value already on one
+	// decimal, and a whole one, print as they are.
+	if l := line("f"); !strings.Contains(l, "79.9%") || strings.Contains(l, "80.0%") {
+		t.Errorf("79.96 = %q, want 79.9%% and not 80.0%%", l)
+	}
+	if l := line("i"); !strings.Contains(l, "80.0%") {
+		t.Errorf("80.04 = %q, want 80.0%%: over the level it prints at the level", l)
+	}
+	if l := line("g"); !strings.Contains(l, "87.3%") {
+		t.Errorf("87.3 = %q, want 87.3%%", l)
+	}
+	if l := line("h"); !strings.Contains(l, "100.0%") {
+		t.Errorf("100 = %q, want 100.0%%", l)
+	}
+	if l := line("e"); !strings.Contains(l, "62.4% (34m ago)") {
+		t.Errorf("stale with a value = %q, want \"62.4%% (34m ago)\"", l)
+	}
+}

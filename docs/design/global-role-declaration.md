@@ -24,7 +24,7 @@ Design for review. No code lands until this doc is reviewed.
 | Stage 3 of per-role users removes the grants from the team user | `declared.go:219-223` comment; `docs/design/per-role-broker-users.md` section 7, phase 2 | after it, a research-supervisor has no global grant in any team |
 | The per-role user is named by a fixed suffix, but looked up by role name | the renderer mints only `<team>.supervisor` (`declared.go:85`, `manager.go:365-372`); `Credential` looks up `team + "." + role` (`manager.go:263-272`) | adding `research-supervisor` to the list would look up `<team>.research-supervisor`, never find it, and fall back to the team user forever |
 | director's launcher already treats both as one global role | `sim/twin/cast-launch.sh:126-130` (director f7334ae): `supervisor\|research-supervisor) GROLE=supervisor` | the global role WORD is `supervisor` for both (R-94 as amended, director#77) |
-| The launcher keys off the wardrobe role, not the manifest role name | `cast-launch.sh:58-66`: a manifest role name maps to a wardrobe role id (`marvel-builder` to `builder`, and so on) | marvel cannot learn the wardrobe role without that table |
+| The launcher keys off the role library role, not the manifest role name | `cast-launch.sh:58-66`: a manifest role name maps to a role library role id (`marvel-builder` to `builder`, and so on) | marvel cannot learn the role library role without that table |
 | A second hard-coded name exists | `internal/team/controller.go:1913-1923`, `shiftOrder` puts the role named `supervisor` last in a shift | see section 7 |
 
 The fourth row is the reason a list edit is not a fix. The issue's own
@@ -246,9 +246,9 @@ launcher a second check in both directions:
 This design proposes both to director and does not depend on them: the
 two-key guard holds without them.
 
-marvel never reads wardrobe. It stays independent of the role library (SOUL
+marvel never reads role library. It stays independent of the role library (SOUL
 section 2), and it could not anyway, since the manifest role name is not the
-wardrobe role id (`cast-launch.sh:58-66` maps between them). The launcher
+role library role id (`cast-launch.sh:58-66` maps between them). The launcher
 derives its answer from the cast on purpose (`:119-121`). The two answers are
 tied by the env check above, not merged into one.
 
@@ -346,7 +346,7 @@ stage 3.
 |---|---|
 | Add `research-supervisor` to `GlobalAddressRoles` | director's constraint; also broken: `Credential` would look for `<team>.research-supervisor`, which the renderer never mints, so stage 3 cuts it off anyway |
 | Match role names ending in `supervisor` | convention as code: a role named `notes-supervisor` would gain global reach by its name |
-| marvel reads the wardrobe role's class | marvel would depend on the role library, and the manifest role name is not the wardrobe role id, so marvel would need the launcher's mapping table as well |
+| marvel reads the role library role's class | marvel would depend on the role library, and the manifest role name is not the role library role id, so marvel would need the launcher's mapping table as well |
 | The launcher reads marvel's env instead of the cast | director's launcher derives the role from the cast on purpose (`cast-launch.sh:119-121`); changing that is director's design, not marvel's |
 | One shared `<team>.supervisor` user for every supervisor-type role | not revocable per role (section 4) |
 | Admission checked at apply only | stored teams rehydrate without an apply, so a de-admitted name keeps its grants until a re-apply (section 6) |

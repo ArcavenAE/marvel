@@ -163,7 +163,7 @@ func (d *Daemon) budgetRows() []admission.Row {
 		}
 		out = append(out, admission.Rows(t, d.AdmissionSnapshot(t))...)
 	}
-	out = append(out, accountRows(d.accounts, d.store.ListSessions(), time.Now().UTC())...)
+	out = append(out, accountRowsAt(d.accounts, d.store.ListSessions(), time.Now().UTC(), d.accountWarnLevel)...)
 	return out
 }
 

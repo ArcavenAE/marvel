@@ -38,6 +38,7 @@ type fakePublisher struct {
 	calls int
 	fail  error
 	block bool
+	extra []sentExtra
 }
 
 func (p *fakePublisher) PublishRoleInbox(ctx context.Context, ws, team, role string, env envelope.Envelope, msgID string) error {
@@ -56,6 +57,57 @@ func (p *fakePublisher) PublishRoleInbox(ctx context.Context, ws, team, role str
 	p.sent = append(p.sent, sentEnvelope{ws, team, role, env, msgID})
 	p.mu.Unlock()
 	return nil
+}
+
+// PublishSeatInbox records a send to one seat by agent id; the team field
+// carries the team and the role field the agent id.
+func (p *fakePublisher) PublishSeatInbox(ctx context.Context, ws, team, agentID string, env envelope.Envelope, msgID string) error {
+	return p.record(ctx, "seat", ws, team, agentID, env, msgID)
+}
+
+// PublishDirectorInbox records a send to the director's global inbox.
+func (p *fakePublisher) PublishDirectorInbox(ctx context.Context, env envelope.Envelope, msgID string) error {
+	return p.record(ctx, "director", "", "", "", env, msgID)
+}
+
+func (p *fakePublisher) record(ctx context.Context, kind, ws, team, who string, env envelope.Envelope, msgID string) error {
+	p.mu.Lock()
+	p.calls++
+	fail, block := p.fail, p.block
+	p.mu.Unlock()
+	if block {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	if fail != nil {
+		return fail
+	}
+	p.mu.Lock()
+	p.extra = append(p.extra, sentExtra{kind, sentEnvelope{ws, team, who, env, msgID}})
+	p.mu.Unlock()
+	return nil
+}
+
+// sentExtra is a seat or director send, with its kind.
+type sentExtra struct {
+	kind string
+	sentEnvelope
+}
+
+// seats returns the sends to seats, and director the sends to the director.
+func (p *fakePublisher) seats() []sentEnvelope    { return p.ofKind("seat") }
+func (p *fakePublisher) director() []sentEnvelope { return p.ofKind("director") }
+
+func (p *fakePublisher) ofKind(kind string) []sentEnvelope {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []sentEnvelope
+	for _, e := range p.extra {
+		if e.kind == kind {
+			out = append(out, e.sentEnvelope)
+		}
+	}
+	return out
 }
 
 func (p *fakePublisher) delivered() []sentEnvelope {

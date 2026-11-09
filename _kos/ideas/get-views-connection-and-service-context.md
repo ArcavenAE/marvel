@@ -60,7 +60,7 @@ sits in, the cluster it belongs to and the services that cluster depends on.
 2. **The state of the cluster's services.** From an earlier operator note:
    decorate `get *` output with the local and global NATS connection URL and
    status, and the status of the other managed or attached services, for example
-   a credential vault, a code graph, flyloft, curtain, and any other attached
+   a credential vault, a code graph, flyloft, the sandbox tool, and any other attached
    service. The list of services and which of their fields matter is open.
 
    The operator also named the bd server's connection status (2026-10-04: "we
@@ -98,7 +98,7 @@ sits in, the cluster it belongs to and the services that cluster depends on.
   are noise? A hostname, a profile, a URL, a reachability state: which of these
   earn a place, and which belong only in a detail view or on request?
 - For the services (NATS local and global, a vault, a code graph, flyloft,
-  curtain, others): what does "status" mean per service, and is a single
+  the sandbox tool, others): what does "status" mean per service, and is a single
   reachability state enough, or does each service have its own essential facts?
 - Where does context belong in a per-session table? A header or banner above the
   rows, a set of columns beside them, or a separate `get`-style view for the

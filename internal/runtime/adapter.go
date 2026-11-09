@@ -260,6 +260,15 @@ type TokenFileCapable interface {
 	DeliversTokenByFile() bool
 }
 
+// HandoffToolOfferer is implemented by an adapter whose harness can be given
+// the submit_handoff MCP tool (docs/design/read-only-seat-handoff.md): it has a
+// seeder that renders the marvel-handoff entry, or a channel the role's own
+// environment declares. apply refuses handoff_via = "tool" for a harness that
+// does not implement it, or returns false.
+type HandoffToolOfferer interface {
+	OffersHandoffTool() bool
+}
+
 // StatuslineFeeder is the optional half of the projection contract. An
 // adapter implements it when its harness can express marvel's context
 // feed as keys in its own settings schema, and the session manager asks
