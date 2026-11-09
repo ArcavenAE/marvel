@@ -791,7 +791,8 @@ current, and the page's staleness bound is unchanged.
 
 `get budgets` prints OBSERVED with one decimal of the value STATE compares to the
 level, for example `79.6%`, so a reading under the level is not shown as the
-rounded `80%`. The row's JSON adds `observed_percent`, the raw value, beside
+rounded `80%`. The decimal is cut, not rounded: `79.96` prints `79.9%`, so a
+reading under the level never prints at it. The row's JSON adds `observed_percent`, the raw value, beside
 `observed`, which stays the rounded integer with the same key, type and meaning.
 A new client against an older daemon, which sends no `observed_percent`, prints
 the integer as before. A window with no percentage never reaches a row: the

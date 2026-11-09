@@ -4038,6 +4038,19 @@ func renderBudgetTable(rows []admission.Row) string {
 // OBSERVED is the percentage for a fresh reading and the last percentage with
 // its age for a stale one ("62% (34m ago)"); a stale reading from a daemon that
 // sends no age, and an absent one, read as that word. Never ok.
+// floorOneDecimal prints v with one decimal, dropping the rest instead of
+// rounding it, so a reading under the warning level never prints at or above
+// it: 79.96 is 79.9, not 80.0. It cuts the shortest decimal form of v, so a
+// value such as 62.4 is not read as 62.39999 and cut to 62.3.
+func floorOneDecimal(v float64) string {
+	s := strconv.FormatFloat(v, 'f', -1, 64)
+	whole, frac, _ := strings.Cut(s, ".")
+	if frac == "" {
+		return whole + ".0"
+	}
+	return whole + "." + frac[:1]
+}
+
 func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 	observed := r.Reading
 	// One decimal of the raw value when the daemon sends it, so a reading of 79.6
@@ -4045,7 +4058,7 @@ func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 	// predates the raw value sends only the rounded integer.
 	value := fmt.Sprintf("%d%%", r.Observed)
 	if r.ObservedPercent != nil {
-		value = fmt.Sprintf("%.1f%%", *r.ObservedPercent)
+		value = floorOneDecimal(*r.ObservedPercent) + "%"
 	}
 	switch {
 	case r.Reading == "fresh":
