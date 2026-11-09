@@ -723,10 +723,9 @@ func TestStaleAccountRowJSONCarriesTheLastValueAndItsAge(t *testing.T) {
 	}
 }
 
-// The raw percentage rides beside the rounded one, and a row whose window gave no
-// percentage has no observed key at all, so it never reads as a 0. A row from a
-// daemon that predates both fields still reads as before.
-func TestAccountRowJSONObservedPercentAndUnknown(t *testing.T) {
+// The raw percentage rides beside the rounded one, and a row from a daemon that
+// predates it reads as before.
+func TestAccountRowJSONObservedPercent(t *testing.T) {
 	base := Row{Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-", Account: "a", AccountWindow: "seven_day"}
 	keys := func(r Row) map[string]any {
 		t.Helper()
@@ -741,41 +740,21 @@ func TestAccountRowJSONObservedPercentAndUnknown(t *testing.T) {
 		return m
 	}
 	pct := 79.6
-
-	fresh := base
-	fresh.Reading, fresh.Observed, fresh.ObservedPercent = "fresh", 80, &pct
-	m := keys(fresh)
-	if m["observed"] != float64(80) || m["observed_percent"] != 79.6 {
-		t.Errorf("fresh with a value: %v, want observed 80 and observed_percent 79.6", m)
-	}
-	if _, ok := m["observed_unknown"]; ok {
-		t.Errorf("fresh with a value carries observed_unknown: %v", m)
-	}
-
 	for _, reading := range []string{"fresh", "stale"} {
 		r := base
-		r.Reading, r.ObservedUnknown = reading, true
+		r.Reading, r.Observed, r.ObservedPercent = reading, 80, &pct
 		m := keys(r)
-		if _, ok := m["observed"]; ok {
-			t.Errorf("%s with no percentage carries observed: %v", reading, m)
-		}
-		if _, ok := m["observed_percent"]; ok {
-			t.Errorf("%s with no percentage carries observed_percent: %v", reading, m)
-		}
-		if m["observed_unknown"] != true {
-			t.Errorf("%s with no percentage lost observed_unknown: %v", reading, m)
+		if m["observed"] != float64(80) || m["observed_percent"] != 79.6 {
+			t.Errorf("%s with a value: %v, want observed 80 and observed_percent 79.6", reading, m)
 		}
 	}
-
 	older := base
 	older.Reading, older.Observed = "fresh", 87
-	m = keys(older)
+	m := keys(older)
 	if m["observed"] != float64(87) {
-		t.Errorf("a row with neither new field: %v, want observed 87", m)
+		t.Errorf("a row without the raw value: %v, want observed 87", m)
 	}
-	for _, k := range []string{"observed_percent", "observed_unknown"} {
-		if _, ok := m[k]; ok {
-			t.Errorf("a row with neither new field carries %s: %v", k, m)
-		}
+	if _, ok := m["observed_percent"]; ok {
+		t.Errorf("a row without the raw value carries observed_percent: %v", m)
 	}
 }
