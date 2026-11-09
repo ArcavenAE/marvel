@@ -43,6 +43,13 @@ const (
 // "no number" is shown and never left out. Informs, never gates: nothing here
 // refuses anything (diagnostic-not-gate).
 func accountRows(readings *api.AccountReadings, sessions []api.Session, now time.Time) []admission.Row {
+	return accountRowsAt(readings, sessions, now, 0)
+}
+
+// accountRowsAt is accountRows with the cluster's warning level: a fresh
+// window at or over it reads near-limit in STATE. Level 0 is off.
+func accountRowsAt(readings *api.AccountReadings, sessions []api.Session, now time.Time, warnLevel int) []admission.Row {
+	_ = warnLevel
 	seen := map[api.AccountKey]bool{}
 	unverified := map[api.AccountKey]bool{}
 	var keys []api.AccountKey

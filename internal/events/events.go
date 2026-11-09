@@ -119,6 +119,10 @@ const (
 	KindHostVitalsCrossed Kind = "host.vitals.crossed"
 	// KindHostVitalsCleared records the same reading no longer passing its line.
 	KindHostVitalsCleared Kind = "host.vitals.cleared"
+	// KindAccountWindowNearLimit records an account's rate-limit window reaching
+	// the cluster's warning level, once per window. It is a report and blocks
+	// nothing (diagnostic-not-gate).
+	KindAccountWindowNearLimit Kind = "account.window-near-limit"
 	// KindViewUnavailable records a view that could not be built when its seat
 	// was spawned, so the seat started without MARVEL_VIEW_<NAME>. Once per
 	// change of cause.
@@ -539,6 +543,7 @@ var allKinds = []Kind{
 	KindViewRefreshFailed,
 	KindHostVitalsCrossed,
 	KindHostVitalsCleared,
+	KindAccountWindowNearLimit,
 	KindViewUnavailable,
 	KindViewRetentionHeld,
 	KindCodexTrust,

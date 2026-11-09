@@ -629,3 +629,34 @@ func TestRenderSessionTableEndedRowRendersAbsence(t *testing.T) {
 		})
 	}
 }
+
+// An account row that the daemon marked near-limit shows it in the STATE
+// column; a row with no state to report keeps the dash, and never reads ok.
+func TestRenderBudgetTableAccountStateColumn(t *testing.T) {
+	rows := []admission.Row{
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "near-limit",
+			Account: "claude default - /h/a", AccountWindow: "seven_day", Reading: "fresh", Observed: 91,
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-",
+			Account: "claude default - /h/b", AccountWindow: "seven_day", Reading: "fresh", Observed: 12,
+		},
+	}
+	table := renderBudgetTable(rows)
+	var near, quiet string
+	for _, line := range strings.Split(strings.TrimRight(table, "\n"), "\n") {
+		switch {
+		case strings.Contains(line, "/h/a"):
+			near = line
+		case strings.Contains(line, "/h/b"):
+			quiet = line
+		}
+	}
+	if !strings.Contains(near, "91%") || !strings.Contains(near, "near-limit") {
+		t.Errorf("the near-limit row = %q, want 91%% and the word near-limit", near)
+	}
+	if strings.Contains(quiet, "near-limit") || strings.Contains(quiet, " ok ") {
+		t.Errorf("the other row = %q, want no near-limit and no ok", quiet)
+	}
+}
