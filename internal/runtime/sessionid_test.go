@@ -190,8 +190,10 @@ func TestCodexDeclaresARelocatableHomeAndOthersDoNot(t *testing.T) {
 	}
 
 	// claude scatters state across ~/.claude and per-project directories
-	// with no single relocatable root, so it must not claim one.
-	for _, a := range []Adapter{&Claude{}, &OpenCode{}, &Generic{}} {
+	// with no single relocatable root, so it must not claim one. opencode
+	// claims one, but only for a seat whose declared provider is local, and the
+	// opencode tests hold that rule; here it is the roster's other claimant.
+	for _, a := range []Adapter{&Claude{}, &Generic{}} {
 		if _, claims := a.(SessionHomeAssigner); claims {
 			t.Errorf("adapter %s claims a relocatable session home", a.Name())
 		}
