@@ -577,7 +577,7 @@ marvel daemon logs [-n N]                            # daemon log ring (works ov
 marvel daemon reexec                                 # re-exec the binary at its own path (an in-place upgrade, not a new mise version), agents keep running
 marvel events                                        # structured event ring (control-plane + agent.*)
 marvel capture <session-key>                         # capture a session's pane content
-marvel attach <desk>                                 # open a session's pane by its DESK number; --print shows the command
+marvel attach <desk|key|name>                      # open a session's pane by DESK number, workspace/name key or unique name; --print shows the command
 marvel exposure add|end <workspace/team> <role> <fn>    # record that a slot read a function; a role with writes: [fn] is not started
 marvel exposure void <workspace/team> <role> <fn> --reason W   # local socket only: stop counting a wrong record, delete nothing
 marvel inject <session-key> [text] [--key <key>]     # send keystrokes to a pane (--key presses a key, text is literal)

@@ -485,7 +485,7 @@ var keyArgCommands = map[string]int{
 	"marvel scale": 0, "marvel shift": 0, "marvel reset-health": 0,
 	"marvel plan": 0, "marvel converge": 0, "marvel backend verify": 0,
 	"marvel exposure add": 0, "marvel exposure end": 0, "marvel exposure void": 0,
-	"marvel view refresh": 0,
-	"marvel hibernate":    0, "marvel wake": 0,
+	"marvel view refresh": 0, "marvel attach": 0,
+	"marvel hibernate": 0, "marvel wake": 0,
 	"marvel describe": -1, "marvel delete": -1,
 }
