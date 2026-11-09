@@ -117,7 +117,7 @@ func companyAllowed(kind string) func([]string) bool {
 		case 2:
 			switch p[0] {
 			case "source":
-				return p[1] == "url" || p[1] == "commit" || p[1] == "contents_tree"
+				return p[1] == "url" || p[1] == "commit" || (p[1] == "contents_tree" && defs)
 			case "requires":
 				return p[1] == "definition_schema"
 			case "definitions":
@@ -313,6 +313,9 @@ func DecodeCompany(dir Ident, data []byte) (*Company, error) {
 		name, _, _ := strings.Cut(d.Identity, "@")
 		if pair != hasIdentity || (pair && name != identName) {
 			return nil, r("12", file, d.ID, d.Identity)
+		}
+		if hasIdentStatus && !pair {
+			return nil, bad("identity_status")
 		}
 		c.Definitions = append(c.Definitions, d)
 	}
