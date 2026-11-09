@@ -12,7 +12,12 @@
     "stop word",
     "one lapse time",
     "trigger",
-    "client isolation"
+    "client isolation",
+    "3.1 order and caps",
+    "3.1 placement",
+    "3.1 input",
+    "3.1 unmatched",
+    "3.1 seat key"
   ],
   "vectors": [
     {
@@ -98,6 +103,7 @@
               {
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "lease": "r1/item-1"
               }
             ],
@@ -106,6 +112,7 @@
                 "id": "r1/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -196,6 +203,7 @@
                 "id": "r1/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -215,6 +223,7 @@
             "id": "r1/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -227,6 +236,7 @@
             "id": "r1/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -239,6 +249,7 @@
             "id": "r1/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -251,6 +262,7 @@
             "id": "r1/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "taken"
           },
@@ -389,6 +401,7 @@
                 "id": "r1/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -659,6 +672,7 @@
               {
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "lease": "r3b/item-1"
               }
             ],
@@ -667,6 +681,7 @@
                 "id": "r3b/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -946,6 +961,7 @@
               {
                 "item": "item-1",
                 "seat": "agent://t1/rev-z",
+                "cluster": "c1",
                 "lease": "r5/item-1"
               }
             ],
@@ -954,6 +970,7 @@
                 "id": "r5/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-z",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -1046,6 +1063,7 @@
             "id": "r6/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1085,6 +1103,7 @@
             "id": "r6/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1125,6 +1144,7 @@
             "id": "r6/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1168,6 +1188,7 @@
             "id": "r6/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1208,6 +1229,7 @@
             "id": "r6/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1248,6 +1270,7 @@
             "id": "r6/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1289,6 +1312,7 @@
             "id": "r6/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1330,6 +1354,7 @@
             "id": "r6/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1370,6 +1395,7 @@
             "id": "r6/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1611,6 +1637,7 @@
             "id": "r7/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1653,6 +1680,7 @@
             "id": "r7/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1697,6 +1725,7 @@
             "id": "r7/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T12:30:00Z",
             "state": "open"
           },
@@ -1798,6 +1827,7 @@
                 "id": "r0/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T11:30:00Z",
                 "state": "open"
               }
@@ -1808,6 +1838,7 @@
               {
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "lease": "r8/item-1"
               }
             ],
@@ -1816,6 +1847,7 @@
                 "id": "r8/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -1887,6 +1919,7 @@
                 "id": "r0/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T11:30:00Z",
                 "state": "open"
               }
@@ -1964,6 +1997,7 @@
                 "id": "r0/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T11:30:00Z",
                 "state": "open"
               }
@@ -1983,6 +2017,7 @@
             "id": "r0/item-1",
             "item": "item-1",
             "seat": "agent://t1/rev-a",
+            "cluster": "c1",
             "valid_until": "2026-10-21T11:30:00Z",
             "state": "open"
           },
@@ -2320,6 +2355,7 @@
               {
                 "item": "item-3",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "lease": "r11/item-3"
               }
             ],
@@ -2328,6 +2364,7 @@
                 "id": "r11/item-3",
                 "item": "item-3",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -2466,16 +2503,19 @@
               {
                 "item": "item-3",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "lease": "r11b/item-3"
               },
               {
                 "item": "item-2",
                 "seat": "agent://t1/rev-b",
+                "cluster": "c1",
                 "lease": "r11b/item-2"
               },
               {
                 "item": "item-1",
                 "seat": "agent://t1/rev-c",
+                "cluster": "c1",
                 "lease": "r11b/item-1"
               }
             ],
@@ -2484,6 +2524,7 @@
                 "id": "r11b/item-3",
                 "item": "item-3",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               },
@@ -2491,6 +2532,7 @@
                 "id": "r11b/item-2",
                 "item": "item-2",
                 "seat": "agent://t1/rev-b",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               },
@@ -2498,6 +2540,7 @@
                 "id": "r11b/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-c",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -2635,6 +2678,7 @@
                 "id": "r0/item-9",
                 "item": "item-9",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -2645,11 +2689,13 @@
               {
                 "item": "item-3",
                 "seat": "agent://t1/rev-b",
+                "cluster": "c1",
                 "lease": "r11c/item-3"
               },
               {
                 "item": "item-2",
                 "seat": "agent://t1/rev-c",
+                "cluster": "c1",
                 "lease": "r11c/item-2"
               }
             ],
@@ -2658,6 +2704,7 @@
                 "id": "r11c/item-3",
                 "item": "item-3",
                 "seat": "agent://t1/rev-b",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               },
@@ -2665,6 +2712,7 @@
                 "id": "r11c/item-2",
                 "item": "item-2",
                 "seat": "agent://t1/rev-c",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -2755,6 +2803,7 @@
               {
                 "item": "item-1",
                 "seat": "agent://t1/rev-b",
+                "cluster": "c1",
                 "lease": "r11e/item-1"
               }
             ],
@@ -2763,6 +2812,7 @@
                 "id": "r11e/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-b",
+                "cluster": "c1",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -2900,6 +2950,7 @@
               {
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c2",
                 "reason": "no sender ruled"
               }
             ],
@@ -2971,6 +3022,7 @@
               {
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c2",
                 "lease": "r12b/item-1"
               }
             ],
@@ -2979,6 +3031,7 @@
                 "id": "r12b/item-1",
                 "item": "item-1",
                 "seat": "agent://t1/rev-a",
+                "cluster": "c2",
                 "valid_until": "2026-10-21T12:30:00Z",
                 "state": "open"
               }
@@ -3472,6 +3525,232 @@
               "free": 1
             }
           }
+        }
+      ]
+    },
+    {
+      "name": "one seat name on two clusters is two seats, and the same name twice on one cluster is an input error",
+      "row": "3.1 seat key",
+      "steps": [
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r15",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              },
+              {
+                "id": "item-2",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:30:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c2",
+                "availability": "free",
+                "free_since": "2026-10-21T11:30:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1",
+              "ruled_clusters": [
+                "c2"
+              ]
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 2,
+            "lease_minutes": 30
+          },
+          "want": {
+            "pairs": [
+              {
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "cluster": "c1",
+                "lease": "r15/item-1"
+              },
+              {
+                "item": "item-2",
+                "seat": "agent://t1/rev-a",
+                "cluster": "c2",
+                "lease": "r15/item-2"
+              }
+            ],
+            "leases": [
+              {
+                "id": "r15/item-1",
+                "item": "item-1",
+                "seat": "agent://t1/rev-a",
+                "cluster": "c1",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              },
+              {
+                "id": "r15/item-2",
+                "item": "item-2",
+                "seat": "agent://t1/rev-a",
+                "cluster": "c2",
+                "valid_until": "2026-10-21T12:30:00Z",
+                "state": "open"
+              }
+            ],
+            "count": {
+              "ready": 2,
+              "eligible": 2,
+              "free": 2,
+              "would_pair": 2
+            }
+          }
+        },
+        {
+          "op": "marry",
+          "input": {
+            "run_id": "r15b",
+            "now": "2026-10-21T12:00:00Z",
+            "items": [
+              {
+                "id": "item-1",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:00:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              },
+              {
+                "id": "item-2",
+                "priority": 2,
+                "ready_at": "2026-10-21T10:30:00Z",
+                "classes": {
+                  "label": "review"
+                },
+                "component": "marvel",
+                "duties": [
+                  "first-turn"
+                ],
+                "status": "open"
+              }
+            ],
+            "seats": [
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:00:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              },
+              {
+                "address": "agent://t1/rev-a",
+                "team": "t1",
+                "cluster": "c1",
+                "availability": "free",
+                "free_since": "2026-10-21T11:30:00Z",
+                "classes": [
+                  "review"
+                ],
+                "scopes": [
+                  "marvel"
+                ],
+                "cells": {
+                  "duty.first-turn": {
+                    "value": "proven",
+                    "observed_at": "2026-10-21T11:50:00Z",
+                    "valid_until": "2026-10-21T12:30:00Z",
+                    "source": "pane:turn"
+                  }
+                }
+              }
+            ],
+            "stop": {},
+            "placement": {
+              "sender_cluster": "c1"
+            },
+            "rulings": {
+              "work_class_source": "label"
+            },
+            "lease_cap": 2,
+            "lease_minutes": 30
+          },
+          "error": "seat agent://t1/rev-a is listed twice"
         }
       ]
     }
