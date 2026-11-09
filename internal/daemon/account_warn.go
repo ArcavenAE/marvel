@@ -26,8 +26,8 @@ const (
 	// accountWarnJitter is how far a window's resets_at may move and still be the
 	// same window, so two senders that round it differently do not read as two.
 	accountWarnJitter = time.Minute
-	// accountWarnPublishTimeout bounds one publish, so a dead bus cannot hold the
-	// reading that caused it for long.
+	// accountWarnPublishTimeout bounds one publish, so a publish to a dead bus ends
+	// on its own. It runs off the reporting call and delays no reading.
 	accountWarnPublishTimeout = 2 * time.Second
 	// accountWarnSender is the notice's sender agent id, a label and not an
 	// authentication.
@@ -49,6 +49,9 @@ type accountWarner struct {
 
 	mu   sync.Mutex
 	seen map[warnWindowKey]*warnWindow
+	// wg counts the publishes in flight. A publish runs off the reporting call, so
+	// a slow bus never holds the reading that caused it.
+	wg sync.WaitGroup
 }
 
 // warnWindowKey names a window of one account.
@@ -59,7 +62,11 @@ type warnWindowKey struct {
 
 // warnWindow is what the warner remembers of the window it last announced.
 type warnWindow struct {
-	resetsAt    time.Time
+	resetsAt time.Time
+	// armedAt is when this window was first held. A window with no resets_at has
+	// no other name, so the time it was armed keeps one arming's dedupe id apart
+	// from the next arming's.
+	armedAt     time.Time
 	sent        bool
 	lastAttempt time.Time
 }
@@ -103,14 +110,16 @@ func (w *accountWarner) observeWindow(key api.AccountKey, workspace string, win 
 	}
 	first := held == nil
 	if first {
-		held = &warnWindow{resetsAt: win.ResetsAt}
+		held = &warnWindow{resetsAt: win.ResetsAt, armedAt: now}
 		w.seen[k] = held
 	}
 	due := !held.sent && w.send != nil && w.leafUp != nil && w.leafUp() &&
 		(held.lastAttempt.IsZero() || now.Sub(held.lastAttempt) >= accountWarnRetry)
 	if due {
 		held.lastAttempt = now
+		w.wg.Add(1)
 	}
+	armedAt := held.armedAt
 	w.mu.Unlock()
 
 	if first {
@@ -119,22 +128,29 @@ func (w *accountWarner) observeWindow(key api.AccountKey, workspace string, win 
 	if !due {
 		return
 	}
-	env, msgID := accountWarnEnvelope(key, workspace, win, pct, now)
-	ctx, cancel := context.WithTimeout(context.Background(), accountWarnPublishTimeout)
-	err := w.send(ctx, env, msgID)
-	cancel()
-	if err != nil {
-		log.Printf("account warn: %s %s: publish to the director: %v; trying again after %s", key, win.Name, err, accountWarnRetry)
-		return
-	}
-	w.mu.Lock()
-	held.sent = true
-	w.mu.Unlock()
+	env, msgID := accountWarnEnvelope(key, workspace, win, pct, now, armedAt)
+	go func() {
+		defer w.wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), accountWarnPublishTimeout)
+		err := w.send(ctx, env, msgID)
+		cancel()
+		if err != nil {
+			log.Printf("account warn: %s %s: publish to the director: %v; trying again after %s", key, win.Name, err, accountWarnRetry)
+			return
+		}
+		w.mu.Lock()
+		held.sent = true
+		w.mu.Unlock()
+	}()
 }
 
 // wait blocks until the publishes now in flight have ended. Tests use it to read
 // what was sent; nothing else needs to.
-func (w *accountWarner) wait() {}
+func (w *accountWarner) wait() {
+	if w != nil {
+		w.wg.Wait()
+	}
+}
 
 // sameWarnWindow reports whether two resets_at values name one window: both
 // absent, or within the jitter allowance of each other.
@@ -168,9 +184,14 @@ func accountWarnText(key api.AccountKey, win api.AccountWindow, pct float64) str
 
 // accountWarnEnvelope builds the INFORM to the director and its dedupe id. The
 // id names the window, so a re-send after a crash between publish and record is
-// dropped by the stream.
-func accountWarnEnvelope(key api.AccountKey, workspace string, win api.AccountWindow, pct float64, now time.Time) (envelope.Envelope, string) {
-	corr := fmt.Sprintf("account-window-near-limit/%s/%s/%d", key, win.Name, win.ResetsAt.Unix())
+// dropped by the stream. A window with no resets_at is named by the time it was
+// armed, so a later arming of the same window is a new notice.
+func accountWarnEnvelope(key api.AccountKey, workspace string, win api.AccountWindow, pct float64, now, armedAt time.Time) (envelope.Envelope, string) {
+	slot := fmt.Sprintf("%d", win.ResetsAt.Unix())
+	if win.ResetsAt.IsZero() {
+		slot = fmt.Sprintf("armed-%d", armedAt.Unix())
+	}
+	corr := fmt.Sprintf("account-window-near-limit/%s/%s/%s", key, win.Name, slot)
 	env := envelope.Envelope{
 		SchemaVersion: 1,
 		MessageID:     team.NewULID(now),
