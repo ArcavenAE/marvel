@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // lookupFrom builds a lookup over a fixed map, so a test states exactly the
 // environment it means and nothing leaks in from the process.
@@ -238,6 +241,38 @@ func TestBackendBearerEnv(t *testing.T) {
 	for _, tt := range tests {
 		if got := BackendBearerEnv(tt.key); got != tt.want {
 			t.Errorf("BackendBearerEnv(%q) = %v, want %v", tt.key, got, tt.want)
+		}
+	}
+}
+
+// The five identity keys a role or a recipe may not set, and the one predicate
+// both paths read. A pointer to a helper is not a literal credential.
+func TestCredentialKeysAreTheFiveIdentityKeys(t *testing.T) {
+	want := []string{
+		"MARVEL_HEARTBEAT_TOKEN", "MARVEL_CREDENTIAL_HELPER", "MARVEL_HEARTBEAT_TOKEN_FILE",
+		"DIRECTOR_NATS_USER", "DIRECTOR_NATS_PASS",
+	}
+	got := CredentialKeys()
+	if !slices.Equal(got, want) {
+		t.Fatalf("CredentialKeys = %v, want %v", got, want)
+	}
+	got[0] = "CHANGED"
+	if CredentialKeys()[0] != want[0] {
+		t.Error("CredentialKeys returned its own backing slice")
+	}
+	for _, k := range want {
+		if !IsCredentialKey(k) {
+			t.Errorf("IsCredentialKey(%q) = false, want true", k)
+		}
+	}
+	for _, k := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AWS_BEARER_TOKEN_BEDROCK"} {
+		if !IsCredentialKey(k) {
+			t.Errorf("IsCredentialKey(%q) = false, want true (a literal bearer)", k)
+		}
+	}
+	for _, k := range []string{"MARVEL_BACKEND_API_KEY_HELPER", "EDITOR", "DIRECTOR_NATS_URL"} {
+		if IsCredentialKey(k) {
+			t.Errorf("IsCredentialKey(%q) = true, want false", k)
 		}
 	}
 }

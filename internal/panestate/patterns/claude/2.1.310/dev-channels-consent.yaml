@@ -1,0 +1,39 @@
+# Captured, not synthetic: claude 2.1.310 on three seats started by generation
+# shifts, each held at the development-channels consent prompt, read with a
+# plain `tmux capture-pane -p` on 2026-10-24. The capture record is a draft
+# document in the orchestrator repo (sha256 prefix a1035e61c992); no key
+# was sent to any seat, and the cwd was masked before the capture was stored.
+#
+# The rows start at option 1 and end at the footer. The "Channels:" line above
+# them is left out, so another channel name still matches. The variable span is
+# the cursor column: "❯" on the selected row and one space on the other, so it
+# is bounded to 1 character (var_runes). A longer span, such as a chat-quoted
+# copy of the screen, does not match.
+#
+# The blank lines in the sample above option 1 were restored: the source record
+# kept only the non-blank lines of the capture. They sit outside the matched
+# rows, which start at option 1. The one blank row between option 2 and the
+# footer is part of the match; the source record's -e hexdump backs that row.
+#
+# Range: 2.1.310 only. No other version was captured. A version above or below
+# reads uncovered until a sample for it is added.
+#
+# The reason is "other": none of trust, permission or update names a consent
+# prompt for a development channel. That is a known gap; a parked-reasons
+# foundation that adds a fitting reason would close it.
+id: dev-channels-consent
+version: 1
+harness: claude
+harness_version: 2.1.310
+version_range:
+  min: 2.1.310
+  max: 2.1.310
+state: parked
+reason: other
+sample_width: 80
+var_runes: 1
+rows:
+  - "  {{var}} 1. I am using this for local development"
+  - "  {{var}} 2. Exit"
+  - ""
+  - "  Enter to confirm · Esc to cancel"

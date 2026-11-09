@@ -117,8 +117,8 @@ func (c *Controller) deliverViewNotices(t *api.Team) {
 			continue
 		}
 		lastActive := sess.CreatedAt
-		if sess.ContextAt.After(lastActive) {
-			lastActive = sess.ContextAt
+		if w := api.WorkAt(&sess); w.After(lastActive) {
+			lastActive = w
 		}
 		quiet := now.Sub(lastActive) >= api.DefaultShiftQuietFor
 

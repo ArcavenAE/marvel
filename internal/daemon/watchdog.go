@@ -301,7 +301,7 @@ func (w *watchdog) visit(now time.Time, s api.Session) {
 	// looking at. A coverage state describes the version, not the screen, so it
 	// stays: a seat that alternates work and quiet would otherwise clear and
 	// re-set it every cycle.
-	if hs := s.HarnessState; hs != nil && !isCoverageState(hs.State) && hs.Source != api.HarnessSourceTranscript && s.ContextAt.After(hs.ContextAt) {
+	if hs := s.HarnessState; hs != nil && !isCoverageState(hs.State) && hs.Source != api.HarnessSourceTranscript && api.WorkAt(&s).After(hs.ContextAt) {
 		w.clear(s, "the session did work")
 		return
 	}
@@ -310,7 +310,7 @@ func (w *watchdog) visit(now time.Time, s api.Session) {
 	if !ok {
 		return
 	}
-	quietSince := s.ContextAt
+	quietSince := api.WorkAt(&s)
 	if quietSince.IsZero() {
 		quietSince = s.CreatedAt
 	}
@@ -434,7 +434,7 @@ func (w *watchdog) setCoverage(now time.Time, s api.Session, state, harness, ver
 	w.clearEvent(s, "the version is not covered")
 	w.store.SetHarnessState(s.Key(), &api.HarnessState{
 		State: state, Harness: harness, HarnessVersion: version, Covered: covered,
-		PaneWidth: width, CapturedAt: now, ContextAt: s.ContextAt,
+		PaneWidth: width, CapturedAt: now, ContextAt: api.WorkAt(&s),
 	})
 }
 
@@ -443,7 +443,7 @@ func harnessState(now time.Time, s api.Session, res panestate.Result, harness, v
 		State: string(res.State), Confidence: string(res.Confidence),
 		Harness: harness, HarnessVersion: version,
 		PatternID: res.PatternID, PatternVersion: res.PatternVersion, PatternFor: res.HarnessVersion,
-		Reason: res.Reason, PaneWidth: width, Evidence: res.Evidence, CapturedAt: now, ContextAt: s.ContextAt,
+		Reason: res.Reason, PaneWidth: width, Evidence: res.Evidence, CapturedAt: now, ContextAt: api.WorkAt(&s),
 	}
 }
 
@@ -805,7 +805,7 @@ func (w *watchdog) setTranscript(now time.Time, s api.Session, r panestate.Trans
 		Harness: "claude", HarnessVersion: clip(r.Version),
 		PatternID: "transcript:authentication_failed", PatternVersion: 1,
 		Evidence:   []string{fmt.Sprintf("entry %s at %s", clip(r.UUID), clip(r.Timestamp))},
-		CapturedAt: now, ContextAt: s.ContextAt, Source: api.HarnessSourceTranscript,
+		CapturedAt: now, ContextAt: api.WorkAt(&s), Source: api.HarnessSourceTranscript,
 	}
 	already := s.HarnessState != nil && s.HarnessState.State == hs.State
 	w.store.SetHarnessState(s.Key(), hs)

@@ -1635,7 +1635,7 @@ func (c *Controller) evaluateHealth() {
 		if sess.State != api.SessionRunning {
 			continue
 		}
-		c.recordTick(sess.Key(), now, sess.ContextAt)
+		c.recordTick(sess.Key(), now, api.WorkAt(&sess))
 		ringed[sess.Key()] = true
 
 		teamKey := fmt.Sprintf("%s/%s", sess.Workspace, sess.Team)
@@ -1658,8 +1658,9 @@ func (c *Controller) evaluateHealth() {
 		}
 
 		var (
-			transitionedToUnhealthy bool
-			shouldApplyRestart      bool
+			reachedThreshold   bool
+			shouldApplyRestart bool
+			staleFor           time.Duration
 		)
 		var updated api.Session
 
@@ -1674,7 +1675,7 @@ func (c *Controller) evaluateHealth() {
 				updated = *live
 				return nil
 			}
-			if role.HealthCheck.Type != api.HealthCheckHeartbeat {
+			if role.HealthCheck.Type != api.HealthCheckHeartbeat && role.HealthCheck.Type != api.HealthCheckBus {
 				// process-alive is handled by ReapDead, which marks a lost
 				// pane unhealthy. Here the pane exists and no check ran
 				// beyond that, so the session is alive, not healthy.
@@ -1684,18 +1685,28 @@ func (c *Controller) evaluateHealth() {
 				return nil
 			}
 
-			// Heartbeat staleness check.
+			// Staleness check. A bus role reads LastBusBeat, the shim's own
+			// liveness, in place of LastHeartbeat, which the statusline feed
+			// moves. So a seat whose statusline is live and whose bus is dead
+			// goes unhealthy (finding-166).
 			live.LastHealthCheck = now
+			prev := live.FailureCount
+			last := live.LastHeartbeat
+			if role.HealthCheck.Type == api.HealthCheckBus {
+				last = live.LastBusBeat
+			}
 
-			if live.LastHeartbeat.IsZero() {
-				// Grace period: allow timeout from creation for first heartbeat.
+			if last.IsZero() {
+				// Grace period: allow timeout from creation for first beat.
 				if live.AgeAt(now) < role.HealthCheck.Timeout {
 					live.HealthState = api.HealthUnknown
 					updated = *live
 					return nil
 				}
+				staleFor = live.AgeAt(now)
 				live.FailureCount++
-			} else if now.Sub(live.LastHeartbeat) > role.HealthCheck.Timeout {
+			} else if now.Sub(last) > role.HealthCheck.Timeout {
+				staleFor = now.Sub(last)
 				live.FailureCount++
 			} else {
 				live.FailureCount = 0
@@ -1705,8 +1716,11 @@ func (c *Controller) evaluateHealth() {
 			}
 
 			if live.FailureCount >= role.HealthCheck.FailureThreshold {
-				if live.HealthState != api.HealthUnhealthy {
-					transitionedToUnhealthy = true
+				// The tick that reaches the threshold emits, so the event marks
+				// the restart policy's trigger. A seat already unhealthy below
+				// the threshold would otherwise never emit (aae-orc-6zmvw).
+				if prev < role.HealthCheck.FailureThreshold || live.HealthState != api.HealthUnhealthy {
+					reachedThreshold = true
 				}
 				live.HealthState = api.HealthUnhealthy
 				shouldApplyRestart = true
@@ -1739,7 +1753,7 @@ func (c *Controller) evaluateHealth() {
 			obs[key] = o
 		}
 
-		if transitionedToUnhealthy {
+		if reachedThreshold {
 			events.Emit(c.Events, events.Event{
 				Kind:      events.KindHealthCheckFailed,
 				Severity:  events.SeverityWarning,
@@ -1747,7 +1761,7 @@ func (c *Controller) evaluateHealth() {
 				Team:      updated.Team,
 				Role:      updated.Role,
 				Session:   updated.Key(),
-				Message:   fmt.Sprintf("heartbeat stale %d/%d failures", updated.FailureCount, role.HealthCheck.FailureThreshold),
+				Message:   healthFailureMessage(role.HealthCheck.Type, staleFor, updated.FailureCount, role.HealthCheck.FailureThreshold),
 			})
 		}
 		// ADR-010 Amendment 1: the restart policy does not apply to a
@@ -1760,6 +1774,18 @@ func (c *Controller) evaluateHealth() {
 	c.decayHealthyRoles(obs, c.nowUTC())
 }
 
+// healthFailureMessage is the KindHealthCheckFailed text. A heartbeat role keeps
+// the text it always had. A bus role names its cause, so an operator reading the
+// ring sees that the director shim lost the bus and not that the statusline
+// went quiet.
+func healthFailureMessage(typ api.HealthCheckType, staleFor time.Duration, failures, threshold int) string {
+	if typ == api.HealthCheckBus {
+		return fmt.Sprintf("no bus beat from the director shim for %s (%d/%d failures)",
+			staleFor.Round(time.Second), failures, threshold)
+	}
+	return fmt.Sprintf("heartbeat stale %d/%d failures", failures, threshold)
+}
+
 // evaluateActivity is the restart-neutral staleness advisory (aae-orc-9box).
 // It is a pure function of the session snapshot, its role, and the clock: it
 // returns an ActivityState and NOTHING else — it never touches FailureCount,
@@ -1768,11 +1794,13 @@ func (c *Controller) evaluateHealth() {
 // never restarted" guarantee.
 //
 // It answers "has marvel recently seen this harness do work?" without parsing
-// harness output for meaning. The signal is SessionContext.ContextAt, the
-// single "measured" sentinel both of marvel's activity producers already
-// stamp: the usage accountant on each token-bearing stream sample (headless),
-// and the cooperative heartbeat RPC (interactive statusline/codex feeds and
-// the simulator; see api.Store.UpdateSessionContext / UpdateSessionHeartbeat).
+// harness output for meaning. The signal is api.WorkAt: the time the session's
+// reading last changed (SessionContext.ReadingChangedAt), or ContextAt where the
+// producer never wrote that stamp. ContextAt is the "measured" sentinel both of
+// marvel's activity producers stamp, the usage accountant on each token-bearing
+// stream sample (headless) and the cooperative heartbeat RPC (interactive
+// statusline/codex feeds and the simulator), but a heartbeat repeats it every
+// beat, so a seat that only beats reads stalled once the window passes (marvel#801).
 // No stream scraping is added here.
 //
 // Two false-positive guards are the reason this is careful rather than a bare
@@ -1789,9 +1817,10 @@ func (c *Controller) evaluateHealth() {
 //     session with a declared activity channel (activityObservable) is a
 //     candidate for "stalled from birth", and only past the startup grace.
 //
-// Once ContextAt is non-zero marvel has demonstrably observed this session
-// work, so staleness is assessable regardless of declared channel — this is
-// the expired-credentials / hung-harness case (worked, then went silent).
+// Once ContextAt is non-zero marvel has demonstrably observed this session,
+// so staleness is assessable regardless of declared channel: this is the
+// expired-credentials / hung-harness case (worked, then went silent, even if
+// the statusline keeps beating).
 //
 // One accepted transient: a headless session's stream-sourced ContextAt is
 // not persisted (UpdateSessionContext does not persist), so a session adopted
@@ -2260,7 +2289,7 @@ roles:
 		req, pending := t.ShiftRequests[role.Name]
 		if pending && !hasCondition(conds, req.Cause) {
 			// The policy that asked no longer declares the cause.
-			c.dropShiftRequest(t, role.Name)
+			c.dropShiftRequest(t, role.Name, holdReasonPolicyRemoved)
 			pending = false
 		}
 		if len(conds) == 0 {
@@ -2329,14 +2358,16 @@ func hasCondition(conds []api.ShiftCondition, on string) bool {
 // autoShift emits the auto-triggered event and initiates a role-scoped shift,
 // reporting whether it started. A concurrent operator shift or a store race
 // can refuse it; that is not fatal, and the next tick re-evaluates.
-func (c *Controller) autoShift(t *api.Team, role *api.Role, sess, msg string) bool {
+func (c *Controller) autoShift(t *api.Team, role *api.Role, sess, cause, msg string) bool {
 	events.Emit(c.Events, events.Event{
 		Kind:       events.KindShiftAutoTriggered,
 		Workspace:  t.Workspace,
 		Team:       t.Name,
 		Role:       role.Name,
 		Session:    sess,
-		Generation: t.Generation,
+		Generation: c.seatGeneration(t, sess),
+		Cause:      shiftEventCause(cause),
+		Reason:     "marker",
 		Message:    msg,
 	})
 	if err := c.initiateShiftLocked(t.Key(), role.Name); err != nil {
@@ -2670,6 +2701,11 @@ func (c *Controller) allReady(sessions []api.Session, role *api.Role) bool {
 			return false
 		}
 		if role.HealthCheck.Type == api.HealthCheckHeartbeat && s.LastHeartbeat.IsZero() {
+			return false
+		}
+		// A bus role is ready once the shim has reached the bus, which is
+		// what its first bus beat says.
+		if role.HealthCheck.Type == api.HealthCheckBus && s.LastBusBeat.IsZero() {
 			return false
 		}
 	}

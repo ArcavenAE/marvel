@@ -47,7 +47,7 @@ Strict: an unknown key anywhere in the file is refused, naming the company, the 
 | `version` | both | yes | `<commit date>-<short sha>`, the form the installer names the version directory with; equals the directory name |
 | `kind` | both | yes | `"definitions"` or `"recipes"` |
 | `schema` | both | yes | the layout version of this file; `1` |
-| `requires_marvel` | both | yes | the oldest marvel that reads this library, as a version |
+| `requires_marvel` | both | yes | the oldest marvel that reads this library, written as that marvel's full version string (an alpha's is `0.1.0-alpha.<yyyymmdd>.<hhmmss>.<sha7>`, ordered by the date and time in it, and a prerelease is below its release) |
 | `source` | both | yes | the master it was built from. A `recipes` library: `{ url, commit }`, stamped by the library's own build step. A `definitions` library: `{ url, contents_tree }` and an optional `commit` |
 | `definition_schema` | definitions | yes | the shape of role files and the index below; `1` |
 | `recipe_schema` | recipes | yes | the shape of recipe files; `1` |
@@ -86,7 +86,7 @@ name = "acme-roles"
 version = "2026-11-01-ecc28ac"
 kind = "definitions"
 schema = 1
-requires_marvel = "0.9.0"
+requires_marvel = "0.1.0-alpha.20261008.044910.0d33f29"
 definition_schema = 1
 source = { url = "https://example.invalid/acme-roles.git", contents_tree = "<40 hex digits>", commit = "ecc28ac" }
 
@@ -107,7 +107,7 @@ name = "acme-recipes"
 version = "2026-11-01-b41d0e2"
 kind = "recipes"
 schema = 1
-requires_marvel = "0.9.0"
+requires_marvel = "0.1.0-alpha.20261008.044910.0d33f29"
 recipe_schema = 1
 requires = { definition_schema = 1 }
 source = { url = "https://example.invalid/acme-recipes.git", commit = "b41d0e2" }
@@ -120,7 +120,7 @@ source = { url = "https://example.invalid/acme-recipes.git", commit = "b41d0e2" 
 3. E0: read-only files and a matching tree hash (companies.md).
 4. `kind`: the `company` pin must name a `definitions` library and the `recipes` pin a `recipes` library.
 5. The index: each entry's `identity` agrees with its `id` (see Definition entries).
-6. `requires_marvel`: refused when this marvel is older.
+6. `requires_marvel`: refused when this marvel is older. A marvel with no orderable version, a build that reads `dev`, passes this check unchecked and the result says so (`unchecked: dev`); the schema check in step 7 still applies. A `requires_marvel` that cannot be ordered is refused when `company.toml` is read, with the form refusal for that key.
 7. Each library's own schema: marvel carries the list of `definition_schema` and `recipe_schema` values it reads, and refuses a library whose value is not on its list, and a recipe file whose `schema` is not its library's `recipe_schema`.
 8. The pair: the recipes library's `requires.definition_schema` must equal the definitions library's `definition_schema`.
 9. Read the definition and the recipe. Refuse a `retired` definition, a pair whose `identity_status` is `retired`, a `proposal` in `status` or `identity_status` unless the role sets `allow_proposal`, and a recipe whose `prompt` lists `identity` against an entry that carries one.
@@ -216,11 +216,12 @@ Fixed text, so the tests and the admin guide quote one wording. Angle brackets a
 | case | message |
 |---|---|
 | unknown key | `company <name>@<version>: <file>: unknown key "<key>"` |
-| a pin names a removed or absent version | `team <team>: <key> pin <name>@<version> is not installed in any root; marvel does not fall back to current` |
+| a pin names a removed or absent version | `team <team>: <key> pin <name>@<version> is not installed in any root; marvel does not fall back to current (roots read: <roots>)` |
 | a library's schema is not one marvel reads | `company <name>@<version>: <definition_schema or recipe_schema> = <n> is not read by this marvel (reads <list>)` |
 | the pair disagrees | `recipes <name>@<version> requires definition_schema = <n>, but company <name>@<version> has definition_schema = <m>` |
 | marvel too old | `company <name>@<version> requires marvel <v> or newer; this is <w>` |
 | pattern failed | `team <team> role <role>: parameter <name> does not match its pattern` |
+| a required parameter is not set | `team <team> role <role>: required parameter <name> is not set` |
 | tool not set | `recipe <name>: tool "<tool>" is not set; run marvel config tools set <tool> <path>` |
 | identity listed twice | `recipe <name>: prompt lists identity, but definition <id> already carries identity <identity>` |
 | env named twice | `team <team> role <role>: recipe <name> and runtime.env both name <KEY>` |
@@ -238,6 +239,27 @@ Fixed text, so the tests and the admin guide quote one wording. Angle brackets a
 | a proposal without the flag | `team <team> role <role>: definition <id> is a proposal (<status or identity_status>) and the role does not set allow_proposal` |
 | pre-flight failed | `pre-flight <command> exited <code>: <output>` |
 | pre-flight timed out | `pre-flight <command> exceeded <timeout> (elapsed <duration>); process group killed` |
+| a credential key in a recipe | `recipe <name>: <block>: key <KEY> is a credential and may not be named in a recipe` |
+| a key marvel sets, in a recipe | `recipe <name>: <block>: key <KEY> is set by marvel and may not be named in a recipe` |
+| a parameter named `global` | `recipe <name>: params.global: parameter name "global" is reserved` |
+| `tool:` out of place | `recipe <name>: <key>: tool: is valid only as a whole command or the first element of a command list` |
+| name or version differs from its directory | `company <name>@<version>: company.toml: <which> "<value>" does not equal its directory "<dir>"` |
+| an index field is malformed | `company <name>@<version>: <file>: definition <id>: <field> is not well formed` |
+| a required key is missing | `company <name>@<version>: <file>: required key "<key>" is missing` |
+| an env or unset name is not a plain name | `company <name>@<version>: recipe <recipe>: <section> key <KEY> is not a plain name` |
+| a company key of the wrong form | `company <name>@<version>: company.toml: <key> must be <form>` |
+| a recipe value of the wrong form | `recipe <name>: <key>: must be <form>` |
+| company.toml does not parse | `company <name>@<version>: company.toml does not parse (line <n>)` |
+| a recipe does not parse | `recipe <name>: recipes/<name>.toml does not parse (line <n>)` |
+| a name-only pin names a name in no root | `team <team>: <key> pin <name> is not installed in any root; marvel does not fall back (roots read: <roots>)` |
+| `current` names a version that is not installed | `team <team>: <key> pin <name> follows current <version>, which is not installed in any root; marvel does not fall back` |
+| `current` is missing or not a link | `team <team>: <key> pin <name> has no readable current in <root>` |
+| `current` points outside its company | `company <name> in <root>: current points outside <name>` |
+| a recipe lists a template the library lacks (draft) | `recipe <name>: prompt lists template:<template>, but company <name>@<version> has no template <template>` |
+| a recipe names a var that is not set (draft) | `recipe <name>: <key>: var "<var>" is not set; run marvel config vars set <var> <value>` |
+| a definition file differs from its index entry | `company <name>@<version>: <file>: sha256 does not match the index entry <id>` |
+
+In the `roots read` suffix `<roots>` is each configured root in configuration order, joined with `, `, or `none` when no root is configured. The two rows marked draft (the template and var rows) carry wording that is open for review.
 
 A pin to a version sideshow removed fails the next restart with the second message and names the team key and, where marvel read the pin from a manifest file, that file and line. It never starts the seat on `current` in its place. Rolling back one team means pinning the previous exact version and shifting.
 

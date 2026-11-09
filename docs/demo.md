@@ -256,7 +256,7 @@ role's restart policy. This exercises the health path with no agent and no auth.
 ./bin/marvel work examples/demo-act1-health.toml
 sleep 12
 ./bin/marvel events --workspace health --warnings
-./bin/marvel events --kind health.failed        # first staleness on each role
+./bin/marvel events --kind health.failed        # the tick each role reaches its failure threshold
 ./bin/marvel events --kind session.restarted     # restarter + capped, restart #1
 ./bin/marvel events --kind session.failed         # failstop, restart_policy=never
 
@@ -293,15 +293,10 @@ A beat that verifies only an event cannot catch a state defect, which is how
 the 1d rollback bug (`aae-orc-d0pt`) survived a verified run. Read the table
 after the events, every time.
 
-TODO(finding): two events in the health vocabulary are not observable through
-this beat.
+TODO(finding): one event in the health vocabulary is not observable through
+this beat. (`health.failed` is: it fires on the tick a role reaches
+`failure_threshold`.)
 
-- `health.failed` fires only on the first transition to unhealthy, and the
-  evaluator marks a session unhealthy while its failure count is still below
-  the threshold. With `failure_threshold` greater than 1 the transition is
-  therefore consumed before the threshold is reached and no `health.failed`
-  event is emitted, even though the restart or fail action still fires. This
-  manifest uses `failure_threshold = 1` precisely so `health.failed` is visible.
 - `health.crashloop-backoff` is emitted only if a live session is re-evaluated
   inside its backoff window. On the always-restart path the session is deleted
   the moment it restarts, so no session exists to re-evaluate during the

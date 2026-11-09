@@ -12,6 +12,12 @@ covered on the strength of its neighbours. A version outside the range reads
 `unknown`, and the watchdog reports it uncovered. A part of a version with a
 leading zero is not a version.
 
+A second set ships: `claude/2.1.310/dev-channels-consent`, a `parked` pattern
+with reason `other` for the development-channels consent prompt a seat shows at
+startup, captured on 2026-10-24 from three seats on 2.1.310. It covers 2.1.310
+only. Its reason is `other` because none of trust, permission or update names
+that prompt.
+
 A pattern may carry `state: parked` and a `reason` (trust, permission, update or
 other) for a harness waiting at a prompt that needs a person; with no `state` it
 is logged-out. A pattern whose sampled version is not known is kept under

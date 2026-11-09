@@ -164,8 +164,8 @@ func TestShippedPatternsLoadAndMatchTheirSamples(t *testing.T) {
 		if err != nil {
 			t.Fatalf("sample for %s %s: %v", p.Harness, p.HarnessVersion, err)
 		}
-		if r := Classify(sets, p.Harness, p.HarnessVersion, rows(raw)); r.State != StateLoggedOut {
-			t.Fatalf("shipped sample %s %s: %+v", p.Harness, p.HarnessVersion, r)
+		if r := Classify(sets, p.Harness, p.HarnessVersion, rows(raw)); r.State != p.state() || r.PatternID != p.ID {
+			t.Fatalf("shipped sample %s %s: %+v, want %s from %s", p.Harness, p.HarnessVersion, r, p.state(), p.ID)
 		}
 	}
 }
@@ -191,6 +191,12 @@ func TestLoadRefusesMoreThanOneVariableSpanPerRow(t *testing.T) {
 // showed the theme step, one Enter later the login-method picker, which is the
 // sample; the first capture showed no logged-in prompt, so the isolation held.
 // No live seat's pane, config or credentials were read.
+//
+// claude/2.1.310/dev-channels-consent, captured 2026-10-24 by `tmux
+// capture-pane -p` on three seats started by generation shifts, claude 2.1.310,
+// each held at the development-channels prompt; the cwd was masked before the
+// capture was stored. No key was sent to any of them. The record is a
+// draft document in the orchestrator repo (sha256 prefix a1035e61c992).
 func TestOnlyCapturedPatternSetsShip(t *testing.T) {
 	sets, err := LoadEmbedded()
 	if err != nil {
@@ -200,7 +206,7 @@ func TestOnlyCapturedPatternSetsShip(t *testing.T) {
 	for _, p := range sets {
 		names = append(names, p.Harness+"/"+p.HarnessVersion+"/"+p.ID)
 	}
-	if got, want := strings.Join(names, ","), "claude/2.1.290/logged-out"; got != want {
+	if got, want := strings.Join(names, ","), "claude/2.1.290/logged-out,claude/2.1.310/dev-channels-consent"; got != want {
 		t.Fatalf("shipped pattern sets = %q, want %q. A set is a claim that a real harness drew that screen: add its P-WD1 capture record (harness version, pane_current_command, how it was isolated) to this test's comment and name it here", got, want)
 	}
 }
@@ -239,7 +245,7 @@ func TestShippedPatternRefusesAQuotedCopyOfItsSample(t *testing.T) {
 			}
 			quoted = append(quoted, l)
 		}
-		if r := Classify(sets, p.Harness, p.HarnessVersion, rows(strings.Join(quoted, "\n"))); r.State == StateLoggedOut {
+		if r := Classify(sets, p.Harness, p.HarnessVersion, rows(strings.Join(quoted, "\n"))); r.State == p.state() {
 			t.Fatalf("a quoted copy of %s %s matched: %+v", p.Harness, p.HarnessVersion, r)
 		}
 	}

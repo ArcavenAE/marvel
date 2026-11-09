@@ -706,3 +706,62 @@ func TestRenderBudgetTableStaleReadingShowsValueAndAge(t *testing.T) {
 		t.Errorf("no-reading row = %q, want the word none", l)
 	}
 }
+
+// The OBSERVED cell prints one decimal of the raw value when the daemon sends it,
+// and the rounded integer from a daemon that predates the raw value.
+func TestRenderBudgetTableObservedOneDecimal(t *testing.T) {
+	pct := func(v float64) *float64 { return &v }
+	acct := func(home, reading string, mod func(*admission.Row)) admission.Row {
+		r := admission.Row{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-",
+			Account: "claude default - /h/" + home, AccountWindow: "seven_day", Reading: reading,
+		}
+		mod(&r)
+		return r
+	}
+	rows := []admission.Row{
+		acct("a", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 80, pct(79.6) }),
+		acct("d", "fresh", func(r *admission.Row) { r.Observed = 87 }),
+		acct("f", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 80, pct(79.96) }),
+		acct("i", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 80, pct(80.04) }),
+		acct("g", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 87, pct(87.3) }),
+		acct("h", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 100, pct(100) }),
+		acct("e", "stale", func(r *admission.Row) {
+			r.State, r.Observed, r.ObservedPercent, r.ReadingAgeSeconds = "stale", 62, pct(62.4), 34*60
+		}),
+	}
+	table := renderBudgetTable(rows)
+	line := func(home string) string {
+		for _, l := range strings.Split(table, "\n") {
+			if strings.Contains(l, "/h/"+home) {
+				return l
+			}
+		}
+		t.Fatalf("no row for %s in:\n%s", home, table)
+		return ""
+	}
+	if l := line("a"); !strings.Contains(l, "79.6%") || strings.Contains(l, "80%") {
+		t.Errorf("fresh with a value = %q, want 79.6%% and not 80%%", l)
+	}
+	if l := line("d"); !strings.Contains(l, "87%") || strings.Contains(l, "87.") {
+		t.Errorf("a row from an older daemon = %q, want 87%% as before", l)
+	}
+	// The value is floored to the decimal, so a reading under the level never
+	// prints at it. 87.3 and 100 are the controls: a value already on one
+	// decimal, and a whole one, print as they are.
+	if l := line("f"); !strings.Contains(l, "79.9%") || strings.Contains(l, "80.0%") {
+		t.Errorf("79.96 = %q, want 79.9%% and not 80.0%%", l)
+	}
+	if l := line("i"); !strings.Contains(l, "80.0%") {
+		t.Errorf("80.04 = %q, want 80.0%%: over the level it prints at the level", l)
+	}
+	if l := line("g"); !strings.Contains(l, "87.3%") {
+		t.Errorf("87.3 = %q, want 87.3%%", l)
+	}
+	if l := line("h"); !strings.Contains(l, "100.0%") {
+		t.Errorf("100 = %q, want 100.0%%", l)
+	}
+	if l := line("e"); !strings.Contains(l, "62.4% (34m ago)") {
+		t.Errorf("stale with a value = %q, want \"62.4%% (34m ago)\"", l)
+	}
+}

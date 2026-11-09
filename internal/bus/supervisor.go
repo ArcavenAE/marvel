@@ -70,6 +70,9 @@ type Supervisor struct {
 	backoff func(n int) time.Duration
 	// dialTimeout bounds the listener wait at start.
 	dialTimeout time.Duration
+	// adoptProvisionWait is the pause between provisioning attempts on an
+	// adopted broker; tests shorten it.
+	adoptProvisionWait time.Duration
 	// leafPoll is the /leafz cadence (R-56, 30s).
 	leafPoll time.Duration
 	// leafRepeatEvery is how long an enrolled leaf stays down before the
@@ -276,21 +279,22 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 		return nil, fmt.Errorf("bus: %w", err)
 	}
 	return &Supervisor{
-		mgr:             mgr,
-		binary:          bin,
-		envAllow:        class.ChildEnvAllow,
-		version:         binaryVersion(bin),
-		pidFile:         filepath.Join(runDir, "nats-server.pid"),
-		logPath:         filepath.Join(logDir, "nats-server.log"),
-		ring:            ring,
-		backoff:         backoff.Restart.Wait,
-		dialTimeout:     defaultDialTimeout,
-		leafPoll:        defaultLeafPoll,
-		leafRepeatEvery: defaultLeafDownRepeat,
-		now:             time.Now,
-		prober:          childproof.New(),
-		grace:           stopGrace,
-		pidState:        pidStateNone,
+		mgr:                mgr,
+		binary:             bin,
+		envAllow:           class.ChildEnvAllow,
+		version:            binaryVersion(bin),
+		pidFile:            filepath.Join(runDir, "nats-server.pid"),
+		logPath:            filepath.Join(logDir, "nats-server.log"),
+		ring:               ring,
+		backoff:            backoff.Restart.Wait,
+		dialTimeout:        defaultDialTimeout,
+		adoptProvisionWait: defaultAdoptProvisionWait,
+		leafPoll:           defaultLeafPoll,
+		leafRepeatEvery:    defaultLeafDownRepeat,
+		now:                time.Now,
+		prober:             childproof.New(),
+		grace:              stopGrace,
+		pidState:           pidStateNone,
 	}, nil
 }
 

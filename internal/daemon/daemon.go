@@ -256,6 +256,13 @@ type Daemon struct {
 	// daemon.
 	metricsWarn sync.Once
 
+	// selfExec resolves the path to the running marvel binary. Defaults to
+	// selfExecPath; a test names another path, or a failure, through it.
+	selfExec func() (string, error)
+	// afterRootLock is Options.AfterRootLock. fallback is what it returned.
+	afterRootLock func() (fallback string, err error)
+	fallback      string
+
 	// reexec replaces the process image. Defaults to syscall.Exec; tests
 	// override it to assert the pre-exec contract without actually
 	// handing the process over.
@@ -283,6 +290,13 @@ type Options struct {
 	// means no lock, as PidFile does, which keeps daemons built directly in
 	// tests out of it. cmd/marvel always sets it, from the layout.
 	RootLock string
+	// AfterRootLock, when non-nil, is called once, right after Start has
+	// taken RootLock and before any other guard. It is the seam for keeping a
+	// copy of the running build to fall back to (the zero-downtime upgrade
+	// chain): the string it returns is the fallback this daemon hands to its
+	// own successor. A daemon that did not get the lock never calls it, and a
+	// hook that fails is logged and does not stop the start. Nil means none.
+	AfterRootLock func() (fallback string, err error)
 	// PidFile, when non-empty, is written with the daemon's PID on
 	// Start and removed on Stop. If the file already exists and
 	// points at a live process, Start refuses with an error.
@@ -495,6 +509,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 
 		leafLossCause: leafLossCause,
 		rootLockPath:  opts.RootLock,
+		afterRootLock: opts.AfterRootLock,
 	}
 	teamCtrl.Suspended = d.clusterSuspended
 	driver.SetSuspendGate(d.clusterSuspended)
@@ -610,6 +625,13 @@ func (d *Daemon) Start(socketPath string) (err error) {
 				d.rootLock = nil
 			}
 		}()
+		if d.afterRootLock != nil {
+			fb, herr := d.afterRootLock()
+			if herr != nil {
+				log.Printf("start: the after-lock hook failed: %v", herr)
+			}
+			d.fallback = fb
+		}
 	}
 
 	// Refuse to start if a pid file already points at a live process.
@@ -905,7 +927,7 @@ func (d *Daemon) Checkpoint() error { return d.store.Checkpoint() }
 // happens after the detach: the daemon has stopped serving but its
 // agents survive, and a fresh daemon start adopts them.
 func (d *Daemon) Reexec() error {
-	exe, err := selfExecPath()
+	exe, err := d.resolveSelf()
 	if err != nil {
 		return err
 	}
@@ -934,6 +956,16 @@ func (d *Daemon) ReexecTo(exe string) error {
 	d.keepBus = true
 	d.Detach()
 	return d.execWithHandoff(exe, h)
+}
+
+// resolveSelf is the daemon's path to its own binary: the selfExec seam when a
+// test set one, otherwise selfExecPath. A Daemon built as a bare literal in a
+// test has no seam set, and gets the real resolution.
+func (d *Daemon) resolveSelf() (string, error) {
+	if d.selfExec != nil {
+		return d.selfExec()
+	}
+	return selfExecPath()
 }
 
 // selfExecPath resolves the path to the running marvel binary for
@@ -1229,7 +1261,7 @@ func (d *Daemon) scopeRefusal(req daemonrpc.Request, c caller) (daemonrpc.Respon
 // never reaches a handler, so it cannot count toward a session's health.
 var ErrDaemonStarting = errors.New("daemon is starting: adopting tmux state, retry")
 
-// ErrReportDeferred is the refusal heartbeat and account.limits get while the
+// ErrReportDeferred is the refusal heartbeat, bus.beat and account.limits get while the
 // daemon is adopting. It wraps ErrDaemonStarting and is a different text, so a
 // producer can tell "try again after the start" from any verdict on its token
 // or its session. It is sent before the handler runs, so it never reaches a
@@ -1252,7 +1284,7 @@ var errStoppedWhileStarting = errors.New("daemon stopped while starting")
 // on adoption and a remote operator has no other way to end the daemon; stop
 // with teardown stays refused, because it would destroy panes adoption has not
 // finished accounting for. Every other method is refused with
-// ErrDaemonStarting before its handler runs. heartbeat and account.limits get
+// ErrDaemonStarting before its handler runs. heartbeat, bus.beat and account.limits get
 // ErrReportDeferred instead, which wraps ErrDaemonStarting: a heartbeat does
 // more than stamp liveness (it checks the session token and records orphan
 // sightings against a store adoption has not finished reconciling), so the
@@ -1295,7 +1327,7 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return daemonrpc.Response{Error: ErrClusterSuspended.Error()}
 	}
 	if d.adoptingSince.Load() != 0 && !startingAllows(req) {
-		if req.Method == "heartbeat" || req.Method == "account.limits" {
+		if req.Method == "heartbeat" || req.Method == "bus.beat" || req.Method == "account.limits" {
 			return daemonrpc.Response{Error: ErrReportDeferred.Error(), Starting: true}
 		}
 		return daemonrpc.Response{Error: ErrDaemonStarting.Error(), Starting: true}
@@ -1317,6 +1349,8 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return d.handleReap(req.Params)
 	case "heartbeat":
 		return d.handleHeartbeat(req.Params)
+	case "bus.beat":
+		return d.handleBusBeat(req.Params)
 	case "handoff.put":
 		return d.handleHandoffPut(req.Params)
 	case "broker.token":
@@ -1699,6 +1733,7 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	firstPromptAdvisories := m.FirstPromptAdvisories()
 	maxAgeAdvisories := m.MaxAgeAdvisories()
 	gooseAdvisories := m.GooseAdvisories()
+	openCodeAdvisories := m.OpenCodeAdvisories()
 
 	if err := m.ApplyFrom(d.store, p.ManifestSource); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("apply manifest: %v", err)}
@@ -1726,6 +1761,9 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		log.Printf("apply: %s", a)
 	}
 	for _, a := range gooseAdvisories {
+		log.Printf("apply: %s", a)
+	}
+	for _, a := range openCodeAdvisories {
 		log.Printf("apply: %s", a)
 	}
 	for _, a := range acks {
@@ -2248,29 +2286,7 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) daemonrpc.Response {
 
 	auth, err := d.store.UpdateSessionHeartbeat(p)
 	if err != nil {
-		if errors.Is(err, api.ErrHeartbeatUnauthorized) {
-			// Two different faults reach this branch and they have
-			// opposite remedies, so they get different messages and
-			// throttle independently. Presenting NO token is a producer
-			// that was not updated to send one (the codex reader shipped
-			// exactly that, see #176). Presenting a WRONG token is a live
-			// process holding a credential minted for an earlier
-			// incarnation of this session key: an orphan from a previous
-			// daemon, which nothing reaps (aae-orc-k58k).
-			cause, msg := "no-token", "refused: this heartbeat presented no token while the session "+
-				"carries one, so its producer is not sending MARVEL_HEARTBEAT_TOKEN"
-			if p.SessionToken != "" {
-				cause, msg = "stale-token", "refused: token does not match the session claimed; an "+
-					"orphaned agent from an earlier daemon is still heartbeating for this key. "+
-					"See 'marvel orphans'. Clear it with 'marvel reap --confirm', or start with "+
-					"'marvel daemon --reclaim'"
-				// A stale-token refusal is a positive orphan sighting: record
-				// it so the condition is queryable, not only a throttled log
-				// line that ages out of the ring (aae-orc-m4of).
-				d.orphans.observe(p.SessionKey, time.Now())
-			}
-			d.emitHeartbeatAuth2(events.KindHeartbeatRefused, cause, p.SessionKey, msg)
-		}
+		d.noteHeartbeatRefusal(err, p.SessionKey, p.SessionToken)
 		return daemonrpc.Response{Error: err.Error()}
 	}
 	if auth == api.HeartbeatAuthUnbound {
@@ -2279,6 +2295,57 @@ func (d *Daemon) handleHeartbeat(params json.RawMessage) daemonrpc.Response {
 	}
 
 	return respond(map[string]string{"status": "ok"})
+}
+
+// handleBusBeat serves bus.beat: the director shim's report that it reached the
+// bus. It authenticates exactly as heartbeat does and records the same refusal
+// events and orphan sightings, so an orphaned shim shows as a stale-token
+// sighting. What it writes is LastBusBeat and nothing else, so it cannot move
+// CTX% or LastHeartbeat. A role reads it only when its healthcheck type is bus.
+func (d *Daemon) handleBusBeat(params json.RawMessage) daemonrpc.Response {
+	var p api.BusBeatRequest
+	if err := json.Unmarshal(params, &p); err != nil {
+		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
+	}
+	auth, err := d.store.UpdateSessionBusBeat(p)
+	if err != nil {
+		d.noteHeartbeatRefusal(err, p.SessionKey, p.SessionToken)
+		return daemonrpc.Response{Error: err.Error()}
+	}
+	if auth == api.HeartbeatAuthUnbound {
+		d.emitHeartbeatAuth(events.KindHeartbeatUnbound, p.SessionKey,
+			"admitted unbound: session record carries no token, restart it to bind its heartbeat")
+	}
+	return respond(map[string]string{"status": "ok"})
+}
+
+// noteHeartbeatRefusal records a token refusal from heartbeat or bus.beat on
+// the ring and in the log. Any other error is not a refusal and records nothing.
+func (d *Daemon) noteHeartbeatRefusal(err error, sessionKey, sessionToken string) {
+	if !errors.Is(err, api.ErrHeartbeatUnauthorized) {
+		return
+	}
+	// Two different faults reach this branch and they have
+	// opposite remedies, so they get different messages and
+	// throttle independently. Presenting NO token is a producer
+	// that was not updated to send one (the codex reader shipped
+	// exactly that, see #176). Presenting a WRONG token is a live
+	// process holding a credential minted for an earlier
+	// incarnation of this session key: an orphan from a previous
+	// daemon, which nothing reaps (aae-orc-k58k).
+	cause, msg := "no-token", "refused: this heartbeat presented no token while the session "+
+		"carries one, so its producer is not sending MARVEL_HEARTBEAT_TOKEN"
+	if sessionToken != "" {
+		cause, msg = "stale-token", "refused: token does not match the session claimed; an "+
+			"orphaned agent from an earlier daemon is still heartbeating for this key. "+
+			"See 'marvel orphans'. Clear it with 'marvel reap --confirm', or start with "+
+			"'marvel daemon --reclaim'"
+		// A stale-token refusal is a positive orphan sighting: record
+		// it so the condition is queryable, not only a throttled log
+		// line that ages out of the ring (aae-orc-m4of).
+		d.orphans.observe(sessionKey, time.Now())
+	}
+	d.emitHeartbeatAuth2(events.KindHeartbeatRefused, cause, sessionKey, msg)
 }
 
 // emitHeartbeatAuth records an authentication outcome on the ring and in
@@ -3235,7 +3302,7 @@ func (d *Daemon) handleReexec(params json.RawMessage, c caller) daemonrpc.Respon
 	// then find nothing to exec.
 	var exe string
 	if p.ExecPath == "" {
-		self, err := selfExecPath()
+		self, err := d.resolveSelf()
 		if err != nil {
 			return daemonrpc.Response{Error: err.Error()}
 		}
@@ -3255,7 +3322,7 @@ func (d *Daemon) handleReexec(params json.RawMessage, c caller) daemonrpc.Respon
 		if who == "" {
 			who = "local socket"
 		}
-		oldPath, _ := selfExecPath()
+		oldPath, _ := d.resolveSelf()
 		msg := fmt.Sprintf("reexec into %s (%s, %s, commit %s) from %s (%s, %s), requested by %s",
 			target.Path, target.Version, target.Channel, revisionLabel(target),
 			oldPath, d.build.Version, d.build.Channel, who)
@@ -3279,7 +3346,7 @@ func (d *Daemon) handleReexec(params json.RawMessage, c caller) daemonrpc.Respon
 		time.Sleep(100 * time.Millisecond)
 		if rerr := d.ReexecTo(exe); rerr != nil {
 			log.Printf("reexec failed after detach: %v; start a fresh daemon to adopt the running panes", rerr)
-			os.Exit(1)
+			d.exitProcess(1)
 		}
 	}()
 	return respond(map[string]string{"status": "reexec", "binary": exe, "handoff": h.Outcome()})

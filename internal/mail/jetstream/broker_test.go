@@ -32,6 +32,11 @@ type scratchBroker struct {
 	st  njs.Stream
 }
 
+// ciRun is whether CI was set when the binary started. The test guard removes
+// every variable off its list before the tests run, so a test reads it from here,
+// from before that, and not from the environment.
+var ciRun = os.Getenv("CI") != ""
+
 func newScratchBroker(t *testing.T) *scratchBroker { return newScratchBrokerWith(t, "", nil) }
 
 // newScratchBrokerWith is newScratchBroker with an extra fragment of server
@@ -43,7 +48,7 @@ func newScratchBrokerWith(t *testing.T, extraConf string, opts []nats.Option) *s
 	if err != nil {
 		// CI installs it (.github/workflows/ci.yml), so a missing binary there is
 		// a failure, never a quiet skip.
-		if os.Getenv("CI") != "" {
+		if ciRun {
 			t.Fatal("nats-server not on PATH under CI: the broker tests would not run")
 		}
 		t.Skip("nats-server not on PATH")

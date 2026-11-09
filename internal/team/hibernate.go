@@ -112,7 +112,7 @@ func (c *Controller) Hibernate(teamKey string, opt HibernateOptions) (HibernateR
 		rep.Seats += len(c.runningSeats(&t, role))
 		if req, ok := t.ShiftRequests[role.Name]; ok {
 			log.Printf("hibernate: %s superseded the open %s handoff request on role %s", teamKey, req.Cause, role.Name)
-			c.dropShiftRequest(&t, role.Name)
+			c.dropShiftRequest(&t, role.Name, "")
 		}
 	}
 	return rep, nil
@@ -262,7 +262,7 @@ func (c *Controller) askHibernate(t *api.Team, role *api.Role, sess api.Session,
 	}
 	events.Emit(c.Events, events.Event{
 		Kind: events.KindShiftHandoffRequested, Severity: events.SeverityInfo,
-		Workspace: t.Workspace, Team: t.Name, Role: role.Name, Session: sess.Key(), Generation: t.Generation,
+		Workspace: t.Workspace, Team: t.Name, Role: role.Name, Session: sess.Key(), Generation: c.seatGeneration(t, sess.Key()),
 		Message: fmt.Sprintf("cause=%s: hibernate by %s; notice %s; handoff window %s", api.HandoffCauseHibernate, t.Hibernate.Actor, delivery, rr.Shift.HandoffWindowOrDefault()),
 	})
 }

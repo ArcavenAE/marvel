@@ -18,7 +18,7 @@ This table is derived from the registry by a test, so it cannot drift. A new ada
 |---|---|---|---|---|---|---|---|
 | StreamCapable | yes | yes | yes | no | no | no | yes |
 | SessionIDAssigner | yes | no | no | no | no | no | no |
-| SessionHomeAssigner | no | yes | no | no | no | no | yes |
+| SessionHomeAssigner | no | yes | yes | no | no | no | yes |
 | StatuslineFeeder | yes | no | no | yes | no | no | no |
 | ComposerCapable | yes | yes | yes | no | no | no | no |
 | ForegroundRule | yes | no | no | no | no | no | no |

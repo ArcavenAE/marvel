@@ -99,15 +99,15 @@ func (c *Controller) firstSessionOverAge(t *api.Team, role *api.Role, cond api.S
 // lastWorked is when the seat last did work, for the pause test. Where the seat
 // forwards cost and API-time totals it is the last move of either, because the
 // statusline beats on an idle seat and ContextAt moves with every beat
-// (marvel#936). A seat with no stamp keeps the context feed's time, and a seat
-// with neither counts from spawn.
+// (marvel#936). A seat with no totals stamp keeps its WorkAt, the last reading
+// change, and a seat with neither counts from spawn.
 func lastWorked(s api.Session) time.Time {
 	at := s.CreatedAt
 	switch {
 	case s.TotalsChangedAt.After(at):
 		at = s.TotalsChangedAt
-	case s.TotalsChangedAt.IsZero() && s.ContextAt.After(at):
-		at = s.ContextAt
+	case s.TotalsChangedAt.IsZero() && api.WorkAt(&s).After(at):
+		at = api.WorkAt(&s)
 	}
 	return at
 }
@@ -158,7 +158,8 @@ func (c *Controller) requestHandoff(t *api.Team, role *api.Role, cond api.ShiftC
 		Team:       t.Name,
 		Role:       role.Name,
 		Session:    sess.Key(),
-		Generation: t.Generation,
+		Generation: sess.Generation,
+		Cause:      cond.On,
 		Message: fmt.Sprintf("cause=%s: %s; notice %s; handoff window %s",
 			cond.On, ask.detail, delivery, role.Shift.HandoffWindowOrDefault()) + dirNote,
 	})
@@ -222,7 +223,7 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 		// same name (a session created at or after the request cannot be the
 		// one asked, which was past its max age): the new session starts its
 		// age over, so the request does not carry to it.
-		c.dropShiftRequest(t, role.Name)
+		c.dropShiftRequest(t, role.Name, holdReasonSeatGone)
 		return false
 	}
 	c.noteStuckRequest(t, role, req, sess, now)
@@ -249,7 +250,7 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 			msg := fmt.Sprintf("cause=%s: session %s wrote its handoff (%s ends in the marker), requested %s",
 				req.Cause, sess.Key(), path, req.RequestedAt.Format(time.RFC3339))
 			c.handoffProbes.forget(sess.Key())
-			return c.autoShift(t, role, sess.Key(), msg)
+			return c.autoShift(t, role, sess.Key(), req.Cause, msg)
 		}
 	}
 	window := role.Shift.HandoffWindowOrDefault()
@@ -265,6 +266,7 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 	}
 
 	req.Escalated = true
+	req.EscalatedAt = now
 	if err := c.store.UpdateTeam(t.Key(), func(live *api.Team) error {
 		if live.ShiftRequests == nil {
 			live.ShiftRequests = make(map[string]api.ShiftRequest)
@@ -345,7 +347,7 @@ func (c *Controller) noteStuckRequest(t *api.Team, role *api.Role, req api.Shift
 		Team:       t.Name,
 		Role:       role.Name,
 		Session:    sess.Key(),
-		Generation: t.Generation,
+		Generation: sess.Generation,
 		Message: fmt.Sprintf("cause=%s: the handoff request for %s, made %s, is %s old, past %s of %s, and %s; nothing has told the supervisor, so the seat may never have been asked (marvel#608, marvel#955)%s",
 			req.Cause, sess.Key(), req.RequestedAt.Format(time.RFC3339), age.Truncate(time.Second), boundName, bound, state, directorNote(req)),
 	})
@@ -406,7 +408,9 @@ func (c *Controller) emitHandoffMissing(t *api.Team, role *api.Role, sess api.Se
 		Team:       t.Name,
 		Role:       role.Name,
 		Session:    sess.Key(),
-		Generation: t.Generation,
+		Generation: sess.Generation,
+		Cause:      shiftEventCause(req.Cause),
+		Reason:     "window-expired",
 		Message: fmt.Sprintf("cause=%s: session %s, age %s%s, asked %s, window %s expired: %s; %s%s",
 			req.Cause, sess.Key(), sess.AgeAt(now).Round(time.Second), pausedNote(sess), req.RequestedAt.Format(time.RFC3339), role.Shift.HandoffWindowOrDefault(), handoffMissingReason(role, sess, req, present), decision, again) + c.publishedClause(sess.Key()),
 	})
@@ -440,8 +444,11 @@ func (c *Controller) repeatHandoffMissing(t *api.Team, role *api.Role, sess api.
 	c.emitHandoffMissing(t, role, sess, req, now, true, present)
 }
 
-func (c *Controller) dropShiftRequest(t *api.Team, role string) {
+func (c *Controller) dropShiftRequest(t *api.Team, role, reason string) {
 	if req, ok := t.ShiftRequests[role]; ok {
+		if reason != "" {
+			c.emitHoldReleased(t, role, req, reason)
+		}
 		c.handoffProbes.forget(req.Session)
 		delete(c.missingEmitted, req.Session)
 		delete(c.stuckEmitted, req.Session)
@@ -578,3 +585,47 @@ func (p *handoffProbes) forget(key string) {
 
 // wait blocks until no read is in flight. Tests use it.
 func (p *handoffProbes) wait() { p.wg.Wait() }
+
+// Reasons a request stops holding its role's slot without a shift
+// (docs/design/per-seat-replace.md D9).
+const (
+	holdReasonSeatGone      = "seat-gone"
+	holdReasonPolicyRemoved = "policy-removed"
+)
+
+// shiftEventCause is the Cause an event names for a request's cause. Only the
+// shift triggers are causes; a hibernate request's cause is not one, so its
+// events carry none.
+func shiftEventCause(cause string) string {
+	switch cause {
+	case api.ShiftTriggerMaxAge, api.ShiftTriggerContextPressure:
+		return cause
+	}
+	return ""
+}
+
+// seatGeneration is the generation the seat itself runs at, which a shift of
+// another role leaves behind the team's counter. The team's counter stands in
+// only where the seat's row is missing.
+func (c *Controller) seatGeneration(t *api.Team, key string) int64 {
+	if sess, err := c.store.GetSession(key); err == nil {
+		return sess.Generation
+	}
+	return t.Generation
+}
+
+// emitHoldReleased says a request stopped holding its role's slot.
+func (c *Controller) emitHoldReleased(t *api.Team, role string, req api.ShiftRequest, reason string) {
+	events.Emit(c.Events, events.Event{
+		Kind:       events.KindShiftHoldReleased,
+		Severity:   events.SeverityInfo,
+		Workspace:  t.Workspace,
+		Team:       t.Name,
+		Role:       role,
+		Session:    req.Session,
+		Generation: c.seatGeneration(t, req.Session),
+		Cause:      shiftEventCause(req.Cause),
+		Reason:     reason,
+		Message:    fmt.Sprintf("cause=%s: the handoff request for %s, made %s, no longer holds the role's slot (%s)", req.Cause, req.Session, req.RequestedAt.Format(time.RFC3339), reason),
+	})
+}

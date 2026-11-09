@@ -93,8 +93,8 @@ client that crossed over, and no harm came of it (#504).
 (PVC), Schedule (CronJob), Gateway (Ingress), Readycheck (readiness
 Probe). No type, no code, no CLI. They survive in
 `elem-k8s-resource-model` as design prose only. `HealthCheckType` has
-exactly two values, `heartbeat` and `process-alive`, so there is no
-readiness check to configure.
+three values, `heartbeat`, `process-alive` and `bus`, and none of them is
+a readiness check, so there is no readiness check to configure.
 
 The k8s mapping below is a **mechanics footnote**, not the frame:
 declarative desired state, the reconciliation loop, and typed resources
@@ -371,7 +371,8 @@ answers "has marvel recently seen this harness do work?" — surfaced as a
 `(stalled)` suffix on the HEALTH cell. It is deliberately NOT a health state:
 it never triggers a restart or any destructive path.
 
-- Signal: `SessionContext.ContextAt`, the timestamp both of marvel's activity
+- Signal: the work stamp, `api.WorkAt` (`SessionContext.ReadingChangedAt`,
+  else `ContextAt`), which both of marvel's activity
   producers already stamp — the usage accountant on each token-bearing stream
   sample (headless) and the cooperative heartbeat RPC (interactive
   `statusline` context feed and the simulator). No harness output is scraped
@@ -577,7 +578,7 @@ marvel daemon logs [-n N]                            # daemon log ring (works ov
 marvel daemon reexec                                 # re-exec the binary at its own path (an in-place upgrade, not a new mise version), agents keep running
 marvel events                                        # structured event ring (control-plane + agent.*)
 marvel capture <session-key>                         # capture a session's pane content
-marvel attach <desk>                                 # open a session's pane by its DESK number; --print shows the command
+marvel attach <desk|key|name>                      # open a session's pane by DESK number, workspace/name key or unique name; --print shows the command
 marvel exposure add|end <workspace/team> <role> <fn>    # record that a slot read a function; a role with writes: [fn] is not started
 marvel exposure void <workspace/team> <role> <fn> --reason W   # local socket only: stop counting a wrong record, delete nothing
 marvel inject <session-key> [text] [--key <key>]     # send keystrokes to a pane (--key presses a key, text is literal)

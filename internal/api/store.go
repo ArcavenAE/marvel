@@ -1007,7 +1007,12 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	// would flip between its total and "-" on every beat (marvel#779). A
 	// heartbeat-only seat stays nil.
 	spendOut, spendPrompt, outRate := sess.SpendOut, sess.SpendPromptTokens, sess.OutRate
+	// ReadingChangedAt is carried across the replace, and moves only when the
+	// beat's reading differs from the one it replaces (marvel#801).
+	prevTokens, prevPercent, prevChanged := sess.ContextTokens, sess.ContextPercent, sess.ReadingChangedAt
+	prevTotals := sess.TotalsChangedAt
 	sess.SessionContext = reading
+	sess.ReadingChangedAt = prevChanged
 	sess.SpendOut, sess.SpendPromptTokens, sess.OutRate = spendOut, spendPrompt, outRate
 	// A producer that reads the harness's own output total (the codex hook)
 	// supplies it here, and the TOUT cell reads the one field. The accountant
@@ -1033,6 +1038,40 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	// shared with the usage accountant's path below. A cooperative
 	// heartbeat is a measurement too, so it stamps it.
 	sess.ContextAt = sess.LastHeartbeat
+	// ContextAt moves on every beat, so it cannot say whether the seat worked.
+	// The work stamp moves when the occupancy or the percentage differs from the
+	// reading this beat replaced, when a cost or API-time total moved, or when
+	// no stamp exists yet. A percent-only change counts. An unchanged idle beat
+	// leaves it.
+	if sess.ReadingChangedAt.IsZero() ||
+		reading.ContextTokens != prevTokens || reading.ContextPercent != prevPercent ||
+		!sess.TotalsChangedAt.Equal(prevTotals) {
+		sess.ReadingChangedAt = sess.LastHeartbeat
+	}
+	if err := s.persistPut(bucketSessions, sess.Key(), sess); err != nil {
+		return "", err
+	}
+	return auth, nil
+}
+
+// UpdateSessionBusBeat authenticates a bus beat and, if it holds, stamps
+// LastBusBeat and nothing else. It checks the token with the heartbeat's own
+// rule, so a refusal reads the same on both RPCs. It never touches the CTX
+// reading, ContextAt or LastHeartbeat: those belong to the statusline feed,
+// and a bus beat that moved them would let one producer vouch for the other
+// (finding-166).
+func (s *Store) UpdateSessionBusBeat(r BusBeatRequest) (HeartbeatAuth, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[r.SessionKey]
+	if !ok {
+		return "", fmt.Errorf("session %s: %w", r.SessionKey, ErrNotFound)
+	}
+	auth, err := authenticateHeartbeat(sess, r.SessionToken)
+	if err != nil {
+		return "", fmt.Errorf("session %s: %w", r.SessionKey, err)
+	}
+	sess.LastBusBeat = time.Now().UTC()
 	if err := s.persistPut(bucketSessions, sess.Key(), sess); err != nil {
 		return "", err
 	}
@@ -1106,6 +1145,7 @@ func (s *Store) UpdateSessionContext(key string, c SessionContext) {
 		return
 	}
 	c.ContextAt = time.Now().UTC()
+	c.ReadingChangedAt = c.ContextAt
 	sess.SessionContext = c
 }
 

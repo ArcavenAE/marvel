@@ -1,0 +1,11 @@
+{
+  "provenance": "Rule order of `opencode debug agent build` with the config {\"*\":\"deny\",\"external_directory\":{\"<data>/opencode/tool-output/*\":\"deny\"}}, measured on opencode 1.18.34: an external_directory deny on exactly that pattern replaces the allow opencode otherwise appends again, and nothing follows it. Rows for other permissions are omitted. <data> stands for the seat's XDG_DATA_HOME.",
+  "rules": [
+    {"permission": "*", "pattern": "*", "action": "allow"},
+    {"permission": "external_directory", "pattern": "*", "action": "ask"},
+    {"permission": "external_directory", "pattern": "<data>/opencode/tool-output/*", "action": "allow"},
+    {"permission": "external_directory", "pattern": "/tmp/opencode/*", "action": "allow"},
+    {"permission": "*", "pattern": "*", "action": "deny"},
+    {"permission": "external_directory", "pattern": "<data>/opencode/tool-output/*", "action": "deny"}
+  ]
+}

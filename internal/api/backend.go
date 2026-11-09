@@ -1,6 +1,9 @@
 package api
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // BackendRedirection is the spawn-time verdict on whether a session reaches
 // the model vendor's direct API or has been pointed at some other backend.
@@ -132,6 +135,32 @@ func BackendBearerEnv(k string) bool {
 		}
 	}
 	return strings.Contains(k, "_BEARER_TOKEN")
+}
+
+// credentialKeys are the five keys a role or a recipe may not set: the
+// credentials marvel or the broker checks to decide whether a session is who it
+// says it is.
+//
+// Owner reading, proposed for review before merge: the names CredentialKeys and
+// IsCredentialKey, and their home beside BackendBearerEnv.
+var credentialKeys = []string{
+	HeartbeatTokenEnv,
+	CredentialHelperEnv,
+	HeartbeatTokenFileEnv,
+	"DIRECTOR_NATS_USER",
+	"DIRECTOR_NATS_PASS",
+}
+
+// CredentialKeys returns the five identity credential keys a manifest may not
+// set. The caller may not change the list.
+func CredentialKeys() []string {
+	return append([]string(nil), credentialKeys...)
+}
+
+// IsCredentialKey reports whether k is a key a role or a recipe may not set: one
+// of the five identity credentials, or a literal bearer by BackendBearerEnv.
+func IsCredentialKey(k string) bool {
+	return slices.Contains(credentialKeys, k) || BackendBearerEnv(k)
 }
 
 // backendValueVars redirect by carrying any value at all: a custom base URL

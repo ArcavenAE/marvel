@@ -641,3 +641,25 @@ func TestNewReturnsAnEvaluateOnlyValueOverAnUnexportedType(t *testing.T) {
 		t.Errorf("New builds %v, want the unexported *source", dyn)
 	}
 }
+
+// An idle seat beats on a timer, and every beat stamps ContextAt. The hold ends
+// when the seat does work, which is a reading change, not a beat (marvel#801).
+func TestPaneMenuIgnoresABeatAndClearsOnAReadingChange(t *testing.T) {
+	r := newPaneRig(t, map[string]string{"TZ": "UTC"})
+	r.update(t, func(s *api.Session) {
+		s.ContextAt, s.ReadingChangedAt = paneT0.Add(-time.Minute), paneT0.Add(-time.Minute)
+	})
+	r.setAndHold(t, paneT0)
+
+	r.update(t, func(s *api.Session) { s.ContextAt = paneT0.Add(time.Minute) })
+	r.src.Evaluate(paneT0.Add(2 * time.Minute))
+	if r.session().Condition != api.ConditionLimited {
+		t.Fatal("a repeated reading cleared the hold")
+	}
+
+	r.update(t, func(s *api.Session) { s.ReadingChangedAt = paneT0.Add(150 * time.Second) })
+	r.src.Evaluate(paneT0.Add(3 * time.Minute))
+	if r.session().Condition == api.ConditionLimited {
+		t.Fatal("a reading change did not clear the hold")
+	}
+}

@@ -20,13 +20,15 @@ func (f *listFixture) stampTotals(s api.Session, ago time.Duration) {
 	}
 }
 
-// setContextAt backdates the seat's feed timestamp on the fixture's clock.
-// seed cannot: UpdateSessionContext stamps wall time over whatever it is given.
+// setContextAt backdates the seat's feed timestamp on the fixture's clock, and
+// its last reading change with it: a seat with no totals stamp is read from
+// WorkAt (marvel#801). seed cannot: UpdateSessionContext stamps wall time over
+// whatever it is given.
 func (f *listFixture) setContextAt(s api.Session, ago time.Duration) {
 	f.t.Helper()
 	at := f.clock.Now().Add(-ago)
 	if err := f.store.UpdateSession(s.Key(), func(live *api.Session) error {
-		live.ContextAt = at
+		live.ContextAt, live.ReadingChangedAt = at, at
 		return nil
 	}); err != nil {
 		f.t.Fatal(err)

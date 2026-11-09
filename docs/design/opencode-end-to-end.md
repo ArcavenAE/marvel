@@ -21,12 +21,12 @@ opencode is the thinnest adapter marvel ships. It has no settings projection, no
 | 4 | `external_directory` defaults to ask on `*`, and a headless seat auto-rejects the ask | T4; `opencode.go:17-20` |
 | 5 | First start installs an npm plugin into the config dir | T4, appendix A.4 |
 | 6 | **A subagent whose bash was denied printed the expected output without running anything.** Its session has no tool call, yet its text and the parent's task result carry the marker | T4 session export, appendix A.2 |
-| 7 | The adapter projects nothing (`ProjectionFor` is false) and passes no `--session` | `opencode.go:37-38`, `:61-64` |
+| 7 | The adapter projects nothing (`ProjectionFor` is false) and passes no `--session` | `internal/runtime/opencode.go:40-46`, and the headless args at `:69-72` |
 | 8 | Headless launches already redirect stdin to `/dev/null` | `opencode.go:67` |
-| 9 | A `Prepare` error launches the seat anyway, with the raw command and only `MARVEL_*` env | `internal/session/manager.go:995-999`, `:1330-1360` |
+| 9 | A `Prepare` error launches the seat anyway, with the raw command and only `MARVEL_*` env (`directPlan`), for a role with no sandbox profile; a profiled role is refused instead | `internal/session/manager.go:1590-1606`, `directPlan` at `:1978` |
 | 10 | The run record's `result` is the last assistant text, and opencode's denial count is always 0, because it comes only from a `session.ended` that opencode never emits | `internal/session/run_record.go:14-24`, `:45-48`; `mapping.md:32-41` |
-| 11 | `HarnessSessionID` is the id marvel assigns and re-mints on every launch | `internal/api/types.go:300-314` |
-| 12 | marvel has no container launch path | `git grep -i 'docker\|podman'` over `internal` and `cmd` finds, outside tests, only a comment, `claude.go:227` |
+| 11 | `HarnessSessionID` is the id marvel assigns and re-mints on every launch, and it is the only session-id field on the session record; the opencode parser separately learns the harness's own session id from the stream | `internal/api/types.go:426-439`, `internal/runtime/opencode/parser.go:135-138` |
+| 12 | marvel has a container launch path (#877, #887 and #888, merged 2026-10-14). The container mounts only the workdir and the harness home and runs the command under `sh -c`, and it forwards only the env names of the launch plan. The stream FIFO lives under `daemonTempDir("marvel-streams")`, which is not mounted, so a container seat cannot write its stream there; that start failure is inferred from the mounts, not measured | `internal/runtime/container.go:165-185`, `internal/session/container_launch.go:102-115`, `internal/session/manager.go:263`, `:278-281` |
 | 13 | Go's `encoding/json` sorts map keys | `go doc encoding/json.Marshal` |
 | 14 | After the user's rules, opencode appends `external_directory` allow on `<data>/opencode/tool-output/*` again, unless the config holds an explicit deny on exactly that glob. Under last-match evaluation a bare `"external_directory":"deny"` therefore leaves that directory open, and with `edit` allowed a write there goes through | opencode v1.18.15 `agent.ts:296-310` (from review); T4 appendix A.1 shows the same rule order. T4 tried no write there, so this is agreement on rule order, not a measured write |
 

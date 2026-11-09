@@ -90,11 +90,12 @@ const (
 // HealthState, so that the restart path (which keys on HealthUnhealthy and
 // FailureCount) can never read it: a stalled session is never restarted.
 //
-// The reading reuses SessionContext.ContextAt, which both activity
-// producers marvel has already stamp — the usage accountant on each
-// token-bearing stream sample (headless) and the cooperative heartbeat RPC
-// (interactive statusline/codex feeds and the simulator). No stream
-// scraping is added. See team.evaluateActivity.
+// The reading is api.WorkAt: SessionContext.ReadingChangedAt where a producer
+// stamps it, else SessionContext.ContextAt. Both activity producers marvel
+// already has write them: the usage accountant on each token-bearing stream
+// sample (headless) and the cooperative heartbeat RPC (interactive
+// statusline/codex feeds and the simulator). No stream scraping is added. See
+// team.evaluateActivity.
 type ActivityState string
 
 const (
@@ -131,7 +132,18 @@ type HealthCheckType string
 const (
 	HealthCheckHeartbeat    HealthCheckType = "heartbeat"
 	HealthCheckProcessAlive HealthCheckType = "process-alive"
+	// HealthCheckBus reads LastBusBeat, the director shim's own liveness beat,
+	// in place of LastHeartbeat. The value is ruled (aae-orc-z63a4, 2026-11-09);
+	// it is named once here.
+	HealthCheckBus HealthCheckType = "bus"
 )
+
+// BusHealthTimeout is the ruled timeout for a bus healthcheck (aae-orc-z63a4,
+// ruled 2026-11-09): three beats of the shim's 30 s presence timer,
+// matching the TTL of its presence record. A bus role that names no timeout
+// gets it; the failure threshold keeps its default. It is the one place the
+// number is written.
+const BusHealthTimeout = 90 * time.Second
 
 // HealthCheck configures health checking for a role's sessions.
 type HealthCheck struct {
@@ -299,6 +311,12 @@ type Session struct {
 	PaneID        string       `toml:"-"`
 	PID           int          `toml:"-"`
 	LastHeartbeat time.Time    `toml:"-"`
+	// LastBusBeat is when the director shim last reported that it reached the
+	// bus (the bus.beat RPC). It is a second liveness stamp beside LastHeartbeat,
+	// not a replacement: LastHeartbeat belongs to the statusline feed and moves
+	// with CTX%, so a live statusline beat can keep a seat looking healthy with
+	// its bus dead (finding-166). Only a role on HealthCheckBus reads this one.
+	LastBusBeat time.Time `toml:"-"`
 	// CostTotalUSD and APIDurationMS are the statusline feed's running totals
 	// for this session, and TotalsChangedAt is when either last moved. They sit
 	// outside SessionContext on purpose: that block is replaced whole by each
@@ -332,7 +350,7 @@ type Session struct {
 	TotalsChangedAt time.Time   `json:"totals_changed_at,omitempty" toml:"-"`
 	HealthState     HealthState `toml:"-"`
 	// ActivityState is the restart-neutral staleness advisory (aae-orc-9box).
-	// Recomputed every evaluateHealth tick from ContextAt/CreatedAt against
+	// Recomputed every evaluateHealth tick from WorkAt/CreatedAt against
 	// the role's ActivityTimeout; orthogonal to HealthState and never read
 	// by the restart path. Status, not spec (toml:"-"), same as HealthState.
 	ActivityState ActivityState `toml:"-"`
@@ -603,6 +621,12 @@ type SessionContext struct {
 	// ContextLimit > 0.
 	ContextPeak float64
 	ContextAt   time.Time
+	// ReadingChangedAt is when the reading last changed, as opposed to when it
+	// was last repeated. ContextAt moves on every beat, and an idle statusline
+	// seat beats every 15 seconds, so ContextAt alone cannot say whether the seat
+	// worked. Readers of "did work" use WorkAt. Zero means the producer never
+	// wrote it (marvel#801).
+	ReadingChangedAt time.Time `toml:"-" json:"reading_changed_at,omitzero"`
 	// SpendOut and SpendPromptTokens are the session's cumulative output
 	// tokens and layout-normalized prompt tokens, as the usage accountant
 	// has summed them (usage.Spend.Out and usage.Spend.PromptTokens).
@@ -1015,6 +1039,9 @@ type ShiftRequest struct {
 	// emitted shift.handoff-missing. From then on the team's supervisor
 	// decides; marvel neither re-requests nor shifts on its own.
 	Escalated bool
+	// EscalatedAt is when Escalated was set, zero until then. It is stored with
+	// the request, so it survives a restart.
+	EscalatedAt time.Time
 }
 
 // ViewNotice is the told-or-not state of one seat's view. A refresh that moves
@@ -1387,8 +1414,8 @@ type HarnessState struct {
 	PaneWidth  int       `json:"pane_width,omitempty"`
 	Evidence   []string  `json:"evidence,omitempty"`
 	CapturedAt time.Time `json:"captured_at"`
-	// ContextAt is the session's ContextAt when this was seen. A later
-	// ContextAt means the seat did work, which clears the state.
+	// ContextAt is the session's WorkAt when this was seen (the name is kept for
+	// stored records). A later WorkAt means the seat did work, which clears the state.
 	ContextAt time.Time `json:"context_at,omitempty"`
 	// Source says which reader set the state: HarnessSourcePane or
 	// HarnessSourceTranscript. Empty reads as pane, so a record written before

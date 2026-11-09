@@ -722,3 +722,39 @@ func TestStaleAccountRowJSONCarriesTheLastValueAndItsAge(t *testing.T) {
 		}
 	}
 }
+
+// The raw percentage rides beside the rounded one, and a row from a daemon that
+// predates it reads as before.
+func TestAccountRowJSONObservedPercent(t *testing.T) {
+	base := Row{Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-", Account: "a", AccountWindow: "seven_day"}
+	keys := func(r Row) map[string]any {
+		t.Helper()
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	pct := 79.6
+	for _, reading := range []string{"fresh", "stale"} {
+		r := base
+		r.Reading, r.Observed, r.ObservedPercent = reading, 80, &pct
+		m := keys(r)
+		if m["observed"] != float64(80) || m["observed_percent"] != 79.6 {
+			t.Errorf("%s with a value: %v, want observed 80 and observed_percent 79.6", reading, m)
+		}
+	}
+	older := base
+	older.Reading, older.Observed = "fresh", 87
+	m := keys(older)
+	if m["observed"] != float64(87) {
+		t.Errorf("a row without the raw value: %v, want observed 87", m)
+	}
+	if _, ok := m["observed_percent"]; ok {
+		t.Errorf("a row without the raw value carries observed_percent: %v", m)
+	}
+}

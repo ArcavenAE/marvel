@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,17 +35,20 @@ func (r *warnRec) kinds() []events.Kind {
 // warnSend is a stand-in director publisher that records what it was asked to
 // publish and can be made to fail.
 type warnSend struct {
-	mu   sync.Mutex
-	envs []envelope.Envelope
-	ids  []string
-	fail error
-	call int
+	mu    sync.Mutex
+	envs  []envelope.Envelope
+	ids   []string
+	tried []string
+	fail  error
+	call  int
+	w     *accountWarner // the warner it feeds, so a read can wait for publishes in flight
 }
 
 func (s *warnSend) send(_ context.Context, env envelope.Envelope, msgID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.call++
+	s.tried = append(s.tried, msgID)
 	if s.fail != nil {
 		return s.fail
 	}
@@ -53,8 +57,33 @@ func (s *warnSend) send(_ context.Context, env envelope.Envelope, msgID string) 
 	return nil
 }
 
-func (s *warnSend) sent() int  { s.mu.Lock(); defer s.mu.Unlock(); return len(s.envs) }
-func (s *warnSend) calls() int { s.mu.Lock(); defer s.mu.Unlock(); return s.call }
+func (s *warnSend) settle() {
+	if s.w != nil {
+		s.w.wait()
+	}
+}
+
+func (s *warnSend) sent() int {
+	s.settle()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.envs)
+}
+
+func (s *warnSend) calls() int {
+	s.settle()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.call
+}
+
+// attempts is the dedupe id of every publish tried, failed or not.
+func (s *warnSend) attempts() []string {
+	s.settle()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.tried...)
+}
 
 var (
 	warnKey  = api.AccountKey{Harness: "claude", Backend: api.BackendDefaultName, ConfigHome: "/h/a"}
@@ -69,7 +98,9 @@ var warnT0 = time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 
 func newWarnFixture(level int) (*accountWarner, *warnRec, *warnSend) {
 	rec, snd := &warnRec{}, &warnSend{}
-	return newAccountWarner(level, rec, snd.send, func() bool { return true }), rec, snd
+	w := newAccountWarner(level, rec, snd.send, func() bool { return true })
+	snd.w = w
+	return w, rec, snd
 }
 
 // A window at the level gives one ring event and one notice to the director.
@@ -173,6 +204,7 @@ func TestAccountWarnWithNoBusIsTheEventOnlyThenSendsWhenItComes(t *testing.T) {
 	rec, snd := &warnRec{}, &warnSend{}
 	up := false
 	w := newAccountWarner(80, rec, snd.send, func() bool { return up })
+	snd.w = w
 	reset := warnT0.Add(24 * time.Hour)
 	w.observe(warnKey, "ws", []api.AccountWindow{warnWin("seven_day", 90, reset)}, warnT0)
 	if len(rec.kinds()) != 1 || snd.calls() != 0 {
@@ -204,6 +236,7 @@ func TestAccountWarnNilSenderIsEventOnly(t *testing.T) {
 func TestAccountWarnFailedPublishRetriesAfterFiveMinutes(t *testing.T) {
 	rec, snd := &warnRec{}, &warnSend{fail: errors.New("bus down")}
 	w := newAccountWarner(80, rec, snd.send, func() bool { return true })
+	snd.w = w
 	reset := warnT0.Add(24 * time.Hour)
 	obs := func(m float64) {
 		w.observe(warnKey, "ws", []api.AccountWindow{warnWin("seven_day", 90, reset)}, warnT0.Add(time.Duration(m*float64(time.Minute))))
@@ -277,6 +310,8 @@ func TestAccountLimitsRPCFeedsTheWarner(t *testing.T) {
 	d := newHandlerDaemon(t)
 	rec, snd := &warnRec{}, &warnSend{}
 	d.accountWarn = newAccountWarner(80, rec, snd.send, func() bool { return true })
+	snd.w = d.accountWarn
+	snd.w = d.accountWarn
 	token := tokenedSession(t, d, "seat")
 	now := time.Now().UTC()
 	resp := d.recordAccountLimits(api.AccountLimitsRequest{
@@ -295,6 +330,8 @@ func TestAccountLimitsRPCStaleReadingDoesNotAnnounce(t *testing.T) {
 	d := newHandlerDaemon(t)
 	rec, snd := &warnRec{}, &warnSend{}
 	d.accountWarn = newAccountWarner(80, rec, snd.send, func() bool { return true })
+	snd.w = d.accountWarn
+	snd.w = d.accountWarn
 	token := tokenedSession(t, d, "seat")
 	now := time.Now().UTC()
 	resp := d.recordAccountLimits(api.AccountLimitsRequest{
@@ -352,5 +389,99 @@ func TestAccountRowsNearLimitStateNeverFromOffStaleOrNone(t *testing.T) {
 		if r.State != "-" {
 			t.Errorf("no reading: STATE = %q, want -", r.State)
 		}
+	}
+}
+
+// A publish that is slow must not hold the reading that caused it: observe
+// returns once the window is marked due, two due windows or one.
+func TestAccountWarnObserveDoesNotWaitOnThePublish(t *testing.T) {
+	rec := &warnRec{}
+	release := make(chan struct{})
+	var calls atomic.Int32
+	send := func(_ context.Context, _ envelope.Envelope, _ string) error {
+		calls.Add(1)
+		<-release
+		return nil
+	}
+	w := newAccountWarner(80, rec, send, func() bool { return true })
+	reset := warnT0.Add(24 * time.Hour)
+	done := make(chan struct{})
+	go func() {
+		w.observe(warnKey, "ws", []api.AccountWindow{warnWin("seven_day", 90, reset), warnWin("five_hour", 91, reset)}, warnT0)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		close(release)
+		<-done
+		w.wait()
+		t.Fatal("observe waited on a blocked publish")
+	}
+	if len(rec.kinds()) != 2 {
+		t.Errorf("events = %v, want one per window before the publish ends", rec.kinds())
+	}
+	close(release)
+	w.wait()
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("publishes = %d, want one per window", n)
+	}
+	w.observe(warnKey, "ws", []api.AccountWindow{warnWin("seven_day", 92, reset), warnWin("five_hour", 93, reset)}, warnT0.Add(time.Minute))
+	w.wait()
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("a window whose publish succeeded was sent again: %d publishes", n)
+	}
+}
+
+// Readings arriving together for one window publish it once, under -race.
+func TestAccountWarnConcurrentObservesPublishOnce(t *testing.T) {
+	w, rec, snd := newWarnFixture(80)
+	reset := warnT0.Add(24 * time.Hour)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			w.observe(warnKey, "ws", []api.AccountWindow{warnWin("seven_day", 90+float64(i)/10, reset)}, warnT0.Add(time.Duration(i)*time.Second))
+		}(i)
+	}
+	wg.Wait()
+	if snd.calls() != 1 || snd.sent() != 1 || len(rec.kinds()) != 1 {
+		t.Fatalf("calls %d, notices %d, events %v; want one of each", snd.calls(), snd.sent(), rec.kinds())
+	}
+}
+
+// A window with no resets_at that is armed again after a drop is a new notice,
+// so its dedupe id differs from the first arming's.
+func TestAccountWarnNoResetsAtRearmGetsANewNoticeID(t *testing.T) {
+	w, _, snd := newWarnFixture(80)
+	at := func(m int) time.Time { return warnT0.Add(time.Duration(m) * time.Minute) }
+	obs := func(pct float64, m int) {
+		w.observe(warnKey, "ws", []api.AccountWindow{warnWin("five_hour", pct, time.Time{})}, at(m))
+	}
+	obs(90, 0)
+	obs(10, 2)
+	obs(91, 3)
+	ids := snd.attempts()
+	if len(ids) != 2 {
+		t.Fatalf("publishes = %v, want one per arming", ids)
+	}
+	if ids[0] == ids[1] {
+		t.Fatalf("two armings of a window with no resets_at share the dedupe id %q", ids[0])
+	}
+}
+
+// Retrying one arming keeps its id, so a notice that reached the stream before
+// its record was kept is still dropped as a duplicate.
+func TestAccountWarnRetryKeepsTheNoticeID(t *testing.T) {
+	rec, snd := &warnRec{}, &warnSend{fail: errors.New("bus down")}
+	w := newAccountWarner(80, rec, snd.send, func() bool { return true })
+	snd.w = w
+	at := func(m int) time.Time { return warnT0.Add(time.Duration(m) * time.Minute) }
+	w.observe(warnKey, "ws", []api.AccountWindow{warnWin("five_hour", 90, time.Time{})}, at(0))
+	w.observe(warnKey, "ws", []api.AccountWindow{warnWin("five_hour", 92, time.Time{})}, at(6))
+	ids := snd.attempts()
+	if len(ids) != 2 || ids[0] != ids[1] {
+		t.Fatalf("ids = %v, want one id for both tries of one arming", ids)
 	}
 }

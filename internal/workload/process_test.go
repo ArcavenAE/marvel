@@ -17,10 +17,15 @@ const (
 	helperEnv = "WORKLOAD_TEST_HELPER"
 )
 
+// helperMode is the helper variable as the binary started with it. The test
+// guard removes every variable off its list before the tests run, so the helper
+// reads it from here, from before that, and not from the environment.
+var helperMode = os.Getenv(helperEnv)
+
 // TestHelperProcess is not a test: it is the long-running child the kernel
 // environment test spawns, and it returns at once in a normal run.
 func TestHelperProcess(t *testing.T) {
-	if os.Getenv(helperEnv) != "sleep" {
+	if helperMode != "sleep" {
 		return
 	}
 	time.Sleep(30 * time.Second)

@@ -23,6 +23,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/buildversion"
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
@@ -242,6 +243,7 @@ func main() {
 	// Strip shell-style comments from args so inline notes work:
 	//   ./marvel shift test/squad  # replace all workers
 	os.Args = stripComments(os.Args)
+	buildversion.Set(version)
 
 	if err := applyMarvelHomeFlag(os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
@@ -3548,6 +3550,14 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 	if s.State == api.SessionRunning && s.HarnessState != nil && isUnwatched(s.HarnessState.State) {
 		health += " (unwatched)"
 	}
+	// A seat marvel can watch that was handed no first message and has shown no
+	// work reads "(unprompted)". Only with no stored harness verdict, so it never
+	// shares a cell with (logged-out), (parked: x) or (unwatched); the watchdog's
+	// verdict names the cause, and this names the absence of any. It also reads
+	// for a seat sitting at a dialog the watchdog has no pattern for.
+	if s.State == api.SessionRunning && s.HarnessState == nil && api.NeverTookATurn(s) {
+		health += " (unprompted)"
+	}
 	// A failed row carrying a projection Reason is TERMINAL: the role
 	// will spawn no replacement. Without this suffix it is byte-identical
 	// to an ordinary failure the reconciler is about to replace, so the
@@ -3680,6 +3690,10 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 		fmt.Fprintf(&buf, "  heartbeat check passed. A live process at a login prompt still reads\n")
 		fmt.Fprintf(&buf, "  alive or healthy. \"(stalled)\" marks a\n")
 		fmt.Fprintf(&buf, "  session marvel has not seen do work within its role's activity_timeout.\n")
+		fmt.Fprintf(&buf, "  \"(unprompted)\" marks a seat that was handed no first message and has\n")
+		fmt.Fprintf(&buf, "  shown no work; it also reads for a seat waiting at a dialog marvel has no\n")
+		fmt.Fprintf(&buf, "  pattern for. It shows only when marvel has an activity channel for the\n")
+		fmt.Fprintf(&buf, "  seat and has stored no harness verdict.\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "    ?  toggle help    q  quit\n")
 		fmt.Fprintf(&buf, "\n")
@@ -4040,11 +4054,18 @@ func renderBudgetTable(rows []admission.Row) string {
 // sends no age, and an absent one, read as that word. Never ok.
 func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 	observed := r.Reading
+	// One decimal of the raw value when the daemon sends it, so a reading of 79.6
+	// is not shown as the 80 that would read as at the level. A daemon that
+	// predates the raw value sends only the rounded integer.
+	value := fmt.Sprintf("%d%%", r.Observed)
+	if r.ObservedPercent != nil {
+		value = floorOneDecimal(*r.ObservedPercent) + "%"
+	}
 	switch {
 	case r.Reading == "fresh":
-		observed = fmt.Sprintf("%d%%", r.Observed)
+		observed = value
 	case r.Reading == "stale" && r.ReadingAgeSeconds > 0:
-		observed = fmt.Sprintf("%d%% (%s ago)", r.Observed, formatUntil(time.Duration(r.ReadingAgeSeconds)*time.Second))
+		observed = fmt.Sprintf("%s (%s ago)", value, formatUntil(time.Duration(r.ReadingAgeSeconds)*time.Second))
 	}
 	resets := "-"
 	if r.ResetsAt != nil {
@@ -4056,6 +4077,19 @@ func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 	}
 	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t-\t%s\t-\t%s\t%s\t%s %s; %s\n",
 		tally.key(r.Workspace), tally.key(r.Team), r.Dimension, observed, tally.draw(state), resets, tally.draw(r.Account), tally.draw(r.AccountWindow), tally.draw(r.Note))
+}
+
+// floorOneDecimal prints v with one decimal, dropping the rest instead of
+// rounding it, so a reading under the warning level never prints at or above
+// it: 79.96 is 79.9, not 80.0. It cuts the shortest decimal form of v, so a
+// value such as 62.4 is not read as 62.39999 and cut to 62.3.
+func floorOneDecimal(v float64) string {
+	s := strconv.FormatFloat(v, 'f', -1, 64)
+	whole, frac, _ := strings.Cut(s, ".")
+	if frac == "" {
+		return whole + ".0"
+	}
+	return whole + "." + frac[:1]
 }
 
 // formatUntil renders a time to go, or a time since for a reading's age, as days

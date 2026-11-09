@@ -1,0 +1,12 @@
+{
+  "provenance": "Rule order of `opencode debug agent build` with OPENCODE_PERMISSION={\"bash\":\"deny\",\"edit\":\"deny\",\"external_directory\":\"deny\"}, from appendix A.1 of docs/design/opencode-end-to-end.md (opencode 1.18.15). The external_directory rows are as printed there; the rows A.1 elides (including the leading allow on every permission) are not included, and the bash and edit rows stand where the env rows fall. <data> stands for the seat's XDG_DATA_HOME.",
+  "rules": [
+    {"permission": "external_directory", "pattern": "*", "action": "ask"},
+    {"permission": "external_directory", "pattern": "<data>/opencode/tool-output/*", "action": "allow"},
+    {"permission": "external_directory", "pattern": "/tmp/opencode/*", "action": "allow"},
+    {"permission": "bash", "pattern": "*", "action": "deny"},
+    {"permission": "edit", "pattern": "*", "action": "deny"},
+    {"permission": "external_directory", "pattern": "*", "action": "deny"},
+    {"permission": "external_directory", "pattern": "<data>/opencode/tool-output/*", "action": "allow"}
+  ]
+}
