@@ -27,8 +27,8 @@ func QuietWindow(role *Role, cluster time.Duration) time.Duration {
 // Quiet is the one quiet test: a session is quiet at now when its WorkAt (the
 // last reading change, else ContextAt) is zero or strictly older than window. At
 // exactly the window it is not quiet yet. The rate and the stalled advisory call
-// it directly; ACTIVE% calls it over the tick ring, which still records ContextAt
-// until the readers move (marvel#801).
+// it directly; ACTIVE% calls it over the tick ring, which records each tick's
+// WorkAt (marvel#801).
 func Quiet(s *Session, window time.Duration, now time.Time) bool {
 	w := WorkAt(s)
 	return w.IsZero() || now.Sub(w) > window

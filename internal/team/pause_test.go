@@ -26,17 +26,17 @@ func TestTickRingShiftMovesSamplesAndStart(t *testing.T) {
 	if got, want := r.samples[0].at, base.Add(150*time.Minute); !got.Equal(want) {
 		t.Errorf("sample 0 at = %v, want %v", got, want)
 	}
-	if got, want := r.samples[0].contextAt, base.Add(150*time.Minute-time.Minute); !got.Equal(want) {
-		t.Errorf("sample 0 contextAt = %v, want %v", got, want)
+	if got, want := r.samples[0].workAt, base.Add(150*time.Minute-time.Minute); !got.Equal(want) {
+		t.Errorf("sample 0 workAt = %v, want %v", got, want)
 	}
-	if !r.samples[1].contextAt.IsZero() {
-		t.Errorf("a zero contextAt moved to %v", r.samples[1].contextAt)
+	if !r.samples[1].workAt.IsZero() {
+		t.Errorf("a zero workAt moved to %v", r.samples[1].workAt)
 	}
 
 	var capped TickRing
 	capped.Record(now.Add(-time.Minute), now.Add(-time.Minute))
 	capped.Shift(time.Hour, now)
-	if !capped.samples[0].at.Equal(now) || !capped.samples[0].contextAt.Equal(now) || !capped.since.Equal(now) {
+	if !capped.samples[0].at.Equal(now) || !capped.samples[0].workAt.Equal(now) || !capped.since.Equal(now) {
 		t.Errorf("a stamp shifted past now was not capped: %+v since %v", capped.samples[0], capped.since)
 	}
 

@@ -23,16 +23,16 @@ type TickRing struct {
 	since time.Time
 }
 
-type tickSample struct{ at, contextAt time.Time }
+type tickSample struct{ at, workAt time.Time }
 
 // Record notes one evaluation tick at at, when the session's WorkAt read
-// contextAt (zero when never observed). Ticks as old as the window or older are
+// workAt (zero when never observed). Ticks as old as the window or older are
 // dropped, so the ring never holds more than the window.
-func (r *TickRing) Record(at, contextAt time.Time) {
+func (r *TickRing) Record(at, workAt time.Time) {
 	if r.since.IsZero() {
 		r.since = at
 	}
-	r.samples = append(r.samples, tickSample{at: at, contextAt: contextAt})
+	r.samples = append(r.samples, tickSample{at: at, workAt: workAt})
 	keep := 0
 	for keep < len(r.samples) && at.Sub(r.samples[keep].at) >= TickRingWindow {
 		keep++
@@ -52,7 +52,7 @@ func (r *TickRing) Counts(window time.Duration, now time.Time) (active, total in
 			continue
 		}
 		total++
-		if !api.Quiet(&api.Session{SessionContext: api.SessionContext{ContextAt: s.contextAt}}, window, s.at) {
+		if !api.Quiet(&api.Session{SessionContext: api.SessionContext{ContextAt: s.workAt}}, window, s.at) {
 			active++
 		}
 	}
@@ -61,7 +61,7 @@ func (r *TickRing) Counts(window time.Duration, now time.Time) (active, total in
 
 // recordTick adds one evaluation tick to a session's ring, creating it on the
 // first.
-func (c *Controller) recordTick(sessKey string, at, contextAt time.Time) {
+func (c *Controller) recordTick(sessKey string, at, workAt time.Time) {
 	c.ringMu.Lock()
 	defer c.ringMu.Unlock()
 	if c.rings == nil {
@@ -72,7 +72,7 @@ func (c *Controller) recordTick(sessKey string, at, contextAt time.Time) {
 		r = &TickRing{}
 		c.rings[sessKey] = r
 	}
-	r.Record(at, contextAt)
+	r.Record(at, workAt)
 }
 
 // dropRingsExcept forgets the rings of sessions that were not evaluated this
@@ -146,13 +146,13 @@ func (c *Controller) ActivityOf(sess api.Session, now time.Time) api.ActiveTicks
 
 // Shift moves every stamp the ring holds forward by pause, capped at now, after
 // a fleet suspend: a ring that watched a seat for ten minutes before the stop
-// reads the same ten minutes after the resume. A zero contextAt (never
+// reads the same ten minutes after the resume. A zero workAt (never
 // observed) stays zero, and a pause that is not positive moves nothing. A
 // ring is not safe for concurrent use; the controller guards its rings.
 func (r *TickRing) Shift(pause time.Duration, now time.Time) {
 	r.since = suspend.ShiftedHeartbeat(r.since, pause, now)
 	for i := range r.samples {
 		r.samples[i].at = suspend.ShiftedHeartbeat(r.samples[i].at, pause, now)
-		r.samples[i].contextAt = suspend.ShiftedHeartbeat(r.samples[i].contextAt, pause, now)
+		r.samples[i].workAt = suspend.ShiftedHeartbeat(r.samples[i].workAt, pause, now)
 	}
 }
