@@ -13,7 +13,7 @@
 # The blank lines in the sample above option 1 were restored: the source record
 # kept only the non-blank lines of the capture. They sit outside the matched
 # rows, which start at option 1. The one blank row between option 2 and the
-# footer is part of the match.
+# footer is part of the match; the source record's -e hexdump backs that row.
 #
 # Range: 2.1.310 only. No other version was captured. A version above or below
 # reads uncovered until a sample for it is added.
