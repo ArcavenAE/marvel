@@ -115,8 +115,8 @@ ambient provider key chooses the model when none is configured.
 ## What each result unblocks
 
 - **Case 1, widening the policy gate to every opencode role:** the director
-  allow key is `director_*`, or exact `director_<tool>` names. The widening can
-  proceed on that key. The colon form must not be used.
+  allow key that matched is `director_*`, or exact `director_<tool>` names. Nothing
+  measured blocks the widening on that key, and the colon form restored no tool.
 - **Case 5, the provider entry for a private home:** the open question was
   whether a seat can run with no provider entry. It cannot: an entry is needed,
   or the seat dials a remote default and hangs. The step that waits on
@@ -124,9 +124,10 @@ ambient provider key chooses the model when none is configured.
 - **Case 7, the scope of the per-seat data folder:** moving `XDG_DATA_HOME`
   takes `auth.json` with it, and linking that file in would place third-party
   bearer material in a marvel-written tree, which the credential custody
-  boundary (SOUL section 3, ADR-009) governs. The decision is that the scope is
-  "exempt": a seat on a paid provider keeps the operator's own data folder, so
-  its sign-in file stays where the operator put it and marvel never copies it.
+  boundary (SOUL section 3, ADR-009) governs. The measurement supports
+  treating the scope as "exempt": a seat on a paid provider would keep the
+  operator's own data folder, so its sign-in file stays where the operator put
+  it and marvel never copies it. This finding does not make that decision.
 - **Case 6, ambient provider keys:** an ambient non-Anthropic key is used when no
   provider is configured, and marvel records only three Anthropic key names.
   This supports a host sandbox profile on the first write run, and argues for
@@ -136,7 +137,8 @@ ambient provider key chooses the model when none is configured.
   `env -u` in the pane prefix is needed and sufficient.
 - **Case 4, where `XDG_CONFIG_HOME` moves:** it must move only in the step that
   seeds the director config, since moving it drops the global file.
-- **Case 2, `auto-unsandboxed`:** the refusal stands; a deny-first block with no
+- **Case 2, `auto-unsandboxed`:** nothing measured argues against the existing
+  refusal; a deny-first block with no
   `ask` left makes `--auto` harmless on tools.
 - **Case 9, first start:** a pre-seeded config directory is not needed for a
   first start with no plugin configured.
@@ -145,7 +147,7 @@ ambient provider key chooses the model when none is configured.
   the pattern byte for byte as opencode prints it (absolute, leading slash). An
   `edit` or `read` deny is not a substitute.
 - **Case 11, which glob forms may be claimed as measured for 1.18.34:** `*`
-  (crosses `/`), `**` (same as `*` in every row tried), `?` (one character),
+  (crosses `/`), `**` (same as `*` in the one row tried), `?` (one character),
   whole-string anchoring, case-sensitive comparison, and `read` paths without a
   leading slash. Every other form (character classes, braces, negation,
   escapes) returns "unverified".
