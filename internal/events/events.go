@@ -192,6 +192,11 @@ const (
 	// to undelivered, that the escalation could not be published to the team's
 	// supervisor. Message carries the error (handoff-missing-delivery.md, H5).
 	KindShiftHandoffUndelivered Kind = "team.shift-handoff-undelivered"
+	// KindShiftHoldReleased records that a handoff request stopped holding its
+	// role's slot without a shift: the seat asked is gone or was replaced, or
+	// the role's policy no longer declares the condition. Reason names which
+	// (docs/design/per-seat-replace.md D9).
+	KindShiftHoldReleased Kind = "team.shift-hold-released"
 	// KindShiftRequestStuck records, once per request, that a max-age handoff
 	// request passed its max_defer with no escalation delivered to the team's
 	// supervisor, so the seat may never have been asked and nobody was told
@@ -563,6 +568,7 @@ var allKinds = []Kind{
 	KindTeamWaking,
 	KindTeamWoken,
 	KindShiftHandoffUndelivered,
+	KindShiftHoldReleased,
 	KindShiftRequestStuck,
 	KindHandoffPut,
 	KindHandoffPutRefused,
@@ -713,6 +719,13 @@ type Event struct {
 	// encode its most load-bearing coordinate in prose. Zero means the
 	// event is not generation-scoped.
 	Generation int64 `json:"generation,omitempty"`
+	// Cause names the condition that moved a shift: max-age, context-pressure
+	// or operator. Empty on an event with no such cause.
+	Cause string `json:"cause,omitempty"`
+	// Reason names why the event happened inside its cause: marker,
+	// window-expired, seat-gone or policy-removed. Empty where the event has
+	// no reason word.
+	Reason string `json:"reason,omitempty"`
 	// Message is a short human-readable description. Keep it one
 	// line — operators scan dozens of these at a time.
 	Message string `json:"message"`
