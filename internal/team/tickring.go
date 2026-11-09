@@ -12,7 +12,7 @@ import (
 const TickRingWindow = 15 * time.Minute
 
 // TickRing is one session's last TickRingWindow of evaluation ticks, in memory.
-// It stores what each tick saw (the time and the session's ContextAt), never a
+// It stores what each tick saw (the time and the session's WorkAt), never a
 // percentage, so the reader applies the quiet window it wants and the one quiet
 // predicate decides. A ring is not safe for concurrent use; the controller
 // guards its rings.
@@ -25,7 +25,7 @@ type TickRing struct {
 
 type tickSample struct{ at, contextAt time.Time }
 
-// Record notes one evaluation tick at at, when the session's ContextAt read
+// Record notes one evaluation tick at at, when the session's WorkAt read
 // contextAt (zero when never observed). Ticks as old as the window or older are
 // dropped, so the ring never holds more than the window.
 func (r *TickRing) Record(at, contextAt time.Time) {
