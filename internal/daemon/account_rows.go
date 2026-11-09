@@ -96,9 +96,15 @@ func accountRowsAt(readings *api.AccountReadings, sessions []api.Session, now ti
 				t := w.ResetsAt
 				r.ResetsAt = &t
 			}
-			if state == api.ReadingFresh && w.UsedPercent != nil {
+			if w.UsedPercent != nil {
 				r.Observed = int(math.Round(*w.UsedPercent))
-				if warnLevel > 0 && *w.UsedPercent >= float64(warnLevel) {
+				switch {
+				case state == api.ReadingStale:
+					// The last value and how old it is, on this clock; STATE says the
+					// reading is stale, whatever the value was.
+					r.State = string(api.ReadingStale)
+					r.ReadingAgeSeconds = int64(now.Sub(reading.At).Seconds())
+				case warnLevel > 0 && *w.UsedPercent >= float64(warnLevel):
 					r.State = accountWarnState
 				}
 			}

@@ -660,3 +660,49 @@ func TestRenderBudgetTableAccountStateColumn(t *testing.T) {
 		t.Errorf("the other row = %q, want no near-limit and no ok", quiet)
 	}
 }
+
+// A stale reading prints its last value with its age instead of the bare word,
+// and says stale in STATE. A stale row from a daemon that sends no age, and a
+// row with no reading, keep the words.
+func TestRenderBudgetTableStaleReadingShowsValueAndAge(t *testing.T) {
+	rows := []admission.Row{
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "stale",
+			Account: "claude default - /h/a", AccountWindow: "seven_day", Reading: "stale", Observed: 62, ReadingAgeSeconds: 34 * 60,
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "stale",
+			Account: "claude default - /h/b", AccountWindow: "seven_day", Reading: "stale", Observed: 0, ReadingAgeSeconds: 65 * 60,
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-",
+			Account: "claude default - /h/c", AccountWindow: "seven_day", Reading: "stale",
+		},
+		{
+			Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "-",
+			Account: "claude default - /h/d", AccountWindow: "-", Reading: "none",
+		},
+	}
+	table := renderBudgetTable(rows)
+	line := func(home string) string {
+		for _, l := range strings.Split(table, "\n") {
+			if strings.Contains(l, home) {
+				return l
+			}
+		}
+		t.Fatalf("no row for %s in:\n%s", home, table)
+		return ""
+	}
+	if l := line("/h/a"); !strings.Contains(l, "62% (34m ago)") || !strings.Contains(l, " stale ") {
+		t.Errorf("stale 62%% row = %q, want \"62%% (34m ago)\" and STATE stale", l)
+	}
+	if l := line("/h/b"); !strings.Contains(l, "0% (1h5m ago)") {
+		t.Errorf("stale 0%% row = %q, want \"0%% (1h5m ago)\"", l)
+	}
+	if l := line("/h/c"); strings.Contains(l, "ago)") || !strings.Contains(l, "stale") {
+		t.Errorf("stale row with no age = %q, want the word stale and no age", l)
+	}
+	if l := line("/h/d"); !strings.Contains(l, "none") {
+		t.Errorf("no-reading row = %q, want the word none", l)
+	}
+}

@@ -4035,12 +4035,16 @@ func renderBudgetTable(rows []admission.Row) string {
 // cells that mean nothing for an account (limit, headroom) are dashes. STATE is
 // the daemon's word for the window, near-limit at or over the cluster's warning
 // level, and a dash otherwise.
-// OBSERVED is the percentage only for a fresh reading; a stale or absent
-// reading reads as that word, never as a number and never as ok.
+// OBSERVED is the percentage for a fresh reading and the last percentage with
+// its age for a stale one ("62% (34m ago)"); a stale reading from a daemon that
+// sends no age, and an absent one, read as that word. Never ok.
 func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 	observed := r.Reading
-	if r.Reading == "fresh" {
+	switch {
+	case r.Reading == "fresh":
 		observed = fmt.Sprintf("%d%%", r.Observed)
+	case r.Reading == "stale" && r.ReadingAgeSeconds > 0:
+		observed = fmt.Sprintf("%d%% (%s ago)", r.Observed, formatUntil(time.Duration(r.ReadingAgeSeconds)*time.Second))
 	}
 	resets := "-"
 	if r.ResetsAt != nil {
@@ -4054,8 +4058,9 @@ func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 		tally.key(r.Workspace), tally.key(r.Team), r.Dimension, observed, tally.draw(state), resets, tally.draw(r.Account), tally.draw(r.AccountWindow), tally.draw(r.Note))
 }
 
-// formatUntil renders a time to go as days and hours, hours and minutes, or
-// minutes, whichever is the coarsest that is not zero.
+// formatUntil renders a time to go, or a time since for a reading's age, as days
+// and hours, hours and minutes, or minutes, whichever is the coarsest that is
+// not zero.
 func formatUntil(d time.Duration) string {
 	if d <= 0 {
 		return "now"
