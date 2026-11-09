@@ -457,6 +457,9 @@ type Row struct {
 	AccountWindow string     `json:"account_window,omitempty"`
 	Reading       string     `json:"reading,omitempty"`
 	ResetsAt      *time.Time `json:"resets_at,omitempty"`
+	// ReadingAgeSeconds is how old a stale reading is, on the daemon's clock.
+	// It is set only on a stale row, where Observed holds the last value.
+	ReadingAgeSeconds int64 `json:"reading_age_seconds,omitempty"`
 }
 
 // Row states.

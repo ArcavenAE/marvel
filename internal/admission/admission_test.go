@@ -636,8 +636,9 @@ func TestTeamRowJSONCarriesNoAccountFields(t *testing.T) {
 	}
 }
 
-// A stale or none account row must not read "observed": 0, and limit and
-// headroom mean nothing for an account; a fresh row keeps its percentage.
+// A none account row must not read "observed": 0, and limit and headroom mean
+// nothing for an account; a fresh row keeps its percentage. A stale row keeps
+// its last value too, with the reading's age (TestStaleAccountRowJSONCarries...).
 func TestAccountRowJSONOmitsWhatItDoesNotHave(t *testing.T) {
 	t.Parallel()
 	row := func(reading string, observed int) map[string]any {
@@ -651,7 +652,7 @@ func TestAccountRowJSONOmitsWhatItDoesNotHave(t *testing.T) {
 		}
 		return m
 	}
-	for _, reading := range []string{"stale", "none"} {
+	for _, reading := range []string{"none"} {
 		m := row(reading, 0)
 		for _, k := range []string{"observed", "limit", "headroom"} {
 			if _, ok := m[k]; ok {
@@ -685,6 +686,39 @@ func TestTeamRowJSONKeepsZeroNumbers(t *testing.T) {
 	for _, k := range []string{`"observed":0`, `"limit":3`, `"headroom":3`} {
 		if !strings.Contains(string(b), k) {
 			t.Errorf("team row lost %s: %s", k, b)
+		}
+	}
+}
+
+// A stale account row carries the last value and the reading's age in seconds,
+// even when the last value is 0%, so a reader can tell it from a row that has no
+// value. Limit and headroom still mean nothing for an account.
+func TestStaleAccountRowJSONCarriesTheLastValueAndItsAge(t *testing.T) {
+	t.Parallel()
+	b, err := json.Marshal(Row{Workspace: "-", Team: "-", Dimension: api.DimAccountWindow, State: "stale", Account: "a", AccountWindow: "seven_day", Reading: "stale", Observed: 0, ReadingAgeSeconds: 2040})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := m["observed"]; !ok || v.(float64) != 0 {
+		t.Errorf("a stale row lost its last value: %v", m)
+	}
+	if v, ok := m["reading_age_seconds"]; !ok || v.(float64) != 2040 {
+		t.Errorf("a stale row lost its age: %v", m)
+	}
+	for _, k := range []string{"limit", "headroom"} {
+		if _, ok := m[k]; ok {
+			t.Errorf("a stale row carries %q: %v", k, m)
+		}
+	}
+	// A none row and a fresh row carry no age.
+	for _, reading := range []string{"none", "fresh"} {
+		b, _ := json.Marshal(Row{Dimension: api.DimAccountWindow, Reading: reading})
+		if strings.Contains(string(b), "reading_age_seconds") {
+			t.Errorf("a %s row carries an age: %s", reading, b)
 		}
 	}
 }
