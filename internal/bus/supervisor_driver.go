@@ -134,11 +134,49 @@ func (d busDriver) Ready(ctx context.Context, c workload.ChildInfo) error {
 		return fmt.Errorf("bus: nats-server pid %d did not answer on %s within %s (see %s)", c.Child.Pid(), s.mgr.bus.Listen, timeout, s.logPath)
 	}
 	if s.AfterReady != nil {
-		if err := s.AfterReady(); err != nil {
+		if err := s.provisionAfterReady(ctx, c.Env == nil); err != nil {
 			return fmt.Errorf("bus: listener up but provisioning failed: %w", err)
 		}
 	}
 	return nil
+}
+
+// adoptProvisionTries is how many times provisioning is tried on an adopted
+// broker before the start fails. defaultAdoptProvisionWait is the pause between.
+const (
+	adoptProvisionTries       = 5
+	defaultAdoptProvisionWait = 250 * time.Millisecond
+)
+
+// provisionAfterReady runs AfterReady. On an adopted broker, whose Env is nil,
+// Start has just sent it SIGHUP, and a reload in flight can close the admin
+// connection mid-provision with the credentials right ("nats: connection
+// closed", measured 9 in 300 on a leafed broker). Provisioning is idempotent,
+// so an adopted broker gets a few tries with a short pause; a spawned one is
+// tried once, as before. A failure that persists is returned unchanged.
+func (s *Supervisor) provisionAfterReady(ctx context.Context, adopted bool) error {
+	tries := 1
+	if adopted {
+		tries = adoptProvisionTries
+	}
+	s.mu.Lock()
+	wait := s.adoptProvisionWait
+	s.mu.Unlock()
+	var err error
+	for i := 0; i < tries; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return err
+			case <-time.After(wait):
+			}
+			log.Printf("bus: provisioning the adopted broker failed (%v); retrying, attempt %d of %d", err, i+1, tries)
+		}
+		if err = s.AfterReady(); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 // Started runs once Process has marked the broker ready: the first structural
