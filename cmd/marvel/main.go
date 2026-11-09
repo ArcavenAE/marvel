@@ -23,6 +23,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/admission"
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/buildversion"
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemon"
@@ -242,6 +243,7 @@ func main() {
 	// Strip shell-style comments from args so inline notes work:
 	//   ./marvel shift test/squad  # replace all workers
 	os.Args = stripComments(os.Args)
+	buildversion.Set(version)
 
 	if err := applyMarvelHomeFlag(os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)

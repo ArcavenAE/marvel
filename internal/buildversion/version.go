@@ -1,5 +1,5 @@
-// Package buildversion orders marvel version strings. The stamped build
-// version is read here too once the reader lands.
+// Package buildversion orders marvel version strings and holds the version
+// stamped into the running build, which reads dev when it was not stamped.
 package buildversion
 
 import (
@@ -93,3 +93,21 @@ func cmpInt(a, b int) int {
 	}
 	return 0
 }
+
+// stamped is the version Set recorded; an unstamped build reads dev.
+var stamped = "dev"
+
+// Set records the version stamped into the binary (the main.version linker
+// flag), once, from main. An empty value leaves the build unstamped.
+//
+// Owner reading, proposed for review before merge: the names Version and Set,
+// and the wiring of the stamp through main.
+func Set(v string) {
+	if v != "" {
+		stamped = v
+	}
+}
+
+// Version is the running build's version string: the stamped value, or "dev"
+// for a build that was not stamped.
+func Version() string { return stamped }
