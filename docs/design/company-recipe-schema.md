@@ -76,7 +76,9 @@ An entry is a role on its own, or a role finished together with an identity (a p
 
 The finished file of an entry is `roles/<id without "role/">.md`, so a pair is `roles/<role>--<identity>.md`. A pair's file already holds the identity text, so marvel refuses a recipe whose `prompt` lists `identity` when the entry carries an `identity` (the identity body must appear once).
 
-marvel refuses a `proposal` in either `status` or `identity_status` unless the role sets `allow_proposal`. The pair grammar was chosen over keeping `id = "role/<role>"` and adding a `path` key; the panel that weighed it split 3 to 2, and a review can reopen it.
+An entry carries `identity` if and only if its `id` contains `--`, and the part of the `id` after `--` equals the name part of `identity` (the text before `@`). marvel checks this when it reads the index and refuses the whole library when one entry disagrees, so a library cannot name one identity in the id and ship another in the file.
+
+marvel refuses a `proposal` in either `status` or `identity_status` unless the role sets `allow_proposal`, and refuses a pair whose `identity_status` is `retired`, as it refuses a `retired` `status`. The pair grammar was chosen over keeping `id = "role/<role>"` and adding a `path` key; the panel that weighed it split 3 to 2, and a review can reopen it.
 
 ```toml
 # a definitions library
@@ -116,11 +118,13 @@ source = { url = "https://example.invalid/acme-recipes.git", commit = "b41d0e2" 
 1. Find each pinned name in the roots. Absent is refused; present in two roots is refused, naming both (companies.md).
 2. Resolve the version.
 3. E0: read-only files and a matching tree hash (companies.md).
-4. `requires_marvel`: refused when this marvel is older.
-5. Each library's own schema: marvel carries the list of `definition_schema` and `recipe_schema` values it reads, and refuses a library whose value is not on its list.
-6. The pair: the recipes library's `requires.definition_schema` must equal the definitions library's `definition_schema`.
-7. Read the definition and the recipe. Refuse a `retired` definition, a `proposal` in `status` or `identity_status` unless the role sets `allow_proposal`, and a recipe whose `prompt` lists `identity` against an entry that carries one.
-8. Merge the environment (below), refusing a key that the recipe and the role both name.
+4. `kind`: the `company` pin must name a `definitions` library and the `recipes` pin a `recipes` library.
+5. The index: each entry's `identity` agrees with its `id` (see Definition entries).
+6. `requires_marvel`: refused when this marvel is older.
+7. Each library's own schema: marvel carries the list of `definition_schema` and `recipe_schema` values it reads, and refuses a library whose value is not on its list, and a recipe file whose `schema` is not its library's `recipe_schema`.
+8. The pair: the recipes library's `requires.definition_schema` must equal the definitions library's `definition_schema`.
+9. Read the definition and the recipe. Refuse a `retired` definition, a pair whose `identity_status` is `retired`, a `proposal` in `status` or `identity_status` unless the role sets `allow_proposal`, and a recipe whose `prompt` lists `identity` against an entry that carries one.
+10. Merge the environment (below), refusing a key that the recipe and the role both name.
 
 A pin that is absent fails at step 1 with no fallback.
 
@@ -191,7 +195,11 @@ A string value may carry a closed set of placeholders, and nothing else is expan
 
 An unknown placeholder is refused when the recipe is read, naming the key. A parameter used but not declared is refused the same way. Declared parameters with a `pattern` are checked at launch, and a value that fails is refused naming the field, never echoing the value.
 
-`unset` lists environment names to remove from the seat's environment. A name set by two blocks that apply to one launch is refused at read, so there is no precedence to remember. `when` blocks apply in name order, and the base `[env]` and `args` come first.
+`unset` lists environment names to remove from the seat's environment. `when` blocks apply in name order, and the base `[env]` and `args` come first.
+
+Which blocks can apply to one launch together: the base with any `when.<param>` block, two `when.<param>` blocks, and a `when.global.<branch>` block with the base or with a `when.<param>` block. `when.global.holder` and `when.global.non_holder` never apply together, because a role is one or the other. If two blocks that can apply together name the same key, in `env` or in `unset`, the recipe is refused at read, naming both blocks and the key. `unset` counts as naming a key, so an unset beside a set of that key is a conflict, and so are two unsets of it. The check uses the recipe alone, with no parameter values, so two blocks that might apply together are refused even when no role sets both. There is no precedence to remember.
+
+The passing case is a `when.global.holder` block that sets `BUS_GLOBAL_DOMAIN` and a `when.global.non_holder` block that unsets it: they never apply to one launch, so they do not conflict.
 
 A recipe and a role never compete for a key. If a recipe's `env` or `unset` (a base entry or an applying `when` block) and the role's `runtime.env` name the same key, the launch is refused, naming the role, the recipe and the key. Neither side wins and there is no order to learn. This covers the case of a role that is not a global holder setting a key the recipe unsets for it.
 
@@ -216,6 +224,17 @@ Fixed text, so the tests and the admin guide quote one wording. Angle brackets a
 | tool not set | `recipe <name>: tool "<tool>" is not set; run marvel config tools set <tool> <path>` |
 | identity listed twice | `recipe <name>: prompt lists identity, but definition <id> already carries identity <identity>` |
 | env named twice | `team <team> role <role>: recipe <name> and runtime.env both name <KEY>` |
+| a retired definition | `team <team> role <role>: definition <id> is retired` |
+| a retired identity | `team <team> role <role>: definition <id> has identity <identity> marked retired` |
+| identity and id disagree | `company <name>@<version>: <file>: definition <id>: identity <identity> does not match the id` |
+| a name in two roots | `company <name> is in two roots: <root> and <root>` |
+| a pin names the wrong kind | `team <team>: <key> pin <name>@<version> is a library of kind <kind>, but <key> needs kind <kind>` |
+| an unknown placeholder | `recipe <name>: <key>: unknown placeholder "<text>"` |
+| an undeclared parameter | `recipe <name>: <key>: parameter "<name>" is not declared` |
+| blocks name one key | `recipe <name>: blocks <block> and <block> both name <KEY>` |
+| an unknown adapter | `recipe <name>: adapter "<adapter>" is not registered` |
+| the recipe's schema differs | `recipe <name>: schema = <n>, but the library's recipe_schema is <m>` |
+| timeout over the ceiling | `recipe <name>: preflight timeout <timeout> is over the ceiling <ceiling>` |
 | a proposal without the flag | `team <team> role <role>: definition <id> is a proposal (<status or identity_status>) and the role does not set allow_proposal` |
 | pre-flight failed | `pre-flight <command> exited <code>: <output>` |
 | pre-flight timed out | `pre-flight <command> exceeded <timeout> (elapsed <duration>); process group killed` |
