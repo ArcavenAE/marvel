@@ -104,16 +104,30 @@ func childValue(out, name string) string {
 	return ""
 }
 
-// A child of a guarded binary that runs `go env` finds the caches the parent
-// resolved, not an empty pair under the scratch HOME. The child is started the
+// A child of a guarded binary that runs `go env` finds the caches go finds for
+// a shell, not an empty pair under the scratch HOME. The child is started the
 // way a shell starts it: the real HOME and no go variables.
 func TestChildGoCachesAreTheResolvedOnesNotUnderTheScratchHome(t *testing.T) {
-	wantMod, wantCache := os.Getenv("GOMODCACHE"), os.Getenv("GOCACHE")
-	if wantMod == "" || wantCache == "" {
-		t.Fatalf("the guard left GOMODCACHE=%q GOCACHE=%q unset in this binary", wantMod, wantCache)
+	if os.Getenv("GOMODCACHE") == "" || os.Getenv("GOCACHE") == "" {
+		t.Fatalf("the guard left GOMODCACHE=%q GOCACHE=%q unset in this binary", os.Getenv("GOMODCACHE"), os.Getenv("GOCACHE"))
 	}
+	// The child's environment is the one a shell would give it: the real HOME and
+	// no go variables. What go answers under exactly that environment is what the
+	// child must find, whatever HOME or GOCACHE this binary itself runs under.
+	childEnv := []string{"HOME=" + realHome, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + os.TempDir()}
+	ask := exec.Command("go", "env", "GOMODCACHE", "GOCACHE")
+	ask.Env = childEnv
+	asked, err := ask.Output()
+	if err != nil {
+		t.Fatalf("go env under the child's environment: %v", err)
+	}
+	askedLines := strings.Split(strings.TrimSpace(string(asked)), "\n")
+	if len(askedLines) != 2 || askedLines[0] == "" || askedLines[1] == "" {
+		t.Fatalf("go env under the child's environment answered %q, want two paths", asked)
+	}
+	wantMod, wantCache := askedLines[0], askedLines[1]
 	cmd := exec.Command(os.Args[0], "-test.run=^TestChildReportsGoCaches$", "-test.v")
-	cmd.Env = []string{"HOMEGUARD_CHILD=gocache", "HOME=" + realHome, "PATH=" + os.Getenv("PATH"), "TMPDIR=" + os.TempDir()}
+	cmd.Env = append([]string{"HOMEGUARD_CHILD=gocache"}, childEnv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("child: %v\n%s", err, out)
@@ -126,7 +140,7 @@ func TestChildGoCachesAreTheResolvedOnesNotUnderTheScratchHome(t *testing.T) {
 	for name, want := range map[string]string{"GOMODCACHE": wantMod, "GOCACHE": wantCache} {
 		got := childValue(o, name)
 		if got != want {
-			t.Errorf("child go env %s = %q, want the parent's resolved %q", name, got, want)
+			t.Errorf("child go env %s = %q, want %q, what go answers under the child's environment", name, got, want)
 		}
 		if strings.HasPrefix(got, childHome) {
 			t.Errorf("child go env %s = %q is under the scratch home %q", name, got, childHome)
