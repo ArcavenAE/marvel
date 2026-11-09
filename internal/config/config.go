@@ -322,7 +322,13 @@ const DefaultAccountWarnPercent = 80
 // AccountWarnLevel resolves the cluster's warning level: the default for an
 // unset key, 0 for off, and an error for a value outside 0 to 100.
 func (c *Cluster) AccountWarnLevel() (int, error) {
-	return DefaultAccountWarnPercent, nil
+	if c == nil || c.AccountWarnPercent == nil {
+		return DefaultAccountWarnPercent, nil
+	}
+	if v := *c.AccountWarnPercent; v >= 0 && v <= 100 {
+		return v, nil
+	}
+	return 0, fmt.Errorf("account_warn_percent %d is outside 0 to 100", *c.AccountWarnPercent)
 }
 
 // Service is one entry of a cluster's Services list. The four common

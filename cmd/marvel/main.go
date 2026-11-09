@@ -4032,7 +4032,9 @@ func renderBudgetTable(rows []admission.Row) string {
 }
 
 // writeAccountRow renders an account_window row into the budget table. The
-// cells that mean nothing for an account (limit, headroom, state) are dashes.
+// cells that mean nothing for an account (limit, headroom) are dashes. STATE is
+// the daemon's word for the window, near-limit at or over the cluster's warning
+// level, and a dash otherwise.
 // OBSERVED is the percentage only for a fresh reading; a stale or absent
 // reading reads as that word, never as a number and never as ok.
 func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
@@ -4044,8 +4046,12 @@ func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 	if r.ResetsAt != nil {
 		resets = formatUntil(time.Until(*r.ResetsAt))
 	}
-	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t-\t%s\t-\t-\t%s\t%s %s; %s\n",
-		tally.key(r.Workspace), tally.key(r.Team), r.Dimension, observed, resets, tally.draw(r.Account), tally.draw(r.AccountWindow), tally.draw(r.Note))
+	state := r.State
+	if state == "" {
+		state = "-"
+	}
+	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t-\t%s\t-\t%s\t%s\t%s %s; %s\n",
+		tally.key(r.Workspace), tally.key(r.Team), r.Dimension, observed, tally.draw(state), resets, tally.draw(r.Account), tally.draw(r.AccountWindow), tally.draw(r.Note))
 }
 
 // formatUntil renders a time to go as days and hours, hours and minutes, or
