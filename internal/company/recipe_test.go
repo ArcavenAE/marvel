@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 const (
@@ -164,8 +166,8 @@ func TestRecipeRefusesACredentialKey(t *testing.T) {
 		"DIRECTOR_NATS_USER", "DIRECTOR_NATS_PASS",
 		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AWS_BEARER_TOKEN_BEDROCK", "SOME_VENDOR_AUTH_TOKEN",
 	}
-	if len(credentialKeys) != 5 {
-		t.Fatalf("credentialKeys holds %d keys, want the five roleEnvRefusedKeys", len(credentialKeys))
+	if len(api.CredentialKeys()) != 5 {
+		t.Fatalf("api.CredentialKeys holds %d keys, want five", len(api.CredentialKeys()))
 	}
 	for _, k := range keys {
 		t.Run(k, func(t *testing.T) {
@@ -340,6 +342,22 @@ func TestRecipeRefusesThePinnedCredentialSet(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s is not a credential and must decode: %v", p.key, err)
 			}
+		})
+	}
+}
+
+// The decoder reads the same list mergeRoleEnv does: every key in
+// api.CredentialKeys is refused as N1, and so is a key moved out of the list
+// only by editing it.
+func TestRecipeCredentialListIsMergeRoleEnvsList(t *testing.T) {
+	keys := api.CredentialKeys()
+	if len(keys) != 5 {
+		t.Fatalf("api.CredentialKeys holds %d keys, want five", len(keys))
+	}
+	for _, k := range keys {
+		t.Run(k, func(t *testing.T) {
+			doc := replaceOnce(t, goodRecipe, "[env]\n", "[env]\n"+k+" = \"v\"\n")
+			wantRefusal(t, decodeRecipeRefused(t, recipeCtx(), doc), "N1", fmt.Sprintf("%senv: key %s is a credential and may not be named in a recipe", recPrefix, k))
 		})
 	}
 }
