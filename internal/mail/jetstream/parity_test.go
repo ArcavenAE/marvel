@@ -42,6 +42,15 @@ type parityRow struct {
 
 // buildParityState makes ten cases on the scratch broker, one seat each, so no
 // case reads another's mail.
+// updateParityGolden and directorMCPBin are the variables the parity tests are
+// switched by, as the binary started with them. The test guard removes every
+// variable off its list before the tests run, so the tests read them from here,
+// from before that, and not from the environment.
+var (
+	updateParityGolden = os.Getenv("UPDATE_PARITY_GOLDEN")
+	directorMCPBin     = os.Getenv("DIRECTOR_MCP_BIN")
+)
+
 func buildParityState(t *testing.T, b *scratchBroker) {
 	t.Helper()
 	subj := func(id string) string { return "agent.ws.squad." + id + ".inbox" }
@@ -254,8 +263,8 @@ func TestAdapterRowsEqualTheDirectorGolden(t *testing.T) {
 	got := append(adapterRows(t, b, testStream, LocalPresence), adapterRows(t, b, "GLOBAL_TO_DIRECTOR", GlobalPresence)...)
 	sort.Slice(got, func(i, j int) bool { return got[i].Durable < got[j].Durable })
 
-	if out := os.Getenv("UPDATE_PARITY_GOLDEN"); out != "" {
-		bin := os.Getenv("DIRECTOR_MCP_BIN")
+	if out := updateParityGolden; out != "" {
+		bin := directorMCPBin
 		if bin == "" {
 			t.Fatal("UPDATE_PARITY_GOLDEN needs DIRECTOR_MCP_BIN")
 		}
@@ -286,7 +295,7 @@ func TestAdapterRowsEqualTheDirectorGolden(t *testing.T) {
 // adapter's age is only checked to be a broker-clock age under a minute; it is
 // not compared with director's. It runs when DIRECTOR_MCP_BIN names the binary.
 func TestAdapterRowsEqualADirectorRunOnTheSameBroker(t *testing.T) {
-	bin := os.Getenv("DIRECTOR_MCP_BIN")
+	bin := directorMCPBin
 	if bin == "" {
 		t.Skip("DIRECTOR_MCP_BIN not set; the golden test covers the comparison")
 	}
