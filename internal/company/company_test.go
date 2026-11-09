@@ -241,6 +241,31 @@ func TestCompanyTOMLRefusesAKeyOfTheWrongForm(t *testing.T) {
 	}
 }
 
+// N23: a requires_marvel that has no order cannot be compared to any marvel, so
+// it is refused when company.toml is decoded. The control is the form the
+// design's examples use, and the alpha form marvel's own builds carry.
+func TestCompanyTOMLRefusesARequiresMarvelWithNoOrder(t *testing.T) {
+	for _, bad := range []string{"latest", "dev", "", "1.x", "v"} {
+		t.Run("refuses "+bad, func(t *testing.T) {
+			doc := replaceOnce(t, goodDefs, `requires_marvel = "0.9.0"`, fmt.Sprintf("requires_marvel = %q", bad))
+			wantRefusal(t, decodeCompanyRefused(t, defsDir, doc), "N23", defsPrefx+"requires_marvel must be a version that can be ordered (for example 0.9.0)")
+		})
+	}
+	for _, good := range []string{"0.9.0", "v0.9.0", "0.1.0-alpha.20261008.044910.0d33f29"} {
+		t.Run("decodes "+good, func(t *testing.T) {
+			doc := replaceOnce(t, goodDefs, `requires_marvel = "0.9.0"`, fmt.Sprintf("requires_marvel = %q", good))
+			c, err := DecodeCompany(defsDir, []byte(doc))
+			if err != nil || c.RequiresMarvel != good {
+				t.Fatalf("%q must decode: %+v, %v", good, c, err)
+			}
+		})
+	}
+	t.Run("the recipes library is held to it too", func(t *testing.T) {
+		doc := replaceOnce(t, goodRecs, `requires_marvel = "0.9.0"`, `requires_marvel = "latest"`)
+		wantRefusal(t, decodeCompanyRefused(t, recsDir, doc), "N23", "company acme-recipes@2026-11-01-b41d0e2: company.toml: requires_marvel must be a version that can be ordered (for example 0.9.0)")
+	})
+}
+
 // N25: TOML that does not parse names the line and nothing the file said.
 func TestCompanyTOMLThatDoesNotParseNamesOnlyTheLine(t *testing.T) {
 	doc := goodDefs + "this is not toml SECRET-FILE-CONTENT\n"
