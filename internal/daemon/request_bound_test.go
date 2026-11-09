@@ -11,8 +11,15 @@ import (
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
-// sshCaller is a tunnelled caller: never local, as the SSH server builds it.
-func sshCaller() caller { return caller{scope: ScopeAdmin, fingerprint: "SHA256:bound-test"} }
+// boundCallers are the two paths into handleRWCAs: a tunnelled caller, never
+// local, as the SSH server builds it, and the daemon's own unix socket.
+var boundCallers = []struct {
+	name string
+	c    caller
+}{
+	{"ssh", caller{scope: ScopeAdmin, fingerprint: "SHA256:bound-test"}},
+	{"local", localCaller()},
+}
 
 // paddedVersionRequest is a valid version request whose params carry a string
 // of the given size, so the request is that many bytes plus a small envelope.
@@ -66,10 +73,17 @@ func serveBounded(t *testing.T, d *Daemon, c caller, body []byte) (daemonrpc.Res
 // that decode. A request past 24 MiB is refused with a size error and the
 // handler never runs.
 func TestRequestOverTheBoundIsRefusedBeforeDispatch(t *testing.T) {
+	for _, p := range boundCallers {
+		t.Run(p.name, func(t *testing.T) { requestOverTheBoundIsRefused(t, p.c) })
+	}
+}
+
+func requestOverTheBoundIsRefused(t *testing.T, c caller) {
+	t.Helper()
 	d := newHandlerDaemon(t)
 
 	over := paddedVersionRequest(t, (24<<20)+1)
-	resp, _ := serveBounded(t, d, sshCaller(), over)
+	resp, _ := serveBounded(t, d, c, over)
 	if !strings.Contains(resp.Error, "request too large") || !strings.Contains(resp.Error, "24 MiB") {
 		t.Fatalf("error = %q result=%.80s, want a size error naming 24 MiB", resp.Error, resp.Result)
 	}
@@ -83,12 +97,12 @@ func TestRequestOverTheBoundIsRefusedBeforeDispatch(t *testing.T) {
 	if len(exact) != 24<<20 {
 		t.Fatalf("exact request is %d bytes, want %d", len(exact), 24<<20)
 	}
-	if at, _ := serveBounded(t, d, sshCaller(), exact); at.Error != "" || len(at.Result) == 0 {
+	if at, _ := serveBounded(t, d, c, exact); at.Error != "" || len(at.Result) == 0 {
 		t.Fatalf("a request of exactly 24 MiB: error %q result %.60s, want it dispatched", at.Error, at.Result)
 	}
 
 	// Control: a request of the same shape, well under the bound, is served.
-	ok, _ := serveBounded(t, d, sshCaller(), paddedVersionRequest(t, 1<<20))
+	ok, _ := serveBounded(t, d, c, paddedVersionRequest(t, 1<<20))
 	if ok.Error != "" || len(ok.Result) == 0 {
 		t.Fatalf("1 MiB request: error %q result %s, want it dispatched", ok.Error, ok.Result)
 	}
@@ -98,9 +112,16 @@ func TestRequestOverTheBoundIsRefusedBeforeDispatch(t *testing.T) {
 // more than the bound is cut off one byte past it, so the daemon does not buffer what
 // it will refuse.
 func TestRequestOverTheBoundIsCutOffNearTheBound(t *testing.T) {
+	for _, p := range boundCallers {
+		t.Run(p.name, func(t *testing.T) { requestOverTheBoundIsCutOff(t, p.c) })
+	}
+}
+
+func requestOverTheBoundIsCutOff(t *testing.T, c caller) {
+	t.Helper()
 	d := newHandlerDaemon(t)
 	offered := paddedVersionRequest(t, 64<<20)
-	resp, taken := serveBounded(t, d, sshCaller(), offered)
+	resp, taken := serveBounded(t, d, c, offered)
 	if !strings.Contains(resp.Error, "request too large") {
 		t.Fatalf("error = %q, want a size error", resp.Error)
 	}
@@ -110,7 +131,7 @@ func TestRequestOverTheBoundIsCutOffNearTheBound(t *testing.T) {
 
 	// Control: a small request is read to its end.
 	small := paddedVersionRequest(t, 1000)
-	if _, taken = serveBounded(t, d, sshCaller(), small); taken != int64(len(small)) {
+	if _, taken = serveBounded(t, d, c, small); taken != int64(len(small)) {
 		t.Errorf("small request: took %d of %d bytes, want all of it", taken, len(small))
 	}
 }
