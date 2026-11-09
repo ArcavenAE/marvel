@@ -196,3 +196,31 @@ func TestResolvedFormsPlanTheSameRemoteSSH(t *testing.T) {
 		}
 	}
 }
+
+// director ruled no cluster:workspace/name form for attach. A key typed with
+// ':' is refused before any dial, with the same one line every key-taking verb
+// gives, in full.
+func TestAttachRefusesAColonKeyBeforeAnyDial(t *testing.T) {
+	a := startFake(t, fakeAnswers, []api.Session{row("aae", "x")})
+	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock})
+
+	const want = `Error: the key "kinu:aae/x" holds ':', which reads as a qualified key; qualified keys are not supported yet (#829), so name the cluster with --cluster` + "\n"
+	for _, arg := range []string{"kinu:aae/x", "a:x"} {
+		code, stdout, stderr := runFanGet(t, "attach", "--print", arg, "--cluster", "a")
+		if code != 1 {
+			t.Errorf("attach %s: exit = %d, want 1", arg, code)
+		}
+		if stdout != "" {
+			t.Errorf("attach %s: stdout = %q, want empty", arg, stdout)
+		}
+		if arg == "kinu:aae/x" && stderr != want {
+			t.Errorf("attach %s: stderr = %q, want %q", arg, stderr, want)
+		}
+		if !strings.Contains(stderr, "#829") {
+			t.Errorf("attach %s: stderr does not name #829: %q", arg, stderr)
+		}
+	}
+	if a.conns() != 0 {
+		t.Errorf("%d connections made before the refusal, want 0", a.conns())
+	}
+}
