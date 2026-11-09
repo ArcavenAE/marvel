@@ -79,6 +79,28 @@ func TestCompanyTOMLRefusesAnUnknownKey(t *testing.T) {
 	// The twins decode: see TestDecodeCompanyAccepts above.
 }
 
+// The spec says identity_status is for pairs only, and a recipes library's
+// source is { url, commit }. Both looser readings are refused, each beside the
+// twin that decodes.
+func TestCompanyTOMLRefusesWhatTheSpecLimitsToOtherShapes(t *testing.T) {
+	t.Run("identity_status on a role on its own is N15", func(t *testing.T) {
+		doc := replaceOnce(t, goodDefs, "role/builder--steady", "role/builder")
+		doc = replaceOnce(t, doc, "identity = \"steady@1.0.0\"\n", "")
+		err := decodeCompanyRefused(t, defsDir, doc)
+		wantRefusal(t, err, "N15", defsPrefx+"definition role/builder: identity_status is not well formed")
+		// Twin: the same entry without identity_status decodes.
+		twin := replaceOnce(t, doc, "identity_status = \"ratified\"\n", "")
+		if _, err := DecodeCompany(defsDir, []byte(twin)); err != nil {
+			t.Fatalf("the twin must decode: %v", err)
+		}
+	})
+	t.Run("contents_tree in a recipes library is row 1", func(t *testing.T) {
+		doc := replaceOnce(t, goodRecs, `commit = "b41d0e2" }`, `commit = "b41d0e2", contents_tree = "0123456789012345678901234567890123456789" }`)
+		err := decodeCompanyRefused(t, recsDir, doc)
+		wantRefusal(t, err, "1", "company acme-recipes@2026-11-01-b41d0e2: company.toml: unknown key \"source.contents_tree\"")
+	})
+}
+
 // N19: one fixture per required key per kind, each beside its full twin.
 func TestCompanyTOMLRefusesAMissingRequiredKey(t *testing.T) {
 	type fx struct{ key, remove string }
