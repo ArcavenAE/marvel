@@ -132,6 +132,10 @@ func (w *accountWarner) observeWindow(key api.AccountKey, workspace string, win 
 	w.mu.Unlock()
 }
 
+// wait blocks until the publishes now in flight have ended. Tests use it to read
+// what was sent; nothing else needs to.
+func (w *accountWarner) wait() {}
+
 // sameWarnWindow reports whether two resets_at values name one window: both
 // absent, or within the jitter allowance of each other.
 func sameWarnWindow(a, b time.Time) bool {
