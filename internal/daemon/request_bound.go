@@ -3,12 +3,13 @@ package daemon
 import (
 	"errors"
 	"io"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
-// maxRequestBytes is the most the daemon reads for one request. The largest
-// request measured is about 0.38 MiB (a worst-case handoff.put), and the cp
-// design names 24 MiB, so every method fits with room to spare (marvel#1197).
-const maxRequestBytes = 24 << 20
+// maxRequestBytes is the most the daemon reads for one request, the same bound
+// the client checks before it dials (marvel#1197). Tests lower it.
+var maxRequestBytes = daemonrpc.DefaultMaxRequestBytes
 
 // errRequestTooLarge is what a boundedReader returns once it has handed on
 // more than its limit.
