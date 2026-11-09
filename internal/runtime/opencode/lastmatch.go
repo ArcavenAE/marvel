@@ -67,7 +67,8 @@ const unmeasuredSyntax = `[]{}!\`
 // measured on opencode 1.18.34 and nothing wider:
 //
 //   - `*` matches any run of characters, including none and including `/`;
-//   - `**` behaved the same as `*` in every probe, and is read as `*`;
+//   - `**` behaved the same as `*` in the one probe that compared them, and is
+//     read as `*`;
 //   - `?` matches exactly one character;
 //   - a match is anchored at both ends and case-sensitive;
 //   - every other character matches itself.
