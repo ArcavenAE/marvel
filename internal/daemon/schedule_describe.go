@@ -38,6 +38,7 @@ type shiftRequestDescription struct {
 	RequestedAt       time.Time `json:"requested_at"`
 	Age               string    `json:"age"`
 	Escalated         bool      `json:"escalated"`
+	EscalatedAt       time.Time `json:"escalated_at,omitzero"`
 	DeliveredCount    int       `json:"delivered_count"`
 	LastDeliveredAt   time.Time `json:"last_delivered_at,omitzero"`
 	NoticeUndelivered string    `json:"notice_undelivered,omitempty"`
@@ -100,7 +101,7 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 		req := t.ShiftRequests[role]
 		out.PendingShiftRequests = append(out.PendingShiftRequests, shiftRequestDescription{
 			Role: role, Session: req.Session, Cause: req.Cause, RequestedAt: req.RequestedAt,
-			Age: now.Sub(req.RequestedAt).Truncate(time.Second).String(), Escalated: req.Escalated,
+			Age: now.Sub(req.RequestedAt).Truncate(time.Second).String(), Escalated: req.Escalated, EscalatedAt: req.EscalatedAt,
 			DeliveredCount: req.DeliveredCount, LastDeliveredAt: req.LastDeliveredAt,
 			NoticeUndelivered: req.NoticeUndelivered,
 		})
@@ -113,7 +114,7 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 		}
 		out.PendingHibernateRequests = append(out.PendingHibernateRequests, shiftRequestDescription{
 			Role: role, Session: req.Session, Cause: req.Cause, RequestedAt: req.RequestedAt,
-			Age: now.Sub(req.RequestedAt).Truncate(time.Second).String(), Escalated: req.Escalated,
+			Age: now.Sub(req.RequestedAt).Truncate(time.Second).String(), Escalated: req.Escalated, EscalatedAt: req.EscalatedAt,
 			DeliveredCount: req.DeliveredCount, LastDeliveredAt: req.LastDeliveredAt,
 			NoticeUndelivered: req.NoticeUndelivered,
 		})

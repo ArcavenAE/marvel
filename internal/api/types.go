@@ -1032,6 +1032,9 @@ type ShiftRequest struct {
 	// emitted shift.handoff-missing. From then on the team's supervisor
 	// decides; marvel neither re-requests nor shifts on its own.
 	Escalated bool
+	// EscalatedAt is when Escalated was set, zero until then. It is stored with
+	// the request, so it survives a restart.
+	EscalatedAt time.Time
 }
 
 // ViewNotice is the told-or-not state of one seat's view. A refresh that moves

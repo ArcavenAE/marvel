@@ -76,3 +76,46 @@ func TestDescribeTeamShowsPendingShiftRequestAgeAndDelivery(t *testing.T) {
 		t.Errorf("request block = %v, want delivered_count 2 and last_delivered_at", r)
 	}
 }
+
+// docs/design/per-seat-replace.md D9 part A, test 21: describe team shows when
+// a request escalated, and shows nothing for one that has not.
+func TestDescribeTeamShowsWhenAShiftRequestEscalated(t *testing.T) {
+	d := newHandlerDaemon(t)
+	resp := applyManifest(t, d, scheduledManifest("reqesc", `          cron: "17 6 * * *"
+          timezone: Etc/UTC`))
+	if resp.Error != "" {
+		t.Fatalf("apply: %s", resp.Error)
+	}
+	const teamKey = "reqesc/timers-reqesc"
+	asked := time.Now().Add(-3 * time.Hour).UTC().Truncate(time.Second)
+	escalated := asked.Add(30 * time.Minute)
+	seed := func(req api.ShiftRequest) map[string]any {
+		t.Helper()
+		if err := d.store.UpdateTeam(teamKey, func(live *api.Team) error {
+			live.ShiftRequests = map[string]api.ShiftRequest{"board-refresh": req}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		reqs, _ := describeTeam(t, d, teamKey)["PendingShiftRequests"].([]any)
+		if len(reqs) != 1 {
+			t.Fatalf("PendingShiftRequests = %v, want one block", reqs)
+		}
+		r, _ := reqs[0].(map[string]any)
+		return r
+	}
+
+	base := api.ShiftRequest{Session: "reqesc/timers-reqesc-board-refresh-g1-0", Cause: api.ShiftTriggerMaxAge, RequestedAt: asked}
+	if r := seed(base); r["escalated_at"] != nil {
+		t.Errorf("a request not yet escalated shows escalated_at = %v, want none", r["escalated_at"])
+	}
+	base.Escalated, base.EscalatedAt = true, escalated
+	r := seed(base)
+	got, _ := r["escalated_at"].(string)
+	if at, err := time.Parse(time.RFC3339, got); err != nil || !at.Equal(escalated) {
+		t.Errorf("escalated_at = %v, want %s", r["escalated_at"], escalated.Format(time.RFC3339))
+	}
+	if r["requested_at"] == nil {
+		t.Errorf("request block = %v, want the existing requested_at kept", r)
+	}
+}
