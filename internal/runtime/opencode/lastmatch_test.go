@@ -42,6 +42,7 @@ func TestLastMatchToolOutputReappend(t *testing.T) {
 	}{
 		{"a bare external_directory deny leaves tool-output allowed", "permission_bare_deny.json", "allow"},
 		{"the exact-glob deny denies it", "permission_exact_glob_deny.json", "deny"},
+		{"the same deny as edit and read rules does not", "permission_path_rule_deny.json", "allow"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -70,8 +71,15 @@ func TestLastMatchControls(t *testing.T) {
 		if got, res := LastMatch(rules, "external_directory", "/tmp/opencode/y"); res != Decided || got.Action != "deny" {
 			t.Errorf("%s: external_directory /tmp/opencode/y = %+v (%v), want the later deny to override the built-in allow", f, got, res)
 		}
-		if _, res := LastMatch(rules, "task", "x"); res != NoRule {
-			t.Errorf("%s: task x = %v, want NoRule", f, res)
+	}
+	// Under the fixtures that carry a deny on every permission, task x is that
+	// deny; under the one that does not, no rule matches it.
+	if got, res := LastMatch(bare, "task", "x"); res != NoRule {
+		t.Errorf("bare deny: task x = %+v (%v), want NoRule", got, res)
+	}
+	for _, f := range []string{"permission_exact_glob_deny.json", "permission_path_rule_deny.json"} {
+		if got, res := LastMatch(loadRules(t, f), "task", "x"); res != Decided || got.Action != "deny" || got.Permission != "*" {
+			t.Errorf("%s: task x = %+v (%v), want the deny on *", f, got, res)
 		}
 	}
 	if _, res := LastMatch(nil, "bash", "ls"); res != NoRule {
@@ -79,15 +87,51 @@ func TestLastMatchControls(t *testing.T) {
 	}
 }
 
-// Glob syntax that no recorded run measures is reported as Unverified, never
-// as allow, deny or no match, whichever rule it sits in.
+// The matcher rows measured on opencode 1.18.34: `*` crosses `/`, `**` is the
+// same as `*`, `?` is one character, a match is anchored at both ends and is
+// case-sensitive, and the path is compared as given (a read path has no
+// leading slash, so a rule written with one does not match). Each row is one
+// rule against one target.
+func TestLastMatchMeasuredMatcherRows(t *testing.T) {
+	const b = "private/tmp/c11/work"
+	for _, c := range []struct {
+		name, pattern, target string
+		want                  Result
+	}{
+		{"star crosses a slash", b + "/a/*", b + "/a/b/c", Decided},
+		{"star on one segment", b + "/a/*", b + "/a/x", Decided},
+		{"double star is star", b + "/a/**", b + "/a/b/c", Decided},
+		{"question mark is one character", b + "/a/?", b + "/a/x", Decided},
+		{"question mark is not two", b + "/a/?", b + "/a/xy", NoRule},
+		{"a literal is anchored at the end", "a/x", b + "/a/x", NoRule},
+		{"a leading star unanchors the start", "*a/x", b + "/za/x", Decided},
+		{"a leading star and slash", "*/a/x", b + "/a/x", Decided},
+		{"a rule with a leading slash does not match a path without one", "/" + b + "/a/x", b + "/a/x", NoRule},
+		{"a rule without the slash matches an absolute path only as given", "/tmp/opencode/*", "/tmp/opencode/y", Decided},
+		{"matching is case-sensitive, rule", b + "/A/*", b + "/a/x", NoRule},
+		{"matching is case-sensitive, path", b + "/a/*", b + "/A/x", NoRule},
+		{"a literal matches itself", "bash", "bash", Decided},
+		{"star alone matches the empty string", "*", "", Decided},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rules := []Rule{{Permission: "*", Pattern: c.pattern, Action: "deny"}}
+			if got, res := LastMatch(rules, "read", c.target); res != c.want {
+				t.Fatalf("%q against %q = %+v (%v), want result %v", c.pattern, c.target, got, res, c.want)
+			}
+		})
+	}
+}
+
+// Any form outside that table is reported as Unverified, never as allow, deny
+// or no match, and it is reported even when an earlier rule would have decided,
+// because a later rule may override it.
 func TestLastMatchUnmeasuredSyntaxIsUnverified(t *testing.T) {
 	for _, c := range []struct{ name, pattern, target string }{
-		{"a double star", "/a/**", "/a/b"},
-		{"a question mark", "/a/?", "/a/b"},
-		{"a star inside a segment", "/a/*.env", "/a/x.env"},
-		{"a star in the middle", "/a/*/c", "/a/b/c"},
-		{"a star crossing a slash", "/a/*", "/a/b/c"},
+		{"a character class", "/a/[xy]", "/a/x"},
+		{"braces", "/a/{x,y}", "/a/x"},
+		{"a negation", "!/a/x", "/a/x"},
+		{"an escape", `/a/\*`, "/a/*"},
+		{"a question mark against a non-ASCII target", "/a/?", "/a/\u00e9"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			rules := []Rule{
@@ -99,8 +143,12 @@ func TestLastMatchUnmeasuredSyntaxIsUnverified(t *testing.T) {
 			}
 		})
 	}
-	// Controls: the measured shapes are decided.
-	rules := []Rule{{Permission: "external_directory", Pattern: "/a/*", Action: "allow"}}
+	// Controls: an unmeasured pattern in a rule whose permission cannot match
+	// is skipped, and the measured shapes beside it are decided.
+	rules := []Rule{
+		{Permission: "external_directory", Pattern: "/a/*", Action: "allow"},
+		{Permission: "bash", Pattern: "{x,y}", Action: "deny"},
+	}
 	if got, res := LastMatch(rules, "external_directory", "/a/b"); res != Decided || got.Action != "allow" {
 		t.Errorf("/a/* on /a/b = %+v (%v), want allow", got, res)
 	}

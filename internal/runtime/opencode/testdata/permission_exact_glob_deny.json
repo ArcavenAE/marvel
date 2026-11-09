@@ -1,10 +1,11 @@
 {
-  "provenance": "DERIVED, not measured. The order opencode builds when the config holds an explicit deny on exactly <data>/opencode/tool-output/*: design fact 14 says opencode then does not append its allow again. The built-in external_directory rows are those of appendix A.1; the two config rows are the design's external_directory block. <data> stands for the seat's XDG_DATA_HOME.",
+  "provenance": "Rule order of `opencode debug agent build` with the config {\"*\":\"deny\",\"external_directory\":{\"<data>/opencode/tool-output/*\":\"deny\"}}, measured on opencode 1.18.34: an external_directory deny on exactly that pattern replaces the allow opencode otherwise appends again, and nothing follows it. Rows for other permissions are omitted. <data> stands for the seat's XDG_DATA_HOME.",
   "rules": [
+    {"permission": "*", "pattern": "*", "action": "allow"},
     {"permission": "external_directory", "pattern": "*", "action": "ask"},
     {"permission": "external_directory", "pattern": "<data>/opencode/tool-output/*", "action": "allow"},
     {"permission": "external_directory", "pattern": "/tmp/opencode/*", "action": "allow"},
-    {"permission": "external_directory", "pattern": "*", "action": "deny"},
+    {"permission": "*", "pattern": "*", "action": "deny"},
     {"permission": "external_directory", "pattern": "<data>/opencode/tool-output/*", "action": "deny"}
   ]
 }
