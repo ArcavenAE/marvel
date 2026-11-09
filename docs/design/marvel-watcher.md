@@ -398,7 +398,7 @@ A seat held at a first-run screen reads `running`, with health `unknown` and com
 | **A detector is built.** The harness-state watchdog visits every running seat every 30 s, for a harness with a foreground rule and a loaded pattern set. Once the seat has been quiet past the window (10 min, from `ContextAt`, or from `CreatedAt` for a seat that never reported), it captures the pane once per window and classifies it with `panestate.Classify` | `internal/daemon/watchdog.go:29`, `:285-351`; `internal/api/quiet.go:10` | read |
 | A matched prompt sets `HarnessState` `parked` with a reason from `trust`, `permission`, `update` and `other`. `get sessions` then prints PANE `prompt`, and the watchdog never answers | `internal/panestate/load.go:119`; `internal/api/types.go:1361-1365`; `internal/daemon/pane_column.go:80` | read |
 | One claude pattern ships: `logged-out`, covering 2.1.285 to 2.1.293. A version outside the range reads `uncovered` | `internal/panestate/patterns/claude/2.1.290/logged-out.yaml` | read |
-| No pattern exists for the theme picker, the trust prompt, the setup menu or the dev-channels prompt | `git ls-tree internal/panestate/patterns` | read; a claude trust pattern is ticketed (aae-orc-e2b5f) |
+| No pattern exists for the theme picker, the trust prompt or the setup menu. One exists for the dev-channels prompt, `dev-channels-consent`, for 2.1.310 only, parked as `other` (marvel#1370) | `git ls-tree internal/panestate/patterns`; `internal/panestate/patterns/claude/2.1.310/dev-channels-consent.yaml` | read; a claude trust pattern is ticketed (aae-orc-e2b5f) |
 | The claude version the fleet ran on 2026-11-06, 2.1.318, is outside the shipped range | `claude --version` | run |
 
 So a held seat is visited by a detector that has nothing to match it against. At 2.1.318 it would read `uncovered`. That is inferred from the code, not read from a held seat.
@@ -440,7 +440,7 @@ Each pattern is built only from a captured sample, never written by hand (`inter
 | theme picker | first launch on a config whose onboarding is not complete. The logged-out pattern's comment places the login picker "once past the theme step" | `onboarding` (new) | none | `seat-bootstrap.md` section 5a (`:447`) writes no onboarding flags, on the premise that "the operator's own config has already completed it". A seat given its own config dir does not meet that premise. That was the cause on 2026-11-06: the held seats came from a launcher outside marvel that sets a seat-own `CLAUDE_CONFIG_DIR`, whose config file had no onboarding-complete key (key names read, not values). That launcher's setup now seeds the onboarding and trust flags, and the launcher checks them. marvel's bootstrap still writes none for a seat with its own config dir |
 | trust prompt | a workdir with no `hasTrustDialogAccepted` | `trust` | none; aae-orc-e2b5f | the bootstrap's trust write (built) |
 | setup menu | named by `c1`; which screen it is has not been captured | to be set from the capture: `onboarding` if it belongs to the first-launch sequence, else `other` | none | |
-| dev-channels prompt | a launch with development channels enabled | `consent` (new) | none | |
+| dev-channels prompt | a launch with development channels enabled | `consent` (new) | `dev-channels-consent`, 2.1.310 only, parked as `other` until `consent` loads (marvel#1370) | |
 | login picker | no login | `logged-out` | 2.1.285 to 2.1.293; extension ticketed (aae-orc-trtbm) | the login is never touched (`seat-bootstrap.md` section 5a) |
 
 `onboarding` and `consent` join the parked reasons (`internal/panestate/load.go:119`). `seat-readiness.md` section 7 already lists claude `consent` and `trust` as patterns to add, so `consent` is its name, not a new one.
@@ -492,7 +492,7 @@ New tickets, filed flat with these edges:
 
 | id | ticket | blocked by |
 |---|---|---|
-| J1 | capture claude's first-run screens on a scratch claude at the fleet's current versions (theme picker, setup menu, dev-channels prompt), and ship each as a pattern with its range | J2 |
+| J1 | capture claude's first-run screens on a scratch claude at the fleet's current versions (theme picker, setup menu), and ship each as a pattern with its range. The dev-channels prompt already has a pattern for 2.1.310 only (marvel#1370); J1 adds its capture at the fleet's current version and extends the range | J2 |
 | J2 | add `onboarding` and `consent` to the parked reasons, with the load test | none |
 | J3 | the watcher reads `HarnessState` for `dialog` and `unknown` per 12.2; no capture of its own | D1 (aae-orc-80tnj), J2 |
 
