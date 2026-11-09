@@ -460,6 +460,14 @@ type Row struct {
 	// ReadingAgeSeconds is how old a stale reading is, on the daemon's clock.
 	// It is set only on a stale row, where Observed holds the last value.
 	ReadingAgeSeconds int64 `json:"reading_age_seconds,omitempty"`
+	// ObservedPercent is the used percentage as the daemon read it, for a fresh
+	// or stale row whose window reported one. Observed is that value rounded; this
+	// is the value STATE compares to the warning level, and the table prints one
+	// decimal of it. A daemon that predates it sends only Observed.
+	ObservedPercent *float64 `json:"observed_percent,omitempty"`
+	// ObservedUnknown is set on a fresh or stale row whose window reported no
+	// percentage. Observed is then left off the wire, so it never reads as a 0.
+	ObservedUnknown bool `json:"observed_unknown,omitempty"`
 }
 
 // Row states.

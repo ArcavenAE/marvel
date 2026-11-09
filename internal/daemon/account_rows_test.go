@@ -444,3 +444,61 @@ func TestAccountLimitsTwoSeatsAReRenderingSiblingNeverLiftsALimit(t *testing.T) 
 		t.Fatalf("seat b lost the limit: %q", got.Condition)
 	}
 }
+
+// A window that reported no percentage is unknown, never a 0. A stale one still
+// says stale and how old it is; a fresh one has no state to report.
+func TestAccountRowsAWindowWithNoPercentageIsUnknown(t *testing.T) {
+	t.Parallel()
+	key := api.AccountKeyOf(accountSession("a", "claude"))
+	wins := []api.AccountWindow{
+		{Name: "five_hour", ResetsAt: acctT0.Add(time.Hour)},
+		{Name: "seven_day", UsedPercent: acctPct(62.4), ResetsAt: acctT0.Add(time.Hour)},
+	}
+	for _, c := range []struct {
+		name  string
+		at    time.Time
+		state string
+		age   int64
+	}{
+		{"fresh", acctT0.Add(time.Minute), "-", 0},
+		{"stale", acctT0.Add(34 * time.Minute), "stale", int64((34 * time.Minute).Seconds())},
+	} {
+		rd := api.NewAccountReadings()
+		rd.Record(key, wins, "ws/a", acctT0)
+		rows := accountRowsAt(rd, []api.Session{accountSession("a", "claude")}, c.at, 80)
+		if len(rows) != 2 {
+			t.Fatalf("%s: rows = %+v, want two windows", c.name, rows)
+		}
+		five, seven := rows[0], rows[1]
+		if five.AccountWindow != "five_hour" || !five.ObservedUnknown || five.Observed != 0 || five.ObservedPercent != nil {
+			t.Errorf("%s no-percentage row = %+v, want unknown and no value", c.name, five)
+		}
+		if five.State != c.state || five.ReadingAgeSeconds != c.age {
+			t.Errorf("%s no-percentage row: STATE %q age %d, want %q and %d", c.name, five.State, five.ReadingAgeSeconds, c.state, c.age)
+		}
+		if seven.ObservedUnknown || seven.ObservedPercent == nil || *seven.ObservedPercent != 62.4 || seven.Observed != 62 {
+			t.Errorf("%s value row = %+v, want observed 62, observed_percent 62.4, known", c.name, seven)
+		}
+	}
+}
+
+// The raw value rides on the row and STATE compares the raw value: 79.6 against a
+// level of 80 prints 79.6 and is not near the limit, and 80.0 is.
+func TestAccountRowsEdgeOfTheLevelKeepsTheRawValue(t *testing.T) {
+	t.Parallel()
+	key := api.AccountKeyOf(accountSession("a", "claude"))
+	for _, c := range []struct {
+		pct   float64
+		state string
+	}{{79.6, "-"}, {80.0, accountWarnState}} {
+		rd := api.NewAccountReadings()
+		rd.Record(key, []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(c.pct), ResetsAt: acctT0.Add(time.Hour)}}, "ws/a", acctT0)
+		rows := accountRowsAt(rd, []api.Session{accountSession("a", "claude")}, acctT0.Add(time.Minute), 80)
+		if len(rows) != 1 || rows[0].ObservedPercent == nil || *rows[0].ObservedPercent != c.pct {
+			t.Fatalf("%.1f: rows = %+v, want observed_percent %.1f", c.pct, rows, c.pct)
+		}
+		if rows[0].State != c.state {
+			t.Errorf("%.1f against level 80: STATE %q, want %q", c.pct, rows[0].State, c.state)
+		}
+	}
+}
