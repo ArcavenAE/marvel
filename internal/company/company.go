@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/arcavenae/marvel/internal/buildversion"
 )
 
 // Ident names a library version the way its directory does.
@@ -255,6 +257,9 @@ func DecodeCompany(dir Ident, data []byte) (*Company, error) {
 			return nil, err
 		}
 	}
+	if !orderable(c.RequiresMarvel) {
+		return nil, r("N23", "requires_marvel", "a version that can be ordered (for example 0.9.0)")
+	}
 	if c.Name != dir.Name {
 		return nil, r("N5", "name", c.Name, dir.Name)
 	}
@@ -320,6 +325,13 @@ func DecodeCompany(dir Ident, data []byte) (*Company, error) {
 		c.Definitions = append(c.Definitions, d)
 	}
 	return c, nil
+}
+
+// orderable reports whether v has an order against other versions at all: it
+// parses as a version.
+func orderable(v string) bool {
+	_, known := buildversion.VersionOlder(v, v)
+	return known
 }
 
 func validStatus(s string) bool { return s == "ratified" || s == "proposal" || s == "retired" }

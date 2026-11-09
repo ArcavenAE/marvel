@@ -105,11 +105,13 @@ func Check(env Env, req Request) (*Result, error) {
 		if c == nil {
 			continue
 		}
+		// A requires_marvel with no order is refused when company.toml is
+		// decoded, so an unknown order here means the running version has none.
 		older, known := buildversion.VersionOlder(running, c.RequiresMarvel)
 		switch {
-		case !known && !orderable(running):
+		case !known:
 			res.RequiresMarvel = "unchecked: dev"
-		case !known || older:
+		case older:
 			return nil, refuse("5", c.Name, c.Version, c.RequiresMarvel, running)
 		}
 	}
@@ -150,12 +152,6 @@ func Check(env Env, req Request) (*Result, error) {
 		}
 	}
 	return res, nil
-}
-
-// orderable reports whether v has an order at all: it parses as a version.
-func orderable(v string) bool {
-	_, known := buildversion.VersionOlder(v, v)
-	return known
 }
 
 func joinInts(l []int) string {

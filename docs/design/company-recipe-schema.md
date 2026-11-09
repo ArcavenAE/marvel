@@ -120,7 +120,7 @@ source = { url = "https://example.invalid/acme-recipes.git", commit = "b41d0e2" 
 3. E0: read-only files and a matching tree hash (companies.md).
 4. `kind`: the `company` pin must name a `definitions` library and the `recipes` pin a `recipes` library.
 5. The index: each entry's `identity` agrees with its `id` (see Definition entries).
-6. `requires_marvel`: refused when this marvel is older. A marvel with no orderable version, a build that reads `dev`, passes this check unchecked and the result says so (`unchecked: dev`); the schema check in step 7 still applies.
+6. `requires_marvel`: refused when this marvel is older. A marvel with no orderable version, a build that reads `dev`, passes this check unchecked and the result says so (`unchecked: dev`); the schema check in step 7 still applies. A `requires_marvel` that cannot be ordered is refused when `company.toml` is read, with the form refusal for that key.
 7. Each library's own schema: marvel carries the list of `definition_schema` and `recipe_schema` values it reads, and refuses a library whose value is not on its list, and a recipe file whose `schema` is not its library's `recipe_schema`.
 8. The pair: the recipes library's `requires.definition_schema` must equal the definitions library's `definition_schema`.
 9. Read the definition and the recipe. Refuse a `retired` definition, a pair whose `identity_status` is `retired`, a `proposal` in `status` or `identity_status` unless the role sets `allow_proposal`, and a recipe whose `prompt` lists `identity` against an entry that carries one.
