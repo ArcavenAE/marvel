@@ -92,9 +92,10 @@ const (
 //
 // The reading is api.WorkAt: SessionContext.ReadingChangedAt where a producer
 // stamps it, else SessionContext.ContextAt. Both activity producers marvel
-// already has write them — the usage accountant on each token-bearing stream
+// already has write them: the usage accountant on each token-bearing stream
 // sample (headless) and the cooperative heartbeat RPC (interactive
-// statusline/codex feeds and the simulator). No stream scraping is added. See team.evaluateActivity.
+// statusline/codex feeds and the simulator). No stream scraping is added. See
+// team.evaluateActivity.
 type ActivityState string
 
 const (
