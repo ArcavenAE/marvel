@@ -18,8 +18,13 @@ import (
 	"github.com/arcavenae/marvel/internal/paths"
 )
 
+// childMode is HOMEGUARD_CHILD as the binary started with it. The guard removes
+// every variable off its list before the tests run, so a child test reads the
+// mode here, from before the scrub, and not from the environment.
+var childMode = os.Getenv("HOMEGUARD_CHILD")
+
 func TestMain(m *testing.M) {
-	if os.Getenv("HOMEGUARD_CHILD") == "setup-real" {
+	if childMode == "setup-real" {
 		// A setup that points an allowed variable into the real home must fail the binary.
 		os.Exit(RunWith(m, func() error {
 			return os.Setenv("MARVEL_SOCKET", filepath.Join(realUserHome(), "x.sock"))
@@ -232,7 +237,7 @@ var wantCleared = []string{
 
 // TestChildReportsEnv runs only as a child of TestRunClearsHomeLikeVariables.
 func TestChildReportsEnv(t *testing.T) {
-	if os.Getenv("HOMEGUARD_CHILD") != "env" {
+	if childMode != "env" {
 		t.Skip("child only")
 	}
 	for _, name := range wantCleared {
@@ -255,6 +260,10 @@ func TestRunClearsHomeLikeVariables(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Errorf("a decoy home-like variable survived the guard: %v\n%s", err, out)
+	}
+	// A child that skipped would also exit 0: require that it ran to a pass.
+	if !strings.Contains(string(out), "--- PASS: TestChildReportsEnv") {
+		t.Errorf("the child test did not run to a pass (a skip would hide a leak):\n%s", out)
 	}
 	for _, name := range wantCleared {
 		if !slices.Contains(HomeVars, name) {

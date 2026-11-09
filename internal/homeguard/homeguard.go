@@ -1,6 +1,8 @@
 // Package homeguard keeps a package's tests out of the operator's real home.
 //
-// Every package with tests calls Run from its TestMain. Run gives the test
+// Every package with tests calls Run from its TestMain. Run starts by removing
+// every variable but PATH, LANG and TMPDIR from the test binary's environment, so
+// a child a test starts inherits no credential variable. It then gives the test
 // binary a scratch HOME and no MARVEL_*, TMUX or TMUX_PANE variables, so a
 // test that forgets t.Setenv resolves ~/.marvel, ~/.codex and ~/.claude.json
 // inside a temp dir, and a tmux call made without -L cannot reach the tmux
@@ -49,6 +51,10 @@ func RunWith(m *testing.M, setup func() error) int {
 		return 1
 	}
 	defer func() { _ = os.RemoveAll(home) }()
+	if err := scrubProcessEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "homeguard: scrub env: %v\n", err)
+		return 1
+	}
 	if err := os.Setenv("HOME", home); err != nil {
 		fmt.Fprintf(os.Stderr, "homeguard: set HOME: %v\n", err)
 		return 1
