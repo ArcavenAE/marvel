@@ -37,17 +37,19 @@ parallel-type-drift class, killed by construction). This is bd aae-orc-b69n.
 - `readiness/routing-vectors.json`: golden vectors for the seat readiness
   routing rule (`docs/design/seat-readiness.md` section 6). Each vector is a
   seat's duty and withdrawn cells, the job's duties, an optional supervisor
-  override and the decision; marvel's `api.RouteSeat` and director must both
-  return it at the file's `now`. Cells use the `asof.Cell` JSON shape.
+  override and the decision; director's `marry` package (`director-mcp marry`)
+  returns it at the file's `now`. Marvel keeps the file and runs no test over
+  it. Cells use the `asof.Cell` JSON shape.
 - `readiness/marry-vectors.json`: golden vectors for the idle scheduler's
   marrying step (idle-scheduler design v2, section 3.2, one vector per row,
-  plus section 3.1). Each vector is a list of steps: `marry` (marvel's
-  `api.Marry`), `take`, `recheck`, `address`, and the trigger row's `grep` of
-  the marry source. The step is shadow only, so no vector sends. Decode the
-  file strictly (an unknown field is an error) and compare each `want` after
-  decoding it, never as bytes: empty fields are omitted. The `grep` steps read
-  marvel's Go source, one per file the marrying step reaches, so they run in
-  marvel only.
+  plus section 3.1). Each vector is a list of steps: `marry` (director's
+  `director-mcp marry`), `take`, `recheck`, `address`, and the trigger row's
+  `grep` of the marry source. The step is shadow only, so no vector sends.
+  Decode the file strictly (an unknown field is an error) and compare each
+  `want` after decoding it, never as bytes: empty fields are omitted. The
+  `grep` steps named marvel's Go source and ran in marvel only; marvel no
+  longer holds that source, so no test runs them. Marvel keeps the file and
+  runs no test over it.
 - `go/envelope`, `go/event`: the Go halves (types + validator for the envelope;
   validator only for the event twin, whose Go source of truth is `events.go`).
 

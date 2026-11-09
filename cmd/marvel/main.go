@@ -311,7 +311,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newGooseWatchCmd())
 	root.AddCommand(newGooseGuardCmd())
 	root.AddCommand(planCmd())
-	root.AddCommand(marryCmd())
 
 	silenceUsageOnConnectErrors(root)
 	return root

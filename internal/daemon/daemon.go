@@ -83,6 +83,10 @@ type Daemon struct {
 
 	// views follows each seat's read-only views (marvel#609).
 	views *view.Keeper
+
+	// registerDir is where the register's pull file is written each pass.
+	// Empty when the layout cannot be resolved, which turns the pass off.
+	registerDir string
 	// scheduleHistoryMax is the cluster's ceiling on a scheduled role's
 	// schedule.history; zero means the default.
 	scheduleHistoryMax int
@@ -519,6 +523,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// Each seat's read-only views are built at spawn by the session manager
 	// and followed on a tick here (marvel#609).
 	if layout, lerr := paths.Default(); lerr == nil {
+		d.registerDir = layout.RegisterDir()
 		d.views = &view.Keeper{ViewsDir: layout.ViewsDir(), Events: evRing, Declared: d.viewDeclarations}
 		d.views.OnMoved = teamCtrl.NoteViewMoved
 		d.views.Held = teamCtrl.ViewTreesHeld
@@ -797,6 +802,14 @@ func (d *Daemon) adoptAndRun(ctx context.Context, socketPath, network string) er
 	go func() {
 		defer d.wg.Done()
 		d.RunBrokerRetry(ctx, ReconcileInterval)
+	}()
+
+	// The register's pull file is rewritten on the reconcile tick, a sibling
+	// loop so a slow write cannot hold a reconcile pass up.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.RunRegisterPull(ctx, ReconcileInterval)
 	}()
 
 	// Start the process sampler. Sibling of the reconcile loop rather
@@ -1828,6 +1841,8 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 			d.stampPaneReads(live)
 		}
 		result = append(live, held...)
+	case "register", "registers":
+		result = d.registerRows()
 	case "teams", "team":
 		result = d.store.ListTeams()
 	case "team-load":
@@ -1904,7 +1919,7 @@ func (d *Daemon) handleDescribe(params json.RawMessage) daemonrpc.Response {
 			if one[0].Reason == "" {
 				one[0].Reason = api.ConfigErrorReason(one[0])
 			}
-			result = one[0]
+			result = describedSession{Session: one[0], Register: d.registerRowFor(one[0])}
 		}
 	case "team":
 		result, err = d.describeTeam(p.Name)
