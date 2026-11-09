@@ -898,6 +898,16 @@ marker, or the role declares no handoff path, marvel records
 `team.shift-handoff-missing` and leaves the seat running; the team's supervisor
 decides whether to call `marvel shift`.
 
+These events carry the condition that asked (`cause`: `max-age` or
+`context-pressure`) and the generation the seat itself runs at, which can be
+behind the team's. `team.shift-handoff-missing` carries `reason` `window-expired`
+and `team.shift-autotriggered` carries `reason` `marker`. A request that stops
+holding its role's slot without a shift, because the seat it asked is gone or
+was replaced or because the role's policy no longer declares the condition,
+records `team.shift-hold-released` with `reason` `seat-gone` or
+`policy-removed`. `marvel describe team` shows each pending request with when
+it was made and, once escalated, `escalated_at`.
+
 A seat that cannot write a file on the daemon host, such as one in a read-only
 sandbox, can hand off through the daemon instead. `marvel handoff put` reads the
 handoff text from stdin, and `marvel mcp handoff` serves the same call as an MCP
