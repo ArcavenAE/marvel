@@ -111,6 +111,9 @@ func TestLastMatchMeasuredMatcherRows(t *testing.T) {
 		{"matching is case-sensitive, rule", b + "/A/*", b + "/a/x", NoRule},
 		{"matching is case-sensitive, path", b + "/a/*", b + "/A/x", NoRule},
 		{"a literal matches itself", "bash", "bash", Decided},
+		{"a pattern longer than the target does not match", b + "/a/xy", b + "/a/x", NoRule},
+		{"a pattern longer than the target after a star does not match", b + "/a/*y", b + "/a/x", NoRule},
+		{"a trailing star beyond the target's end still matches", b + "/a/x*", b + "/a/x", Decided},
 		{"star alone matches the empty string", "*", "", Decided},
 	} {
 		t.Run(c.name, func(t *testing.T) {
