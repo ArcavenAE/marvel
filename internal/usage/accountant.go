@@ -5,6 +5,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -53,6 +54,10 @@ type Coords struct {
 type Bind struct {
 	Harness string
 	Args    []string
+	// CacheHome is the seat's own XDG_CACHE_HOME, "" for a seat that shares the
+	// daemon's. A seat with a private home keeps its own opencode model
+	// catalog under it, which is the one its window is read from.
+	CacheHome string
 	// Model is a launch-arg model, "" when absent.
 	Model string
 	// Window is a manifest override, 0 when unset.
@@ -288,7 +293,13 @@ func (a *Accountant) catalogLimit(b Bind) int {
 	if model == "" {
 		model = ModelFromArgs(b.Args)
 	}
-	w, err := OpenCodeWindow(a.opencodeModelsPath, model)
+	path := a.opencodeModelsPath
+	if filepath.IsAbs(b.CacheHome) {
+		// A seat with a private home keeps its own catalog under its own cache
+		// home, as OpenCodeModelsPath places it.
+		path = filepath.Join(b.CacheHome, "opencode", "models.json")
+	}
+	w, err := OpenCodeWindow(path, model)
 	if err != nil {
 		a.mu.Lock()
 		first := a.warnOnceLocked("opencode-models:" + model)
