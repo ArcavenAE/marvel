@@ -147,6 +147,10 @@ func (o *OpenCode) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		}
 	}
 
+	if reason := openCodeLaunchRefusal(ctx); reason != "" {
+		return openCodeRefusal(env, reason), nil
+	}
+
 	if ctx.Session.Runtime.Mode != api.RuntimeModeHeadless {
 		return &LaunchResult{
 			Command: buildCommand(binary, args),
