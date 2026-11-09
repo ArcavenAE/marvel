@@ -723,6 +723,7 @@ func TestRenderBudgetTableObservedOneDecimal(t *testing.T) {
 		acct("a", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 80, pct(79.6) }),
 		acct("d", "fresh", func(r *admission.Row) { r.Observed = 87 }),
 		acct("f", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 80, pct(79.96) }),
+		acct("i", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 80, pct(80.04) }),
 		acct("g", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 87, pct(87.3) }),
 		acct("h", "fresh", func(r *admission.Row) { r.Observed, r.ObservedPercent = 100, pct(100) }),
 		acct("e", "stale", func(r *admission.Row) {
@@ -750,6 +751,9 @@ func TestRenderBudgetTableObservedOneDecimal(t *testing.T) {
 	// decimal, and a whole one, print as they are.
 	if l := line("f"); !strings.Contains(l, "79.9%") || strings.Contains(l, "80.0%") {
 		t.Errorf("79.96 = %q, want 79.9%% and not 80.0%%", l)
+	}
+	if l := line("i"); !strings.Contains(l, "80.0%") {
+		t.Errorf("80.04 = %q, want 80.0%%: over the level it prints at the level", l)
 	}
 	if l := line("g"); !strings.Contains(l, "87.3%") {
 		t.Errorf("87.3 = %q, want 87.3%%", l)

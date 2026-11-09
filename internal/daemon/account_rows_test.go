@@ -453,7 +453,7 @@ func TestAccountRowsEdgeOfTheLevelKeepsTheRawValue(t *testing.T) {
 	for _, c := range []struct {
 		pct   float64
 		state string
-	}{{79.6, "-"}, {79.96, "-"}, {80.0, accountWarnState}} {
+	}{{79.6, "-"}, {79.96, "-"}, {80.0, accountWarnState}, {80.04, accountWarnState}} {
 		rd := api.NewAccountReadings()
 		rd.Record(key, []api.AccountWindow{{Name: "seven_day", UsedPercent: acctPct(c.pct), ResetsAt: acctT0.Add(time.Hour)}}, "ws/a", acctT0)
 		rows := accountRowsAt(rd, []api.Session{accountSession("a", "claude")}, acctT0.Add(time.Minute), 80)
