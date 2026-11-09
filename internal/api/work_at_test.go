@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -140,5 +142,25 @@ func TestWorkAtFallsBackToContextAt(t *testing.T) {
 	}
 	if !WorkAt(&Session{}).IsZero() {
 		t.Error("WorkAt of a session with no stamps is not zero")
+	}
+}
+
+// A zero stamp is left out of the stored and wire form, so a record written
+// before the stamp existed and one that never had it read the same.
+func TestReadingChangedAtIsOmittedWhenZero(t *testing.T) {
+	t.Parallel()
+	zero, err := json.Marshal(&Session{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(zero), "reading_changed_at") {
+		t.Errorf("a zero ReadingChangedAt was written: %s", zero)
+	}
+	set, err := json.Marshal(&Session{SessionContext: SessionContext{ReadingChangedAt: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(set), `"reading_changed_at":"2026-11-09T12:00:00Z"`) {
+		t.Errorf("a set ReadingChangedAt was not written: %s", set)
 	}
 }

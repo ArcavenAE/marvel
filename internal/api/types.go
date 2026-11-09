@@ -625,7 +625,7 @@ type SessionContext struct {
 	// seat beats every 15 seconds, so ContextAt alone cannot say whether the seat
 	// worked. Readers of "did work" use WorkAt. Zero means the producer never
 	// wrote it (marvel#801).
-	ReadingChangedAt time.Time `toml:"-" json:"reading_changed_at,omitempty"`
+	ReadingChangedAt time.Time `toml:"-" json:"reading_changed_at,omitzero"`
 	// SpendOut and SpendPromptTokens are the session's cumulative output
 	// tokens and layout-normalized prompt tokens, as the usage accountant
 	// has summed them (usage.Spend.Out and usage.Spend.PromptTokens).
