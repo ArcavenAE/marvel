@@ -223,10 +223,19 @@ const (
 	childMarker  = "EXEC_CROSSING_MARKER"
 )
 
+// The child's two switches, read as the binary started and not from the
+// environment: the test guard removes every variable off its list before the
+// tests run, so a child that read them with os.Getenv would find nothing, take
+// the parent's branch, and start another child without end.
+var (
+	childStubValue   = os.Getenv(childStubVar)
+	childMarkerValue = os.Getenv(childMarker)
+)
+
 func TestFallbackMarkerCrossesAnExec(t *testing.T) {
-	if stub := os.Getenv(childStubVar); stub != "" {
+	if stub := childStubValue; stub != "" {
 		// The child: set the marker and a stale handoff variable, then exec.
-		if err := os.Setenv(api.FallbackEnv, os.Getenv(childMarker)); err != nil {
+		if err := os.Setenv(api.FallbackEnv, childMarkerValue); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Setenv(handoffEnvVar, "9"); err != nil {
