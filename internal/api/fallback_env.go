@@ -6,6 +6,6 @@ package api
 // that finds it set has already fallen back once and does not fall back again.
 // It is a marker in the daemon's own environment and never reaches a seat.
 //
-// Owner reading, for review before merge: the name and the value (the kept
-// path) are the builder's proposal, ruled in as written by the director.
+// Owner reading, proposed for review before merge: the name and the value (the
+// kept path).
 const FallbackEnv = "MARVEL_UPGRADE_FALLBACK"

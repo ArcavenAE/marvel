@@ -88,6 +88,32 @@ func TestReexecResolvesItsOwnPathThroughTheSelfExecSeam(t *testing.T) {
 	expectNoExec(t, calls2)
 }
 
+// Reexec, the entry point with no RPC in front of it, resolves its own path
+// through the selfExec seam and execs it. The control is a seam that fails: the
+// error comes back and nothing is exec'd.
+func TestReexecEntryPointUsesTheSelfExecSeam(t *testing.T) {
+	d, calls := reexecHarness(t)
+	d.selfExec = func() (string, error) { return "/kept/marvel", nil }
+	if err := d.Reexec(); err != nil {
+		t.Fatalf("Reexec: %v", err)
+	}
+	select {
+	case got := <-calls:
+		if got != "/kept/marvel" {
+			t.Errorf("exec'd %q, want the path the seam named", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the exec primitive was not invoked")
+	}
+
+	d2, calls2 := reexecHarness(t)
+	d2.selfExec = func() (string, error) { return "", errors.New("no self") }
+	if err := d2.Reexec(); err == nil || !strings.Contains(err.Error(), "no self") {
+		t.Errorf("Reexec error = %v, want the seam's failure", err)
+	}
+	expectNoExec(t, calls2)
+}
+
 // Without a seam the daemon resolves its path as before.
 func TestResolveSelfWithoutASeamIsSelfExecPath(t *testing.T) {
 	d := &Daemon{}

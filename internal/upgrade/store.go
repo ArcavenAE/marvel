@@ -62,8 +62,8 @@ type Record struct {
 // its successor does not start: where it is, its sha256, and the store schema
 // it reads, so a fallback is not aimed at a store newer than it understands.
 //
-// Owner reading, for review before merge: the fields are the builder's
-// proposal, ruled in as written by the director.
+// Owner reading, proposed for review before merge: the type name and its three
+// fields.
 type Fallback struct {
 	Path   string
 	Sum    string
@@ -73,6 +73,8 @@ type Fallback struct {
 // KeepRunning keeps a copy of the running build, at running, for a fallback.
 // This is the seam only: it keeps nothing and returns the zero Fallback, and
 // nothing calls it yet. The zero-downtime upgrade chain gives it a body.
+//
+// Owner reading, proposed for review before merge: the name and the signature.
 func KeepRunning(l paths.Layout, running string) (Fallback, error) {
 	return Fallback{}, nil
 }
