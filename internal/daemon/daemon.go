@@ -1119,7 +1119,7 @@ func (d *Daemon) handleRWCAs(rwc io.ReadWriteCloser, c caller) {
 	if err != nil {
 		resp := daemonrpc.Response{Error: fmt.Sprintf("decode request: %v", err)}
 		if errors.Is(err, errRequestTooLarge) {
-			resp = daemonrpc.Response{Error: errRequestTooLarge.Error()}
+			resp = daemonrpc.Response{Error: fmt.Sprintf("%v: over %s", errRequestTooLarge, daemonrpc.BoundText(bounded.limit))}
 		}
 		_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
 		return

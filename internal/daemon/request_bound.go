@@ -13,7 +13,7 @@ var maxRequestBytes = daemonrpc.DefaultMaxRequestBytes
 
 // errRequestTooLarge is what a boundedReader returns once it has handed on
 // more than its limit.
-var errRequestTooLarge = errors.New("request too large: over 24 MiB")
+var errRequestTooLarge = errors.New("request too large")
 
 // boundedReader reads from r, never reads more than limit+1 bytes through it,
 // and fails every read after the first byte past limit. The request is decoded
