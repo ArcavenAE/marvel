@@ -238,6 +238,18 @@ Fixed text, so the tests and the admin guide quote one wording. Angle brackets a
 | a proposal without the flag | `team <team> role <role>: definition <id> is a proposal (<status or identity_status>) and the role does not set allow_proposal` |
 | pre-flight failed | `pre-flight <command> exited <code>: <output>` |
 | pre-flight timed out | `pre-flight <command> exceeded <timeout> (elapsed <duration>); process group killed` |
+| a credential key in a recipe | `recipe <name>: <block>: key <KEY> is a credential and may not be named in a recipe` |
+| a key marvel sets, in a recipe | `recipe <name>: <block>: key <KEY> is set by marvel and may not be named in a recipe` |
+| a parameter named `global` | `recipe <name>: params.global: parameter name "global" is reserved` |
+| `tool:` out of place | `recipe <name>: <key>: tool: is valid only as a whole command or the first element of a command list` |
+| name or version differs from its directory | `company <name>@<version>: company.toml: <which> "<value>" does not equal its directory "<dir>"` |
+| an index field is malformed | `company <name>@<version>: <file>: definition <id>: <field> is not well formed` |
+| a required key is missing | `company <name>@<version>: <file>: required key "<key>" is missing` |
+| an env or unset name is not a plain name | `company <name>@<version>: recipe <recipe>: <section> key <KEY> is not a plain name` |
+| a company key of the wrong form | `company <name>@<version>: company.toml: <key> must be <form>` |
+| a recipe value of the wrong form | `recipe <name>: <key>: must be <form>` |
+| company.toml does not parse | `company <name>@<version>: company.toml does not parse (line <n>)` |
+| a recipe does not parse | `recipe <name>: recipes/<name>.toml does not parse (line <n>)` |
 
 A pin to a version sideshow removed fails the next restart with the second message and names the team key and, where marvel read the pin from a manifest file, that file and line. It never starts the seat on `current` in its place. Rolling back one team means pinning the previous exact version and shifting.
 
