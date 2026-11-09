@@ -120,6 +120,10 @@ ambient provider key chooses the model when none is configured.
 
 One host, one opencode version, one 0.6B model. The recorder answered 500, so no
 run in cases 1 and 2 reached a tool call. Case 2's ask-to-allow behavior and
-case 7's write location on login are inferred. Every recommendation drawn from
+case 7's write location on login are inferred. Two matcher questions are
+pending and not answered here: the rule order when an exact tool name follows a
+glob (and the re-append), and how `*`, `**` and `?` match in a permission key.
+Until they are measured, the first launch step treats any pattern it has not
+measured as "unverified". Every recommendation drawn from
 this finding is valid until 2026-11-16 and is re-checked then; nothing takes
 effect on silence.
