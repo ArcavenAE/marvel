@@ -189,7 +189,9 @@ func TestMarryVectorsCarryTheClusterOnEveryLease(t *testing.T) {
 			}
 			var in marryInput
 			if len(s.Input) > 0 {
-				_ = json.Unmarshal(s.Input, &in)
+				if err := json.Unmarshal(s.Input, &in); err != nil {
+					t.Fatalf("%s step %d input: %v", v.Name, i, err)
+				}
 			}
 			for _, l := range append(in.Ledger, s.Lease) {
 				if len(l) == 0 || string(l) == "null" {
