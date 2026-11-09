@@ -8,6 +8,11 @@ import "testing"
 // tmux "Pane is dead" status line that follows the exit is not claude output
 // and is blanked in the fixture. The reader must not call it an empty or
 // working composer.
+//
+// The .ansi.txt file is a `capture-pane -p -e` capture, but this screen drew no
+// SGR under these capture conditions: it has no ESC byte and is byte-identical
+// to the .txt. It does not count as escape coverage; it is kept as the -e
+// capture of the same screen.
 func TestPreflightErrorScreenIsNeitherEmptyNorMidTurn(t *testing.T) {
 	t.Parallel()
 	r := ReaderFor("claude")
