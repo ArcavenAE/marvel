@@ -57,7 +57,7 @@ is the separation `ctxforward.go` asked for.
   `rate_limits` record in the rollout log (finding-050). No refusal text is
   parsed.
 - **Storage.** In memory, per key: the newest reading and its provenance. A
-  reading older than 15 minutes shows as `stale`, never as a number. The
+  reading older than 15 minutes shows as `stale` (section 10.1: with its last value and age). The
   provenance a condition relies on is copied onto the session with the
   condition (section 3), so it survives a daemon restart without the reading.
 - **Where it shows.** The budget view already renders one row per dimension
@@ -768,3 +768,17 @@ It is a report: nothing pauses, sheds, refuses or blocks on it
   later.
 - **The STATE word.** `near-limit` for a fresh window at or over the level, and
   `-` otherwise. An account row never reads `ok`.
+
+### 10.1 A stale reading keeps its last value and age (marvel#1341)
+
+`get budgets` no longer drops the number of a stale reading. OBSERVED prints the
+last value with how long ago it was taken, for example `62% (34m ago)`, and
+STATE reads `stale`, whatever the value was: a stale reading is never
+`near-limit`. The age is counted on the daemon's clock and sent as the row's
+`reading_age_seconds`, so a remote client's clock cannot change it. The JSON
+`observed` of a stale row now holds the last value; a row with no reading still
+carries neither. A client that predates the field prints the word `stale` for
+any reading that is not fresh, and a new client against an older daemon, which
+sends no age, prints the word as before. This replaces section 2's rule that a
+stale reading shows as `stale`, never as a number; the reading is still not
+current, and the page's staleness bound is unchanged.
