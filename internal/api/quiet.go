@@ -25,8 +25,18 @@ func QuietWindow(role *Role, cluster time.Duration) time.Duration {
 }
 
 // Quiet is the one quiet test: a session is quiet at now when its
-// ContextAt is zero or strictly older than window. At exactly the window it
+// WorkAt is zero or strictly older than window. At exactly the window it
 // is not quiet yet. The rate, ACTIVE% and the stalled advisory all call it.
 func Quiet(s *Session, window time.Duration, now time.Time) bool {
-	return s.ContextAt.IsZero() || now.Sub(s.ContextAt) > window
+	w := WorkAt(s)
+	return w.IsZero() || now.Sub(w) > window
+}
+
+// WorkAt is the last time the session showed a sign of work: when its reading
+// last changed, or ContextAt for a producer that never wrote that stamp.
+func WorkAt(s *Session) time.Time {
+	if !s.ReadingChangedAt.IsZero() {
+		return s.ReadingChangedAt
+	}
+	return s.ContextAt
 }

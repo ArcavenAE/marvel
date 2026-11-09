@@ -620,6 +620,12 @@ type SessionContext struct {
 	// ContextLimit > 0.
 	ContextPeak float64
 	ContextAt   time.Time
+	// ReadingChangedAt is when the reading last changed, as opposed to when it
+	// was last repeated. ContextAt moves on every beat, and an idle statusline
+	// seat beats every 15 seconds, so ContextAt alone cannot say whether the seat
+	// worked. Readers of "did work" use WorkAt. Zero means the producer never
+	// wrote it (marvel#801).
+	ReadingChangedAt time.Time `toml:"-" json:"reading_changed_at,omitempty"`
 	// SpendOut and SpendPromptTokens are the session's cumulative output
 	// tokens and layout-normalized prompt tokens, as the usage accountant
 	// has summed them (usage.Spend.Out and usage.Spend.PromptTokens).
@@ -1407,8 +1413,8 @@ type HarnessState struct {
 	PaneWidth  int       `json:"pane_width,omitempty"`
 	Evidence   []string  `json:"evidence,omitempty"`
 	CapturedAt time.Time `json:"captured_at"`
-	// ContextAt is the session's ContextAt when this was seen. A later
-	// ContextAt means the seat did work, which clears the state.
+	// ContextAt is the session's WorkAt when this was seen (the name is kept for
+	// stored records). A later WorkAt means the seat did work, which clears the state.
 	ContextAt time.Time `json:"context_at,omitempty"`
 	// Source says which reader set the state: HarnessSourcePane or
 	// HarnessSourceTranscript. Empty reads as pane, so a record written before

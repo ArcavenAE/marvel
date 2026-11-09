@@ -385,7 +385,7 @@ func (d *Daemon) handleResume() daemonrpc.Response {
 // hook, after the processes are resumed and before the record is cleared, so a
 // daemon that stops in between finds the record still there and runs it again.
 //
-// Per running session: LastHeartbeat, LastBusBeat and ContextAt move forward, capped at now;
+// Per running session: LastHeartbeat, LastBusBeat, ContextAt and ReadingChangedAt move forward, capped at now;
 // FailureCount clears; PausedTotal grows by the pause, once per suspend record
 // (PauseAppliedSince holds the Since already counted), so a repeat counts
 // nothing twice. CreatedAt is never written. It goes by session, not by
@@ -412,6 +412,7 @@ func (d *Daemon) applyPause(rec suspend.Record, now time.Time) error {
 			s.LastHeartbeat = suspend.ShiftedHeartbeat(s.LastHeartbeat, pause, now)
 			s.LastBusBeat = suspend.ShiftedHeartbeat(s.LastBusBeat, pause, now)
 			s.ContextAt = suspend.ShiftedHeartbeat(s.ContextAt, pause, now)
+			s.ReadingChangedAt = suspend.ShiftedHeartbeat(s.ReadingChangedAt, pause, now)
 			s.FailureCount = 0
 			if pause > 0 && !s.PauseAppliedSince.Equal(rec.Since) {
 				s.PausedTotal += pause
