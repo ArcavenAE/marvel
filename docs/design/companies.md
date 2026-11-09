@@ -98,6 +98,7 @@ scope = "marvel"                                  # a parameter, not a role
 - **Exact pin** (`name@version`): reproducible. Apply refuses a pin that is in no root.
 - **A second pin** (`recipes = "name"` or `"name@version"`) names a library of kind `recipes`, checked on its own and then against the `company` pin (company-recipe-schema.md).
 - **Name only:** the team follows that name's `current`, so a library rolls forward with no edit at the host: the owning tool flips `current`, and the next launch or shift picks it up.
+- **How `current` is read:** a company name is a real directory under its root, each version a real directory inside it that holds a `company.toml`, and `current` is a symbolic link beside them. marvel reads the link once, as a single path element that names a listed version, and then reads everything through that version's directory. Entries whose names start with `.`, the name `current` itself, symbolic links standing in for a name or a version, and directories with no `company.toml` are not listed. A link that is missing, is not a link, points outside the company, or names a version that is not listed refuses the launch, naming the team key and the pin, and marvel does not fall back to another version.
 - Either way, the version is **resolved once per launch** and recorded on the session. A running session never changes version.
 - A role with no `definition` behaves as today. Nothing existing changes until a manifest opts in.
 
