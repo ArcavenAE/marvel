@@ -131,7 +131,18 @@ type HealthCheckType string
 const (
 	HealthCheckHeartbeat    HealthCheckType = "heartbeat"
 	HealthCheckProcessAlive HealthCheckType = "process-alive"
+	// HealthCheckBus reads LastBusBeat, the director shim's own liveness beat,
+	// in place of LastHeartbeat. The value is ruled (aae-orc-z63a4, 2026-11-09);
+	// it is named once here.
+	HealthCheckBus HealthCheckType = "bus"
 )
+
+// BusHealthTimeout is the ruled timeout for a bus healthcheck (aae-orc-z63a4,
+// ruled 2026-11-09): three beats of the shim's 30 s presence timer,
+// matching the TTL of its presence record. A bus role that names no timeout
+// gets it; the failure threshold keeps its default. It is the one place the
+// number is written.
+const BusHealthTimeout = 90 * time.Second
 
 // HealthCheck configures health checking for a role's sessions.
 type HealthCheck struct {
@@ -299,6 +310,12 @@ type Session struct {
 	PaneID        string       `toml:"-"`
 	PID           int          `toml:"-"`
 	LastHeartbeat time.Time    `toml:"-"`
+	// LastBusBeat is when the director shim last reported that it reached the
+	// bus (the bus.beat RPC). It is a second liveness stamp beside LastHeartbeat,
+	// not a replacement: LastHeartbeat belongs to the statusline feed and moves
+	// with CTX%, so a live statusline beat can keep a seat looking healthy with
+	// its bus dead (finding-166). Only a role on HealthCheckBus reads this one.
+	LastBusBeat time.Time `toml:"-"`
 	// CostTotalUSD and APIDurationMS are the statusline feed's running totals
 	// for this session, and TotalsChangedAt is when either last moved. They sit
 	// outside SessionContext on purpose: that block is replaced whole by each
