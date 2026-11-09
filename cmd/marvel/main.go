@@ -3550,6 +3550,14 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 	if s.State == api.SessionRunning && s.HarnessState != nil && isUnwatched(s.HarnessState.State) {
 		health += " (unwatched)"
 	}
+	// A seat marvel can watch that was handed no first message and has shown no
+	// work reads "(unprompted)". Only with no stored harness verdict, so it never
+	// shares a cell with (logged-out), (parked: x) or (unwatched); the watchdog's
+	// verdict names the cause, and this names the absence of any. It also reads
+	// for a seat sitting at a dialog the watchdog has no pattern for.
+	if s.State == api.SessionRunning && s.HarnessState == nil && api.NeverTookATurn(s) {
+		health += " (unprompted)"
+	}
 	// A failed row carrying a projection Reason is TERMINAL: the role
 	// will spawn no replacement. Without this suffix it is byte-identical
 	// to an ordinary failure the reconciler is about to replace, so the
@@ -3682,6 +3690,9 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 		fmt.Fprintf(&buf, "  heartbeat check passed. A live process at a login prompt still reads\n")
 		fmt.Fprintf(&buf, "  alive or healthy. \"(stalled)\" marks a\n")
 		fmt.Fprintf(&buf, "  session marvel has not seen do work within its role's activity_timeout.\n")
+		fmt.Fprintf(&buf, "  \"(unprompted)\" marks a seat that was handed no first message and has\n")
+		fmt.Fprintf(&buf, "  shown no work; it also reads for a seat waiting at a dialog marvel has no\n")
+		fmt.Fprintf(&buf, "  pattern for.\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "    ?  toggle help    q  quit\n")
 		fmt.Fprintf(&buf, "\n")
