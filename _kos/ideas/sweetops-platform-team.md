@@ -7,7 +7,7 @@
   where it lives is an open question below. Filed in the marvel graph per the
   subject test.
 - **Related:** [[shift-change-succession-protocol]] (a long-lived platform
-  team is the case where succession matters most). wardrobe (B14 role library;
+  team is the case where succession matters most). role library (B14 role library;
   the existing `author`, `reader`, `builder`, `reviewer` roles are the nearest
   shapes). aae-orc B14 (persona, identity, role, process as separate library
   items).
@@ -51,7 +51,7 @@ with the upstream default.
 ## Tensions
 
 - **Where team and role content lives versus what marvel provides.** The
-  roles could be wardrobe items (B14-decomposed, versioned, index-digested)
+  roles could be role library items (B14-decomposed, versioned, index-digested)
   or come from another role system. Marvel's part is the manifest, the
   spawn, the environment, and supervision. Which of the team's needs (for
   example per-repo worktrees, a plan-only credential, a review route) are

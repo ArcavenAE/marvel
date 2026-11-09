@@ -312,3 +312,34 @@ func TestFiringIDIsTheDueTime(t *testing.T) {
 		t.Fatalf("FiringID = %q, want 20261001T061700Z", got)
 	}
 }
+
+// ADR-010 Amendment 2: a scheduled run that exits 78 takes no retries, whatever
+// the retries count, and on_failure then applies. Any other failing status
+// still retries.
+func TestSettleRunExit78TakesNoRetries(t *testing.T) {
+	t.Parallel()
+	due := time.Date(2026, 10, 1, 6, 17, 0, 0, time.UTC)
+	now := due.Add(5 * time.Minute)
+	for _, tc := range []struct {
+		status      string
+		onFailure   string
+		wantSettled bool
+		wantFrozen  bool
+	}{
+		{"78", ScheduleOnFailureWait, true, false},
+		{"78", ScheduleOnFailureFreeze, true, true},
+		{"1", ScheduleOnFailureWait, false, false},
+		{"", ScheduleOnFailureWait, false, false},
+	} {
+		p := SchedulePolicy{Retries: 2, OnFailure: tc.onFailure}
+		st := ScheduleStatus{Firing: "f1", FiringDueAt: due}
+		st.SettleRun(RunRecord{Outcome: RunFailed, Firing: "f1", ExitStatus: tc.status}, p, now)
+		if st.Settled != tc.wantSettled || st.Frozen != tc.wantFrozen {
+			t.Errorf("status %q on_failure %q: settled %v frozen %v, want %v %v",
+				tc.status, tc.onFailure, st.Settled, st.Frozen, tc.wantSettled, tc.wantFrozen)
+		}
+		if retry := !st.RetryAfter.IsZero(); retry == tc.wantSettled {
+			t.Errorf("status %q: retry scheduled = %v, want %v", tc.status, retry, !tc.wantSettled)
+		}
+	}
+}

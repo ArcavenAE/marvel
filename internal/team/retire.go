@@ -108,7 +108,7 @@ func (c *Controller) retireSession(t *api.Team, role *api.Role, sess api.Session
 	if role != nil && role.Shift != nil {
 		template, marker, window = role.Shift.Handoff, role.Shift.HandoffMarker, role.Shift.HandoffWindowOrDefault()
 	}
-	prep := prepareHandoffNotice(retireNotice, template, marker, window, sess)
+	prep := prepareHandoffNotice(retireNotice, template, marker, window, false, sess)
 	if prep.path == "" {
 		prep.text += fmt.Sprintf("; you have %s", window)
 	}

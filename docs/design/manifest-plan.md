@@ -11,8 +11,8 @@ Design for review. No code lands until this doc is reviewed.
   of the missing feature, routing to architect for a bmad party mode casting
   call with three rounds to develop how marvel plan or marvel work dry run
   should work and what unique features it should have for marvel's domain".
-- Gap first established by the builder seat (aae-orc#461, comment
-  5968875135).
+- Gap first established by the builder seat (a comment on the third
+  cluster's bring-up issue).
 - Worked out in a three-round party with five seats (distributed systems,
   harness internals, runtime substrate, AI finops, AI security). The record,
   with every seat's replies, the per-round checks and the vote, is in the

@@ -5,7 +5,7 @@ operator's ruling in that report excluding such seats. I verified the
 mechanism against marvel origin/main b003cd3.
 
 **Placement.** marvel is the subject: the max-age trigger's design. Which
-wardrobe roles can write is context, not the subject.
+role library roles can write is context, not the subject.
 
 ## The mechanism
 

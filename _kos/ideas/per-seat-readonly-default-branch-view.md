@@ -41,7 +41,7 @@ Candidate mechanisms, cheapest first:
    relies on the seat leaving them alone.
 2. The same worktree with its files made read-only after checkout. Git
    itself can still move it, but the seat's tools cannot edit it.
-3. A read-only mount. This is the curtain thin-mission shape (design
+3. A read-only mount. This is the sandbox tool thin-mission shape (design
    resolved, unbuilt) and the slotefs question. It is the strongest option
    and the furthest away.
 
@@ -60,5 +60,5 @@ a default for every seat that names a repository?
 B. Who refreshes it, and when: marvel on a timer, the seat on demand, or a
 merge event (see the director idea on a merge-event feed)?
 
-C. Is option 2 enough until curtain exists, or does a writable-by-git view
+C. Is option 2 enough until the sandbox tool exists, or does a writable-by-git view
 give a false sense of isolation?

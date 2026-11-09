@@ -42,12 +42,12 @@ records what the agent actually received:
 - The `A1` turn arrived as `"<text>\nx"`. The first bare Enter was swallowed,
   the typed `x` landed on the second line, and `C-m` submitted both.
 - `T1` and `T2`, two injects staged before any submit, arrived as **one** turn
-  joined by a newline. This is the stacking seen on e98-architect.
+  joined by a newline. This is the stacking seen on an architect seat in a client workspace.
 
 This explains the operator's report. `Enter` and `C-m` are the same byte
 (`\r`, verified). `C-m` "worked" because it was the second key, not because it
 was a different key. The daemon log carries the same pattern for
-e98-architect on 2026-09-24: a 1386-byte `enter=true` inject at 06:32:54, then
+that seat on 2026-09-24: a 1386-byte `enter=true` inject at 06:32:54, then
 two bare 5-byte `Enter` keys at 06:36 and 06:37.
 
 Not established: *why* Claude Code swallows the first Enter after a staged

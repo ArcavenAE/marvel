@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-30
 **Confidence:** frontier. Read from marvel main 04c258f; no new harness measurement. Builds on finding-064 (the 2026-10-02 probes).
-**Probe:** none new; a code and ticket read for aae-orc-g88i1, aae-orc-dgb35 and aae-orc-cw2d7 (operator ruling I-29, stream 2).
+**Probe:** none new; a code and ticket read for aae-orc-g88i1, aae-orc-dgb35 and aae-orc-cw2d7 (operator ruling, stream 2).
 **Placement:** marvel. The subject is how marvel drives a harness composer through inject: submit, clear, send-key, verify, and who typed. The harnesses and director are objects.
 
 ## Why this matters

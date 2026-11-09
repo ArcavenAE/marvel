@@ -6,7 +6,7 @@ content: |
   C-042 records the objective with no date, and the brief records no
   deployment target. STREQ-022 has no pass condition until both are given.
 provenance:
-  created_by: spectacle.reverse-prd
+  created_by: reverse-prd
   session: 9b948f8e-a64e-43f7-87d7-401e0816204a
   created_at: 2026-10-13T21:37:08Z
   derived_from:

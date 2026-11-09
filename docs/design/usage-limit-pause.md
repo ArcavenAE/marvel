@@ -57,7 +57,7 @@ is the separation `ctxforward.go` asked for.
   `rate_limits` record in the rollout log (finding-050). No refusal text is
   parsed.
 - **Storage.** In memory, per key: the newest reading and its provenance. A
-  reading older than 15 minutes shows as `stale`, never as a number. The
+  reading older than 15 minutes shows as `stale` (section 10.1: with its last value and age). The
   provenance a condition relies on is copied onto the session with the
   condition (section 3), so it survives a daemon restart without the reading.
 - **Where it shows.** The budget view already renders one row per dimension
@@ -742,3 +742,43 @@ matched under 9.4's matcher, may set the `limited` condition (source
 nothing about sending a key; that stays UL-R1's, under 9.4. The earlier
 conflict between this section's adoption line and 9.3's expiry is resolved
 by the ruling.
+
+## 10. The warning level on an account window (marvel#1340)
+
+An account window at or over a level reads `near-limit` in the STATE column of
+`get budgets`, and the first time a window reaches it the daemon says so once.
+It is a report: nothing pauses, sheds, refuses or blocks on it
+(`.claude/rules/diagnostic-not-gate.md`).
+
+- **The level.** The cluster key `account_warn_percent`: unset is 80, `0` turns
+  it off, 1 to 100 is the level, and any other value is logged and read as 80.
+  It applies to every window a reading carries, each on its own.
+- **When it is said.** At the moment a reading is stored, for a fresh reading
+  only, so a value that has gone stale announces nothing.
+- **Once per window.** A window is the account, the window name and `resets_at`.
+  A `resets_at` that moves later by a minute or more is a new window; a smaller
+  move is the same one. A window with no `resets_at` ends when its percentage
+  falls back under the level. The memory is in the daemon process, so a restart
+  or reexec can say it again for a window already announced.
+- **Where it goes.** One ring event, `account.window-near-limit`, always. Where
+  the cluster has a managed bus with its leaf up, one INFORM to
+  `global://director` on the same publisher the shift escalation uses. With no
+  bus it is the event only, and the notice is sent later in the same window if
+  the leaf comes up. A failed publish is tried again no sooner than five minutes
+  later.
+- **The STATE word.** `near-limit` for a fresh window at or over the level, and
+  `-` otherwise. An account row never reads `ok`.
+
+### 10.1 A stale reading keeps its last value and age (marvel#1341)
+
+`get budgets` no longer drops the number of a stale reading. OBSERVED prints the
+last value with how long ago it was taken, for example `62% (34m ago)`, and
+STATE reads `stale`, whatever the value was: a stale reading is never
+`near-limit`. The age is counted on the daemon's clock and sent as the row's
+`reading_age_seconds`, so a remote client's clock cannot change it. The JSON
+`observed` of a stale row now holds the last value; a row with no reading still
+carries neither. A client that predates the field prints the word `stale` for
+any reading that is not fresh, and a new client against an older daemon, which
+sends no age, prints the word as before. This replaces section 2's rule that a
+stale reading shows as `stale`, never as a number; the reading is still not
+current, and the page's staleness bound is unchanged.

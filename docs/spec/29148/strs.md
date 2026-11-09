@@ -1,7 +1,7 @@
 ---
 standard: ISO/IEC/IEEE 29148:2018
 document_type: Stakeholder Requirements Specification (StRS)
-description: What marvel's stakeholders need it to do, drafted from the ratified BRS by spectacle reverse-prd
+description: What marvel's stakeholders need it to do, drafted from the ratified BRS by the spec-pack reverse-prd
 ---
 
 # Stakeholder Requirements Specification
@@ -21,7 +21,7 @@ The scope is marvel as the brief records it: a control plane for AI agent worklo
 - `docs/spec/29148/brs.md`, claims C-001 to C-046 and questions Q-001 to Q-010.
 - `docs/spec/29148/evidence-index.md`, the sources a row may cite by id.
 - `docs/spec/29148/brs-review.md`, the operator's verdicts and answers of 2026-10-05.
-- Template: `.spectacle/templates/29148/strs.md` from spectacle (ISO/IEC/IEEE 29148:2018 outline).
+- Template: the ISO/IEC/IEEE 29148:2018 outline for the STRS, from the spec-pack tool.
 
 ### 1.4 Definitions and Acronyms
 

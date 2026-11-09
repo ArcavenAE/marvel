@@ -185,7 +185,7 @@ func (d *Driver) lockPane(paneID string) func() {
 // messaging credential removed (api.InheritedSessionEnv): a tmux server
 // takes the environment of the process that starts it and hands it to every
 // pane, so the first command to start the server decides what every seat
-// inherits (aae-orc#418).
+// inherits (marvel#381).
 func (d *Driver) cmd(args ...string) *tmuxCmd {
 	ctx, cancel := context.WithTimeout(context.Background(), d.timeout())
 	// -u first, on every exec: without it a client that has no UTF-8 locale

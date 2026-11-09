@@ -55,7 +55,7 @@ The operator also asks whether a reviewer and a builder could be paired on a sin
 By id or number only, since the orchestrator that holds them is private:
 
 - aae-orc-8yag2
-- director messages 01M5JYJK3X (the headless-candidates list) and 01M5JYKF4Q (the scheduler evaluation)
+- two director messages (the headless-candidates list and the scheduler evaluation)
 - ADR-010 (headless completion semantics), ADR-007 (automation boundary)
 
 ## Open questions

@@ -286,6 +286,9 @@ func (d *Daemon) handleSuspend(params json.RawMessage) daemonrpc.Response {
 			return daemonrpc.Response{Error: fmt.Sprintf("suspend: bad params: %v", err)}
 		}
 	}
+	if key, busy := d.hibernateInProgress(); busy {
+		return daemonrpc.Response{Error: fmt.Sprintf("suspend refused: a hibernate of %s is still signing off; wait for it, or run marvel wake", key)}
+	}
 	d.suspendMu.Lock()
 	defer d.suspendMu.Unlock()
 	if rec := d.suspendRec.Load(); rec != nil || d.suspendHeld.Load() {

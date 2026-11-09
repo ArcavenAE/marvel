@@ -127,7 +127,7 @@ func provisionObjects(ctx context.Context, js jetstream.JetStream) (Provisioned,
 
 // raiseMaxAge brings a live stream's max_age up to the declared value when
 // the live one is finite and shorter, so a broker provisioned under an older
-// declaration (AGENT_INBOX was 24h before I-65) picks up the new retention at
+// declaration (AGENT_INBOX was 24h before the 2026-10-30 ruling) picks up the new retention at
 // the next daemon start. It only raises: a longer live value stays, and a
 // zero (unlimited) live value stays. Every other field is the live config,
 // copied unchanged. A refused update is logged and not returned: Provision

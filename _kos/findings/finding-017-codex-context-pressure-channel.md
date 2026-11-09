@@ -82,8 +82,8 @@ some sessions and right for most, which is the failure mode that makes
 derivation attractive and dangerous.
 
 Not established: whether hook trust can be pre-seeded so marvel need not
-pass `--dangerously-bypass-hook-trust`. The probe used the flag. This is
-on the critical path, because a design that requires the flag is not
+bypass codex's hook review. The probe ran with the review bypassed. This is
+on the critical path, because a design that requires the bypass is not
 shippable.
 
 One catalog claim I could not reproduce and could not properly test: it
@@ -267,8 +267,8 @@ which reports levels and names no model.
 
 - Whether the codex accumulator resets per turn or per session (needs an
   authenticated multi-turn `codex exec resume`).
-- Whether hook trust can be pre-seeded without
-  `--dangerously-bypass-hook-trust`. Critical path.
+- Whether hook trust can be pre-seeded without bypassing codex's hook
+  review. Critical path.
 - Whether codex's window varies by model at all. Every model available
   here reports 258400.
 - Whether `codex exec` propagates codex-generated `CODEX_*` variables to

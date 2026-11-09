@@ -34,8 +34,8 @@ window after it. Written to assume the upgrade goes badly.
 | **The tap's floating alpha already migrates.** `Formula/marvel.rb` is `0.1.0-alpha.20261004.033357.c99ce98`, and c99ce98 contains 1cc0a84 | `gh api repos/ArcavenAE/homebrew-tap/contents/Formula/marvel.rb`; ancestry check | an unpinned upgrade on kinu would migrate the store at once. kinu is now pinned (precondition 1). The window installs the exact rehearsed release, never the floating alpha |
 | A v2 store is refused by a v1 binary | `bolt.go:122-134` ("newer than binary's ... refusing to load") | after migration, going back needs the backup **and** the old binary |
 | The migration writes `<store>.v1.bak` first, and refuses a v1 store while one sits beside it | `bolt.go:535-540`, `:642-680` | an interrupted migration leaves the store at v1, and any retry must move the old `.v1.bak` aside first |
-| Teams with an empty `WorkDir` are stamped with the **daemon's** cwd, source `legacy`; a cwd of `/` with such teams is refused before the backup | `bolt.go:535-611` (the refusal at `:556-561`) | every kinu team shows `WorkDir: ""` (`marvel describe team`); the daemon's cwd is `~/work/aae-orc` (`lsof -d cwd` on the daemon pid) |
-| Today a team with no workdir spawns where the **tmux server** is, not where the daemon is | `internal/tmux/driver.go:322-323` ("An empty dir starts the pane where the tmux server is") | on kinu, 30 of the 38 panes on the marvel tmux server start in a worktree path (the server's cwd), not `~/work/aae-orc`. So the stamp **changes** where each team's next spawn starts. Section 2 item 5 decides what to do about it |
+| Teams with an empty `WorkDir` are stamped with the **daemon's** cwd, source `legacy`; a cwd of `/` with such teams is refused before the backup | `bolt.go:535-611` (the refusal at `:556-561`) | every kinu team shows `WorkDir: ""` (`marvel describe team`); the daemon's cwd is `<orchestrator>` (`lsof -d cwd` on the daemon pid) |
+| Today a team with no workdir spawns where the **tmux server** is, not where the daemon is | `internal/tmux/driver.go:322-323` ("An empty dir starts the pane where the tmux server is") | on kinu, 30 of the 38 panes on the marvel tmux server start in a worktree path (the server's cwd), not `<orchestrator>`. So the stamp **changes** where each team's next spawn starts. Section 2 item 5 decides what to do about it |
 | The migration prints nothing about itself | #524; `daemon.go:329-345` logs only per-team placement stamps | without #524 fixed, the evidence is the `.v1.bak` file and the placement lines |
 | No `marvel.bolt.v1.bak` exists on kinu, and its config has no `services:` entry | `ls ~/.marvel/state`; `grep -c services: ~/.marvel/config.yaml` = 0 | nothing blocks the migration; no service attaches at start |
 
@@ -61,8 +61,8 @@ window after it. Written to assume the upgrade goes badly.
 4. **Quiet.** No shift, scheduled run, or `marvel work` apply is in flight.
 5. **The start directory, decided by the operator.** Two branches:
    - **Accept the move (default, no writes).** Each team's next spawn starts
-     in `~/work/aae-orc` instead of the tmux server's cwd. Today that cwd is
-     `~/work/aae-orc/marvel-wt-318`, a feature-branch worktree
+     in `<orchestrator>` instead of the tmux server's cwd. Today that cwd is
+     `<orchestrator>/marvel-wt-318`, a feature-branch worktree
      (`feat/backend-swaps-overlay-writer`), so today's start directory looks
      accidental, and the move may be the correction. Nothing is applied.
    - **Declare roots (operator-attended, before the window).** `marvel work`
@@ -109,7 +109,7 @@ Everything else is scratch and checked to be scratch before each step.
 for v in ${(k)parameters[(I)MARVEL_*]}; do unset "$v"; done   # zsh; bash: unset $(compgen -v MARVEL_)
 env | grep '^MARVEL_'                                          # must print nothing (CLAUDE.md, #504)
 S=$(mktemp -d); mkdir -p "$S/state" "$S/bin" "$S/out"
-run() { (cd ~/work/aae-orc && HOME="$S" MARVEL_TMUX_SOCKET=rehearse-a4 \
+run() { (cd <orchestrator> && HOME="$S" MARVEL_TMUX_SOCKET=rehearse-a4 \
   "$1" daemon --socket "$S/m.sock" --state-bolt "$S/state/marvel.bolt" \
   --log-file "$S/daemon.log" --pidfile "$S/daemon.pid" &) }
 cli() { HOME="$S" "$1" --socket "$S/m.sock" "${@:2}"; }
@@ -153,7 +153,7 @@ Steps, each with a pass condition:
 2. **Migrate with the new binary.** `run "$S/bin/marvel-new"`. Pass:
    `$S/state/marvel.bolt.v1.bak` exists at about the store's size; there is one
    `placement: legacy daemon cwd` line per team; `describe team` shows `WorkDir`
-   = `~/work/aae-orc` with source `legacy` (or no stamp, if precondition 5
+   = `<orchestrator>` with source `legacy` (or no stamp, if precondition 5
    declared the roots); with #524 fixed, one line names the migration and the
    backup. Then check the **old client against the new daemon** (`get
    sessions`, `get teams`) and record the result. Stop it.
@@ -191,7 +191,7 @@ directly, and the rollback restores it the same way.
   rehearsal's copy and once in the window):** marvel verbs, heartbeats,
   `ctx-forward`, max-age injections and automatic shifts pause; a scheduled
   firing that falls in a gap is skipped. Seats keep working.
-- **After the window,** each team's next spawn starts in `~/work/aae-orc`
+- **After the window,** each team's next spawn starts in `<orchestrator>`
   unless precondition 5 declared its root (section 1).
 - **mokuzai and corporate:** untouched.
 

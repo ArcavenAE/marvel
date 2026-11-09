@@ -69,7 +69,7 @@ Required owner controls:
 - **A global off switch, external to marvel.** Disabling all proxying must be
   enforceable without asking marvel to disable itself: a host-level config marvel
   reads and cannot write, an environment gate, or kernel-enforced containment
-  (curtain is the natural home, denying the proxy and relay paths at the sandbox
+  (the sandbox tool is the natural home, denying the proxy and relay paths at the sandbox
   boundary regardless of marvel's own settings).
 - **Policy the owner sets, above marvel's RBAC:**
   - prevent proxy management entirely (no identity inside marvel may grant or open a proxy),
@@ -123,7 +123,7 @@ authority the owner cannot reach).
 
 [[desk-addressed-tmux-connection]] (addressed connections to a cluster),
 [[identity-at-launch-and-managed-nats]] (the managed-NATS direction this rides).
-curtain (kernel-enforced containment, the natural home for the owner's external
+the sandbox tool (kernel-enforced containment, the natural home for the owner's external
 off switch: deny the proxy and relay paths at the sandbox boundary).
 Director reach: aae-orc-7gnvo, aae-orc-srfdl (two-hop relay), aae-orc-av2v1
 (mokuzai on the global tier), aae-orc-bxg5f (managed bus mode). Bus authz:

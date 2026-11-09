@@ -21,8 +21,8 @@ content: |
   `marvel daemon --mrvl` with no argument listens on `*:6785`, not
   loopback:
 
-      lsof: marvel 51098 skippy 8u IPv6 TCP *:6785 (LISTEN)
-      nc -z -w2 192.168.100.196 6785 -> succeeded
+      lsof: marvel <pid> <user> 8u IPv6 TCP *:6785 (LISTEN)
+      nc -z -w2 <lan-ip> 6785 -> succeeded
 
   The flag's help text ("use --mrvl=:<port> for a custom port") is
   about the PORT. Neither it nor docs/keys.md states the interface.

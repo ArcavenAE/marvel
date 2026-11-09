@@ -233,3 +233,47 @@ interactive CTX% as a separate, lower-priority gap."
   as the platform contract.
 - **Version-pinned.** Claude 2.1.220, Codex 0.146.0, opencode 1.18.5, Crush
   0.67.0. A harness bump that changes the telemetry schema changes the read.
+
+## Addendum 2026-11-06: the interactive claim was never run, and the CTX% consumer claims were retired
+
+This corrects two claims above. The body is left as written; read it with this
+addendum. Tracked as aae-orc-da6az.
+
+**1. "It flows in interactive/TUI sessions as well as headless ones" was not
+measured.** The only live run in this finding is the one headless turn in
+Method (`claude -p`, model haiku, console exporter). No interactive or TUI
+session was started with telemetry on. A headless capture comes out the same
+whether or not the harness exports OTEL in TUI mode, so it cannot tell the
+claim from its alternative. The docs and the binary's env-var literals make
+TUI-mode export plausible, and that is all they show. The Gaps section should
+have listed it; it did not. Read the sentence in the opening paragraph, and the
+"UI-mode independence is the whole point" paragraph, as **inferred, not
+verified**. One interactive Claude Code session with the console exporter would
+settle it.
+
+**2. The consumer claims were retired on 2026-08-08.** The opening paragraph
+calls native OTEL "the first viable path to interactive-session context
+pressure (aae-orc-dc1j)", and the Recommendation says it re-scopes
+aae-orc-w5su and gives dc1j its first clean path.
+`_kos/nodes/frontier/question-marvel-otel-architecture.yaml` retired both:
+"BOTH OF THOSE CONSUMER CLAIMS ARE RETIRED, 2026-08-08". The reason is a type
+mismatch, not the untested TUI half. Every harness token instrument is a
+monotonic cumulative counter, and occupancy is a per-request level that resets
+at compaction, so no collector recovers occupancy from it. That node keeps
+OTEL for every cumulative quantity (cost, tokens billed, tool calls, active
+time), so the retirement is narrow: it removes OTEL as a CTX% source only.
+
+**What still stands.** The per-harness table, the live Claude headless capture,
+the negative result that no harness exports occupancy, and the absence of a
+Prometheus scrape endpoint. For interactive Claude Code context pressure, the
+statusline side channel (finding-011) is the shipped path.
+
+**Lines that carried the claim.**
+- `question-stream-attachment.yaml`, the "THIRD CHANNEL UNDER INVESTIGATION"
+  paragraph: qualified in the same change as this addendum.
+- `question-interactive-context-pressure.yaml` and
+  `probe-interactive-ctx-remainder-sweep.md` already read "capable but not
+  live-verified".
+
+Found by the fleet sweep for findings whose evidence cannot support their
+claim (orc finding-aae-orc-c3gd, 2026-11-06).

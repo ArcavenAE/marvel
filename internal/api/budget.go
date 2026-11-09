@@ -253,7 +253,29 @@ func OccupiesReplicaSlot(s Session) bool {
 	if s.State.CountsAsAlive() {
 		return true
 	}
-	return s.Runtime.Mode == RuntimeModeHeadless && s.State == SessionSucceeded
+	return s.Runtime.Mode == RuntimeModeHeadless && (s.State == SessionSucceeded || IsConfigError(s))
+}
+
+// ExitConfig is the exit status a headless run uses to declare its own
+// configuration error (EX_CONFIG). ADR-010 Amendment 2.
+const ExitConfig = "78"
+
+// IsConfigError reports whether this is a headless run that ended with exit 78.
+// It holds its replica slot like a finished run: a relaunch would only print the
+// same refusal again, so the slot waits for a person to delete the session. Every other nonzero exit is not this and keeps its crash-loop
+// backoff.
+func IsConfigError(s Session) bool {
+	return s.Runtime.Mode == RuntimeModeHeadless && s.State == SessionFailed && s.ExitStatus == ExitConfig
+}
+
+// ConfigErrorReason is the reason a configuration-error row reads in listings,
+// empty for every other session. It is a projection, like Session.Reason's other
+// uses, and is never stored.
+func ConfigErrorReason(s Session) string {
+	if !IsConfigError(s) {
+		return ""
+	}
+	return "configuration error: the run exited 78 and is not relaunched; delete the session to release its slot; a schedule frozen by on_failure also needs `marvel reset-health`"
 }
 
 // CountReplicaSlots returns how many of these sessions occupy a replica

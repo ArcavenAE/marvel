@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.arcaven.com/marvel/register-seat-row/v1",
+  "title": "Marvel Register Seat Row",
+  "description": "One seat's row of the register fact table. Each cell carries a value, when it was observed, when it stops being fresh, and its source. A cell with none of these has never been observed.",
+  "type": "object",
+  "required": [
+    "seat",
+    "role",
+    "team",
+    "harness",
+    "host",
+    "alive",
+    "pane.alive",
+    "harness.version",
+    "harness.covered",
+    "harness.reader",
+    "interrupt.key",
+    "empty_c_c_exits",
+    "bus.publish_scope"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "seat": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+      "description": "The session key the row describes."
+    },
+    "role": {
+      "$ref": "#/$defs/cell"
+    },
+    "team": {
+      "$ref": "#/$defs/cell"
+    },
+    "harness": {
+      "$ref": "#/$defs/cell"
+    },
+    "host": {
+      "$ref": "#/$defs/cell"
+    },
+    "alive": {
+      "$ref": "#/$defs/cell"
+    },
+    "pane.alive": {
+      "$ref": "#/$defs/cell"
+    },
+    "harness.version": {
+      "$ref": "#/$defs/cell"
+    },
+    "harness.covered": {
+      "$ref": "#/$defs/cell"
+    },
+    "harness.reader": {
+      "$ref": "#/$defs/cell"
+    },
+    "interrupt.key": {
+      "$ref": "#/$defs/cell"
+    },
+    "empty_c_c_exits": {
+      "$ref": "#/$defs/cell"
+    },
+    "bus.publish_scope": {
+      "$ref": "#/$defs/cell"
+    },
+    "duties": {
+      "type": "object",
+      "description": "One cell for each duty the seat's role declares, keyed by the full cell name: duty. plus the duty name. A bare duty name is never a key.",
+      "maxProperties": 64,
+      "propertyNames": {
+        "type": "string",
+        "maxLength": 53,
+        "pattern": "^duty\\.[a-z][a-z0-9]*([.-][a-z0-9]+)*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/cell"
+      }
+    }
+  },
+  "$defs": {
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "valid_until": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

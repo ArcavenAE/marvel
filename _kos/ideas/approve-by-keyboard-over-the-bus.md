@@ -69,7 +69,7 @@ Two framings follow from it, both recorded and neither settled.
   - aae-orc `question-akey-majordomo-local-llm-authorization`, "Reading B"
     (2026-07-05): the majordomo as a delegated signer inside a scope the
     operator ratifies. The same shape applied to seat approvals instead of
-    akey signatures is the closest match to this idea.
+    signing-agent signatures is the closest match to this idea.
   - aae-orc `question-marvel-service-provider-shape` and
     `ideas/marvel-service-provider-architecture.md`: the caretaker
     (majordomo) behind the wall, where it proposes and a deterministic layer
@@ -81,7 +81,7 @@ Two framings follow from it, both recorded and neither settled.
     cluster, a supervisor of supervisors concerned with the cluster rather
     than the work.
 
-**A second open tension.** The akey reading lets the majordomo act inside
+**A second open tension.** The signing-agent reading lets the majordomo act inside
 its ratified scope. The service-provider reading lets it only propose, and
 it ruled against pressure for it to act. An approval-by-keyboard majordomo
 would need one of the two.

@@ -608,7 +608,7 @@ marvel upgrade                                        # self-upgrade
   (Max, API key, Bedrock, Vertex) is permitted. Orchestrating agents that route
   other people's consumer credentials is not — multi-user distribution requires
   API key auth. See SOUL.md §3.
-- **PR and issue bodies:** the first one or two sentences say why to read it and why merging is worth the risk. See `.claude/rules/lead-with-why.md` in aae-orc.
+- **PR and issue bodies:** the first one or two sentences say why to read it and why merging is worth the risk.
 - **No file deletion:** Never delete user files. Overwrite only with explicit intent.
 - **Parallel-safe:** Each session gets a UUID. Volumes provide isolation.
 - **Session substrate:** tmux. Panes = sessions. Sessions = agent processes.
@@ -627,17 +627,17 @@ accepts a prompt on stdin). Everything else is optional integration.
 | forestage (RETIRED, reference only) | Marvel drives claude, codex, or opencode. | Identity flags, permission mode, script, socket. The adapter is frozen as the reference implementation of the deep-integration contract; forestage is not a live target (operator directive 2026-07-31). |
 | switchboard | Local-only scheduling. All sessions on one host. | Remote hosts. Distributed fleet. Cross-machine attach. |
 | director | No inter-agent comms. Fan-out/collect only. | Supervisor patterns, agent-to-agent routing, role-based endpoints. |
-| spectacle | No spec commands in packs. User loads manually. | IEEE-based spec templates available as a pack. |
+| spec-template pack | No spec commands in packs. User loads manually. | IEEE-based spec templates available as a pack. |
 | kos | No knowledge projection. Specs are manual. | Specs projected from knowledge graph into sessions. |
 
 **Marvel is also optional to everything else:**
 - forestage runs standalone without marvel (single-agent, own config chain)
 - switchboard relays any tmux session, not just marvel-managed ones
-- spectacle installs with `just install <target>`, no marvel needed
+- the spec-template pack installs with `just install <target>`, no marvel needed
 - kos operates its own probe/finding cycle independently
 
 **Graceful degradation, not hard dependencies.** In the table above only
-the runtime-adapter row is shipped: the switchboard, director, spectacle,
+the runtime-adapter row is shipped: the switchboard, director, spec-template pack,
 and kos columns describe intended integrations, and none of them appears in
 the code today. What marvel actually probes at startup is tmux, without
 which the driver refuses to run, plus the manifest validator's `LookPath`

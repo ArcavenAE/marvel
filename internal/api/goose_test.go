@@ -192,7 +192,7 @@ func TestStoreSnapshotDoesNotShareTheGooseLists(t *testing.T) {
 
 // A headless goose role with no prompt is refused at apply, in both formats.
 // The refusal is scoped to goose: the same role on another adapter applies, and
-// so does an interactive goose role (ruling I-51:goose-empty-prompt-durable).
+// so does an interactive goose role (operator ruling on goose empty prompts).
 func TestGooseHeadlessRoleNeedsAPromptAtApply(t *testing.T) {
 	t.Parallel()
 	tomlRole := func(image, extra string) string {

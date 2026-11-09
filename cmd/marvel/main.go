@@ -275,6 +275,8 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(statusCmd())
 	root.AddCommand(suspendCmd())
 	root.AddCommand(resumeCmd())
+	root.AddCommand(hibernateCmd())
+	root.AddCommand(wakeCmd())
 	root.AddCommand(doctorCmd())
 	root.AddCommand(credentialCmd())
 	root.AddCommand(busCmd())
@@ -309,7 +311,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newGooseWatchCmd())
 	root.AddCommand(newGooseGuardCmd())
 	root.AddCommand(planCmd())
-	root.AddCommand(marryCmd())
 
 	silenceUsageOnConnectErrors(root)
 	return root
@@ -415,7 +416,20 @@ Examples:
 				return err
 			}
 
+			// One root is one daemon (marvel#883). The lock path comes from
+			// the resolved layout and nothing else: no flag moves it, because
+			// moving it would let two daemons share a root. It sits in run/,
+			// which must exist before the daemon opens the lock file there.
+			rootLock := ""
+			if layout.Home != "" {
+				if err := layout.EnsureRunDir(); err != nil {
+					return err
+				}
+				rootLock = filepath.Join(layout.RunDir(), "daemon.lock")
+			}
+
 			d, err := newDaemon(daemon.Options{
+				RootLock:     rootLock,
 				PidFile:      pidFilePath,
 				StateBolt:    stateBoltPath,
 				ShiftTimeout: shiftTO,
@@ -1191,12 +1205,15 @@ longer names, as the prune set stands when the apply runs. marvel plan -f
 				Workspace  string   `json:"workspace"`
 				Advisories []string `json:"advisories"`
 				Behind     int      `json:"behind"`
+				Held       []string `json:"held"`
+				HeldLine   string   `json:"held_line"`
 			}
 			_ = json.Unmarshal(resp.Result, &result)
 			for _, a := range result.Advisories {
 				fmt.Fprintf(os.Stderr, "warning: %s\n", a)
 			}
 			fmt.Printf("workspace/%s ready\n", result.Workspace)
+			fmt.Print(heldLines(result.Held, result.HeldLine))
 			if line := behindLine(result.Behind); line != "" {
 				fmt.Println(line)
 			}
@@ -1225,7 +1242,24 @@ the row has no creation time.
 ACCT (opt-in, --columns acct) is a short key for the account a session spends against and
 that account's limit reading: 87% (seven_day) while fresh, stale once the reading
 is old, a - when none was read. Sessions on one account repeat the same cell; it is
-never summed or averaged across rows.
+never summed or averaged across rows. On a cluster-set read ACCT folds in the
+cluster, so its keys differ from a single-cluster read.
+
+SERVICE (opt-in, --columns service) says in words which account a session spends
+against: harness, backend, credential source, the account home, then the login
+label the role or team declared with account_label. The backend is the one the
+environment resolved to, written backend!intent where the role declared another.
+The home is its last element, or the whole path where another home on the same
+cluster shares that element. The label is declared, never checked against the login.
+Every SERVICE cell is diagnostic only: nothing gates or acts on it.
+Example: 'claude subscription ambient alt-ultra ultra'. It is the first column
+cut on a narrow terminal when it came from rest.
+For a session on the operator's own login the source reads ambient:api-key+oauth-token
+when those variable names were set in the tmux environment at spawn (names only, never
+values); plain ambient means none were seen or the session was spawned before it was
+recorded, and ambient:? means tmux could not say.
+Absence is not proof of no key. To list seats that inherited a key:
+  marvel get sessions -o json | jq '.[] | select(.ambient_bearer // "" | test("^(api-key|auth-token|oauth-token)"))'
 
 ACTIVE% is the share of the last 15 minutes of daemon ticks that found the seat
 not quiet, under the role's activity_timeout or the cluster quiet window. It
@@ -1819,13 +1853,36 @@ func scaleCmd() *cobra.Command {
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
-			fmt.Printf("team/%s role/%s scaled to %d replicas\n", args[0], role, replicas)
+			fmt.Print(scaledLines(args[0], role, replicas, resp.Result))
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&replicas, "replicas", 1, "desired replica count")
 	cmd.Flags().StringVar(&role, "role", "", "role to scale (required)")
 	return cmd
+}
+
+// scaledLines is what scale prints: the change, then the hold line when the
+// team is hibernated and nothing started.
+func scaledLines(team, role string, replicas int, result json.RawMessage) string {
+	out := fmt.Sprintf("team/%s role/%s scaled to %d replicas\n", team, role, replicas)
+	var scaled struct {
+		Held string `json:"held"`
+	}
+	_ = json.Unmarshal(result, &scaled)
+	if scaled.Held != "" {
+		out += scaled.Held + "\n"
+	}
+	return out
+}
+
+// heldLines is one hold line per hibernated team an apply touched.
+func heldLines(teams []string, line string) string {
+	var b strings.Builder
+	for _, k := range teams {
+		fmt.Fprintf(&b, "team/%s %s\n", k, line)
+	}
+	return b.String()
 }
 
 func convergeCmd() *cobra.Command {
@@ -2769,7 +2826,12 @@ Daemon-side (on the machine running marvel daemon):
 				return fmt.Errorf("read key file: %w", err)
 			}
 			comment := args[0]
-			return daemon.AddAuthorizedKey(data, comment, scope)
+			fp, err := daemon.EnrollAuthorizedKey(data, comment, scope)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "authorized %s scope=%s\n", fp, scope)
+			return err
 		},
 	}
 	authorize.Flags().StringVar(&authScope, "scope", string(daemon.ScopeAdmin),
@@ -3385,19 +3447,19 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
-	key                                                                                  string
-	workspace, team, role, generation, name                                              string
-	state, health, context, cpu, rss                                                     string
-	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct string
-	lastTurn                                                                             string
-	composer                                                                             string
-	pane                                                                                 string
+	key                                                                                           string
+	workspace, team, role, generation, name                                                       string
+	state, health, context, cpu, rss                                                              string
+	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct, service string
+	lastTurn                                                                                      string
+	composer                                                                                      string
+	pane                                                                                          string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
 // one place, whichever columns are selected: "-" is never measured, "?" is
 // a reading whose window could not be resolved.
-func newSessionRow(s api.Session) sessionRow {
+func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 	runtimeName := s.Runtime.Name
 	if runtimeName == "" {
 		runtimeName = s.Runtime.Command
@@ -3447,7 +3509,11 @@ func newSessionRow(s api.Session) sessionRow {
 	// reached (no pid, or a platform with no process table reader)
 	// shows absence rather than an idle-looking zero.
 	cpu, rss := "-", "-"
-	if !s.MetricsAt.IsZero() {
+	// A crashed, failed or succeeded row has no process left to read, and its
+	// last in-memory reading is frozen (the sampler skips it), so it shows
+	// absence too (aae-orc-wtavi).
+	gone := s.State == api.SessionCrashed || s.State == api.SessionFailed || s.State == api.SessionSucceeded
+	if !s.MetricsAt.IsZero() && !gone {
 		cpu = fmt.Sprintf("%.1f", s.CPUPercent)
 		rss = formatBytes(s.RSSBytes)
 	}
@@ -3475,6 +3541,12 @@ func newSessionRow(s api.Session) sessionRow {
 	}
 	if s.State == api.SessionRunning && s.HarnessState != nil && s.HarnessState.State == api.HarnessStateParked && s.HarnessState.Reason != "" {
 		health += " (parked: " + s.HarnessState.Reason + ")"
+	}
+	// A seat the watchdog cannot watch (no pattern covers its version, or every
+	// pattern failed its control) reads healthy above, which is the failure the
+	// watchdog exists to catch. describe session keeps the two states apart.
+	if s.State == api.SessionRunning && s.HarnessState != nil && isUnwatched(s.HarnessState.State) {
+		health += " (unwatched)"
 	}
 	// A failed row carrying a projection Reason is TERMINAL: the role
 	// will spawn no replacement. Without this suffix it is byte-identical
@@ -3532,6 +3604,7 @@ func newSessionRow(s api.Session) sessionRow {
 		active:     activePctCell(s, lastActiveClock()),
 		spec:       specCell(s),
 		acct:       acctCell(s),
+		service:    serviceCell(s, homes),
 		composer:   composerCell(s),
 		pane:       paneCell(s),
 		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,
@@ -3959,24 +4032,35 @@ func renderBudgetTable(rows []admission.Row) string {
 }
 
 // writeAccountRow renders an account_window row into the budget table. The
-// cells that mean nothing for an account (limit, headroom, state) are dashes.
-// OBSERVED is the percentage only for a fresh reading; a stale or absent
-// reading reads as that word, never as a number and never as ok.
+// cells that mean nothing for an account (limit, headroom) are dashes. STATE is
+// the daemon's word for the window, near-limit at or over the cluster's warning
+// level, and a dash otherwise.
+// OBSERVED is the percentage for a fresh reading and the last percentage with
+// its age for a stale one ("62% (34m ago)"); a stale reading from a daemon that
+// sends no age, and an absent one, read as that word. Never ok.
 func writeAccountRow(w io.Writer, r admission.Row, tally *undrawTally) {
 	observed := r.Reading
-	if r.Reading == "fresh" {
+	switch {
+	case r.Reading == "fresh":
 		observed = fmt.Sprintf("%d%%", r.Observed)
+	case r.Reading == "stale" && r.ReadingAgeSeconds > 0:
+		observed = fmt.Sprintf("%d%% (%s ago)", r.Observed, formatUntil(time.Duration(r.ReadingAgeSeconds)*time.Second))
 	}
 	resets := "-"
 	if r.ResetsAt != nil {
 		resets = formatUntil(time.Until(*r.ResetsAt))
 	}
-	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t-\t%s\t-\t-\t%s\t%s %s; %s\n",
-		tally.key(r.Workspace), tally.key(r.Team), r.Dimension, observed, resets, tally.draw(r.Account), tally.draw(r.AccountWindow), tally.draw(r.Note))
+	state := r.State
+	if state == "" {
+		state = "-"
+	}
+	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t-\t%s\t-\t%s\t%s\t%s %s; %s\n",
+		tally.key(r.Workspace), tally.key(r.Team), r.Dimension, observed, tally.draw(state), resets, tally.draw(r.Account), tally.draw(r.AccountWindow), tally.draw(r.Note))
 }
 
-// formatUntil renders a time to go as days and hours, hours and minutes, or
-// minutes, whichever is the coarsest that is not zero.
+// formatUntil renders a time to go, or a time since for a reading's age, as days
+// and hours, hours and minutes, or minutes, whichever is the coarsest that is
+// not zero.
 func formatUntil(d time.Duration) string {
 	if d <= 0 {
 		return "now"
@@ -4035,4 +4119,10 @@ func paneCell(s api.Session) string {
 		return "-"
 	}
 	return s.Pane
+}
+
+// isUnwatched reports whether a harness state is one of the two coverage
+// states, in which the watchdog could not examine the seat's pane.
+func isUnwatched(state string) bool {
+	return state == api.HarnessStateUncovered || state == api.HarnessStateControlFailed
 }

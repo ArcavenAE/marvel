@@ -104,3 +104,28 @@ A marvel builder seat hit it twice in one commit attempt. A retry with a scratch
 - **Workaround:** a fresh, empty `GOLANGCI_LINT_CACHE` for each run. This is not a bypass: lint, vet and format all still run.
 - **Cause, not established:** it fits a cache keyed on absolute paths and reused after the tree behind them was removed, which is candidate (a) from the third instance. This sighting does not separate (a) from (b). It adds a vote, not a mechanism.
 - **Evidence:** the commit output around 2026-11-01 16:20Z, for commit attempt 499d3f72.
+
+## Eighth instance, 2026-11-05: a reproduction on 2.12.2 answers the fourth instance's version question
+
+A builder seat's pre-commit `lint` step failed on a one-line comment change to `internal/toolchain/bus_skip_gate_test.go`. It reported the third instance's pair again, `internal/runtime/codex/ratelimits.go:52:15` and `rollout.go:126:15` (errcheck, `f.Close`), under a removed sibling worktree's path. Three `no such file or directory` warnings came first, one from the `generated_file_filter` processor ("failed to get doc (strict) of file ... failed to parse file"). `GOLANGCI_LINT_CACHE` was unset, and the hook's `PATH` put `/opt/homebrew/bin` (2.12.2) ahead of the mise shim. A fresh, empty `GOLANGCI_LINT_CACHE` and a rerun with the hook on reported `0 issues.`. The seat saw the same failure earlier that day, on the first commit of #1290.
+
+**The reproduction.** Two `git clone --shared` checkouts, A and B, of main at ff5d5f95, with a scratch `GOLANGCI_LINT_CACHE` and `GOCACHE` per trial and `GOPROXY=off`. Lint A on `./internal/runtime/codex/...`, delete A, then lint B:
+
+| version | trials | B after A is deleted |
+|---|---|---|
+| 2.12.2 (go1.26.2) | 3 | rc 1 every time: the two errcheck issues, named `../A/internal/runtime/codex/...`, with 3 `no such file` warnings |
+| 2.13.2 (go1.27.0) | 3 | rc 0 every time, 0 issues |
+
+A control, linting B on a cold cache, gave `0 issues.` on 2.12.2.
+
+**What it settles.** The answer to the question at the end of the fourth instance is version: 2.12.2 replays and 2.13.2 does not. A separate reviewer run reports 2.13.1 at 0 issues on every step too, which fits the fourth instance's path-scoped 2.13.1 result. On 2.12.2 the entry is shared by content across checkouts and keeps the path of the checkout that wrote it. That is candidate (b) with a stored path. Once that path is gone, the nolint and generated-file filters cannot read the source, and the issue is reported unsuppressed. That supports the third instance's inferred reading of the `//nolint:errcheck` lines; it is drawn from the output, not from golangci-lint's source.
+
+**Scope.** Measured on 2.12.2 and 2.13.2 only. `mise.toml` now pins 2.15.0, which was not installed on the measuring host and is untested. The hook runs the bare `golangci-lint` name, so the binary first on `PATH` decides which behavior a seat gets. That makes the mise pin and the bare name the durable-fix candidate this instance points at, alongside the per-checkout `GOLANGCI_LINT_CACHE` above. Prior record of the class outside this repository: orc finding-aae-orc-oukk, retired into this finding.
+
+## Ninth instance, 2026-11-06: the eighth instance's pair again, from a predecessor seat's removed worktree
+
+A builder seat's first commit on a branch off main failed the lefthook pre-commit `lint` step, which runs `golangci-lint run ./...`. It reported the eighth instance's pair, `internal/runtime/codex/ratelimits.go:52:15` and `rollout.go:126:15` (errcheck, `f.Close`), under the path of a sibling worktree named `marvel-wt-builder-...-lows` (a previous seat's), which no longer exists. `level=warning` lines ahead of them said the source lines could not be read ("no such file or directory"). The commit touched nothing under `internal/runtime/codex`. A run limited to `./internal/runtime/codex/...` reproduced the same two issues before the clean.
+
+- **Workaround:** `golangci-lint cache clean`, then `golangci-lint run ./...` reported `0 issues.` and the commit went through with the hook on. Nothing was skipped.
+- **Version:** the binary first on `PATH` was `/opt/homebrew/bin/golangci-lint`, 2.12.2 (go1.26.2), with a mise shim after it and `GOLANGCI_LINT_CACHE` unset. This is the version the eighth instance's reproduction replays under. `mise.toml` pins 2.15.0.
+- **What it adds:** a vote for the version reading, not a new mechanism. The carrier was again a removed worktree, and the same two lines replayed. The fix candidates in the eighth instance stand: pin the hook to the mise version, or give each checkout its own `GOLANGCI_LINT_CACHE`.

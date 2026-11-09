@@ -1,0 +1,15 @@
+seat               ws/squad-worker-g1-0
+role               worker
+team               squad
+harness            claude
+host               corporate
+alive              alive
+pane.alive         ?
+harness.version    - unmeasured
+harness.covered    -
+harness.reader     declared
+interrupt.key      declared
+empty_c_c_exits    -
+bus.publish_scope  declared
+duty.ack           - unmeasured
+duty.first-turn    proven

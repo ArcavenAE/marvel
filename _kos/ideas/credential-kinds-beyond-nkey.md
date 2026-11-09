@@ -46,7 +46,7 @@ Each fact below was checked against marvel origin/main ea47261 on 2026-10-04.
 A second cluster needed the bd client password. It went into that cluster's
 marvel store as `bd/client` under the `nats-nkey-seed` kind, because that is
 the only kind there is. The credential's binding reads "NOT A SEED", and nothing
-in marvel reads that field (`aae-orc#461`, the comment on moving it to the
+in marvel reads that field (the third cluster's bring-up, in the comment on moving it to the
 keychain). So the kind field says one thing, the binding says another, and the
 operator keeps them apart by hand.
 

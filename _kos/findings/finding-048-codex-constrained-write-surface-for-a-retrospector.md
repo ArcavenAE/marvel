@@ -4,7 +4,7 @@ finding-046 left a codex reviewer read-only, its output in the event ring. A
 retrospector must WRITE, but only to a defined place. This proves the write
 surface can be widened to exactly one directory and no more, using codex's own
 sandbox through `runtime.Args`, with no marvel code change and a clean path to a
-later curtain policy. Proved on gpt-5.6-luna in a throwaway team, torn down
+later the sandbox tool policy. Proved on gpt-5.6-luna in a throwaway team, torn down
 after.
 
 ## The mechanism
@@ -57,7 +57,7 @@ retrospector) hits this on every file it produces, so the ring reads noisier
 than the run actually is. Flagged as a flat marvel task (aae-orc-tvlcg); it does
 not block the role.
 
-## The path to curtain (vision Gap 4)
+## The path to the sandbox tool (vision Gap 4)
 
 The write restriction lives today in `runtime.Args` as codex's own sandbox mode
 plus the pinned cwd, and optionally `--add-dir`. That is the interim enforcement
@@ -67,14 +67,14 @@ adapter reports no projection surface (codex.go) and marvel injects no codex
 sandbox, so the enforcement is codex's own, set at launch.
 
 Expressed as a single named writable-root set (the retro dir, plus any
-`--add-dir` roots), this maps one-to-one onto a later curtain policy
+`--add-dir` roots), this maps one-to-one onto a later sandbox-tool policy
 (permission-through-environment, `question-permission-model` Layer 1;
-aae-orc-10x, sandbox composition with curtain). Keeping the write surface a
+aae-orc-10x, sandbox composition with the sandbox tool). Keeping the write surface a
 named parameter rather than scattering paths keeps that migration a mechanism
 swap, not a redesign.
 
 Related: finding-046 (the read-only reviewer, same team shape), finding-006
 (Layer-1 environment construction for claude), question-permission-model (the
 node this harvests; codex's own sandbox is the interim Layer-1 for a
-non-projecting harness), ADR-010 (headless completion), the wardrobe
+non-projecting harness), ADR-010 (headless completion), the role library
 `retrospector` role (extended with this write surface).

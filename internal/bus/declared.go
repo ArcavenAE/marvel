@@ -93,7 +93,7 @@ var (
 )
 
 // InboxMaxAge is how long AGENT_INBOX keeps a message: 7 days (operator ruling
-// I-65, 2026-10-30). It was 24h, which let an idle seat's mail expire unread.
+// of 2026-10-30). It was 24h, which let an idle seat's mail expire unread.
 // Provision raises a live stream's shorter, finite max_age to this value at
 // the next daemon start (raiseMaxAge); it never lowers one.
 const InboxMaxAge = 168 * time.Hour

@@ -269,7 +269,7 @@ party's rulings and are not in this plan.
 
 PANE is one word for what a seat's pane is doing, so a seat at a login or
 startup prompt no longer reads as alive (marvel#1142, part a). The set is the
-operator's (ruling I-60): `working`, `idle`, `prompt`, `restart`, `logged-out`,
+operator's ruling: `working`, `idle`, `prompt`, `restart`, `logged-out`,
 `unknown`, and `fresh` (part d, added by the director's ruling).
 
 | Word | Read from |

@@ -411,6 +411,9 @@ func TestWatchdogFieldTypesArePinned(t *testing.T) {
 		"lastCapture": "map[string]time.Time",
 		"rolled":      "map[string]string",
 		"uncovered":   "map[string]int",
+		"client":      "func(string) (bool, error)",
+		"tailRead":    "func(string, int64) ([]uint8, error)",
+		"tx":          "map[string]*daemon.transcriptTail",
 	}
 	typ := reflect.TypeOf(watchdog{})
 	got := map[string]bool{}

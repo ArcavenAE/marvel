@@ -151,7 +151,7 @@ decided by a vendor default.
 |---|---|---|
 | **Ports unchanged** | manifests as data; the reconciliation loop; Team, Role and replica model (B5); shift state machine with supervisor-last ordering (B6); restart policies and heartbeat health (B7); the twelve-kind event vocabulary; admission and the declared-budget path; the agentic resource matrix | None of these has an AgentCore counterpart. AgentCore has sessions and agents; it has no team, no role, no shift, no supervisor ordering, no context-pressure admission. This is the whole argument for marvel continuing to exist next to it. |
 | **Void for cloud sessions, retained for local** | the tmux driver, pane lifecycle, `send-keys` inject, `capture-pane` | Narrower than the brief assumed. Three non-test files import `internal/tmux` (`cmd/marvel/main.go`, `internal/daemon/daemon.go`, `internal/session/manager.go`) across 14 driver call sites. The substrate is already behind a seam, so cloud and local sessions coexist rather than one replacing the other. |
-| **Redundant if the session is cloud** | curtain's isolation job; marvel's compute-level restart; switchboard's reach-the-box premise | Each is redundant only for cloud sessions. Local hosts still have no microVM, and the shell channel reaches only AgentCore sessions, 10 at a time. |
+| **Redundant if the session is cloud** | the sandbox tool's isolation job; marvel's compute-level restart; switchboard's reach-the-box premise | Each is redundant only for cloud sessions. Local hosts still have no microVM, and the shell channel reaches only AgentCore sessions, 10 at a time. |
 | **Becomes an implementation, not an adapter** | the launch path | A second `Instance` implementation plus a real `Host` type. `Adapter` stays command-shaped for local harnesses. |
 
 ## Boundary gaps, and the sovereignty price
@@ -223,10 +223,10 @@ Three surfaces, run against (a) does a platform feature now cover the
 commodity form, (b) is our differentiation stated in the repo, (c) would
 we start this today.
 
-- **curtain** (sandboxing): yes / yes / partially. Both vendors ship
+- **the sandbox tool** (sandboxing): yes / yes / partially. Both vendors ship
   kernel-level isolation for cloud sessions. Local hosts have no microVM
   and both vendors' isolation stops at their own boundary. **Narrow**, do
-  not retire: curtain's remaining job is the local host, and its fat-pole
+  not retire: the sandbox tool's remaining job is the local host, and its fat-pole
   scope was already extracted to the credential plane.
 - **switchboard** (remote session reach): partially / yes / yes. The shell
   WebSocket reaches AgentCore sessions and nothing else, under a

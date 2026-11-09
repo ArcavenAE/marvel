@@ -94,7 +94,7 @@ the interesting part, and it is bigger than keys alone.
 - **bd `aae-orc-kim3`** (marvel security assessment: listeners, cluster
   network path, sockets, ssh key handling and storage, before a second user
   runs it): this idea is one input to that assessment's key-handling section.
-- **akey / YubiKey SSH-agent context**: the fleet already routes SSH signing
+- **SSH signing agent / YubiKey context**: the fleet already routes SSH signing
   through a hardware-resident key via an agent proxy (keys never touch disk;
   the YubiKey is the custody boundary). A hardware-backed agent is a fifth
   candidate shape and a useful contrast: it keeps the private key off the

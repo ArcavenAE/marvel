@@ -239,6 +239,10 @@ func cloneTeam(t *Team) Team {
 	if len(t.Retiring) > 0 {
 		out.Retiring = maps.Clone(t.Retiring)
 	}
+	out.Hibernate = t.Hibernate.Clone()
+	if len(t.HibernateRequests) > 0 {
+		out.HibernateRequests = maps.Clone(t.HibernateRequests)
+	}
 	return out
 }
 
@@ -1017,6 +1021,7 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	}
 	sess.LastHeartbeat = time.Now().UTC()
 	recordTotals(sess, r, dropped)
+	recordHarnessVersion(sess, r)
 	// A cooperative reporter that knows its model names it (the
 	// statusline feed does); one that doesn't sends "" and any
 	// prior reading stands. ContextModel is promoted from the embedded
@@ -1086,6 +1091,19 @@ func recordTotals(sess *Session, r HeartbeatRequest, dropped bool) {
 	if moved && !dropped {
 		sess.TotalsChangedAt = sess.LastHeartbeat
 	}
+}
+
+// recordHarnessVersion stores the harness version a beat carried, with its own
+// observed_at: the beat that carried it, which is when marvel saw the claim.
+// A beat with no version, or one outside HarnessVersionPattern, changes neither
+// the value nor the stamp, so an old reading is never refreshed by a beat that
+// said nothing about it (register row R7).
+func recordHarnessVersion(sess *Session, r HeartbeatRequest) {
+	if r.HarnessVersion == nil || !ValidHarnessVersion(*r.HarnessVersion) {
+		return
+	}
+	sess.HarnessVersion = *r.HarnessVersion
+	sess.HarnessVersionAt = sess.LastHeartbeat
 }
 
 // UpdateSessionContext records one context-window reading.
@@ -1160,6 +1178,17 @@ func (s *Store) SetHarnessState(key string, hs *HarnessState) {
 	c.Evidence = append([]string(nil), hs.Evidence...)
 	c.Covered = append([]string(nil), hs.Covered...)
 	sess.HarnessState = &c
+}
+
+// SetTranscriptGap records why the transcript reader has no reading for a
+// session, "" when it has one. Like SetHarnessState it is status only and does
+// not persist.
+func (s *Store) SetTranscriptGap(key, gap string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[key]; ok {
+		sess.TranscriptGap = gap
+	}
 }
 
 // UpdateSessionMetrics records one process-sampler reading. m.MetricsAt

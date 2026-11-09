@@ -19,7 +19,7 @@ Raised by the operator 2026-08-07, alongside
 - What it does have is a model-name-to-context-window TABLE
   (`internal/usage/limits.go`), used to turn token counts into CTX%.
   Marvel knows model *names* and has never called one.
-- **The fleet already has the tool.** `aae-orc/ai` (Go, Ollama) is a
+- **The fleet already has the tool.** `<orchestrator>/ai` (Go, Ollama) is a
   Unix-philosophy CLI: stdin plus a prompt in, model output out. It was
   built to compose with pipes.
 
@@ -155,4 +155,4 @@ useful whichever way it falls.
   corollary, innovation 1 (the resource matrix).
 - orc finding-114: fluent output from a tool that cannot do the job is
   the failure mode; mark generated content and carry its evidence.
-- `aae-orc/ai`: fleet prior art, Go plus Ollama, already composable.
+- `<orchestrator>/ai`: fleet prior art, Go plus Ollama, already composable.

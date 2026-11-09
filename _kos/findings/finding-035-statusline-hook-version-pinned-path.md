@@ -172,7 +172,7 @@ The reproducing topology is not an exotic edge case. It is a channel marvel is
 deliberately adopting, and one the fleet already runs.
 
 **Existing proof on this machine.** The orchestrator's own
-`/Users/skippy/work/aae-orc/mise.toml` installs an ArcavenAE binary this exact
+`<orchestrator>/mise.toml` installs an ArcavenAE binary this exact
 way:
 
 ```toml

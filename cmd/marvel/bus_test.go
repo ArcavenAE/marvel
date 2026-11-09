@@ -33,10 +33,10 @@ func TestPrintBusStatusRecordFields(t *testing.T) {
 	printBusStatus(&b, bus.Status{
 		Managed: true, Ready: true, Leaf: "n/a", URL: "nats://127.0.0.1:4222", Listen: "127.0.0.1:4222", Domain: "kinu",
 		Class: "message-bus", Provider: "nats-server", Mode: "managed", CallerIdentity: "api-key",
-		Version: "v2.14.6", Seat: "aae-orc/ops", SeatPassFile: "/s/nats/director.pass", PID: 7, ConfPath: "/x",
+		Version: "v2.14.6", Seat: "example/ops", SeatPassFile: "/s/nats/director.pass", PID: 7, ConfPath: "/x",
 	})
 	got := b.String()
-	for _, want := range []string{"class:    message-bus\n", "provider: nats-server\n", "mode:     managed\n", "caller:   api-key\n", "version:  v2.14.6\n", "seat:     aae-orc/ops (user director, password at /s/nats/director.pass)\n"} {
+	for _, want := range []string{"class:    message-bus\n", "provider: nats-server\n", "mode:     managed\n", "caller:   api-key\n", "version:  v2.14.6\n", "seat:     example/ops (user director, password at /s/nats/director.pass)\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("status lacks %q:\n%s", want, got)
 		}

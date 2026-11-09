@@ -51,4 +51,4 @@ the network are left out; they have no marvel home.
 
 - The kill-failed row defect: marvel#364, fixed by #376.
 - The team-name collision: marvel#319, PR #378.
-- The seat environment leak: aae-orc#418, PR #381.
+- The seat environment leak: PR marvel#381.

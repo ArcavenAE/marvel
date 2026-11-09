@@ -353,3 +353,13 @@ func TestVerifyPrivateKeyMode(t *testing.T) {
 		t.Error("expected error for missing key")
 	}
 }
+
+func TestRegisterDirSitsBesideViewsUnderTheState(t *testing.T) {
+	l := WithHome("/h")
+	if got, want := l.RegisterDir(), "/h/state/register"; got != want {
+		t.Fatalf("RegisterDir() = %q, want %q", got, want)
+	}
+	if filepath.Dir(l.RegisterDir()) != filepath.Dir(l.ViewsDir()) {
+		t.Fatalf("RegisterDir %q and ViewsDir %q are not siblings", l.RegisterDir(), l.ViewsDir())
+	}
+}

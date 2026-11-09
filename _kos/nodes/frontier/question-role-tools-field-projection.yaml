@@ -1,27 +1,27 @@
 id: question-role-tools-field-projection
 type: question
 confidence: frontier
-title: "What does a wardrobe role tools field project to for a launched agent's harness tools and MCP access?"
+title: "What does a role library role tools field project to for a launched agent's harness tools and MCP access?"
 tags:
   - marvel
-  - wardrobe
+  - role library
   - permission
   - projection
   - mcp
 content: |
-  A wardrobe role definition carries a `constraints.tools` field. The question
+  A role library role definition carries a `constraints.tools` field. The question
   is what that field projects to when marvel launches the agent: which harness
   tools and which MCP servers the running seat gets, and in particular whether
   `tools: null` resolves to "inherit, unrestricted by this field" or to "no
   tools," and whether it can sever an MCP channel such as director-mcp.
 
   This matters because a role with `reports_to: director` and
-  `escalates_to: supervisor` (the retrospector, wardrobe#11) depends on a
+  `escalates_to: supervisor` (the retrospector, a role library issue) depends on a
   messaging channel. A tools value that resolved to "no tools" would sever the
   role's own edges, so the resolution of the field is a correctness property,
   not a detail.
 
-  DOCUMENTED CONTRACT (the seed, from wardrobe docs, not yet runtime-verified):
+  DOCUMENTED CONTRACT (the seed, from role library docs, not yet runtime-verified):
   - `definition-contract.md` (ruling 81): `tools: null` is "reserved; refused if
     set." The field is reserved and the validator refuses a non-null value today.
   - `projection.md` (ruling 81): the launcher leaves the policy `settings` block
@@ -39,7 +39,7 @@ content: |
     differently; the codex reviewer case (finding-046) already showed harnesses
     behave differently, so this needs testing per harness, not assumption. Note
     the tools projection is the CLAUDE policy path: for a codex role, director-mcp
-    comes from the codex config's `mcp_servers` block, not the wardrobe tools
+    comes from the codex config's `mcp_servers` block, not the role library tools
     projection at all (marvel-builder, config-level verified), so `tools: null`
     is doubly a non-issue for a codex seat's bus channel and the "does tools:null
     sever director-mcp" worry is really a claude question.
@@ -65,8 +65,8 @@ content: |
 
   The projection of a role definition into a running agent is marvel's, which is
   why this question sits in marvel's graph beside question-permission-model,
-  though the field and its rulings are wardrobe's and the channel at risk is
-  director's. The author-facing note lives in wardrobe docs so a role author does
+  though the field and its rulings are the role library's and the channel at risk is
+  director's. The author-facing note lives in role library docs so a role author does
   not rediscover this from zero.
 
   Empirical seed: marvel-builder's confirmation of what `tools: null` resolves to

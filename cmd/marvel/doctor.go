@@ -59,6 +59,9 @@ type doctorInput struct {
 	// errRemoteNotDialed for a remote daemon that was not asked for, and any
 	// other error when the daemon does not answer. Nil means no read.
 	Sessions func() ([]api.Session, error)
+	// Installs names the installed-copies records doctor reads. The zero
+	// value reads nothing.
+	Installs installSource
 }
 
 const (
@@ -107,6 +110,7 @@ func runDoctor(w io.Writer, in doctorInput) int {
 	checkShim(r, in)
 	checkKeys(r, in)
 	checkSeats(r, in)
+	checkInstalled(r, in)
 	return r.failed
 }
 
@@ -508,6 +512,13 @@ doctor prints one line per check, and a fix line under each failure. A stage
 with nothing configured reads SKIP, not FAIL. Name a manifest to check its
 harness commands, their logins and the director shim.
 
+The install lines report what the role-library install and the director installs
+record as their version, and the last line the installed-copies job logged for
+each. The role-library install is read from the directory named by
+MARVEL_ROLE_LIBRARY_DIR, under the job name in MARVEL_ROLE_LIBRARY_JOB; with
+neither set the line reads "not configured". They compare nothing with a remote, never read as a failure, and read
+"not installed" or "unreadable" where a record is missing or cannot be read.
+
 doctor is read-only: it writes nothing and changes no setting. It never reads
 a credential file; a harness login is asked of the harness's own status
 command. It prints no command text and no env value from a manifest.
@@ -585,6 +596,7 @@ func hostDoctorInput(args []string, remote bool) (doctorInput, error) {
 	if cfg, err := config.Load(); err == nil {
 		in.Clusters = cfg.Clusters
 	}
+	in.Installs = hostInstallSource()
 	in.Sessions = func() ([]api.Session, error) {
 		if isRemoteAddr(addr) && !remote {
 			return nil, errRemoteNotDialed

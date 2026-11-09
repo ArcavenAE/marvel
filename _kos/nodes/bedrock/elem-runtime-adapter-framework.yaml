@@ -71,7 +71,7 @@ content: |
   finding-024): a named settings fragment written per session, live
   re-projected on re-apply, emitting `policy.projected`. What remains
   open in F10 is the internal-capability layer (role-based RPC
-  authorization) and real containment, which belongs to curtain.
+  authorization) and real containment, which belongs to the sandbox tool.
   Recorded here as prose because kos schema v0.3 has no
   scope-exclusion edge type; the original `leaves-open` edges were
   removed in the schema-conformance fix (marvel 57d058f). If kos

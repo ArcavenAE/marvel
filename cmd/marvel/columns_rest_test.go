@@ -126,7 +126,7 @@ func wideNames() []string { return slices.Clone(wideSessionColumns) }
 // fitPriority first, in reverse registry order, then the others in reverse
 // fitPriority order.
 var restCutOrder = []string{
-	"ACCT", "SPEC", "PROMPT", "LAST-TURN",
+	"SERVICE", "ACCT", "SPEC", "PROMPT", "LAST-TURN",
 	"WORKSPACE", "GEN", "DESK", "RSS", "CPU%", "RUNTIME", "ACTIVE%", "AGE", "WORKDIR", "ROLE", "TEAM",
 	"RATE", "TOUT", "LAST-ACTIVE", "CTX%", "HEALTH", "STATE",
 }
@@ -148,7 +148,7 @@ func TestColumnsRestIsTheOnlyThingCutAtANarrowWidth(t *testing.T) {
 			t.Errorf("%s was cut; pinned columns are never cut:\n%s", pinned, got.table)
 		}
 	}
-	for _, first := range []string{"ACCT", "SPEC", "PROMPT"} {
+	for _, first := range []string{"SERVICE", "ACCT", "SPEC", "PROMPT"} {
 		if slices.Contains(shown, first) {
 			t.Errorf("%s printed at 80; it is cut first:\n%s", first, got.table)
 		}
@@ -268,5 +268,19 @@ func TestColumnsRestIsCutOnTheSessionsScreen(t *testing.T) {
 	}
 	if !strings.Contains(out, " columns hidden at this width\n") {
 		t.Errorf("no hidden-columns line:\n%s", out)
+	}
+}
+
+// SERVICE is opt-in and outside the wide set, so `rest` holds it and a plain
+// `wide` does not.
+func TestColumnsRestIncludesService(t *testing.T) {
+	if !slices.Contains(headersOf(columnsOrFatal(t, "name,rest", nil)), "SERVICE") {
+		t.Error("name,rest does not include SERVICE")
+	}
+	if slices.Contains(headersOf(columnsOrFatal(t, "wide", nil)), "SERVICE") {
+		t.Error("wide includes SERVICE")
+	}
+	if slices.Contains(headersOf(defaultSessionColumns()), "SERVICE") {
+		t.Error("the default table includes SERVICE")
 	}
 }

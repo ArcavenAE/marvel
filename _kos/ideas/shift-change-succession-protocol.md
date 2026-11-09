@@ -6,16 +6,16 @@
   conditioned unanimous vote), commissioned via director on behalf of the
   operator, 2026-09-17.
 - **Subject:** marvel (the shift state machine, the runtime adapters, the
-  daemon). The succession MECHANISM is marvel's; wardrobe is an OBJECT it
+  daemon). The succession MECHANISM is marvel's; role library is an OBJECT it
   consumes for the handoff CONTENT. Filed in the marvel graph per the subject
-  test, cross-linked to wardrobe for the content contract.
+  test, cross-linked to role library for the content contract.
 - **Related:** [[tmux-harness-state-watchdog]] (classified state and the
   advisory-only boundary; a shift is one operator response a classified state
   can motivate), [[token-rate-column-and-configurable-columns]] (the decaying
   rate is a cheap "went quiet" signal adjacent to context pressure). Vision row
   15 (marvel owns handoff SCHEMA; departing agent owns CONTENT). marvel
   ShiftPolicy / ShiftState (the trigger and state machine this extends).
-  wardrobe `contents/fragments/succession.md` (the authored content contract,
+  role library `contents/fragments/succession.md` (the authored content contract,
   included by 8 roles). orc finding-016 (fire on the level, not the
   post-compaction event; F-02 context-pressure monitoring).
 
@@ -122,7 +122,7 @@ continuity directly, not file-read.
 
 ## The design
 
-Marvel builds the half it lacks. The departing agent keeps the half wardrobe
+Marvel builds the half it lacks. The departing agent keeps the half role library
 already authored. Neither owns the seam today; this places it.
 
 ### 1. The handoff slot (marvel owns location and lifecycle)
@@ -149,7 +149,7 @@ harness's own message tool (INC-004); then waits for the departing agent's
 terminal marker or a timeout, and only then drains. `HeadroomTokens` is already
 documented to budget the departing agent's handoff turn, so the timeout has a
 home. The self-initiated path stays valid: where the harness exposes its own
-pressure, the agent may write before being asked (wardrobe already says so), and
+pressure, the agent may write before being asked (role library already says so), and
 both paths converge on the same file and the same marker.
 
 ### 3. Delivery to the successor (marvel owns the generation binding)
@@ -157,7 +157,7 @@ both paths converge on the same file and the same marker.
 At gen-2 spawn marvel stamps one more environment variable, `MARVEL_HANDOFF_IN`
 set to the slot path, alongside the five it already stamps (`MARVEL_SESSION`,
 `MARVEL_ROLE`, and the rest). The successor reads it as its first act, which is
-exactly wardrobe's ordered first-acts. The binding is recorded in `ShiftState`,
+exactly the role library's ordered first-acts. The binding is recorded in `ShiftState`,
 so a daemon restart mid-shift does not lose the pointer.
 
 ### 4. The marker contract (the seam marvel owns, and only this)
@@ -166,7 +166,7 @@ Marvel gates the drain on a terminal marker, so marvel must parse that one token
 Therefore the marker contract, the token and the file location, belongs to
 marvel's schema, together with location, lifecycle, and generation binding. That
 is the minimal schema marvel parses and not a byte more. Everything inside the
-file, the four things and the record shapes, is wardrobe's content, which only
+file, the four things and the record shapes, is the role library's content, which only
 the writer and the successor read; marvel never parses the prose. The marker
 written last is also the partial-write defense: if the agent dies mid-write, the
 marker is absent, the successor treats the file as not-there, and it reconciles.
@@ -177,17 +177,17 @@ The pointers are the load-bearing part of the handoff; the prose intent is the
 fast path. The guarantee is three layers: a durable record store (git for the
 worker, the issue tracker and kos for the rest), plus marvel's guaranteed slot
 and delivery so the pointers reach the successor, plus the successor's
-reconcile-from-records fallback (wardrobe's singleton query and
+reconcile-from-records fallback (the role library's singleton query and
 compute-what-changed first-acts) when the handoff is absent or unmarked. The
 residual risk is a role whose in-flight work is neither in a durable store nor
 written before death; that is thinner for non-worker roles and is a NAMED
 limitation with a test, not a paper-over.
 
-### The content the agent writes (wardrobe owns this, already authored)
+### The content the agent writes (role library owns this, already authored)
 
-Per commander's-intent doctrine and wardrobe's existing contract: purpose, key
+Per commander's-intent doctrine and the role library's existing contract: purpose, key
 tasks, desired end state, and constraints, capped in length (brevity is a
-feature, not a nicety), plus the four things wardrobe already specifies (pointers
+feature, not a nicety), plus the four things role library already specifies (pointers
 to every record held, what is in flight, what was ruled out and why, what is
 being dropped). The pointers are addresses, not payloads. The schema FORBIDS any
 full-context or prior-transcript field, because that is the door context-bloat
@@ -198,7 +198,7 @@ stays in the store and shift forty starts with the same access as shift one.
 
 **Recommendation: split, along the seam the code and content already imply.**
 Marvel owns location, lifecycle, generation binding, and the marker contract
-(schema and mechanism). Wardrobe owns the content shape (what to write, the write
+(schema and mechanism). Role library owns the content shape (what to write, the write
 discipline, the successor's first-acts). The binary owns the mechanical delivery
 (slot creation, the env stamp, the wipe) and encodes NO editable content.
 
@@ -213,7 +213,7 @@ reality, not a preference:
   env stamps, the settings projection, the input path. It is the only place that
   can inject the slot pointer into gen-2 or create a marvel-owned directory. If a
   handoff is delivered at all, the delivery originates here.
-- **Wardrobe role content.** Already owns the entire handoff CONTENT contract,
+- **Role library role content.** Already owns the entire handoff CONTENT contract,
   authored, versioned, digest-pinned, included by 8 roles, including a concrete
   store for the worker (git branch and PR). It can only reach the agent as slice
   text in the system prompt, and it defers the write trigger and the "handoff
@@ -226,10 +226,10 @@ reality, not a preference:
 
 Tradeoff of the split: it requires the marker contract to be agreed by both
 sides, so a change to the marker is a two-repo change (marvel schema and
-wardrobe content). That is the cost, and it is the right cost: the marker is the
+role library content). That is the cost, and it is the right cost: the marker is the
 one thing both the writer and the reader must agree on, so it should be the one
 thing that cannot drift silently. The de-facto arrangement is already this split
-on the content side (merge-queue's prompt has moved to wardrobe, marked do-not-
+on the content side (merge-queue's prompt has moved to role library, marked do-not-
 load from multiclaude); this design builds the marvel side that has been missing.
 
 ## Harness-independence (protocol yes, trigger separately)
@@ -262,7 +262,7 @@ credential-handling path.
 - **Phase 1:** the slot, the handoff phase, and delivery for ONE role on the
   claude adapter, end to end: marvel creates the slot, requests the write, gates
   the drain on the marker, stamps `MARVEL_HANDOFF_IN`, and the successor reads it
-  as its first act. Wardrobe's content shape aligns to the marker contract.
+  as its first act. The role library's content shape aligns to the marker contract.
   Chosen because it runs the whole path once and proves the architecture; the
   rest is more roles and more adapters, not more plumbing. Verified by re-running
   the Jabberwocky context-pressure test against the built handoff.

@@ -30,7 +30,7 @@ building it that the design did not have going in:
    actually runs.
 3. **Hook trust did not close, and two plausible escapes are refuted.**
    The mechanism is now mapped rather than guessed, and the shipped
-   design does not need the bypass flag, but automation still does.
+   design does not need a hook-review bypass, but automation still does.
 4. **Two of the sweep's tailing questions dissolve rather than resolve.**
    Taking the path from the hook payload on every fire, and holding no
    file handle between fires, removes what `.zst` replacement and a new
@@ -179,7 +179,7 @@ stdout contracts do not.
 ## Hook trust: off the critical path, and the graph should say so
 
 **Stated plainly, because finding-017 marked this critical path and the
-graph still carries that**: `--dangerously-bypass-hook-trust` is not
+graph still carries that**: a hook-review bypass is not
 needed by the shipped design, and nothing in this channel depends on the
 trust question. Marvel cannot install the codex hook at all, because
 `auth.json` lives in `$CODEX_HOME` and the hook stanza is operator setup;
@@ -187,7 +187,7 @@ an operator who can write the stanza can run the TUI review that grants
 trust. What remains open is only whether trust can be pre-seeded
 non-interactively, which is a convenience with no dependent.
 
-finding-017's reasoning was that a design requiring the bypass flag is not
+finding-017's reasoning was that a design requiring the bypass is not
 shippable. That reasoning is sound and its premise turned out false: this
 design does not require it. Whoever harvests should retire the critical-
 path marking rather than carry it forward.
@@ -197,8 +197,8 @@ I did not close it:
 
 - **The gate is silent.** An enabled, untrusted hook does not run and
   nothing says so: no warning on stderr, no line in the rollout, no
-  nonzero exit. The positive control is the same run with the bypass
-  flag, where the hook fires. A person wiring this up gets no signal
+  nonzero exit. The positive control is the same run with the hook
+  reviewed and trusted, where the hook fires. A person wiring this up gets no signal
   distinguishing "not trusted" from "misconfigured".
 - **The state is observable.** The app-server method `hooks/list` returns
   per-hook `key`, `currentHash` (`sha256:...`), `trustStatus`
@@ -208,25 +208,23 @@ I did not close it:
   `state = { enabled = true, trusted_hash = "<currentHash>" }` into the
   handler leaves `trustStatus` at `untrusted`, in both the `sha256:`
   and bare-hex spellings. The `state` table is inert in general: setting
-  `enabled = false` there still reports `enabled: true`. Neither
-  `bypass_hook_trust = true` in `config.toml` nor `-c
-  bypass_hook_trust=true` on the command line reaches the flag's
-  behavior, though the binary parses the name (it carries the message
-  "`bypass_hook_trust` override must be a boolean").
+  `enabled = false` there still reports `enabled: true`. A config key
+  and a command-line override aimed at the same effect did not change
+  `trustStatus` either.
 - **The granting path is the TUI**, `startup_hooks_review.rs`, reached
   through the string "hooks need review before they can run". I could
   not exercise it: the probe home has no credentials and the TUI stops
   at its login screen, so where the accepted decision persists is still
   unknown.
 
-**The shipped design does not need the flag**, and that is the part that
+**The shipped design does not need a bypass**, and that is the part that
 matters for pt8k. Marvel cannot install this hook anyway: codex reads
 hooks from `$CODEX_HOME/config.toml`, and `auth.json` lives in that same
 directory, so relocating `CODEX_HOME` to a marvel-owned tree would take
 the operator's credentials away with it. The hook is therefore an
 operator's one-time edit to their own config, and an operator can trust
-their own hook through codex's own review. The flag remains the only
-route for unattended installs, and that is the residue of the question.
+their own hook through codex's own review. Unattended installs have no
+supported route, and that is the residue of the question.
 
 ## What the design does not have to solve
 

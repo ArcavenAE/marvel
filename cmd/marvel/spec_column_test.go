@@ -10,7 +10,7 @@ import (
 func specRowOf(spec string) string {
 	s := fitSession("agent-0")
 	s.Spec = spec
-	return newSessionRow(s).spec
+	return newSessionRow(s, nil).spec
 }
 
 // SPEC reads current, behind, or "-" where there is no role to compare against.

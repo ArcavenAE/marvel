@@ -4,7 +4,7 @@ Design for review. No code lands until this doc is reviewed.
 
 - Author: arcaven-architect-g5-0.
 - Issue: #416. Tracks: aae-orc-b8ptm, step 1 of the orc's
-  `docs/design/wardrobe-iteration.md` section (e).
+  the role library iteration note, section (e).
 - Checked against marvel `origin/main` 3cb6101.
 
 ## 1. The problem, verified

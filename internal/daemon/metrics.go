@@ -44,6 +44,7 @@ type metricsHold struct{ skipped bool }
 // baseline, and publishes nothing, because its CPU delta would span the whole
 // pause; the next pass publishes.
 func (d *Daemon) metricsPass(sampler *procstat.Sampler, h *metricsHold) {
+	d.vitalsTick()
 	if d.clusterSuspended() {
 		h.skipped = true
 		return

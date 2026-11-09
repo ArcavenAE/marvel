@@ -25,7 +25,7 @@ code and stays unknown.
 
 ## Findings
 
-Source: marvel#1214 and its two comments of 2026-11-02 (ticket I-117). The
+Source: marvel#1214 and its two comments of 2026-11-02. The
 capture is a 60 s root `fs_usage` on one host, 2026-11-02 03:05Z, reported as
 aggregates only. The code reading was done at main f9a43400. Nothing here was
 re-measured for this harvest.

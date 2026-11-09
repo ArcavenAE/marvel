@@ -10,7 +10,7 @@ import (
 
 // The PANE column of `get sessions` (marvel#1142 part a): one word for what a
 // seat's pane is doing, so a seat sitting at a login or startup prompt no
-// longer reads as alive. The set is the operator's (ruling I-60): working,
+// longer reads as alive. The set is the operator's ruling: working,
 // idle, prompt, restart, logged-out, unknown, and fresh (part d, ruled by the
 // director: a seat that has never taken a turn, with no startup text injected
 // by marvel).

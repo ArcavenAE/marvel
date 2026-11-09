@@ -58,7 +58,7 @@ architecture; anyone deciding what to build next wants the probes.
   to a QoS resource.
 - The catalog is filed by lifecycle: runtime services an agent requests (bd, kos,
   flyloft, critic, code-graph, NATS) versus provisioning capabilities that shape
-  the workspace before the agent exists (sideshow, callbook, curtain).
+  the workspace before the agent exists (sideshow, callbook, the sandbox tool).
 - Marvel does not store credentials, but it brokers them, holds session state on
   the agent's behalf, and connects agents to a vault that mints short-lived
   credentials. The one thing that crosses the wall from the agent is its minted

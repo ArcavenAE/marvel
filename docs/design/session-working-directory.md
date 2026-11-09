@@ -138,8 +138,8 @@ operator's cwd is the trusted one by construction; a script that wants a
 different placement says so.
 
 **9. Placement stays out of the role library.** `workdir` is a marvel
-manifest field and nothing else. A wardrobe role definition carries no
-path, no host, no directory (wardrobe keeps liveness and placement off the
+manifest field and nothing else. A role library role definition carries no
+path, no host, no directory (role library keeps liveness and placement off the
 role by ruling); the launcher's `TWIN_CWD` default retires the day this
 field ships, replaced by `MARVEL_WORKDIR` when set and a refusal when not.
 Adjacent to R-84 (identity at launch) and kept apart from it: `workdir`
@@ -152,7 +152,7 @@ the pane and the environment with no second record to reconcile.
 - Per-replica placement (replica 0 here, replica 1 there). One `workdir`
   per role; a role that needs two homes is two roles.
 - Creating the directory. marvel places into a directory that exists; a
-  worktree-per-session model (the wardrobe worker's "one task in its own
+  worktree-per-session model (the role library worker's "one task in its own
   worktree") is a workspace-preparation concern, upstream of spawn.
 - Trust itself. The harness decides trust from its own store; marvel's
   contribution is a placement that defaults to the directory the operator

@@ -114,7 +114,7 @@ content: |
   environment in scope. Composed with the exposure result above it is
   one finding rather than two: a repo-supplied script runs with the
   same environment the harness serves over its socket. An adapter
-  needs a stated position (refuse, sandbox under curtain, or accept
+  needs a stated position (refuse, sandbox under the sandbox tool, or accept
   and say so) before it launches anything. Undecided is an honest
   state; silent is not.
 

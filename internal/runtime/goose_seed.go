@@ -43,6 +43,32 @@ type gooseExtensionEntry struct {
 	Name    string `yaml:"name"`
 }
 
+// gooseTempName is the directory under the seat's home that holds its temp
+// files when a sandbox profile is in force. It persists across launches and is
+// never cleared.
+const gooseTempName = "tmp"
+
+// gooseTempDir is where a goose seat's temp files go under a sandbox profile:
+// the shipped profile lets a seat write only to its private home and its working
+// directory, so goose's temp file under the daemon's inherited per-user temp
+// directory is refused (marvel#1315). It names a directory only when a profile
+// is in force and the home is absolute, and never where the role set TMPDIR
+// itself. The inherited process TMPDIR is not the role's: it is the value to
+// replace.
+//
+// home is the seat's private home. The launch passes ctx.HarnessHomePath; the
+// seeder passes the directory it is handed, because the manager calls Seed
+// before it sets HarnessHomePath.
+func gooseTempDir(ctx *LaunchContext, home string) (string, bool) {
+	if ctx == nil || ctx.Session == nil || ctx.SandboxProfile == "" || !filepath.IsAbs(home) {
+		return "", false
+	}
+	if _, set := ctx.Session.Runtime.Env["TMPDIR"]; set {
+		return "", false
+	}
+	return filepath.Join(home, gooseTempName), true
+}
+
 // gooseSeeder returns the Seed step for one launch: config.yaml with the mode,
 // the provider and model the role's env names, and the extensions; and
 // permission.yaml with the role's tools. Neither carries a credential: the
@@ -83,7 +109,17 @@ func gooseSeeder(ctx *LaunchContext) func(dir string) error {
 		if err := writeGooseYAML(filepath.Join(cfgDir, gooseConfigFile), cfg); err != nil {
 			return err
 		}
-		return writeGooseYAML(filepath.Join(cfgDir, goosePermissionFile), perm)
+		if err := writeGooseYAML(filepath.Join(cfgDir, goosePermissionFile), perm); err != nil {
+			return err
+		}
+		// Last, so a failure here never costs the permission file a first
+		// launch needs.
+		if tmp, ok := gooseTempDir(ctx, dir); ok {
+			if err := os.MkdirAll(tmp, 0o700); err != nil {
+				return fmt.Errorf("make goose temp dir: %w", err)
+			}
+		}
+		return nil
 	}
 }
 

@@ -18,7 +18,7 @@ bytes to run `marvel work` from kinu. Every channel failed:
 
 - no shared filesystem between the hosts;
 - host SSH refused (only `mrvl://` was open), so scp/rsync were unavailable;
-- the tmux inject/capture channel truncates well under 15KB (the stagekeeper
+- the tmux inject/capture channel truncates well under 15KB (the pattern store
   launch-prompt truncation finding is the same failure mode);
 - git was ruled out because the manifest carried host-local paths and the
   target repo is public (a correct redaction call).

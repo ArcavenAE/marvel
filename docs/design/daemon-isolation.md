@@ -124,7 +124,8 @@ layout root, replacing the five per-daemon flags and `MARVEL_TMUX_SOCKET` as
 the way to run a second daemon on a host. The unit of isolation is still the
 layout; the root is now a thing an operator can name. The override in
 Decision 3 is unchanged and still outranks the root for the socket. The
-shape is in `docs/design/marvel-home.md`.
+shape is in `docs/design/marvel-home.md`. A second daemon under one root
+refuses at start, on the root lock at `run/daemon.lock` (marvel#883).
 
 ## Decision 2: the socket resolves to `RunDir()/marvel.sock`
 

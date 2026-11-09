@@ -31,6 +31,7 @@ import (
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/hostvitals"
 	"github.com/arcavenae/marvel/internal/limitmenu"
 	"github.com/arcavenae/marvel/internal/logbuf"
 	"github.com/arcavenae/marvel/internal/panemenu"
@@ -82,6 +83,10 @@ type Daemon struct {
 
 	// views follows each seat's read-only views (marvel#609).
 	views *view.Keeper
+
+	// registerDir is where the register's pull file is written each pass.
+	// Empty when the layout cannot be resolved, which turns the pass off.
+	registerDir string
 	// scheduleHistoryMax is the cluster's ceiling on a scheduled role's
 	// schedule.history; zero means the default.
 	scheduleHistoryMax int
@@ -92,6 +97,12 @@ type Daemon struct {
 	sessMgr            *session.Manager
 	teamCtrl           *team.Controller
 	driver             *tmux.Driver
+
+	// vitals is the host vitals sampler. It is built off unless the cluster
+	// config turns it on, and metricsPass drives it every VitalsEvery passes.
+	vitals     *hostvitals.Sampler
+	vitalsPass int
+
 	// composerClient reports whether a workspace is a client one, whose
 	// panes the COMPOSER column never reads, or an error when its manifest
 	// cannot be read. New sets the workspace scope; nil captures nothing.
@@ -147,6 +158,17 @@ type Daemon struct {
 	// shutdown. Nil for TCP listeners, which have their own kernel-level
 	// exclusion.
 	socketLock *socketLock
+
+	// watchdog is the harness-state watchdog startWatchdog built, kept so a test
+	// can see how it was wired. Nil until the daemon starts it.
+	watchdog *watchdog
+
+	// Path of the root lock to take on Start. Empty = no root lock.
+	rootLockPath string
+
+	// Advisory lock on the marvel root, held from the first act of Start to
+	// shutdown. Nil when rootLockPath is empty.
+	rootLock *socketLock
 
 	// reclaim makes the startup reconcile destroy marvel-* tmux state
 	// this daemon does not own, instead of leaving it running. Off by
@@ -204,6 +226,10 @@ type Daemon struct {
 	// accounts holds the newest rate-limit reading per account, in memory.
 	// It is not keyed to a session and is not the heartbeat's data.
 	accounts *api.AccountReadings
+	// accountWarn reports an account window reaching the cluster's warning
+	// level, once per window (marvel#1340).
+	accountWarn      *accountWarner
+	accountWarnLevel int // 0 when the cluster turned the warning off
 	// limitMenu holds the captured limit-menu samples, the one list the inject
 	// refusal (its Menus) and the pane-menu source and limit action read. Production
 	// ships none (limitmenu: no sample, no match), so nothing is refused, no extra
@@ -251,6 +277,12 @@ type Daemon struct {
 // Options configures optional daemon behavior. Zero value disables
 // everything optional (matches legacy behavior).
 type Options struct {
+	// RootLock, when non-empty, is the path of the lock that makes one
+	// marvel root one daemon, <root>/run/daemon.lock. Start takes it first,
+	// before any other guard, and holds it until the daemon stops. Empty
+	// means no lock, as PidFile does, which keeps daemons built directly in
+	// tests out of it. cmd/marvel always sets it, from the layout.
+	RootLock string
 	// PidFile, when non-empty, is written with the daemon's PID on
 	// Start and removed on Stop. If the file already exists and
 	// points at a live process, Start refuses with an error.
@@ -311,7 +343,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	carried, handoff := receiveReexecHandoff()
 	// Before anything is exec'd: a daemon started from a Claude Code session
 	// carries that session's messaging credential and identity, and reexec,
-	// services and tmux would otherwise pass them on (aae-orc#418).
+	// services and tmux would otherwise pass them on (marvel#381).
 	scrubbed, serr := api.UnsetInheritedSessionEnv()
 	if serr != nil {
 		return nil, fmt.Errorf("scrub inherited session env: %w", serr)
@@ -462,6 +494,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		reexec:    syscall.Exec,
 
 		leafLossCause: leafLossCause,
+		rootLockPath:  opts.RootLock,
 	}
 	teamCtrl.Suspended = d.clusterSuspended
 	driver.SetSuspendGate(d.clusterSuspended)
@@ -494,6 +527,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// Each seat's read-only views are built at spawn by the session manager
 	// and followed on a tick here (marvel#609).
 	if layout, lerr := paths.Default(); lerr == nil {
+		d.registerDir = layout.RegisterDir()
 		d.views = &view.Keeper{ViewsDir: layout.ViewsDir(), Events: evRing, Declared: d.viewDeclarations}
 		d.views.OnMoved = teamCtrl.NoteViewMoved
 		d.views.Held = teamCtrl.ViewTreesHeld
@@ -558,7 +592,26 @@ func (d *Daemon) LogBuffer() *logbuf.Buffer { return d.logs }
 // Start starts the daemon: listens on Unix or TCP socket and starts reconciliation.
 // The address format determines the network: "host:port" for TCP, a file path
 // for Unix. Examples: "~/.marvel/run/marvel.sock", "0.0.0.0:9090", ":9090".
-func (d *Daemon) Start(socketPath string) error {
+func (d *Daemon) Start(socketPath string) (err error) {
+	// One root is one daemon. This is the first act, before the pid file
+	// guard, the socket lock and attachServices: a daemon that loses it must
+	// never reach the broker, the same rule the pid file guard states below.
+	// A start that fails after taking it gives it back, so a failed start
+	// leaves the root free.
+	if d.rootLockPath != "" {
+		lock, lerr := lockRoot(d.rootLockPath)
+		if lerr != nil {
+			return lerr
+		}
+		d.rootLock = lock
+		defer func() {
+			if err != nil {
+				d.rootLock.release()
+				d.rootLock = nil
+			}
+		}()
+	}
+
 	// Refuse to start if a pid file already points at a live process.
 	if d.pidFile != "" {
 		if err := checkPidFileFree(d.pidFile); err != nil {
@@ -605,6 +658,8 @@ func (d *Daemon) Start(socketPath string) error {
 	// hand it. A managed bus that cannot start is a start failure, the
 	// tmux posture.
 	d.loadScheduleHistoryMax(socketPath)
+	d.loadHostVitals(socketPath)
+	d.loadAccountWarn(socketPath)
 	d.identifyCluster(socketPath)
 	d.loadSuspendRecord(socketPath)
 	d.loadResumeJournal(socketPath)
@@ -752,6 +807,14 @@ func (d *Daemon) adoptAndRun(ctx context.Context, socketPath, network string) er
 	go func() {
 		defer d.wg.Done()
 		d.RunBrokerRetry(ctx, ReconcileInterval)
+	}()
+
+	// The register's pull file is rewritten on the reconcile tick, a sibling
+	// loop so a slow write cannot hold a reconcile pass up.
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.RunRegisterPull(ctx, ReconcileInterval)
 	}()
 
 	// Start the process sampler. Sibling of the reconcile loop rather
@@ -971,6 +1034,8 @@ func (d *Daemon) shutdown(teardown bool) {
 	}
 	d.socketLock.release()
 	d.socketLock = nil
+	d.rootLock.release()
+	d.rootLock = nil
 	if d.pidFile != "" {
 		_ = os.Remove(d.pidFile)
 	}
@@ -1280,6 +1345,10 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return d.handleSuspend(req.Params)
 	case "resume":
 		return d.handleResume()
+	case "team.hibernate":
+		return d.handleHibernate(req.Params)
+	case "team.wake":
+		return d.handleWake(req.Params)
 	case "view.refresh":
 		return d.handleViewRefresh(req.Params)
 	case "bus.leaf.connect":
@@ -1580,6 +1649,9 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	if err := refuseUnadmittedGlobalRoles(m, d.sessMgr.Bus); err != nil {
 		return daemonrpc.Response{Error: err.Error()}
 	}
+	if refusals := m.HandoffViaRefusals(d.sessMgr.CanOfferHandoffToolRole); len(refusals) > 0 {
+		return daemonrpc.Response{Error: "apply manifest: " + strings.Join(refusals, "; ")}
+	}
 
 	// Pre-flight: a team name held by another workspace would commit, spawn,
 	// and then break bus-auth rendering cluster-wide (marvel#319).
@@ -1702,6 +1774,12 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	for _, mt := range m.Teams {
 		teamNames = append(teamNames, mt.Name)
 	}
+	var held []string
+	for _, mt := range m.Teams {
+		if live, err := d.store.GetTeam(m.Workspace.Name + "/" + mt.Name); err == nil && live.Hibernate != nil && live.Hibernate.State == api.HibernateHibernated {
+			held = append(held, live.Key())
+		}
+	}
 	out := map[string]any{
 		"status":     "applied",
 		"workspace":  m.Workspace.Name,
@@ -1710,6 +1788,10 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		// role's. Information, not a warning: under operator ruling D4 this
 		// is the normal state right after an apply.
 		"behind": d.behindCount(m.Workspace.Name, teamNames),
+	}
+	if len(held) > 0 {
+		out["held"] = held
+		out["held_line"] = api.HibernateHeldLine
 	}
 	if pruned != nil {
 		pruned.addTo(out)
@@ -1754,6 +1836,9 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 			if r, ok := reasons[live[i].Key()]; ok && live[i].Reason == "" {
 				live[i].Reason = r
 			}
+			if live[i].Reason == "" {
+				live[i].Reason = api.ConfigErrorReason(live[i])
+			}
 		}
 		d.stampLimitReading(live, time.Now().UTC())
 		d.stampActivity(live, time.Now().UTC())
@@ -1763,6 +1848,8 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 			d.stampPaneReads(live)
 		}
 		result = append(live, held...)
+	case "register", "registers":
+		result = d.registerRows()
 	case "teams", "team":
 		result = d.store.ListTeams()
 	case "team-load":
@@ -1834,7 +1921,12 @@ func (d *Daemon) handleDescribe(params json.RawMessage) daemonrpc.Response {
 			if one[0].SettingSources != "" && one[0].SettingSourcesDelivery == "" {
 				one[0].SettingSourcesNote = api.SettingSourcesNotRecorded
 			}
-			result = one[0]
+			// The configuration-error reason get sessions shows, on this copy
+			// only (ADR-010 Amendment 2).
+			if one[0].Reason == "" {
+				one[0].Reason = api.ConfigErrorReason(one[0])
+			}
+			result = describedSession{Session: one[0], Register: d.registerRowFor(one[0])}
 		}
 	case "team":
 		result, err = d.describeTeam(p.Name)
@@ -2016,12 +2108,18 @@ func (d *Daemon) handleScale(params json.RawMessage) daemonrpc.Response {
 
 	d.teamCtrl.ReconcileOnce()
 
-	return respond(map[string]any{
+	out := map[string]any{
 		"status":   "scaled",
 		"team":     p.TeamKey,
 		"role":     p.Role,
 		"replicas": p.Replicas,
-	})
+	}
+	// The change is recorded and a wake honours it, but nothing starts while the
+	// mark covers the role, so the reply says the success spawned nothing.
+	if live, err := d.store.GetTeam(p.TeamKey); err == nil && live.Hibernate != nil && live.Hibernate.State == api.HibernateHibernated && live.HibernateCovers(p.Role) {
+		out["held"] = api.HibernateHeldLine
+	}
+	return respond(out)
 }
 
 // convergeParams selects which team(s) to move and which way. An empty TeamKey
@@ -3351,6 +3449,7 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		admin := mgr.Admin()
 		return mgr.URL(), admin.Name, admin.Password
 	})
+	d.teamCtrl.LeafUp = leafGate(sup.Status)
 	d.teamCtrl.BusGate = func() (bool, string) {
 		if sup.Ready() {
 			return true, ""
