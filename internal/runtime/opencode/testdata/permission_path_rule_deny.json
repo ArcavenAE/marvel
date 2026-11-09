@@ -1,0 +1,13 @@
+{
+  "provenance": "Rule order of `opencode debug agent build` with the config {\"*\":\"deny\",\"edit\":{\"<data>/opencode/tool-output/*\":\"deny\"},\"read\":{\"<data>/opencode/tool-output/*\":\"deny\"}}, measured on opencode 1.18.34: the same pattern written as an edit and a read rule does not stop the external_directory allow being appended last. Rows for other permissions are omitted. <data> stands for the seat's XDG_DATA_HOME.",
+  "rules": [
+    {"permission": "*", "pattern": "*", "action": "allow"},
+    {"permission": "external_directory", "pattern": "*", "action": "ask"},
+    {"permission": "external_directory", "pattern": "<data>/opencode/tool-output/*", "action": "allow"},
+    {"permission": "external_directory", "pattern": "/tmp/opencode/*", "action": "allow"},
+    {"permission": "*", "pattern": "*", "action": "deny"},
+    {"permission": "edit", "pattern": "<data>/opencode/tool-output/*", "action": "deny"},
+    {"permission": "read", "pattern": "<data>/opencode/tool-output/*", "action": "deny"},
+    {"permission": "external_directory", "pattern": "<data>/opencode/tool-output/*", "action": "allow"}
+  ]
+}
