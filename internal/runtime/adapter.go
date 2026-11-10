@@ -85,6 +85,12 @@ type LaunchContext struct {
 	CredentialHelper string
 	BusUser          string
 	BusPassword      string
+	// BusPasswordFile is the private file holding BusPassword, set by the
+	// session manager before the launch is built (as TokenFile is). When set
+	// the environment carries this path in DIRECTOR_NATS_PASS_FILE and no
+	// password value, so an adapter that names the environment's variables
+	// (codex's env_vars) names the ones the seat will have.
+	BusPasswordFile string
 	// GlobalRole is the global role the role holds on this cluster, resolved
 	// by config.ResolvedGlobalRole through the bus provider: "supervisor", or
 	// empty for none. It rides to the seat as DIRECTOR_GLOBAL_ROLE.
@@ -624,7 +630,12 @@ func constructedEnvQuiet(ctx *LaunchContext, quiet bool) map[string]string {
 		env["NATS_URL"] = ctx.BusURL
 		if ctx.BusUser != "" {
 			env["DIRECTOR_NATS_USER"] = ctx.BusUser
-			env["DIRECTOR_NATS_PASS"] = ctx.BusPassword
+			switch {
+			case ctx.BusPasswordFile != "":
+				env["DIRECTOR_NATS_PASS_FILE"] = ctx.BusPasswordFile
+			case ctx.BusPassword != "":
+				env["DIRECTOR_NATS_PASS"] = ctx.BusPassword
+			}
 		}
 		// The resolved global role, so director's launcher reads the
 		// declaration and not the role name. Set only when the role holds the
