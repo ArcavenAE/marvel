@@ -205,9 +205,13 @@ func (d *Daemon) noteRefusedAccountReport(req api.AccountLimitsRequest, err erro
 	d.emitHeartbeatAuth2(events.KindHeartbeatRefused, cause, req.Session, msg)
 }
 
-// accountKeyOfSession resolves the account a named session spends against.
-func (d *Daemon) accountKeyOfSession(name string) (api.AccountKey, error) {
-	sess, err := d.store.GetSession(name)
+// accountKeyOfSession resolves the account a session spends against, for a
+// caller that holds the token minted for that session. The history is an
+// account's, so the caller proves a seat on it the way account.limits does:
+// a session of another account, a wrong or missing token, and a record with no
+// token are refused.
+func (d *Daemon) accountKeyOfSession(name, token string) (api.AccountKey, error) {
+	sess, err := d.store.AuthenticateAccountReport(name, token)
 	if err != nil {
 		return api.AccountKey{}, err
 	}
@@ -215,14 +219,14 @@ func (d *Daemon) accountKeyOfSession(name string) (api.AccountKey, error) {
 }
 
 // handleAccountSeries answers the stamped readings of one window of the
-// account a session is on. It reads the history only; it asks nothing of any
+// account of a session the caller holds the token of. It reads the history only; it asks nothing of any
 // harness.
 func (d *Daemon) handleAccountSeries(params json.RawMessage) daemonrpc.Response {
 	var req api.AccountSeriesRequest
 	if err := json.Unmarshal(params, &req); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("account.series: %v", err)}
 	}
-	key, err := d.accountKeyOfSession(req.Session)
+	key, err := d.accountKeyOfSession(req.Session, req.SessionToken)
 	if err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("account.series: %v", err)}
 	}
@@ -241,7 +245,7 @@ func (d *Daemon) handleAccountDelta(params json.RawMessage) daemonrpc.Response {
 	if err := json.Unmarshal(params, &req); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("account.delta: %v", err)}
 	}
-	key, err := d.accountKeyOfSession(req.Session)
+	key, err := d.accountKeyOfSession(req.Session, req.SessionToken)
 	if err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("account.delta: %v", err)}
 	}

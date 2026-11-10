@@ -664,9 +664,10 @@ var ErrSecretOverBareTCP = errors.New("refusing to send a secret-bearing request
 
 // secretBearingMethods are the methods whose params or result hold a
 // credential, a bearer token or a heartbeat-token-bound write. They go only
-// over a unix socket, mrvl:// or ssh://. heartbeat, bus.beat and account.limits
-// carry the same session_token that authenticates broker.token, so a client
-// pointed at bare TCP would otherwise send it on every beat.
+// over a unix socket, mrvl:// or ssh://. heartbeat, bus.beat, account.limits,
+// account.series and account.delta carry the same session_token that
+// authenticates broker.token, so a client pointed at bare TCP would otherwise
+// send it on every beat.
 var secretBearingMethods = map[string]bool{
 	"credential.put":    true,
 	"credential.get":    true,
@@ -676,4 +677,6 @@ var secretBearingMethods = map[string]bool{
 	"heartbeat":         true,
 	"bus.beat":          true,
 	"account.limits":    true,
+	"account.series":    true,
+	"account.delta":     true,
 }

@@ -115,7 +115,9 @@ func (s *AccountSeries) Append(key AccountKey, windows []AccountWindow, session 
 		if over := len(cur) - drop - SeriesMaxSamples; over > 0 {
 			drop += over
 		}
-		s.m[sk] = append([]AccountSample(nil), cur[drop:]...)
+		// Reslice, do not copy: in time order the insert is a plain append, and the
+		// dropped prefix is released when the slice next grows.
+		s.m[sk] = cur[drop:]
 	}
 }
 
@@ -196,17 +198,22 @@ func (s *AccountSeries) Delta(key AccountKey, window string, start, end time.Tim
 // AccountSeriesRequest is the account.series RPC body. The account is the one
 // the named session spends against. A zero From or To leaves that end open.
 type AccountSeriesRequest struct {
-	Session string    `json:"session"`
-	Window  string    `json:"window"`
-	From    time.Time `json:"from,omitempty"`
-	To      time.Time `json:"to,omitempty"`
+	Session string `json:"session"`
+	// SessionToken is the secret marvel minted for the named session at spawn
+	// (MARVEL_HEARTBEAT_TOKEN), as account.limits requires. The account is the
+	// one a session the caller holds the token of spends against.
+	SessionToken string    `json:"session_token,omitempty"`
+	Window       string    `json:"window"`
+	From         time.Time `json:"from,omitempty"`
+	To           time.Time `json:"to,omitempty"`
 }
 
 // AccountDeltaRequest is the account.delta RPC body: a run's start and end
 // instants, and the session whose account the run spent against.
 type AccountDeltaRequest struct {
-	Session string    `json:"session"`
-	Window  string    `json:"window"`
-	Start   time.Time `json:"start"`
-	End     time.Time `json:"end"`
+	Session      string    `json:"session"`
+	SessionToken string    `json:"session_token,omitempty"`
+	Window       string    `json:"window"`
+	Start        time.Time `json:"start"`
+	End          time.Time `json:"end"`
 }

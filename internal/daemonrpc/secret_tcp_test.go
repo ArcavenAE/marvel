@@ -62,7 +62,7 @@ func TestSecretBearingRequestIsNotSentOverBareTCP(t *testing.T) {
 	addr, hits := countingTCP(t)
 	for _, method := range []string{
 		"credential.put", "credential.reveal", "credential.get", "broker.token", "handoff.put",
-		"heartbeat", "bus.beat", "account.limits",
+		"heartbeat", "bus.beat", "account.limits", "account.series", "account.delta",
 	} {
 		for _, a := range []string{addr, "tcp://" + addr} {
 			_, err := SendRequest(a, Request{Method: method, Params: json.RawMessage(`{"value":"x"}`)})

@@ -202,3 +202,30 @@ func TestDeltaOfAFallInsideOneWindowIsUnknown(t *testing.T) {
 		t.Fatalf("delta = %+v, want unknown with a note and no rollover", d)
 	}
 }
+
+// The rule fires on any change of resets_at, not only on a drop: a window that
+// reset and then burned past the start figure is still not a burn of the
+// difference.
+func TestDeltaAcrossAResetThatRoseIsStillARollover(t *testing.T) {
+	s := NewAccountSeries("kinu", DefaultSeriesRetention)
+	k := seriesKey()
+	s.Append(k, []AccountWindow{pctWin("five_hour", 10, seriesT0.Add(time.Hour))}, "ws/a", seriesT0)
+	s.Append(k, []AccountWindow{pctWin("five_hour", 60, seriesT0.Add(6*time.Hour))}, "ws/a", seriesT0.Add(2*time.Hour))
+	d := s.Delta(k, "five_hour", seriesT0, seriesT0.Add(2*time.Hour))
+	if !d.Rollover || d.Delta != nil {
+		t.Fatalf("delta = %+v, want a rollover with no delta although the figure rose", d)
+	}
+}
+
+// A reading with no resets_at beside one that has it also reads as a
+// rollover: the two cannot be shown to be one window, so the delta is unknown.
+func TestDeltaBetweenAStampedAndAnUnstampedResetIsUnknown(t *testing.T) {
+	s := NewAccountSeries("kinu", DefaultSeriesRetention)
+	k := seriesKey()
+	s.Append(k, []AccountWindow{pctWin("five_hour", 10, seriesT0.Add(time.Hour))}, "ws/a", seriesT0)
+	s.Append(k, []AccountWindow{pctWin("five_hour", 20, time.Time{})}, "ws/a", seriesT0.Add(10*time.Minute))
+	d := s.Delta(k, "five_hour", seriesT0, seriesT0.Add(10*time.Minute))
+	if d.Delta != nil || !d.Rollover {
+		t.Fatalf("delta = %+v, want unknown", d)
+	}
+}
