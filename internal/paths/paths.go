@@ -508,3 +508,19 @@ func VerifyPrivateKeyMode(path string) error {
 		issue.Got, path, path,
 	)
 }
+
+// RefuseTCPListen rejects a TCP listen address. The daemon serves every
+// connection on its listener as the local admin, so a network listener would
+// put credential reveal, token minting, run and re-exec in reach of the
+// network with no authentication. The authenticated remote route is the
+// mrvl:// listener (marvel daemon --mrvl) or an ssh:// tunnel to the unix
+// socket.
+func RefuseTCPListen(addr string) error {
+	if !IsTCPAddr(addr) {
+		return nil
+	}
+	return fmt.Errorf(
+		"refusing to listen on %q: the daemon serves every connection on its listener as the local admin, "+
+			"so a TCP listener would expose it to the network; give a unix socket path, "+
+			"and reach a remote daemon with --mrvl (mrvl://host) or an ssh:// tunnel", addr)
+}

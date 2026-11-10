@@ -604,10 +604,17 @@ func (d *Daemon) Usage() *usage.Accountant { return d.usage }
 // daemon process does this in cmd/marvel.
 func (d *Daemon) LogBuffer() *logbuf.Buffer { return d.logs }
 
-// Start starts the daemon: listens on Unix or TCP socket and starts reconciliation.
-// The address format determines the network: "host:port" for TCP, a file path
-// for Unix. Examples: "~/.marvel/run/marvel.sock", "0.0.0.0:9090", ":9090".
+// Start starts the daemon: listens on a Unix socket and starts reconciliation.
+// A TCP address ("host:port") is refused: the listener serves every connection
+// as the local admin, and the authenticated remote route is the mrvl://
+// listener. Example: "~/.marvel/run/marvel.sock".
 func (d *Daemon) Start(socketPath string) (err error) {
+	// First act, before any lock or file is taken: a refused start leaves
+	// nothing behind.
+	if err := paths.RefuseTCPListen(socketPath); err != nil {
+		return err
+	}
+
 	// One root is one daemon. This is the first act, before the pid file
 	// guard, the socket lock and attachServices: a daemon that loses it must
 	// never reach the broker, the same rule the pid file guard states below.
