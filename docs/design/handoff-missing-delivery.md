@@ -117,7 +117,7 @@ seat holds the role now, so a supervisor that shifted still gets it.
   cross-cluster recipient.
 
   **As built (marvel#1309, marvel#1311).** Replicas and other teams are sent
-  on the normal cadence: at escalation and once per window. A team in the same
+  on the normal cadence: at escalation, then on the repeat schedule of H4. A team in the same
   workspace is reached only when its `supervisor` role has a running seat;
   there is no queue-once for it, so nothing waits 7 days for a holder that may
   never come. The director leg is on only while the bus supervisor reads the
@@ -200,8 +200,8 @@ marvel observes the action:
   --role <role>`. The shift replaces the seat, the request is dropped, and
   delivery stops.
 - **Leave it running:** the supervisor does nothing, and the repeats
-  continue once per window until the request ends some other way, or until
-  the operator uses one of the controls in H6.
+  continue, backing off as H4 describes, until the request ends some other
+  way, or until the operator uses one of the controls in H6.
 
 Making marvel a bus consumer to read replies would be a larger change
 (a subscription, its own durable, parsing intent from text) for no gain over
@@ -210,8 +210,15 @@ stays the supervisor's business.
 
 ### H4. Cadence and idempotency across a daemon restart
 
-- Deliver at escalation and then once per window, on the same schedule as
-  the #455 event, and stop when the request ends.
+- Deliver at escalation and then repeat while the request stands, and stop
+  when the request ends. The escalation and the first three repeats go one
+  window apart. After that the gap doubles with each send, up to a ceiling
+  of 24 hours (a window longer than that is not shortened). The count and the
+  ceiling are the role's `handoff_repeat_flat` and `handoff_repeat_ceiling`,
+  with those as defaults. Without it a
+  request nobody decides sent once per window for days, which on a 25 minute
+  window was 866 sends in about 15 days (marvel#1381). The #455 event keeps
+  its once-per-window cadence: it is the floor, and it is local.
 - The persisted request gains `DeliveredCount` (and `LastDeliveredAt`),
   written in the same store update that records a send. On restart, marvel
   sends again only when the next window boundary passes, so a restart does
