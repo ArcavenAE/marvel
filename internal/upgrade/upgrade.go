@@ -523,10 +523,6 @@ func downloadAndReplace(release *githubRelease, asset *githubAsset, current stri
 	return nil
 }
 
-// buildKey reduces a release tag or a Homebrew formula version to the part
-// that names the build. The tap spells it 0.1.0-alpha.20261002.232554.bc327df
-// and GitHub spells it alpha-20261002-232554-bc327df, so both are split on
-// dots and dashes and compared from the channel word onward.
 // checkWritable reports whether the install directory takes a new file. The
 // probe is created exclusively under a random name, so a link planted at a
 // guessable name carries nothing. The failure does not advise sudo: in a
@@ -543,6 +539,10 @@ func checkWritable(dir string) error {
 	return nil
 }
 
+// buildKey reduces a release tag or a Homebrew formula version to the part
+// that names the build. The tap spells it 0.1.0-alpha.20261002.232554.bc327df
+// and GitHub spells it alpha-20261002-232554-bc327df, so both are split on
+// dots and dashes and compared from the channel word onward.
 func buildKey(v string) string {
 	v = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), "v")
 	parts := strings.FieldsFunc(v, func(r rune) bool { return r == '-' || r == '.' })

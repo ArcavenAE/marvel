@@ -138,3 +138,85 @@ func TestCopyFileRefusesALinkAtTheDestination(t *testing.T) {
 	}
 	requireOutsideUntouched(t, target)
 }
+
+// The create is exclusive, so something planted after the check and before the
+// open makes the open fail and is not followed or truncated. clearForCreate
+// refuses a link first, so these tests plant in the window after it, through
+// the afterClear seam.
+
+func plantAfterClear(t *testing.T, plant func(path string)) {
+	t.Helper()
+	afterClear = plant
+	t.Cleanup(func() { afterClear = nil })
+}
+
+func TestInstallDirectDoesNotFollowALinkPlantedAfterTheCheck(t *testing.T) {
+	l, bin := directLayout(t)
+	target := outsideFile(t)
+	plantAfterClear(t, func(path string) {
+		if err := os.Symlink(target, path); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := installDirect(l, bin, []byte("build two"), "v2", "v1", false); err == nil {
+		t.Fatal("installDirect wrote through a link planted after the check")
+	}
+	requireOutsideUntouched(t, target)
+	if got := readFile(t, bin); got != "build one" {
+		t.Fatalf("the running binary changed to %q", got)
+	}
+}
+
+func TestInstallDirectDoesNotTruncateAFilePlantedAfterTheCheck(t *testing.T) {
+	l, bin := directLayout(t)
+	planted := ""
+	plantAfterClear(t, func(path string) {
+		planted = path
+		if err := os.WriteFile(path, []byte("planted"), 0o600); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := installDirect(l, bin, []byte("build two"), "v2", "v1", false); err == nil {
+		t.Fatal("installDirect reused a file planted after the check")
+	}
+	if got := readFile(t, planted); got != "planted" {
+		t.Fatalf("the planted file was rewritten to %q", got)
+	}
+}
+
+func TestCopyFileDoesNotFollowALinkPlantedAfterTheCheck(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.WriteFile(src, []byte("prior build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "marvel")
+	target := outsideFile(t)
+	plantAfterClear(t, func(path string) {
+		if err := os.Symlink(target, path); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := copyFile(src, dst); err == nil {
+		t.Fatal("copyFile wrote through a link planted after the check")
+	}
+	requireOutsideUntouched(t, target)
+}
+
+func TestCopyFileDoesNotTruncateAFilePlantedAfterTheCheck(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.WriteFile(src, []byte("prior build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "marvel")
+	plantAfterClear(t, func(path string) {
+		if err := os.WriteFile(path, []byte("planted"), 0o600); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := copyFile(src, dst); err == nil {
+		t.Fatal("copyFile reused a file planted after the check")
+	}
+	if got := readFile(t, dst); got != "planted" {
+		t.Fatalf("the planted file was rewritten to %q", got)
+	}
+}

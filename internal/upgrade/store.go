@@ -259,6 +259,9 @@ func copyFile(src, dst string) error {
 	if err := clearForCreate(dst); err != nil {
 		return err
 	}
+	if afterClear != nil {
+		afterClear(dst)
+	}
 	o, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dst, err)
@@ -296,6 +299,11 @@ func refuseLink(path string) error {
 	return nil
 }
 
+// afterClear is a test seam, nil in production. It runs after clearForCreate and
+// before the exclusive create, which is the window a file or link can be
+// planted in; the tests use it to prove the create fails and does not follow.
+var afterClear func(path string)
+
 // clearForCreate readies path for an exclusive create: a link is refused, and
 // a regular file left by an earlier failed run is removed. Anything else there
 // is refused.
@@ -324,6 +332,9 @@ func clearForCreate(path string) error {
 func writeNew(path string, body []byte) error {
 	if err := clearForCreate(path); err != nil {
 		return err
+	}
+	if afterClear != nil {
+		afterClear(path)
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
 	if err != nil {
