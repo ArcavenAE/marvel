@@ -562,6 +562,14 @@ func (d *Driver) NewPane(session, command, title string, envs map[string]string,
 // NewPaneAt is NewPane with a start directory (new-window -c). An empty dir
 // starts the pane where the tmux server is, as NewPane always did.
 func (d *Driver) NewPaneAt(session, command, title, dir string, envs map[string]string, keepOnExit bool) (string, error) {
+	// Every -e below is an argument of the tmux process, readable by any
+	// account on the host from the process table. The heartbeat token travels
+	// by file (aae-orc-xs6om), so a caller that hands it over by value is
+	// refused at the last place it could be stopped. The error names the key,
+	// never the value.
+	if _, ok := envs[api.HeartbeatTokenEnv]; ok {
+		return "", fmt.Errorf("new-pane in %s: %s carries a secret and may not ride the tmux command line; hand it over as a file (%s)", session, api.HeartbeatTokenEnv, api.HeartbeatTokenFileEnv)
+	}
 	args := []string{
 		"new-window", "-t", sessionScope(session),
 		"-d",

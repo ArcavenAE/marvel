@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1032,6 +1033,7 @@ func TestCreateMintsHeartbeatToken(t *testing.T) {
 	// launch environment. Per-test path anyway, because a fixed one is a
 	// shared host resource waiting for the day something does open it.
 	mgr.SocketPath = t.TempDir() + "/marvel.sock"
+	mgr.TokenDir = filepath.Join(t.TempDir(), "tokens")
 
 	ws := "test-sess-token"
 	t.Cleanup(func() {
@@ -1063,8 +1065,12 @@ func TestCreateMintsHeartbeatToken(t *testing.T) {
 	// The ad-hoc path builds its own environment rather than going
 	// through an adapter, so it needs its own assertion.
 	_, env := mgr.directCommand(sess)
-	if got := env[api.HeartbeatTokenEnv]; got != sess.HeartbeatToken {
-		t.Errorf("%s = %q in the ad-hoc environment, want the minted token", api.HeartbeatTokenEnv, got)
+	if _, present := env[api.HeartbeatTokenEnv]; present {
+		t.Errorf("%s is in the ad-hoc environment; the token travels by file (aae-orc-xs6om)", api.HeartbeatTokenEnv)
+	}
+	b, err := os.ReadFile(env[api.HeartbeatTokenFileEnv])
+	if err != nil || string(b) != sess.HeartbeatToken {
+		t.Errorf("token file read = %q, %v; want the minted token", b, err)
 	}
 }
 

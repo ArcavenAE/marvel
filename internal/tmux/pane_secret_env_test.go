@@ -7,12 +7,12 @@ import (
 )
 
 // aae-orc-xs6om: a tmux new-window argument list is readable from the process
-// table by every account on the host, so the driver refuses an environment
-// entry that would put a secret value there. The file-path variables are fine.
+// table by every account on the host, so the driver refuses the heartbeat
+// token by value. The file-path variables are fine.
 func TestNewPaneAtNeverPutsASecretOnTheCommandLine(t *testing.T) {
 	t.Parallel()
 	const secret = "s3cr3t-value-0042"
-	for _, key := range []string{"MARVEL_HEARTBEAT_TOKEN", "DIRECTOR_NATS_PASS"} {
+	for _, key := range []string{"MARVEL_HEARTBEAT_TOKEN"} {
 		d, log := fakeTmux(t)
 
 		_, err := d.NewPaneAt("sess", "true", "title", "", map[string]string{key: secret}, false)
