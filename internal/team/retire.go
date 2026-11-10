@@ -186,7 +186,7 @@ func (c *Controller) advanceRetirement(t *api.Team, req api.RetireRequest, now t
 	var read handoffProbeResult
 	var haveRead bool
 	if req.Path != "" {
-		read, haveRead = c.handoffProbes.complete(req.Session, req.Path, req.Marker, time.Time{}, now)
+		read, haveRead = c.handoffProbes.complete(req.Session, req.Path, req.Marker, req.RequestedAt.Truncate(time.Second), now)
 	}
 	if !sess.State.CountsAsAlive() {
 		switch {
