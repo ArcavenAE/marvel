@@ -145,6 +145,14 @@ func (d *Daemon) recordAccountLimits(req api.AccountLimitsRequest, now time.Time
 		stored = d.accounts.RecordObserved(key, req.Windows, sess.Key(), observed, now)
 	}
 	if stored {
+		// The history keeps every stored reading with the time it was observed.
+		// A reading with no observation time is stamped with the daemon's clock.
+		at := now
+		if !req.ObservedAt.IsZero() {
+			at, _ = observationTime(req.ObservedAt, now)
+		}
+		d.accountSeries.SetCluster(d.cluster)
+		d.accountSeries.Append(key, req.Windows, sess.Key(), at)
 		// Only a reading that is current says anything about the window.
 		if reading, state := d.accounts.Reading(key, now); state == api.ReadingFresh {
 			d.accountWarn.observe(key, sess.Workspace, reading.Windows, now)
@@ -195,4 +203,48 @@ func (d *Daemon) noteRefusedAccountReport(req api.AccountLimitsRequest, err erro
 		return
 	}
 	d.emitHeartbeatAuth2(events.KindHeartbeatRefused, cause, req.Session, msg)
+}
+
+// accountKeyOfSession resolves the account a named session spends against.
+func (d *Daemon) accountKeyOfSession(name string) (api.AccountKey, error) {
+	sess, err := d.store.GetSession(name)
+	if err != nil {
+		return api.AccountKey{}, err
+	}
+	return api.AccountKeyOf(sess), nil
+}
+
+// handleAccountSeries answers the stamped readings of one window of the
+// account a session is on. It reads the history only; it asks nothing of any
+// harness.
+func (d *Daemon) handleAccountSeries(params json.RawMessage) daemonrpc.Response {
+	var req api.AccountSeriesRequest
+	if err := json.Unmarshal(params, &req); err != nil {
+		return daemonrpc.Response{Error: fmt.Sprintf("account.series: %v", err)}
+	}
+	key, err := d.accountKeyOfSession(req.Session)
+	if err != nil {
+		return daemonrpc.Response{Error: fmt.Sprintf("account.series: %v", err)}
+	}
+	d.accountSeries.SetCluster(d.cluster)
+	samples := d.accountSeries.Samples(key, req.Window, req.From, req.To)
+	if samples == nil {
+		samples = []api.AccountSample{}
+	}
+	return respond(map[string]any{"account": key.String(), "window": req.Window, "samples": samples})
+}
+
+// handleAccountDelta answers what a run did to one window: the used percentage
+// at its start and end and the difference, unknown where no reading is near.
+func (d *Daemon) handleAccountDelta(params json.RawMessage) daemonrpc.Response {
+	var req api.AccountDeltaRequest
+	if err := json.Unmarshal(params, &req); err != nil {
+		return daemonrpc.Response{Error: fmt.Sprintf("account.delta: %v", err)}
+	}
+	key, err := d.accountKeyOfSession(req.Session)
+	if err != nil {
+		return daemonrpc.Response{Error: fmt.Sprintf("account.delta: %v", err)}
+	}
+	d.accountSeries.SetCluster(d.cluster)
+	return respond(d.accountSeries.Delta(key, req.Window, req.Start, req.End))
 }

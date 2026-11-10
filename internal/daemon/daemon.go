@@ -226,6 +226,9 @@ type Daemon struct {
 	// accounts holds the newest rate-limit reading per account, in memory.
 	// It is not keyed to a session and is not the heartbeat's data.
 	accounts *api.AccountReadings
+	// accountSeries keeps the stamped history of those readings, in memory,
+	// bounded by a retention and a per-window cap. Always non-nil.
+	accountSeries *api.AccountSeries
 	// accountWarn reports an account window reaching the cluster's warning
 	// level, once per window (marvel#1340).
 	accountWarn      *accountWarner
@@ -490,22 +493,23 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		build:     opts.Build,
-		startedAt: time.Now().UTC(),
-		store:     store,
-		sessMgr:   sessMgr,
-		teamCtrl:  teamCtrl,
-		driver:    driver,
-		limitMenu: shippedLimitMenus(),
-		pidFile:   opts.PidFile,
-		reclaim:   opts.Reclaim,
-		home:      home,
-		logs:      buf,
-		events:    evRing,
-		usage:     acct,
-		accounts:  api.NewAccountReadings(),
-		orphans:   newOrphanRegistry(),
-		reexec:    syscall.Exec,
+		build:         opts.Build,
+		startedAt:     time.Now().UTC(),
+		store:         store,
+		sessMgr:       sessMgr,
+		teamCtrl:      teamCtrl,
+		driver:        driver,
+		limitMenu:     shippedLimitMenus(),
+		pidFile:       opts.PidFile,
+		reclaim:       opts.Reclaim,
+		home:          home,
+		logs:          buf,
+		events:        evRing,
+		usage:         acct,
+		accounts:      api.NewAccountReadings(),
+		accountSeries: api.NewAccountSeries("", api.DefaultSeriesRetention),
+		orphans:       newOrphanRegistry(),
+		reexec:        syscall.Exec,
 
 		leafLossCause: leafLossCause,
 		rootLockPath:  opts.RootLock,
@@ -1364,6 +1368,10 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 		return d.handleBrokerToken(context.Background(), req.Params)
 	case "account.limits":
 		return d.handleAccountLimits(req.Params)
+	case "account.series":
+		return d.handleAccountSeries(req.Params)
+	case "account.delta":
+		return d.handleAccountDelta(req.Params)
 	case "run":
 		return d.handleRun(req.Params)
 	case "shift":
