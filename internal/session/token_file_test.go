@@ -146,24 +146,6 @@ func TestAByFileLaunchThatCannotWriteItsFileCarriesNoTokenAtAll(t *testing.T) {
 	}
 }
 
-func TestALaunchWhoseAdapterDoesNotAskForAFileKeepsTheEnvironmentToken(t *testing.T) {
-	t.Parallel()
-	dir := filepath.Join(t.TempDir(), "tokens")
-	mgr := tokenManager(t, dir)
-
-	plan := mgr.planLaunch(seat("plain", "claude"))
-
-	if got := plan.env[api.HeartbeatTokenEnv]; got != testToken {
-		t.Errorf("%s = %q, want the token", api.HeartbeatTokenEnv, got)
-	}
-	if _, present := plan.env[api.HeartbeatTokenFileEnv]; present {
-		t.Errorf("%s set for an adapter that did not ask for a file", api.HeartbeatTokenFileEnv)
-	}
-	if _, err := os.Stat(dir); err == nil {
-		t.Errorf("token directory %s created for a launch that wrote no file", dir)
-	}
-}
-
 func TestDroppingASessionRemovesItsTokenFile(t *testing.T) {
 	t.Parallel()
 	mgr := tokenManager(t, filepath.Join(t.TempDir(), "tokens"))

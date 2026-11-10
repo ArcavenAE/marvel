@@ -90,9 +90,14 @@ teams:
 	if sess.State != api.SessionRunning {
 		t.Errorf("seat state = %s, want running", sess.State)
 	}
-	tok, ok := env[api.HeartbeatTokenEnv]
-	if !ok {
-		t.Fatalf("seat has no %s; it could not heartbeat", api.HeartbeatTokenEnv)
+	// The token reaches the seat by file, never by value (aae-orc-xs6om), and
+	// the seat reads it the way marvel's own commands do.
+	if v, ok := env[api.HeartbeatTokenEnv]; ok {
+		t.Fatalf("seat carries %s by value (%d bytes); it would be on the tmux command line", api.HeartbeatTokenEnv, len(v))
+	}
+	tok := api.HeartbeatTokenFrom(func(k string) string { return env[k] })
+	if tok == "" {
+		t.Fatalf("seat has no readable %s; it could not heartbeat", api.HeartbeatTokenFileEnv)
 	}
 	raw, err := json.Marshal(api.NewHeartbeatRequestWithToken(sess.Key(), tok, 12, ""))
 	if err != nil {
@@ -125,9 +130,9 @@ teams:
 		t.Fatalf("sessions after replacement = %d, want 1", len(sessions))
 	}
 	cur := sessions[0]
-	curTok, ok := env2[api.HeartbeatTokenEnv]
-	if !ok {
-		t.Fatalf("replacement seat has no %s", api.HeartbeatTokenEnv)
+	curTok := api.HeartbeatTokenFrom(func(k string) string { return env2[k] })
+	if curTok == "" {
+		t.Fatalf("replacement seat has no readable %s", api.HeartbeatTokenFileEnv)
 	}
 	if curTok == tok {
 		t.Fatal("replacement seat was given the previous session's token")

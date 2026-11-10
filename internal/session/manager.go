@@ -174,11 +174,13 @@ type Manager struct {
 	paneStatus func(paneID string) (tmux.PaneStatus, error)
 }
 
-// byFile reports whether this session's runtime asks for its heartbeat token
-// by file.
+// byFile reports whether this session gets its heartbeat token by file. Every
+// runtime does unless its adapter says no: the environment of a new tmux window
+// is carried on the tmux command line, which every account on the host can
+// read from the process table (aae-orc-xs6om).
 func (m *Manager) byFile(sess *api.Session) bool {
 	c, ok := m.adapters.Resolve(sess.Runtime.Name).(runtime.TokenFileCapable)
-	return ok && c.DeliversTokenByFile()
+	return !ok || c.DeliversTokenByFile()
 }
 
 // tokenFilePath names the session's token file under TokenDir. The name is a

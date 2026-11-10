@@ -656,10 +656,12 @@ without trust records, and says so in `marvel daemon logs`; the hooks are
 then skipped and CTX% reads `-`.
 
 Attribution needs nothing extra. `marvel codex-ctx` reads
-`MARVEL_SOCKET`, `MARVEL_WORKSPACE`, `MARVEL_SESSION` and
-`MARVEL_HEARTBEAT_TOKEN` from the environment the adapter already
-constructs at spawn, so a codex started outside marvel finds none of them
-and the command does nothing. The token is what lets the daemon tell this
+`MARVEL_SOCKET`, `MARVEL_WORKSPACE`, `MARVEL_SESSION` and the heartbeat
+token from the environment the adapter already constructs at spawn, so a
+codex started outside marvel finds none of them and the command does
+nothing. The token reaches the seat as a file (`MARVEL_HEARTBEAT_TOKEN_FILE`,
+mode 0600 under a private directory, removed with the session), never on the
+tmux command line, where any account on the host could read it. The token is what lets the daemon tell this
 session reporting itself from any other process on the host reporting on
 its behalf; without it a beat is refused and the CTX% cell shows `-`. It
 also
