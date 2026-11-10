@@ -475,12 +475,9 @@ func downloadAndReplace(release *githubRelease, asset *githubAsset, current stri
 
 	dir := filepath.Dir(resolved)
 
-	// Check write access.
-	testPath := filepath.Join(dir, ".marvel-update-test")
-	if err := os.WriteFile(testPath, []byte("test"), 0o644); err != nil {
-		return fmt.Errorf("cannot write to %s (try running with sudo): %w", dir, err)
+	if err := checkWritable(dir); err != nil {
+		return err
 	}
-	_ = os.Remove(testPath)
 
 	layout, err := storeLayout()
 	if err != nil {
@@ -523,6 +520,22 @@ func downloadAndReplace(release *githubRelease, asset *githubAsset, current stri
 	}
 
 	fmt.Printf("Upgraded to %s\n", tag)
+	return nil
+}
+
+// checkWritable reports whether the install directory takes a new file. The
+// probe is created exclusively under a random name, so a link planted at a
+// guessable name carries nothing. The failure does not advise sudo: in a
+// shared directory a root-level retry would be a root-level write through
+// whatever was planted there.
+func checkWritable(dir string) error {
+	f, err := os.CreateTemp(dir, ".marvel-update-test-*")
+	if err != nil {
+		return fmt.Errorf("cannot write to %s: install to a directory you own, or use your package manager: %w", dir, err)
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
 	return nil
 }
 

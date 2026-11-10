@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -255,7 +256,13 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("open %s: %w", src, err)
 	}
 	defer func() { _ = in.Close() }()
-	o, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err := clearForCreate(dst); err != nil {
+		return err
+	}
+	if afterClear != nil {
+		afterClear(dst)
+	}
+	o, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dst, err)
 	}
@@ -275,6 +282,76 @@ func storeNote(format string, args ...any) {
 	_, _ = fmt.Fprintf(errOut, "note: version store: "+format+"\n", args...)
 }
 
+// refuseLink fails when path is a symlink. The install directory can be shared
+// and writable, so a link planted at one of the fixed names is refused and not
+// followed or silently replaced.
+func refuseLink(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("check %s: %w", path, err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symbolic link: refusing to write through it", path)
+	}
+	return nil
+}
+
+// afterClear is a test seam, nil in production. It runs after clearForCreate and
+// before the exclusive create, which is the window a file or link can be
+// planted in; the tests use it to prove the create fails and does not follow.
+var afterClear func(path string)
+
+// clearForCreate readies path for an exclusive create: a link is refused, and
+// a regular file left by an earlier failed run is removed. Anything else there
+// is refused.
+func clearForCreate(path string) error {
+	if err := refuseLink(path); err != nil {
+		return err
+	}
+	fi, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check %s: %w", path, err)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file: refusing to replace it", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove the stale %s: %w", path, err)
+	}
+	return nil
+}
+
+// writeNew creates path exclusively, so a file or link that appears after the
+// check makes the create fail and not follow it.
+func writeNew(path string, body []byte) error {
+	if err := clearForCreate(path); err != nil {
+		return err
+	}
+	if afterClear != nil {
+		afterClear(path)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o755)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if _, err := f.Write(body); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
 // installDirect swaps body in for the binary at resolved, keeps the build it
 // replaces in the store, and records both. A mise install is swapped as it
 // always was and recorded, and its prior is not kept: mise keeps versions in
@@ -291,8 +368,11 @@ func installDirect(l paths.Layout, resolved string, body []byte, tag, current st
 		return fmt.Errorf("read the binary being replaced, %s: %w", resolved, err)
 	}
 
-	if err := os.WriteFile(newPath, body, 0o755); err != nil {
-		return fmt.Errorf("write %s: %w", newPath, err)
+	if err := refuseLink(oldPath); err != nil {
+		return err
+	}
+	if err := writeNew(newPath, body); err != nil {
+		return err
 	}
 
 	// Atomic swap: current → .old, .new → current.
