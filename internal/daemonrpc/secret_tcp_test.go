@@ -58,7 +58,10 @@ func countingTCP(t *testing.T) (addr string, hits *atomic.Int32) {
 
 func TestSecretBearingRequestIsNotSentOverBareTCP(t *testing.T) {
 	addr, hits := countingTCP(t)
-	for _, method := range []string{"credential.put", "credential.reveal", "credential.get", "broker.token", "handoff.put"} {
+	for _, method := range []string{
+		"credential.put", "credential.reveal", "credential.get", "broker.token", "handoff.put",
+		"heartbeat", "bus.beat", "account.limits",
+	} {
 		for _, a := range []string{addr, "tcp://" + addr} {
 			_, err := SendRequest(a, Request{Method: method, Params: json.RawMessage(`{"value":"x"}`)})
 			if !errors.Is(err, ErrSecretOverBareTCP) {
