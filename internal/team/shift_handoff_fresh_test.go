@@ -3,6 +3,7 @@ package team
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,5 +130,117 @@ func TestAStaleHandoffEscalatesAtTheWindowAndNeverShifts(t *testing.T) {
 	}
 	if n := f.count(events.KindShiftHandoffMissing); n != 1 {
 		t.Fatalf("handoff-missing events = %d, want 1", n)
+	}
+}
+
+// The request's instant is truncated to the second before it is compared, so
+// on a coarse-timestamp filesystem a handoff stamped in the request's second
+// counts. A request at a sub-second instant and a file stamped earlier in that
+// second must shift; without the truncation the file reads as older.
+func TestAHandoffStampedEarlierInTheRequestsSecondShiftsTheSeat(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-handoff-subsecond", maxAgeRole(dir))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	f.clock.Advance(700 * time.Millisecond)
+	f.evaluate() // asks at listEpoch + 700ms
+
+	f.ctrl.handoffProbes.wait()
+	writeHandoff(t, dir, s.Name, "notes\nEND HANDOFF\n")
+	sameSecond := listEpoch.Add(100 * time.Millisecond)
+	if err := os.Chtimes(filepath.Join(dir, s.Name+".md"), sameSecond, sameSecond); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.Advance(time.Minute)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Minute)
+	if got := f.evaluate(); got.Shift.Phase != api.ShiftLaunching {
+		t.Fatalf("phase = %q, want launching: the file is stamped in the request's second", got.Shift.Phase)
+	}
+}
+
+// A finished read answers only for the instant it was made against: a read
+// against an earlier request's instant is not served for a later request on
+// the same path and marker.
+func TestAFinishedHandoffReadAnswersOnlyForItsOwnInstant(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "h.md")
+	if err := os.WriteFile(path, []byte("n\nEND HANDOFF\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Date(2026, 11, 10, 20, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	var p handoffProbes
+	now := stamp.Add(time.Hour)
+	earlier, later := stamp.Add(-time.Minute), stamp.Add(time.Minute)
+
+	p.complete("k", path, "END HANDOFF", earlier, now)
+	p.wait()
+	got, known := p.complete("k", path, "END HANDOFF", earlier, now)
+	if !known || !got.complete {
+		t.Fatalf("read for the earlier instant = %+v, known %v; want a complete answer", got, known)
+	}
+	p.wait()
+
+	// A later request on the same session and file: the file now predates it.
+	if _, known := p.complete("k", path, "END HANDOFF", later, now); known {
+		t.Fatal("an answer made for an earlier instant was served for a later one")
+	}
+	p.wait()
+	got, known = p.complete("k", path, "END HANDOFF", later, now)
+	if !known || got.complete {
+		t.Fatalf("read for the later instant = %+v, known %v; want a known, incomplete answer", got, known)
+	}
+}
+
+// The repeats after an escalation read the file against the same instant: a
+// stale marker is reported absent, and a handoff written after the request is
+// reported present.
+func TestTheEscalatedRepeatJudgesTheHandoffByTheRequestsInstant(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-handoff-repeat-fresh", maxAgeRole(dir))
+	s := f.seed(testMaxAge+time.Hour, 10*time.Minute, 0, 0)
+	writeHandoff(t, dir, s.Name, "old notes\nEND HANDOFF\n")
+	stale := listEpoch.Add(-time.Hour)
+	file := filepath.Join(dir, s.Name+".md")
+	if err := os.Chtimes(file, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	window := api.DefaultShiftHandoffWindow
+
+	f.clock.Advance(700 * time.Millisecond)
+	f.evaluate() // asks at a sub-second instant
+	f.clock.Advance(window + time.Second)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
+	f.evaluate() // escalates
+	f.ctrl.handoffProbes.wait()
+
+	repeat := func() string {
+		t.Helper()
+		f.clock.Advance(window + time.Second)
+		f.evaluate()
+		f.ctrl.handoffProbes.wait()
+		f.clock.Advance(time.Second)
+		f.evaluate()
+		f.ctrl.handoffProbes.wait()
+		evs := f.ring.Snapshot(events.Filter{Kind: events.KindShiftHandoffMissing}, 0)
+		return evs[len(evs)-1].Message
+	}
+
+	if msg := repeat(); strings.Contains(msg, "marker is now present") || !strings.Contains(msg, "ends in the marker") {
+		t.Fatalf("repeat over a stale marker = %q, want the marker reported absent", msg)
+	}
+
+	// Stamped earlier in the request's second: it counts, to the second.
+	fresh := listEpoch.Add(100 * time.Millisecond)
+	if err := os.Chtimes(file, fresh, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if msg := repeat(); !strings.Contains(msg, "marker is now present") {
+		t.Fatalf("repeat after a handoff stamped after the request = %q, want the marker reported present", msg)
 	}
 }
