@@ -436,6 +436,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 	if m.Workspace.Name == "" {
 		return nil, fmt.Errorf("parse manifest: workspace.name is required")
 	}
+	if err := ValidateName("workspace", m.Workspace.Name); err != nil {
+		return nil, fmt.Errorf("parse manifest: %w", err)
+	}
 	if err := Placement(m.Workspace.Placement).check("parse manifest: workspace.placement"); err != nil {
 		return nil, err
 	}
@@ -447,6 +450,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 	for i, p := range m.Policies {
 		if p.Name == "" {
 			return nil, fmt.Errorf("parse manifest: policy[%d].name is required", i)
+		}
+		if err := ValidateName("policy", p.Name); err != nil {
+			return nil, fmt.Errorf("parse manifest: policy[%d]: %w", i, err)
 		}
 		if policyNames[p.Name] {
 			return nil, fmt.Errorf("parse manifest: policy[%d].name %q is duplicated", i, p.Name)
@@ -461,6 +467,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 	for i, t := range m.Teams {
 		if t.Name == "" {
 			return nil, fmt.Errorf("parse manifest: team[%d].name is required", i)
+		}
+		if err := ValidateName("team", t.Name); err != nil {
+			return nil, fmt.Errorf("parse manifest: team[%d]: %w", i, err)
 		}
 		// A second entry would overwrite the first at apply time, so the
 		// operator would get one team where they wrote two (marvel#319).
@@ -477,6 +486,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 		for j, r := range t.Roles {
 			if r.Name == "" {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].name is required", i, j)
+			}
+			if err := ValidateName("role", r.Name); err != nil {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d]: %w", i, j, err)
 			}
 			if err := validateAccountLabel(fmt.Sprintf("role %s", r.Name), r.Runtime.AccountLabel); err != nil {
 				return nil, fmt.Errorf("parse manifest: %w", err)
@@ -588,6 +600,11 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 		// declaration clause.
 		if err := validateManifestBudget(i, t); err != nil {
 			return nil, err
+		}
+	}
+	for i, e := range m.Endpoints {
+		if err := ValidateName("endpoint", e.Name); err != nil {
+			return nil, fmt.Errorf("parse manifest: endpoint[%d]: %w", i, err)
 		}
 	}
 	return m, nil

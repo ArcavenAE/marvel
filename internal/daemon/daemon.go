@@ -2462,6 +2462,13 @@ func (d *Daemon) handleRun(params json.RawMessage) daemonrpc.Response {
 	if p.Role == "" {
 		p.Role = "adhoc"
 	}
+	// The names reach file paths and bus subjects, so they pass the same rule as
+	// a manifest's, before anything is created.
+	for _, n := range [...]struct{ kind, v string }{{"workspace", p.Workspace}, {"team", p.Team}, {"role", p.Role}} {
+		if err := api.ValidateName(n.kind, n.v); err != nil {
+			return daemonrpc.Response{Error: err.Error()}
+		}
+	}
 	// A run into a team being pruned would be deleted with it, so it is
 	// refused (docs/design/work-prune.md section 5, ruling Q8).
 	if t, err := d.store.GetTeam(p.Workspace + "/" + p.Team); err == nil && t.Pruning != nil {
