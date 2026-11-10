@@ -578,36 +578,31 @@ teams:
 	}
 }
 
-func TestDaemonTCP(t *testing.T) {
+// TestDaemonRefusesTCP: a TCP address would serve every connection as the
+// local admin, so Start refuses it before it binds anything. The unix socket
+// path, which every other test in this package starts on, is the control.
+func TestDaemonRefusesTCP(t *testing.T) {
 	skipIfNoTmux(t)
 
 	d, err := New()
 	if err != nil {
 		t.Fatalf("new daemon: %v", err)
 	}
-
-	addr := "127.0.0.1:0" // OS picks a free port
 	t.Cleanup(func() {
 		d.Stop()
 	})
 
-	if err := d.Start(addr); err != nil {
-		t.Fatalf("start daemon on TCP: %v", err)
-	}
-
-	// Get the actual address the OS assigned.
-	actualAddr := d.listener.Addr().String()
-
-	// Send a request over TCP.
-	resp, err := daemonrpc.SendRequest(actualAddr, daemonrpc.Request{
-		Method: "get",
-		Params: mustMarshal(t, map[string]string{"resource_type": "sessions"}),
-	})
-	if err != nil {
-		t.Fatalf("TCP request: %v", err)
-	}
-	if resp.Error != "" {
-		t.Fatalf("TCP response error: %s", resp.Error)
+	for _, addr := range []string{"127.0.0.1:0", "0.0.0.0:9090", ":9090"} {
+		err := d.Start(addr)
+		if err == nil {
+			t.Fatalf("Start(%q) = nil, want a refusal", addr)
+		}
+		if !strings.Contains(err.Error(), "unix socket") {
+			t.Errorf("Start(%q) = %q, want it to point at a unix socket", addr, err)
+		}
+		if d.listener != nil {
+			t.Fatalf("Start(%q) left a listener bound", addr)
+		}
 	}
 }
 
@@ -1126,5 +1121,34 @@ func TestCaptureBounds(t *testing.T) {
 				t.Fatalf("bounds = (%d, %d), want (%d, %d)", start, end, tt.wantStart, tt.wantEnd)
 			}
 		})
+	}
+}
+
+// TestRunRefusesAnUnaddressableName: handleRun takes the workspace, team and
+// role from the request, so the same rule as the manifest parse applies, before
+// anything is created. The defaults (default/adhoc/adhoc) are control.
+func TestRunRefusesAnUnaddressableName(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := New()
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	t.Cleanup(func() { d.Stop() })
+
+	for name, p := range map[string]map[string]string{
+		"workspace dot-dot": {"workspace": ".."},
+		"workspace slash":   {"workspace": "a/b"},
+		"team slash":        {"team": "../x"},
+		"role backslash":    {"role": `a\b`},
+		"workspace in caps": {"workspace": "Proj"},
+	} {
+		p["runtime_command"] = "true"
+		resp := d.handleRun(mustMarshal(t, p))
+		if resp.Error == "" || !strings.Contains(resp.Error, "name") {
+			t.Errorf("%s: handleRun answered %q, want a refusal naming the bad name", name, resp.Error)
+		}
+	}
+	if got := d.store.ListSessions(); len(got) != 0 {
+		t.Errorf("a refused run left %d sessions", len(got))
 	}
 }

@@ -357,7 +357,7 @@ func (s *mcpServer) put(text string) (string, error) {
 	if sock == "" {
 		return "", fmt.Errorf("no daemon socket: %s is not set; this tool works only inside a seat marvel started", config.SocketEnv)
 	}
-	if daemonrpc.IsMRVL(sock) || daemonrpc.IsSSH(sock) {
+	if daemonrpc.IsMRVL(sock) || daemonrpc.IsSSH(sock) || daemonrpc.IsBareTCP(sock) {
 		return "", fmt.Errorf("%s names a remote daemon; the handoff goes only to a local socket", config.SocketEnv)
 	}
 	token := api.HeartbeatTokenFrom(s.opt.Env)

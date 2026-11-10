@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/arcavenae/marvel/internal/daemonrpc"
+	"github.com/arcavenae/marvel/internal/paths"
 )
 
 // adoptsText is what 'marvel daemon reexec' does, said once for every place
@@ -17,7 +18,9 @@ const adoptsText = "'marvel daemon reexec', run on the daemon's host, adopts the
 
 // isLocalDaemonAddr reports whether addr is the daemon's own unix socket, the
 // only transport on which the daemon accepts an exec_path.
-func isLocalDaemonAddr(addr string) bool { return addr != "" && !strings.Contains(addr, "://") }
+func isLocalDaemonAddr(addr string) bool {
+	return addr != "" && !strings.Contains(addr, "://") && !paths.IsTCPAddr(addr)
+}
 
 // reexecRequest builds the reexec request. Against a local daemon it names the
 // binary this command runs from, so an install that keeps each version in its
