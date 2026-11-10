@@ -69,8 +69,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release download "${{ github.ref_name }}" --pattern "*.tar.gz"
+          # One directory per archive. The archives hold their files at the
+          # root, so extracting them together would overwrite one platform's
+          # binary with the next and leave no directory for the signing loop
+          # to find.
           for f in *.tar.gz; do
-            tar xzf "$f"
+            d="${f%.tar.gz}"
+            mkdir -p "$d"
+            tar xzf "$f" -C "$d"
           done
 
       - name: Import certificates
@@ -112,6 +118,7 @@ jobs:
           chmod +x scripts/*.sh
 
           # Find and sign darwin binaries from extracted archives.
+          signed=0
           for dir in marvel_*_darwin_*/; do
             [ -d "$dir" ] || continue
             binary="${dir}marvel"
@@ -136,7 +143,14 @@ jobs:
 
             # Upload signed binary as standalone asset
             cp "$binary" "marvel-darwin-${arch}"
+            signed=$((signed + 1))
           done
+
+          # A job that signed nothing must not read as a signed release.
+          if [ "$signed" -eq 0 ]; then
+            echo "::error::no darwin binaries were found to sign" >&2
+            exit 1
+          fi
 
           # Notarize
           for artifact in marvel-*.pkg marvel-*.dmg; do
@@ -158,9 +172,11 @@ jobs:
             [ -f "$f" ] && ASSETS+=("$f")
           done
 
-          if [ ${#ASSETS[@]} -gt 0 ]; then
-            gh release upload "${{ github.ref_name }}" "${ASSETS[@]}" --clobber
+          if [ ${#ASSETS[@]} -eq 0 ]; then
+            echo "::error::no signed artifacts to upload" >&2
+            exit 1
           fi
+          gh release upload "${{ github.ref_name }}" "${ASSETS[@]}" --clobber
 
       - name: Cleanup keychain
         if: always()

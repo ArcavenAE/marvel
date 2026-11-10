@@ -278,6 +278,15 @@ jobs:
           version: v2.18.3
           args: release --snapshot --clean
 
+      - name: Check the archive layout the signing job reads
+        # sign-release extracts each archive into a directory of its own and
+        # signs the marvel binary at its top level.
+        run: |
+          set -euo pipefail
+          for a in dist/marvel_*_darwin_*.tar.gz; do
+            tar tzf "$a" | grep -Eqx '(\./)?marvel' || { echo "$a has no top-level marvel"; exit 1; }
+          done
+
       - name: List the formulas the snapshot wrote
         # A formula pipe that fails does not fail goreleaser, so the job looks
         # for the files itself. The tap's own workflow owns Formula/marvel.rb,
