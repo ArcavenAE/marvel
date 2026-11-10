@@ -26,7 +26,7 @@ func (d *Daemon) AdmissionSnapshot(t api.Team) admission.Snapshot {
 		LiveSessions: api.CountAlive(d.store.ListSessionsByTeam(t.Workspace, t.Name)),
 	}
 	for i := range t.Roles {
-		s.DeclaredSessions += t.Roles[i].Replicas
+		s.DeclaredSessions = api.AddSat(s.DeclaredSessions, t.Roles[i].Replicas)
 	}
 	if d.usage == nil {
 		return s
@@ -124,7 +124,7 @@ func (d *Daemon) admitDeclaration(t api.Team, role string, replicas, old int) *d
 	}
 	declared := replicas - old
 	for i := range t.Roles {
-		declared += t.Roles[i].Replicas
+		declared = api.AddSat(declared, t.Roles[i].Replicas)
 	}
 	if declared <= t.Budget.MaxSessions {
 		return nil

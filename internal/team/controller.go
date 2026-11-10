@@ -1293,11 +1293,13 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 		Action:     RoleSteady,
 	}
 	// A negative count can only be a stored row from a daemon that predates
-	// the scale check (marvel#365); the daemon reports it at startup. It
-	// plans nothing: shedding against it once indexed past the session list
-	// and panicked, and deleting every session of the role would act on a
-	// value nobody meant.
-	if desired < 0 {
+	// the scale check (marvel#365), and one above api.MaxScaleReplicas from a
+	// daemon that predates the upper bound; the daemon reports either at
+	// startup. Both plan nothing: shedding against a negative once indexed past
+	// the session list and panicked, deleting every session of the role would
+	// act on a value nobody meant, and converging on a count that large would
+	// spawn without limit.
+	if desired < 0 || desired > api.MaxScaleReplicas {
 		return plan
 	}
 
