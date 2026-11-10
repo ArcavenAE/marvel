@@ -1346,7 +1346,8 @@ type launchPlan struct {
 //
 // A home that cannot be prepared holds the spawn, with the reason, and the
 // reconciler tries again; the seat is never started in the shared home. A
-// missing source entry or a failed link is skipped rather than fatal.
+// missing source entry is skipped, and a failed link is logged and put on the
+// ring as session.home-link-failed; neither is fatal.
 func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtime.Adapter) (refusal string) {
 	assigner, ok := adapter.(runtime.SessionHomeAssigner)
 	if !ok || m.HarnessHomeDir == "" {
@@ -1395,6 +1396,27 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 		if err := os.Symlink(src, dst); err != nil {
 			log.Printf("session %s: could not link %s into the private %s: %v",
 				lctx.Session.Key(), name, spec.EnvVar, err)
+			// The ring carries the entry name and the bare errno, not the
+			// os.LinkError, whose text holds the operator's source path and the
+			// private-home destination.
+			cause := err
+			var le *os.LinkError
+			if errors.As(err, &le) {
+				cause = le.Err
+			}
+			msg := fmt.Sprintf("could not link %s into the private %s: %v", name, spec.EnvVar, cause)
+			// The seat still starts, and reports its own auth state; the ring
+			// says which entry it is missing. One event per failed link per
+			// launch, since a launch that is not held happens once.
+			events.Emit(m.Events, events.Event{
+				Kind:      events.KindSessionHomeLinkFailed,
+				Severity:  events.SeverityWarning,
+				Workspace: lctx.Session.Workspace,
+				Team:      lctx.Session.Team,
+				Role:      lctx.Session.Role,
+				Session:   lctx.Session.Name,
+				Message:   msg,
+			})
 		}
 	}
 	if spec.Seed != nil {

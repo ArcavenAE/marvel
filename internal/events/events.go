@@ -270,6 +270,12 @@ const (
 	// session's projected file is left as it was, never replaced by an empty
 	// policy. Error severity; emitted once per change of failure.
 	KindPolicyProjectionFailed Kind = "policy.projection-failed"
+	// KindSessionHomeLinkFailed records a credential or state entry that marvel
+	// found under the operator's harness home but could not symlink into the
+	// seat's private home. The seat still starts, without that entry. One event
+	// per failed link per launch; the message names the entry and the error.
+	// Warning severity.
+	KindSessionHomeLinkFailed Kind = "session.home-link-failed"
 	// KindStoreRowSkipped records a stored workspace, team or endpoint row that
 	// daemon start left out because its name is outside the name class. One
 	// event per row; the message names the bucket and the key. Warning severity.
@@ -586,6 +592,7 @@ var allKinds = []Kind{
 	KindPolicyProjected,
 	KindSessionFirstPrompt,
 	KindPolicyProjectionFailed,
+	KindSessionHomeLinkFailed,
 	KindStoreRowSkipped,
 	KindContextLimitUnresolved,
 	KindScheduleDSTAcknowledged,
