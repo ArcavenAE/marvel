@@ -340,7 +340,7 @@ func (c *Controller) advanceHibernateRequest(t *api.Team, req api.ShiftRequest, 
 	var read handoffProbeResult
 	var haveRead bool
 	if path != "" && pathErr == nil {
-		read, haveRead = c.handoffProbes.complete(sess.Key(), path, rr.Shift.HandoffMarker, time.Time{}, now)
+		read, haveRead = c.handoffProbes.complete(sess.Key(), path, rr.Shift.HandoffMarker, req.RequestedAt.Truncate(time.Second), now)
 		if haveRead && read.complete {
 			c.endHibernated(t, sess, retireHandoffWritten, fmt.Sprintf("hibernate: %s ends in the marker", path))
 			return
