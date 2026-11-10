@@ -156,7 +156,12 @@ func (k *Keeper) timeout() time.Duration {
 }
 
 // track returns the entry for a session's view, creating it on first sight.
-func (k *Keeper) track(sess api.Session, v api.View) *tracked {
+func (k *Keeper) track(sess api.Session, v api.View) (*tracked, error) {
+	dir, perr := k.viewDir(sess.Key(), v.Name)
+	if perr != nil {
+		k.refusePath(perr)
+		return nil, perr
+	}
 	id := sess.Key() + "/" + v.Name
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -170,17 +175,61 @@ func (k *Keeper) track(sess api.Session, v api.View) *tracked {
 		if t.builder.Remote != v.Remote || t.builder.Ref != v.Ref {
 			t.builder.Remote, t.builder.Ref = v.Remote, v.Ref
 		}
-		return t
+		return t, nil
 	}
 	t := &tracked{
 		key: id, session: sess, view: v,
-		builder: New(filepath.Join(k.ViewsDir, sess.Key(), v.Name), v.Remote, v.Ref, k.git()),
+		builder: New(dir, v.Remote, v.Ref, k.git()),
 		next:    k.now(),
 		run:     make(chan struct{}, 1),
 		gen:     k.gen,
 	}
 	k.tracked[id] = t
-	return t
+	return t, nil
+}
+
+// plainElem reports whether s is one ordinary path element: not empty, not "."
+// or "..", and free of both separators.
+func plainElem(s string) bool {
+	return s != "" && s != "." && s != ".." && !strings.ContainsAny(s, `/\`)
+}
+
+// sessionDir is the directory a session key names under ViewsDir. The key must
+// be exactly workspace/name with both parts plain elements, and the joined path
+// must stay inside ViewsDir; anything else is refused, so no remove or write
+// below can leave the views directory.
+func (k *Keeper) sessionDir(sessKey string) (string, error) {
+	ws, name, ok := strings.Cut(sessKey, "/")
+	if !ok || !plainElem(ws) || !plainElem(name) {
+		return "", fmt.Errorf("session key %q is not workspace/name with two plain names", sessKey)
+	}
+	dir := filepath.Join(k.ViewsDir, ws, name)
+	if rel, err := filepath.Rel(k.ViewsDir, dir); err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("session key %q leaves the views directory", sessKey)
+	}
+	return dir, nil
+}
+
+// viewDir is the directory of one view of a session, under the same rules, with
+// the view name a plain element as well.
+func (k *Keeper) viewDir(sessKey, view string) (string, error) {
+	dir, err := k.sessionDir(sessKey)
+	if err != nil {
+		return "", err
+	}
+	if !plainElem(view) {
+		return "", fmt.Errorf("view name %q is not a plain name", view)
+	}
+	return filepath.Join(dir, view), nil
+}
+
+// refusePath says a view path was refused, as view.unavailable: the view cannot
+// be built or removed, and nothing was touched.
+func (k *Keeper) refusePath(err error) {
+	events.Emit(k.Events, events.Event{
+		Kind: events.KindViewUnavailable, Severity: events.SeverityWarning,
+		Message: fmt.Sprintf("view path refused, nothing was touched: %v", err),
+	})
 }
 
 // Build builds each declared view for a session being spawned. A view the
@@ -203,7 +252,10 @@ func (k *Keeper) Build(sess api.Session, views []api.View) {
 	ctx, cancel := context.WithTimeout(life, k.spawnTimeout())
 	defer cancel()
 	for _, v := range views {
-		t := k.track(sess, v)
+		t, terr := k.track(sess, v)
+		if terr != nil {
+			continue
+		}
 		k.mu.Lock()
 		prepared := t.prepared
 		t.pre = time.Time{}
@@ -241,7 +293,10 @@ var errNotBuiltInTime = errors.New("not built within the spawn bound")
 func (k *Keeper) Prepare(sess api.Session, views []api.View) bool {
 	ready := true
 	for _, v := range views {
-		t := k.track(sess, v)
+		t, terr := k.track(sess, v)
+		if terr != nil {
+			continue
+		}
 		now := k.now()
 		k.mu.Lock()
 		first := !t.prepared
@@ -363,7 +418,10 @@ func (k *Keeper) Refresh(sessKey, name string) ([]string, error) {
 	}
 	lines := make([]string, 0, len(picked))
 	for _, v := range picked {
-		t := k.track(decl.Session, v)
+		t, terr := k.track(decl.Session, v)
+		if terr != nil {
+			return lines, terr
+		}
 		if !t.acquire(life) {
 			return lines, errClosed
 		}
@@ -389,7 +447,7 @@ func (k *Keeper) Tick() {
 		for _, d := range k.Declared() {
 			for _, v := range d.Views {
 				live[d.Session.Key()+"/"+v.Name] = true
-				k.track(d.Session, v)
+				_, _ = k.track(d.Session, v)
 			}
 		}
 		k.mu.Lock()
@@ -463,7 +521,12 @@ func (k *Keeper) Seal(sess api.Session, view string, commits []string) error {
 		}
 		defer t.release()
 	}
-	b := &Builder{Dir: filepath.Join(k.ViewsDir, sess.Key(), view)}
+	sealDir, perr := k.viewDir(sess.Key(), view)
+	if perr != nil {
+		k.refusePath(perr)
+		return fmt.Errorf("seal: %w", perr)
+	}
+	b := &Builder{Dir: sealDir}
 	var errs []error
 	for _, c := range commits {
 		if err := b.Seal(c); err != nil {
@@ -476,6 +539,11 @@ func (k *Keeper) Seal(sess api.Session, view string, commits []string) error {
 // Teardown forgets a session's views and removes their directory, restoring
 // owner permissions from the top down first because the trees are read-only.
 func (k *Keeper) Teardown(sessKey string) error {
+	dir, perr := k.sessionDir(sessKey)
+	if perr != nil {
+		k.refusePath(perr)
+		return perr
+	}
 	k.mu.Lock()
 	for id, t := range k.tracked {
 		if t.session.Key() == sessKey {
@@ -484,7 +552,6 @@ func (k *Keeper) Teardown(sessKey string) error {
 		}
 	}
 	k.mu.Unlock()
-	dir := filepath.Join(k.ViewsDir, sessKey)
 	if _, err := os.Lstat(dir); err != nil {
 		return nil
 	}
@@ -550,7 +617,11 @@ func (k *Keeper) refreshLocked(parent context.Context, t *tracked, why string) s
 		// wrote is removed unless a newer seat has taken the key, whose own
 		// refresh then owns the directory. No event: the seat is gone.
 		if !k.owned(t.session.Key()) {
-			_ = forceRemove(filepath.Join(k.ViewsDir, t.session.Key()))
+			if dir, perr := k.sessionDir(t.session.Key()); perr != nil {
+				k.refusePath(perr)
+			} else {
+				_ = forceRemove(dir)
+			}
 		}
 		k.mu.Unlock()
 		return fmt.Sprintf("%s: seat is gone", t.view.Name)

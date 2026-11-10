@@ -93,7 +93,10 @@ func TestCloseLetsGoARefreshQueuedBehindAHeldSlot(t *testing.T) {
 	}
 	// Hold the view's slot, as a tick or verb in flight would, and give it back
 	// at the end so nothing is left blocked on it.
-	held := k.track(sess, v)
+	held, terr := k.track(sess, v)
+	if terr != nil {
+		t.Fatal(terr)
+	}
 	held.run <- struct{}{}
 	t.Cleanup(held.release)
 
