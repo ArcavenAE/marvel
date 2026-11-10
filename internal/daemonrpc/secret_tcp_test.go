@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/shorttmp"
 )
 
 // A secret-bearing request is sent only over a unix socket or an authenticated
@@ -86,10 +88,12 @@ func TestOrdinaryRequestStillDialsTCP(t *testing.T) {
 
 // Control: a secret-bearing request over a unix socket goes through.
 func TestSecretBearingRequestStillGoesOverUnixSocket(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "m.sock")
+	// A short directory: t.TempDir on macOS can push the socket path past the
+	// 104-byte limit, and a control that skips there proves nothing.
+	sock := filepath.Join(shorttmp.Dir(t), "m.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
-		t.Skipf("cannot listen on a unix socket here: %v", err)
+		t.Fatalf("cannot listen on a unix socket at %s (%d bytes): %v", sock, len(sock), err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 	var hits atomic.Int32
