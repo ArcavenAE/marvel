@@ -1,11 +1,14 @@
 package runtime
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"gopkg.in/yaml.v3"
 
@@ -85,7 +88,7 @@ func gooseSeeder(ctx *LaunchContext) func(dir string) error {
 			return nil
 		}
 		cfgDir := filepath.Join(dir, gooseConfigDir)
-		if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		if err := ensurePlainDir(cfgDir); err != nil {
 			return fmt.Errorf("make goose config dir: %w", err)
 		}
 		cfg := map[string]any{gooseModeEnv: g.Posture}
@@ -115,7 +118,7 @@ func gooseSeeder(ctx *LaunchContext) func(dir string) error {
 		// Last, so a failure here never costs the permission file a first
 		// launch needs.
 		if tmp, ok := gooseTempDir(ctx, dir); ok {
-			if err := os.MkdirAll(tmp, 0o700); err != nil {
+			if err := ensurePlainDir(tmp); err != nil {
 				return fmt.Errorf("make goose temp dir: %w", err)
 			}
 		}
@@ -135,12 +138,48 @@ func dedupe(in []string) []string {
 	return out
 }
 
+// ensurePlainDir makes dir if it is absent and refuses anything present that is
+// not a plain directory. The seat's kept home may hold a link planted between
+// launches, and MkdirAll would follow it and put the seed outside the home.
+func ensurePlainDir(dir string) error {
+	fi, err := os.Lstat(dir)
+	switch {
+	case err == nil:
+		if !fi.IsDir() {
+			return fmt.Errorf("%s is not a plain directory (%s)", dir, fi.Mode().Type())
+		}
+		return nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return err
+	}
+	return os.Mkdir(dir, 0o700)
+}
+
+// writeGooseYAML writes one seed file in place. The open refuses a link at the
+// path, and the opened file must be a regular file with a single name before
+// anything is truncated, so a hard link to a file outside the home is refused
+// and not emptied.
 func writeGooseYAML(path string, v any) error {
 	data, err := yaml.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", filepath.Base(path), err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", filepath.Base(path), err)
+	}
+	defer func() { _ = f.Close() }()
+	opened, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("check %s: %w", filepath.Base(path), err)
+	}
+	if st, ok := opened.Sys().(*syscall.Stat_t); !opened.Mode().IsRegular() || !ok || uint64(st.Nlink) != 1 {
+		return fmt.Errorf("check %s: not a regular file with one link", filepath.Base(path))
+	}
+	if err := f.Truncate(0); err != nil {
+		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
+	}
+	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
 	}
 	// Read it back by metadata: a path that took the write but is not the

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -232,14 +233,36 @@ func seedCodexHome(dir, codexBin string, seed codexSeed) error {
 
 // writeSeedFile renders and replaces path, owner-only, through a rename so
 // a codex reading the file never sees half of it.
+//
+// The home is a seat's kept state, so the seat may have planted a link in it
+// between launches. The temp file is created exclusively under a random name,
+// so a link at any guessable name carries nothing, and a link or any other
+// non-regular entry at the final path is refused rather than replaced.
 func writeSeedFile(path string, seed codexSeed) error {
 	data, err := renderCodexConfig(seed)
 	if err != nil {
 		return err
 	}
-	tmp := path + ".marvel-tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", tmp, err)
+	if fi, lerr := os.Lstat(path); lerr == nil {
+		if !fi.Mode().IsRegular() {
+			return fmt.Errorf("replace %s: not a regular file (%s)", path, fi.Mode().Type())
+		}
+	} else if !errors.Is(lerr, fs.ErrNotExist) {
+		return fmt.Errorf("check %s: %w", path, lerr)
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".marvel-tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp for %s: %w", path, err)
+	}
+	tmp := f.Name()
+	if _, werr := f.Write(data); werr != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("write %s: %w", tmp, werr)
+	}
+	if cerr := f.Close(); cerr != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("write %s: %w", tmp, cerr)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
