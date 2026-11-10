@@ -100,6 +100,9 @@ func SendRequest(socketPath string, req Request) (*Response, error) {
 // this when the caller has a per-cluster identity key or known_hosts
 // file it wants to thread through.
 func SendRequestWith(socketPath string, req Request, opts DialOptions) (*Response, error) {
+	if secretBearingMethods[req.Method] && IsBareTCP(socketPath) {
+		return nil, fmt.Errorf("%w: %s goes only over a unix socket, mrvl:// or ssh://", ErrSecretOverBareTCP, req.Method)
+	}
 	// The encoded request is measured before anything is dialed, so a caller
 	// of any method sees the size error and not a daemon's refusal after the
 	// bytes have gone. The daemon's own bound stays the authority.
@@ -646,4 +649,26 @@ func loadKeyFile(path string, strictPerms bool) (ssh.Signer, error) {
 		return nil, err
 	}
 	return ssh.ParsePrivateKey(data)
+}
+
+// IsBareTCP reports whether addr is a plain TCP address, either tcp://host:port
+// or host:port. mrvl:// and ssh:// addresses are authenticated and encrypted,
+// so they are not bare TCP even when they carry a port.
+func IsBareTCP(addr string) bool {
+	return !IsMRVL(addr) && !IsSSH(addr) && paths.IsTCPAddr(addr)
+}
+
+// ErrSecretOverBareTCP is returned, before any connection is made, when a
+// request that carries or returns a secret is aimed at a bare TCP address.
+var ErrSecretOverBareTCP = errors.New("refusing to send a secret-bearing request over bare TCP")
+
+// secretBearingMethods are the methods whose params or result hold a
+// credential, a bearer token or a heartbeat-token-bound write. They go only
+// over a unix socket, mrvl:// or ssh://.
+var secretBearingMethods = map[string]bool{
+	"credential.put":    true,
+	"credential.get":    true,
+	"credential.reveal": true,
+	"broker.token":      true,
+	"handoff.put":       true,
 }

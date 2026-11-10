@@ -386,6 +386,9 @@ Examples:
 			if w := config.LegacySocketWarning(sock); w != "" {
 				fmt.Fprintln(os.Stderr, w)
 			}
+			if err := paths.RefuseTCPListen(sock); err != nil {
+				return err
+			}
 			if err := paths.CheckSocketPath(sock); err != nil {
 				return err
 			}
