@@ -1,6 +1,7 @@
 package view
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,4 +134,94 @@ func eventMessages(r *events.Ring) []string {
 		out = append(out, e.Message)
 	}
 	return out
+}
+
+// Seal builds its directory from the session key too, so a key outside the
+// views directory must be refused before any tree there is touched. The view
+// name rule in Seal is older and does not cover the key.
+func TestSealRefusesASessionKeyOutsideTheViewsDir(t *testing.T) {
+	r := newKRig(t)
+	if err := os.MkdirAll(r.k.ViewsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tree := filepath.Join(filepath.Dir(r.k.ViewsDir), "escape", "alpha", "trees", shaOne)
+	if err := os.MkdirAll(tree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(tree, "keep.txt")
+	if err := os.WriteFile(file, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess := api.Session{Workspace: "..", Name: "escape", Team: "t", Role: "r", State: api.SessionRunning}
+	if err := r.k.Seal(sess, "alpha", []string{shaOne}); err == nil {
+		t.Error("Seal on a key outside the views dir = nil, want a refusal")
+	}
+	mustExist(t, file, "Seal hollowed a tree outside the views dir")
+	if len(r.kinds(events.KindViewUnavailable)) == 0 {
+		t.Error("a refused seal emitted no event")
+	}
+}
+
+// The cleanup after a refresh that finished on a torn-down seat removes the
+// seat's directory. If the key it holds is outside the views directory, it
+// removes nothing.
+func TestLateRefreshCleanupRefusesAKeyOutsideTheViewsDir(t *testing.T) {
+	r := newKRig(t)
+	r.g.sha["a"] = shaOne
+	v := kView("alpha", "a", 10*time.Minute)
+	sess := r.session("seat", v)
+	tr, err := r.k.track(sess, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	victim := victimBeside(t, r, "victim")
+
+	// The seat is gone, and the entry holds a key that joins to the victim.
+	r.k.mu.Lock()
+	delete(r.k.tracked, tr.key)
+	tr.gone = true
+	tr.session = api.Session{Workspace: "..", Name: "victim", Team: "t", Role: "r"}
+	r.k.mu.Unlock()
+
+	ctx := context.Background()
+	if !tr.acquire(ctx) {
+		t.Fatal("could not take the view's slot")
+	}
+	line := r.k.refreshLocked(ctx, tr, "tick")
+	if !strings.Contains(line, "seat is gone") {
+		t.Errorf("refreshLocked = %q, want the seat-is-gone line", line)
+	}
+	mustExist(t, victim, "the late-refresh cleanup removed a directory outside the views dir")
+	if len(r.kinds(events.KindViewUnavailable)) == 0 {
+		t.Error("a refused cleanup emitted no event")
+	}
+}
+
+// Control: with a clean key the same cleanup removes the seat's own directory.
+func TestLateRefreshCleanupStillRemovesACleanSeatDir(t *testing.T) {
+	r := newKRig(t)
+	r.g.sha["a"] = shaOne
+	v := kView("alpha", "a", 10*time.Minute)
+	sess := r.session("seat", v)
+	tr, err := r.k.track(sess, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(r.k.ViewsDir, sess.Key())
+	if err := os.MkdirAll(filepath.Join(dir, "alpha"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r.k.mu.Lock()
+	delete(r.k.tracked, tr.key)
+	tr.gone = true
+	r.k.mu.Unlock()
+
+	ctx := context.Background()
+	if !tr.acquire(ctx) {
+		t.Fatal("could not take the view's slot")
+	}
+	_ = r.k.refreshLocked(ctx, tr, "tick")
+	if _, err := os.Lstat(dir); !os.IsNotExist(err) {
+		t.Errorf("the gone seat's directory is still there: %v", err)
+	}
 }
