@@ -724,7 +724,7 @@ func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 	return env
 }
 
-// roleEnvRefused reports whether a role-declared env key is one of the five
+// roleEnvRefused reports whether a role-declared env key is one of the six
 // credentials marvel or the broker checks to decide whether a session is who it
 // says it is. A role cannot point its seat at another credential helper: the
 // pointer picks the program that receives a bearer token. Narrowing a seat's
@@ -743,7 +743,7 @@ func roleEnvRefused(k string) bool {
 // daemon's own layout, never from a manifest. A role able to replace one could
 // point its seat at a listener of its choosing and so collect the broker and
 // heartbeat credentials without reading daemon state (aae-orc-kx73y). They are
-// not part of api.CredentialKeys, which is pinned at the five identity
+// not part of api.CredentialKeys, which is pinned at the six identity
 // credentials and read by the company recipe decoder as well.
 var roleEnvTopologyKeys = []string{"NATS_URL", "MARVEL_SOCKET", paths.HomeEnv}
 

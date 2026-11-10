@@ -137,7 +137,7 @@ func BackendBearerEnv(k string) bool {
 	return strings.Contains(k, "_BEARER_TOKEN")
 }
 
-// credentialKeys are the five keys a role or a recipe may not set: the
+// credentialKeys are the six keys a role or a recipe may not set: the
 // credentials marvel or the broker checks to decide whether a session is who it
 // says it is.
 //
@@ -149,16 +149,17 @@ var credentialKeys = []string{
 	HeartbeatTokenFileEnv,
 	"DIRECTOR_NATS_USER",
 	"DIRECTOR_NATS_PASS",
+	"DIRECTOR_NATS_PASS_FILE",
 }
 
-// CredentialKeys returns the five identity credential keys a manifest may not
+// CredentialKeys returns the six identity credential keys a manifest may not
 // set. The caller may not change the list.
 func CredentialKeys() []string {
 	return append([]string(nil), credentialKeys...)
 }
 
 // IsCredentialKey reports whether k is a key a role or a recipe may not set: one
-// of the five identity credentials, or a literal bearer by BackendBearerEnv.
+// of the six identity credentials, or a literal bearer by BackendBearerEnv.
 func IsCredentialKey(k string) bool {
 	return slices.Contains(credentialKeys, k) || BackendBearerEnv(k)
 }

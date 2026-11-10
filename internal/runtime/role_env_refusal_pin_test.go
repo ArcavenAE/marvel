@@ -8,7 +8,7 @@ import (
 )
 
 // pinnedRoleEnvProbe is every key whose treatment by mergeRoleEnv is pinned:
-// true means a role may not set it. The set is the five identity credentials
+// true means a role may not set it. The set is the six identity credentials
 // plus whatever api.BackendBearerEnv judges a literal bearer, as at the commit
 // that moved the list into internal/api. The company decoder pins the same
 // table in internal/company, so a change to either path's set fails a test.
@@ -22,6 +22,7 @@ var pinnedRoleEnvProbe = []struct {
 	{"MARVEL_HEARTBEAT_TOKEN_FILE", true, "marvel owns the credentials that prove a session's identity"},
 	{"DIRECTOR_NATS_USER", true, "marvel owns the credentials that prove a session's identity"},
 	{"DIRECTOR_NATS_PASS", true, "marvel owns the credentials that prove a session's identity"},
+	{"DIRECTOR_NATS_PASS_FILE", true, "marvel owns the credentials that prove a session's identity"},
 	{"ANTHROPIC_API_KEY", true, "it carries a literal credential"},
 	{"ANTHROPIC_AUTH_TOKEN", true, "it carries a literal credential"},
 	{"CLAUDE_CODE_OAUTH_TOKEN", true, "it carries a literal credential"},
