@@ -1614,6 +1614,26 @@ func (c *Controller) evaluateHealth() {
 	// regardless of the order its replicas are visited.
 	obs := make(map[string]roleObs)
 
+	// The bus gate is read at most once per tick, and only if a bus role is
+	// visited (aae-orc-pzv0n). A broker outage stops every bus-role seat's
+	// beat at once, which is the broker's fault and not the role's, so while
+	// the gate reports down a bus role is neither charged nor restarted. The
+	// spawn path holds respawns for the same outage in planRole.
+	var (
+		gateRead    bool
+		gateReady   = true
+		gateReason  string
+		gateChecked = func() (bool, string) {
+			if !gateRead {
+				gateRead = true
+				if c.BusGate != nil {
+					gateReady, gateReason = c.BusGate()
+				}
+			}
+			return gateReady, gateReason
+		}
+	)
+
 	// One write set per tick: each session's update changes memory at once and
 	// the file is written once, at the end, for the records that changed
 	// (marvel#1214). A persist error then comes back once, from Flush, not per
@@ -1661,6 +1681,7 @@ func (c *Controller) evaluateHealth() {
 			reachedThreshold   bool
 			shouldApplyRestart bool
 			staleFor           time.Duration
+			heldForBus         string
 		)
 		var updated api.Session
 
@@ -1683,6 +1704,18 @@ func (c *Controller) evaluateHealth() {
 				live.FailureCount = 0
 				updated = *live
 				return nil
+			}
+
+			// A bus role is not charged while the broker gate reports down:
+			// FailureCount stays where it was and the seat reads unknown, so
+			// no restart policy runs for the outage (aae-orc-pzv0n).
+			if role.HealthCheck.Type == api.HealthCheckBus && c.BusGate != nil {
+				if ready, reason := gateChecked(); !ready {
+					heldForBus = reason
+					live.HealthState = api.HealthUnknown
+					updated = *live
+					return nil
+				}
 			}
 
 			// Staleness check. A bus role reads LastBusBeat, the shim's own
@@ -1734,6 +1767,14 @@ func (c *Controller) evaluateHealth() {
 			// Session disappeared between snapshot and update — fine,
 			// another tick will handle whatever's next.
 			continue
+		}
+
+		if role != nil && role.HealthCheck != nil && role.HealthCheck.Type == api.HealthCheckBus && c.BusGate != nil {
+			if heldForBus != "" {
+				c.latchBusHold(&t, role.Name, heldForBus)
+			} else if ready, _ := gateChecked(); ready {
+				c.clearBusHold(&t, role.Name)
+			}
 		}
 
 		// Record this session's health against its role for decay. Unknown
@@ -2563,6 +2604,17 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 			return
 		}
 		c.clearExposureHold(t, role.Name)
+
+		// The bus gate, as in planRole: a broker outage is not the role's
+		// fault, so no successor is created while it lasts. The shift stays
+		// in launching and says so once (aae-orc-pzv0n).
+		if c.BusGate != nil {
+			if ready, reason := c.BusGate(); !ready {
+				c.latchBusHold(t, role.Name, reason)
+				return
+			}
+			c.clearBusHold(t, role.Name)
+		}
 
 		// Each successor is paired with one of the seats shiftDrain will
 		// retire, oldest first, the order it retires them in. Selected the
