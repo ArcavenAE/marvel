@@ -1123,3 +1123,32 @@ func TestCaptureBounds(t *testing.T) {
 		})
 	}
 }
+
+// TestRunRefusesAnUnaddressableName: handleRun takes the workspace, team and
+// role from the request, so the same rule as the manifest parse applies, before
+// anything is created. The defaults (default/adhoc/adhoc) are control.
+func TestRunRefusesAnUnaddressableName(t *testing.T) {
+	skipIfNoTmux(t)
+	d, err := New()
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	t.Cleanup(func() { d.Stop() })
+
+	for name, p := range map[string]map[string]string{
+		"workspace dot-dot": {"workspace": ".."},
+		"workspace slash":   {"workspace": "a/b"},
+		"team slash":        {"team": "../x"},
+		"role backslash":    {"role": `a\b`},
+		"workspace in caps": {"workspace": "Proj"},
+	} {
+		p["runtime_command"] = "true"
+		resp := d.handleRun(mustMarshal(t, p))
+		if resp.Error == "" || !strings.Contains(resp.Error, "name") {
+			t.Errorf("%s: handleRun answered %q, want a refusal naming the bad name", name, resp.Error)
+		}
+	}
+	if got := d.store.ListSessions(); len(got) != 0 {
+		t.Errorf("a refused run left %d sessions", len(got))
+	}
+}
