@@ -418,3 +418,48 @@ func TestGooseSeedThroughALinkHoldsTheSpawn(t *testing.T) {
 		t.Fatal("a goose seed that went through a link did not hold the spawn")
 	}
 }
+
+// A credential that exists but cannot be linked in does not stop the launch,
+// and the ring says so: one warning naming the seat and the entry.
+func TestFailedCredentialLinkLaunchesAndEmitsOneEvent(t *testing.T) {
+	// No t.Parallel: this one sets CODEX_HOME for the process.
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	mgr := homeManager(t)
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "auth.json"), []byte(`{"token":"operator-secret"}`), 0o600); err != nil {
+		t.Fatalf("seed auth: %v", err)
+	}
+	t.Setenv("CODEX_HOME", source)
+
+	sess := sessionFor("coder", "codex")
+	home := mgr.harnessHomeFor(sess.Key())
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(home, 0o700) })
+
+	plan := mgr.planLaunch(sess)
+
+	if plan.homeRefusal != "" || plan.command == "" {
+		t.Fatalf("a failed link held or broke the launch: refusal %q, command %q", plan.homeRefusal, plan.command)
+	}
+	got := mgr.Events.(*events.Ring).Snapshot(events.Filter{Kind: events.KindSessionHomeLinkFailed}, 10)
+	if len(got) != 1 {
+		t.Fatalf("want one %s event, got %d: %+v", events.KindSessionHomeLinkFailed, len(got), got)
+	}
+	ev := got[0]
+	if ev.Severity != events.SeverityWarning || ev.Session != sess.Name || ev.Team != sess.Team || ev.Role != sess.Role {
+		t.Errorf("event %+v does not name the seat at warning severity", ev)
+	}
+	if !strings.Contains(ev.Message, "auth.json") {
+		t.Errorf("message %q does not name the entry", ev.Message)
+	}
+	if strings.Contains(ev.Message, "operator-secret") {
+		t.Errorf("message %q carries the credential value", ev.Message)
+	}
+}
