@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-// MaxLine is the longest stream line a parser reads whole. A longer line is
+// MaxLine is the longest stream line a parser reads whole, counting the line's
+// newline (and the carriage return of a CRLF ending): a line of MaxLine content
+// bytes, or a CRLF line of MaxLine-1, is over the limit. This matches the
+// bufio.Scanner limit the parsers had and the goose parser. A longer line is
 // read to its newline without being kept, reported as one parse error with a
 // bounded prefix, and the stream goes on. A bufio.Scanner would stop the parse
 // at such a line and lose every later one.
