@@ -147,6 +147,9 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 			// Newest first: the run an operator asks about is the last one.
 			for i := len(st.History) - 1; i >= 0; i-- {
 				r := st.History[i]
+				// The stderr tail is the run record's, read by the operator's
+				// reap; describe team does not show it (api.RunRecord).
+				r.StderrTail = ""
 				s.Runs = append(s.Runs, runDescription{
 					RunRecord: r,
 					Duration:  r.Duration().String(),
