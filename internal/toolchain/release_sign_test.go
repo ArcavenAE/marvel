@@ -179,13 +179,17 @@ func TestSignJobUploadFailsOnNoAssets(t *testing.T) {
 	if err := os.MkdirAll(stubs, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(stubs, "gh"), []byte("#!/bin/sh\necho unexpected upload >&2\nexit 9\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(stubs, "gh"), []byte("#!/bin/sh\n: > \"$PWD/gh-was-called\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("/bin/bash", "-e", "-c", run)
 	cmd.Dir = scratch
 	cmd.Env = []string{"PATH=" + stubs + ":/usr/bin:/bin", "HOME=" + scratch, "GH_TOKEN=unused"}
+	// The stub gh succeeds, so only the step's own guard can fail it.
 	if err := cmd.Run(); err == nil {
 		t.Error("the upload step reported success with no files to upload")
+	}
+	if _, err := os.Stat(filepath.Join(scratch, "gh-was-called")); err == nil {
+		t.Error("the upload step called gh with nothing to upload")
 	}
 }
