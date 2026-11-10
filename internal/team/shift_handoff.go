@@ -242,7 +242,7 @@ func (c *Controller) advanceShiftRequest(t *api.Team, role *api.Role, req api.Sh
 	var read handoffProbeResult
 	var haveRead bool
 	if path != "" && pathErr == nil {
-		read, haveRead = c.handoffProbes.complete(sess.Key(), path, role.Shift.HandoffMarker, now)
+		read, haveRead = c.handoffProbes.complete(sess.Key(), path, role.Shift.HandoffMarker, req.RequestedAt.Truncate(time.Second), now)
 		if haveRead && read.complete {
 			if c.autoShiftsThisTick >= maxAutoShiftsPerTick {
 				return false // the marker stays; a later tick starts the shift
@@ -430,7 +430,7 @@ func (c *Controller) repeatHandoffMissing(t *api.Team, role *api.Role, sess api.
 	present := false
 	if role.Shift.Handoff != "" {
 		if path, err := handoffPath(role.Shift.Handoff, sess); err == nil {
-			read, ok := c.handoffProbes.complete(sess.Key(), path, role.Shift.HandoffMarker, now)
+			read, ok := c.handoffProbes.complete(sess.Key(), path, role.Shift.HandoffMarker, req.RequestedAt.Truncate(time.Second), now)
 			if !due || !ok || !read.startedAt.After(last) {
 				return
 			}
@@ -486,6 +486,15 @@ func handoffPath(template string, sess api.Session) (string, error) {
 // links, and the open file must be the regular file that was checked. It
 // reads at most the file's last maxHandoffTail bytes (D5 step 2).
 func handoffComplete(path, marker string) bool {
+	return handoffCompleteSince(path, marker, time.Time{})
+}
+
+// handoffCompleteSince is handoffComplete for a file that must also have been
+// written at or after notBefore (a zero notBefore asks nothing of its age). A
+// handoff that ends in the marker but predates the request describes an earlier
+// moment than the one the successor needs (marvel#1387). The age is read from
+// the open file, so it belongs to the bytes that were checked.
+func handoffCompleteSince(path, marker string, notBefore time.Time) bool {
 	before, err := os.Lstat(path)
 	if err != nil || !before.Mode().IsRegular() {
 		return false
@@ -497,6 +506,9 @@ func handoffComplete(path, marker string) bool {
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) {
+		return false
+	}
+	if info.ModTime().Before(notBefore) {
 		return false
 	}
 	off := info.Size() - maxHandoffTail
@@ -532,6 +544,7 @@ type handoffProbes struct {
 
 type handoffProbeResult struct {
 	path, marker string
+	notBefore    time.Time
 	complete     bool
 	startedAt    time.Time // when the read began, so a deadline can be checked against it
 }
@@ -540,11 +553,13 @@ type handoffRead struct{ startedAt time.Time }
 
 // complete returns the last finished read of path for session key, and whether
 // there is one, and starts a fresh read at now unless one is already running.
-func (p *handoffProbes) complete(key, path, marker string, now time.Time) (handoffProbeResult, bool) {
+// A file older than notBefore does not count as complete; the zero time asks
+// nothing of its age.
+func (p *handoffProbes) complete(key, path, marker string, notBefore, now time.Time) (handoffProbeResult, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	last, ok := p.done[key]
-	known := ok && last.path == path && last.marker == marker
+	known := ok && last.path == path && last.marker == marker && last.notBefore.Equal(notBefore)
 	if p.inflight[key] == nil {
 		if p.inflight == nil {
 			p.inflight = make(map[string]*handoffRead)
@@ -553,7 +568,7 @@ func (p *handoffProbes) complete(key, path, marker string, now time.Time) (hando
 		p.inflight[key] = token
 		check := p.check
 		if check == nil {
-			check = handoffComplete
+			check = func(path, marker string) bool { return handoffCompleteSince(path, marker, notBefore) }
 		}
 		p.wg.Add(1)
 		go func() {
@@ -568,7 +583,7 @@ func (p *handoffProbes) complete(key, path, marker string, now time.Time) (hando
 			if p.done == nil {
 				p.done = make(map[string]handoffProbeResult)
 			}
-			p.done[key] = handoffProbeResult{path: path, marker: marker, complete: got, startedAt: token.startedAt}
+			p.done[key] = handoffProbeResult{path: path, marker: marker, notBefore: notBefore, complete: got, startedAt: token.startedAt}
 		}()
 	}
 	return last, known

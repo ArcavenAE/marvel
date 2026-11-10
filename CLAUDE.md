@@ -219,7 +219,7 @@ shifts a seat by itself. Past `max_age` and quiet for `quiet_for` (default 5m, r
 or past `max_age + max_defer` (default 30m) however busy, marvel types a
 handoff request into the pane (`team.shift-handoff-requested`). When the file
 the role declares in `handoff` (with `{session}` for the session name) ends in
-`handoff_marker`, the shift starts. With no marker by the end of
+`handoff_marker` and was written after the request (its mtime, to the second), the shift starts. With no marker by the end of
 `handoff_window` (default 5m), or no declared file, marvel emits
 `team.shift-handoff-missing`, leaves the seat running, and the team's
 supervisor decides. The event repeats once per window while the request

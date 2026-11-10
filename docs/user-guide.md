@@ -895,7 +895,9 @@ the window when the role declares them, and records
 `team.shift-handoff-requested`. It then watches the handoff file. When the last
 non-empty line is `handoff_marker`, the shift starts and the successor gets
 `MARVEL_PREDECESSOR`. Only a regular file counts: a handoff path that is a
-symlink never completes. If the window (`handoff_window`, default 5m) ends with no
+symlink never completes. The file must also have been written after the request
+(its modification time, compared to the second): a marker left by an earlier
+handoff does not start the shift, and the seat has to write the handoff again. If the window (`handoff_window`, default 5m) ends with no
 marker, or the role declares no handoff path, marvel records
 `team.shift-handoff-missing` and leaves the seat running; the team's supervisor
 decides whether to call `marvel shift`.
