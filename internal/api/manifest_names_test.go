@@ -61,7 +61,7 @@ team = %q
 	// the longest allowed, and digits may lead.
 	for _, ok := range []string{
 		build("proj", "squad", "worker", "svc", "pol"),
-		build("aae", "arcaven", "marvel-builder", "agent-svc", "no-co-authored"),
+		build("aae", "arcaven", "marvel-builder", "agent-svc", "read-only"),
 		build("proj", strings.Repeat("a", 32), "9worker", "svc", "pol"),
 	} {
 		if _, err := ParseManifestBytes([]byte(ok)); err != nil {
