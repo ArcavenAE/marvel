@@ -143,6 +143,15 @@ func writeGooseYAML(path string, v any) error {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
 	}
+	// Read it back by metadata: a path that took the write but is not the
+	// plain file of the size written is not a seed goose will read.
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("check %s: %w", filepath.Base(path), err)
+	}
+	if !fi.Mode().IsRegular() || fi.Size() != int64(len(data)) {
+		return fmt.Errorf("check %s: not a regular file of %d bytes", filepath.Base(path), len(data))
+	}
 	return nil
 }
 

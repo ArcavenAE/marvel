@@ -48,7 +48,7 @@ func (g *Goose) ProjectionFor(_ *LaunchContext, _ string) ProjectionTarget {
 // SessionHome gives every goose seat a private root. The operator's own goose
 // directories are not a seed source in this change.
 func (g *Goose) SessionHome(ctx *LaunchContext) (SessionHomeSpec, bool) {
-	return SessionHomeSpec{EnvVar: gooseHomeEnv, Seed: gooseSeeder(ctx)}, true
+	return SessionHomeSpec{EnvVar: gooseHomeEnv, Seed: gooseSeeder(ctx), SeedRequired: true}, true
 }
 
 // gooseRefuseNoPrompt is the slug of the refusal of a headless role that has no

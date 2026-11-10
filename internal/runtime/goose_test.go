@@ -796,3 +796,26 @@ func TestGooseHeadlessWithoutAnAbsoluteHomeIsRefused(t *testing.T) {
 		t.Errorf("command %q is not the relative-root stub", res.Command)
 	}
 }
+
+// A seed path that took the write but is not a plain file (here a link to a file
+// elsewhere) is not a seed goose will read, so Seed reports it.
+func TestGooseSeedRefusesAPathThatIsNotAPlainFile(t *testing.T) {
+	t.Parallel()
+	ctx := gooseContext(t, nil)
+	spec, _ := (&Goose{}).SessionHome(ctx)
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "config")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere.yaml")
+	if err := os.WriteFile(elsewhere, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(cfgDir, "config.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := spec.Seed(dir); err == nil {
+		t.Fatal("a symlinked config.yaml was accepted as a seed")
+	}
+}

@@ -216,9 +216,10 @@ func TestSpawnRefusesWhenEveryBaseFailsValidation(t *testing.T) {
 	}
 }
 
-// An ordinary error (here a parent that is a file, so Mkdir gives ENOTDIR) is
-// not a validation failure, and keeps today's downgrade to the shared home.
-func TestSpawnStillDowngradesOnAnOrdinaryMkdirError(t *testing.T) {
+// An ordinary error (here a parent that is a file, so Mkdir gives ENOTDIR)
+// holds the spawn too: starting the seat in the shared home would hand it the
+// operator's state, so the seat waits for a home it can be given.
+func TestSpawnRefusesOnAnOrdinaryMkdirError(t *testing.T) {
 	t.Parallel()
 	mgr, _ := recheckManager(t)
 	file := filepath.Join(t.TempDir(), "file")
@@ -230,14 +231,11 @@ func TestSpawnStillDowngradesOnAnOrdinaryMkdirError(t *testing.T) {
 	mgr.harnessChain = broken
 	sess := sessionFor("coder", "codex")
 	plan := mgr.planLaunch(sess)
-	if plan.homeRefusal != "" {
-		t.Errorf("an ordinary mkdir error refused the spawn: %s", plan.homeRefusal)
+	if plan.homeRefusal == "" {
+		t.Fatal("an ordinary mkdir error let the seat start in the shared home")
 	}
-	if sess.HarnessHome != "" {
-		t.Errorf("home = %q, want none (the shared home)", sess.HarnessHome)
-	}
-	if plan.command == "" {
-		t.Error("the seat was not given a launch command")
+	if sess.HarnessHome != "" || plan.env["CODEX_HOME"] != "" {
+		t.Errorf("a held spawn still got a home: %q, CODEX_HOME=%q", sess.HarnessHome, plan.env["CODEX_HOME"])
 	}
 }
 

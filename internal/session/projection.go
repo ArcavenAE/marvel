@@ -22,13 +22,14 @@ import (
 // the adapter exposes a settings surface, writes the projected file and
 // points the launch at it via lctx.PolicyProjectionPath. Called from
 // planLaunch before Prepare. Projection is best-effort relative to a
-// working session: a write failure is logged and the session launches
-// unprojected rather than being refused. The one carve-out is a policy that
-// reads a settings_file: its file carries the role's deny rules, so a launch
-// without it fails open, and the unreadable file is returned as a
-// settingsFileError for the caller to hold the spawn on. Create's
-// checkSettingsFile normally holds it first; this is the backstop for a file
-// that goes bad between that check and this read.
+// working session: a failure for the context feed alone is logged and the
+// session launches unprojected. A role with a policy is the carve-out: its
+// settings carry the role's deny rules, so a launch without the projected file
+// fails open, and the failure is returned as a settingsFileError for the
+// caller to hold the spawn on. Create's checkSettingsFile normally holds an
+// unreadable settings_file first; this is the backstop for a file that goes
+// bad between that check and this read, and for a projection that cannot be
+// written.
 func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.Adapter) error {
 	target, wrote, _, shadowed, err := m.projectPolicy(lctx, adapter)
 	if err != nil {
@@ -36,7 +37,10 @@ func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.
 		if errors.As(err, &sfe) {
 			return sfe
 		}
-		log.Printf("session %s: policy projection failed, launching unprojected: %v", lctx.Session.Key(), err)
+		if lctx.Role.Policy != "" && !errors.Is(err, errNothingToProject) {
+			return &settingsFileError{policy: lctx.Role.Policy, stage: "projection", err: err}
+		}
+		log.Printf("session %s: context feed projection failed, launching unprojected: %v", lctx.Session.Key(), err)
 		return nil
 	}
 	m.clearSettingsFileFailure(lctx.Session.Key())
@@ -219,6 +223,7 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 			settings[k] = v
 		}
 	}
+	policyEmpty := len(settings) == 0
 	var shadowed []string
 	if feed {
 		shadowed = injectStatuslineFeed(settings, adapter, lctx.Session.Key(), lctx.Role.Policy)
@@ -226,6 +231,10 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 
 	changed, err := writeProjectionFile(target.Path, settings)
 	if err != nil {
+		if policyEmpty {
+			// Nothing of the policy is lost with the file: only the feed is.
+			err = fmt.Errorf("%w: %w", errNothingToProject, err)
+		}
 		return target, false, false, nil, err
 	}
 	return target, true, changed, shadowed, nil
@@ -380,15 +389,25 @@ func (m *Manager) emitProjected(sess *api.Session, policyName, path, detail stri
 	})
 }
 
+// errNothingToProject marks a write failure for a launch whose policy resolved
+// to no settings, so the file held only the context feed.
+var errNothingToProject = errors.New("policy resolved to no settings")
+
 // settingsFileError is a policy settings file that could not be read as a JSON
 // object. It is its own type so the callers report it as an event, where any
 // other projection error is only logged.
 type settingsFileError struct {
 	policy, path string
-	err          error
+	// stage is set when the failure is the projection write and not the read of
+	// a settings file.
+	stage string
+	err   error
 }
 
 func (e *settingsFileError) Error() string {
+	if e.stage != "" {
+		return fmt.Sprintf("policy %q %s: %v", e.policy, e.stage, e.err)
+	}
 	return fmt.Sprintf("policy %q settings file %s: %v", e.policy, e.path, e.err)
 }
 
@@ -504,8 +523,12 @@ func (m *Manager) checkSettingsFile(sess *api.Session) error {
 // holdSpawn reports the failure once for the role and returns the error that
 // holds the spawn.
 func (m *Manager) holdSpawn(sess *api.Session, sfe *settingsFileError) error {
+	until := "the file reads"
+	if sfe.stage != "" {
+		until = "the policy can be projected"
+	}
 	m.emitSettingsFileFailure(heldSpawnKey(sess), sess,
-		fmt.Sprintf("%s; the spawn is held and retried until the file reads", sfe))
+		fmt.Sprintf("%s; the spawn is held and retried until %s", sfe, until))
 	return fmt.Errorf("hold session %s: %v: %w", sess.Key(), sfe, ErrSettingsFileRefused)
 }
 

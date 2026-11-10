@@ -435,7 +435,7 @@ func privateLeafRefusal(path string, mine func(os.FileInfo) bool) (why string, v
 // the base that passed. If the base vanishes between the check and the home,
 // the selection runs once more; if it vanishes again the spawn is refused. A
 // refusal is returned for every validation failure; ok is false with no refusal
-// only for an ordinary error, where the caller takes the existing downgrade.
+// only for an ordinary error, which the caller also turns into a refusal.
 func (m *Manager) homeUnderVerifiedBase(key, dir string) (home string, ok bool, refusal string) {
 	base := filepath.Dir(dir)
 	leaf := filepath.Base(m.harnessHomeFor(key))
@@ -1295,10 +1295,9 @@ type launchPlan struct {
 // (marvel#1142); only a session with no usable recorded home gets the
 // current base.
 //
-// Linking and seeding are best-effort. A missing source entry is skipped
-// rather than fatal, and any failure downgrades to the shared home the
-// session would have used anyway, because a harness that cannot be
-// containerised should still run.
+// A home that cannot be prepared holds the spawn, with the reason, and the
+// reconciler tries again; the seat is never started in the shared home. A
+// missing source entry or a failed link is skipped rather than fatal.
 func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtime.Adapter) (refusal string) {
 	assigner, ok := adapter.(runtime.SessionHomeAssigner)
 	if !ok || m.HarnessHomeDir == "" {
@@ -1323,15 +1322,11 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 			return why
 		}
 		if !ok {
-			log.Printf("session %s: private %s unavailable, sharing the operator's home",
-				lctx.Session.Key(), spec.EnvVar)
-			return ""
+			return fmt.Sprintf("private %s is unavailable and the seat would share the operator's home", spec.EnvVar)
 		}
 		dir = home
 	} else if err := os.MkdirAll(dir, 0o700); err != nil {
-		log.Printf("session %s: private %s unavailable, sharing the operator's home: %v",
-			lctx.Session.Key(), spec.EnvVar, err)
-		return ""
+		return fmt.Sprintf("private %s is unavailable and the seat would share the operator's home: %v", spec.EnvVar, err)
 	}
 	for _, name := range spec.LinkIn {
 		if spec.Source == "" {
@@ -1354,10 +1349,14 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 		}
 	}
 	if spec.Seed != nil {
-		// Seeded files are marvel's own, rewritten at every launch. A
-		// failure costs what the file would have given (a hook, a server)
-		// and not the session.
+		// Seeded files are marvel's own, rewritten at every launch. Where
+		// they carry the seat's rules (SeedRequired) a failed seed holds the
+		// spawn; elsewhere it costs what the file would have given and not
+		// the session.
 		if err := spec.Seed(dir); err != nil {
+			if spec.SeedRequired {
+				return fmt.Sprintf("seeding the private %s failed: %v", spec.EnvVar, err)
+			}
 			log.Printf("session %s: seeding the private %s: %v",
 				lctx.Session.Key(), spec.EnvVar, err)
 		}
