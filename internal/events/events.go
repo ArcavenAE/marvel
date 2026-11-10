@@ -276,6 +276,10 @@ const (
 	// per failed link per launch; the message names the entry and the error.
 	// Warning severity.
 	KindSessionHomeLinkFailed Kind = "session.home-link-failed"
+	// KindStoreRowSkipped records a stored workspace, team or endpoint row that
+	// daemon start left out because its name is outside the name class. One
+	// event per row; the message names the bucket and the key. Warning severity.
+	KindStoreRowSkipped Kind = "store.row-skipped"
 	// KindContextLimitUnresolved records that marvel measured a session's
 	// context tokens but could not resolve the model's context window, so
 	// CTX% stays blank rather than showing a percentage against a guessed
@@ -589,6 +593,7 @@ var allKinds = []Kind{
 	KindSessionFirstPrompt,
 	KindPolicyProjectionFailed,
 	KindSessionHomeLinkFailed,
+	KindStoreRowSkipped,
 	KindContextLimitUnresolved,
 	KindScheduleDSTAcknowledged,
 	KindScheduleStale,

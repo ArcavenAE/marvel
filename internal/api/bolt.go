@@ -246,6 +246,10 @@ func (s *Store) rehydrate() error {
 			if err := json.Unmarshal(v, &w); err != nil {
 				return fmt.Errorf("unmarshal workspace: %w", err)
 			}
+			if err := rehydrateNameError("workspaces", w.Key(), nameField{"workspace", w.Name}); err != nil {
+				s.skipRehydrated(err)
+				return nil
+			}
 			s.workspaces[w.Key()] = &w
 			return nil
 		}); err != nil {
@@ -257,6 +261,10 @@ func (s *Store) rehydrate() error {
 			if err := json.Unmarshal(v, &t); err != nil {
 				return fmt.Errorf("unmarshal team: %w", err)
 			}
+			if err := rehydrateNameError("teams", t.Key(), nameField{"workspace", t.Workspace}, nameField{"team", t.Name}); err != nil {
+				s.skipRehydrated(err)
+				return nil
+			}
 			s.teams[t.Key()] = &t
 			return nil
 		}); err != nil {
@@ -267,6 +275,12 @@ func (s *Store) rehydrate() error {
 			var sess Session
 			if err := json.Unmarshal(v, &sess); err != nil {
 				return fmt.Errorf("unmarshal session: %w", err)
+			}
+			// An ad hoc run (marvel run) can carry no team or role, so an
+			// empty field is not a name and passes; a set one must be in class.
+			if err := rehydrateNameError("sessions", sess.Key(), setFields(
+				nameField{"workspace", sess.Workspace}, nameField{"team", sess.Team}, nameField{"role", sess.Role})...); err != nil {
+				return err
 			}
 			// Nothing can refresh a STREAM reading for a session this
 			// daemon did not launch, so drop it rather than serve a frozen
@@ -308,6 +322,10 @@ func (s *Store) rehydrate() error {
 			if err := json.Unmarshal(v, &e); err != nil {
 				return fmt.Errorf("unmarshal endpoint: %w", err)
 			}
+			if err := rehydrateNameError("endpoints", e.Key(), nameField{"workspace", e.Workspace}, nameField{"endpoint", e.Name}); err != nil {
+				s.skipRehydrated(err)
+				return nil
+			}
 			s.endpoints[e.Key()] = &e
 			return nil
 		}); err != nil {
@@ -318,6 +336,9 @@ func (s *Store) rehydrate() error {
 			var p Policy
 			if err := json.Unmarshal(v, &p); err != nil {
 				return fmt.Errorf("unmarshal policy: %w", err)
+			}
+			if err := rehydrateNameError("policies", p.Key(), nameField{"workspace", p.Workspace}, nameField{"policy", p.Name}); err != nil {
+				return err
 			}
 			s.policies[p.Key()] = &p
 			return nil

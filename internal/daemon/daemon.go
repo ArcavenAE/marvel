@@ -446,6 +446,15 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 			Message:   msg,
 		})
 	}
+	// Rows the name rule left out when the store was read back: one event each,
+	// beside the log line the store already wrote.
+	for _, row := range store.RehydrateSkipped() {
+		events.Emit(evRing, events.Event{
+			Kind:     events.KindStoreRowSkipped,
+			Severity: events.SeverityWarning,
+			Message:  row,
+		})
+	}
 	reportInvalidReplicas(store, evRing)
 	if len(scrubbed) > 0 {
 		msg := "removed inherited session variables: " + strings.Join(scrubbed, ", ")

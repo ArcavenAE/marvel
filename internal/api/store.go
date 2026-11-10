@@ -31,6 +31,9 @@ type Store struct {
 	teams      map[string]*Team
 	endpoints  map[string]*Endpoint
 	policies   map[string]*Policy
+	// rehydrateSkipped lists the stored rows daemon start left out for a name
+	// outside the name class (bolt_rehydrate_names.go).
+	rehydrateSkipped []string
 	// credentials are transient (Credential.Persist is always false): they
 	// live only in this map, are never written to bolt, and are dropped on a
 	// daemon restart. See the credential CRUD below and brief 9 S1.
