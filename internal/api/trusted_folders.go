@@ -100,7 +100,65 @@ func GitMainRoot(start string) (root, reason string) {
 	if err != nil {
 		return "", GitReasonSymlinkUnresolved
 	}
+	if !tiedToFolder(start, common) {
+		return "", GitReasonError
+	}
 	return real, ""
+}
+
+// tiedToFolder reports whether start really belongs to the repository whose
+// common directory is common. A seat can write a .git file in a folder it owns,
+// and a file that points at another repository's directory makes git report that
+// repository's common directory for the folder. So the answer is accepted only
+// when the folder is the checkout the repository itself records: for a main
+// checkout, its top-level is the parent of the common directory; for a linked
+// worktree, the worktree's own record under common/worktrees names this
+// top-level's .git file.
+func tiedToFolder(start, common string) bool {
+	gitDir, err := gitOut(start, "rev-parse", "--path-format=absolute", "--git-dir")
+	if err != nil || gitDir == "" {
+		return false
+	}
+	top, err := gitOut(start, "rev-parse", "--path-format=absolute", "--show-toplevel")
+	if err != nil || top == "" {
+		return false
+	}
+	realStart, err1 := filepath.EvalSymlinks(start)
+	realTop, err2 := filepath.EvalSymlinks(top)
+	if err1 != nil || err2 != nil || !within(realTop, realStart) {
+		return false
+	}
+	realGit, err1 := filepath.EvalSymlinks(gitDir)
+	realCommon, err2 := filepath.EvalSymlinks(common)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if realGit == realCommon {
+		return realTop == filepath.Dir(realCommon)
+	}
+	if filepath.Dir(realGit) != filepath.Join(realCommon, "worktrees") {
+		return false
+	}
+	rec, err := os.ReadFile(filepath.Join(realGit, "gitdir"))
+	if err != nil {
+		return false
+	}
+	recorded := strings.TrimSpace(string(rec))
+	if !filepath.IsAbs(recorded) {
+		recorded = filepath.Join(realGit, recorded)
+	}
+	realRecorded, err := filepath.EvalSymlinks(recorded)
+	if err != nil {
+		return false
+	}
+	return realRecorded == filepath.Join(realTop, ".git")
+}
+
+// within reports whether path is dir or lies under it. Both are cleaned,
+// symlink-resolved paths.
+func within(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // ExpandTrustedFolder resolves one trusted_folders entry: a leading ~/ against
