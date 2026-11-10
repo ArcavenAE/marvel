@@ -100,3 +100,43 @@ func TestDescribeTeamShowsTheSchedule(t *testing.T) {
 		t.Fatalf("an unscheduled team has a schedule block: %v", plain["Schedules"])
 	}
 }
+
+// The stderr tail is for the run record and the operator's reap, not for
+// describe team: its own field comment says describe does not show it.
+func TestDescribeTeamDoesNotShowTheStderrTail(t *testing.T) {
+	d := newHandlerDaemon(t)
+	resp := applyManifest(t, d, scheduledManifest("tailless", `          cron: "17 6 * * *"
+          timezone: Etc/UTC`))
+	if resp.Error != "" {
+		t.Fatalf("apply: %s", resp.Error)
+	}
+	const teamKey = "tailless/timers-tailless"
+	ended := time.Date(2026, 10, 1, 6, 20, 0, 0, time.UTC)
+	if _, err := d.store.UpdateScheduleStatus(teamKey+"/board-refresh", func(st *api.ScheduleStatus) bool {
+		r := api.RunRecord{
+			Session: "tailless/timers-tailless-board-refresh-g1-0", Outcome: api.RunFailed,
+			ExitStatus: "1", StartedAt: ended.Add(-time.Minute), EndedAt: ended,
+		}
+		r.SetStderrTail("goose stderr: provider refused the request")
+		st.AddRun(r, api.ScheduleHistory{Succeeded: 3, Failed: 3})
+		return true
+	}); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+	out := describeTeam(t, d, teamKey)
+	scheds, _ := out["Schedules"].([]any)
+	s, _ := scheds[0].(map[string]any)
+	runs, _ := s["runs"].([]any)
+	if len(runs) != 1 {
+		t.Fatalf("runs = %v, want one", s["runs"])
+	}
+	run, _ := runs[0].(map[string]any)
+	if v, present := run["stderr_tail"]; present {
+		t.Fatalf("describe team shows the stderr tail: %v", v)
+	}
+	// The record in the store keeps it.
+	st, _ := d.store.GetScheduleStatus(teamKey + "/board-refresh")
+	if got := st.History[len(st.History)-1].StderrTail; got == "" {
+		t.Fatal("the stored run lost its stderr tail")
+	}
+}
