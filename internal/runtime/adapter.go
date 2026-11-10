@@ -675,7 +675,7 @@ func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 	// (design-backend-swaps.md); it is advisory against a settings-managed
 	// host, so the reliable enforcement is the --settings overlay.
 	//
-	// Two classes never pass, because neither is a value seam:
+	// Three classes never pass, because none is a value seam:
 	//
 	//   1. The credentials that decide WHO this session is. The heartbeat
 	//      token and the broker user and password are how marvel and the bus
@@ -689,6 +689,11 @@ func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 	//      most exposed surface marvel owns, and ADR-009 puts third-party
 	//      authority outside the custody line entirely.
 	//
+	//   3. Where the session reaches marvel: NATS_URL, MARVEL_SOCKET and the
+	//      marvel home. They come from the cluster config and the daemon's
+	//      layout, and a role able to replace one could aim the credentials in
+	//      1 at a listener of its choosing (roleEnvTopologyKeys).
+	//
 	// Everything else a role declares still wins, including the identity
 	// values it is merely inadvisable to change, because the operator owns
 	// that choice. It is logged so that a wrong identity on the bus is
@@ -698,6 +703,9 @@ func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 		switch {
 		case roleEnvRefused(k):
 			log.Printf("warning: session %s: role env %q refused, marvel owns the credentials that prove a session's identity", ctx.Session.Name, k)
+			continue
+		case roleEnvTopologyRefused(k):
+			log.Printf("warning: session %s: role env %q refused, marvel owns where a session reaches the bus and the daemon", ctx.Session.Name, k)
 			continue
 		case api.BackendBearerEnv(k):
 			log.Printf("warning: session %s: role env %q refused, it carries a literal credential; declare a helper pointer instead (ADR-009)", ctx.Session.Name, k)
@@ -722,6 +730,23 @@ func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 // company recipe is read against too.
 func roleEnvRefused(k string) bool {
 	return slices.Contains(api.CredentialKeys(), k)
+}
+
+// roleEnvTopologyKeys are the three variables that say where a seat presents
+// the bus and daemon credentials marvel gives it: the broker URL, the daemon
+// socket and the marvel home. They come from the cluster config and the
+// daemon's own layout, never from a manifest. A role able to replace one could
+// point its seat at a listener of its choosing and so collect the broker and
+// heartbeat credentials without reading daemon state (aae-orc-kx73y). They are
+// not part of api.CredentialKeys, which is pinned at the five identity
+// credentials and read by the company recipe decoder as well.
+var roleEnvTopologyKeys = []string{"NATS_URL", "MARVEL_SOCKET", paths.HomeEnv}
+
+// roleEnvTopologyRefused reports whether a role-declared env key is one of
+// roleEnvTopologyKeys. It is refused whether or not marvel built a value for
+// the key on this launch: the key is marvel's to set, not the role's.
+func roleEnvTopologyRefused(k string) bool {
+	return slices.Contains(roleEnvTopologyKeys, k)
 }
 
 // buildCommand joins a binary and its args into the single command string
