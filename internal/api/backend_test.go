@@ -245,12 +245,12 @@ func TestBackendBearerEnv(t *testing.T) {
 	}
 }
 
-// The five identity keys a role or a recipe may not set, and the one predicate
+// The six identity keys a role or a recipe may not set, and the one predicate
 // both paths read. A pointer to a helper is not a literal credential.
-func TestCredentialKeysAreTheFiveIdentityKeys(t *testing.T) {
+func TestCredentialKeysAreTheSixIdentityKeys(t *testing.T) {
 	want := []string{
 		"MARVEL_HEARTBEAT_TOKEN", "MARVEL_CREDENTIAL_HELPER", "MARVEL_HEARTBEAT_TOKEN_FILE",
-		"DIRECTOR_NATS_USER", "DIRECTOR_NATS_PASS",
+		"DIRECTOR_NATS_USER", "DIRECTOR_NATS_PASS", "DIRECTOR_NATS_PASS_FILE",
 	}
 	got := CredentialKeys()
 	if !slices.Equal(got, want) {

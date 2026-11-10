@@ -158,16 +158,16 @@ func TestRecipeRefusesAPreflightTimeoutOverTheCeiling(t *testing.T) {
 	}
 }
 
-// N1 and the credential classes: the five keys marvel refuses a role and any
+// N1 and the credential classes: the six keys marvel refuses a role and any
 // key api.BackendBearerEnv judges a literal credential.
 func TestRecipeRefusesACredentialKey(t *testing.T) {
 	keys := []string{
 		"MARVEL_HEARTBEAT_TOKEN", "MARVEL_CREDENTIAL_HELPER", "MARVEL_HEARTBEAT_TOKEN_FILE",
-		"DIRECTOR_NATS_USER", "DIRECTOR_NATS_PASS",
+		"DIRECTOR_NATS_USER", "DIRECTOR_NATS_PASS", "DIRECTOR_NATS_PASS_FILE",
 		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AWS_BEARER_TOKEN_BEDROCK", "SOME_VENDOR_AUTH_TOKEN",
 	}
-	if len(api.CredentialKeys()) != 5 {
-		t.Fatalf("api.CredentialKeys holds %d keys, want five", len(api.CredentialKeys()))
+	if len(api.CredentialKeys()) != 6 {
+		t.Fatalf("api.CredentialKeys holds %d keys, want six", len(api.CredentialKeys()))
 	}
 	for _, k := range keys {
 		t.Run(k, func(t *testing.T) {
@@ -316,6 +316,7 @@ var pinnedRecipeCredentialProbe = []struct {
 	{"MARVEL_HEARTBEAT_TOKEN_FILE", true},
 	{"DIRECTOR_NATS_USER", true},
 	{"DIRECTOR_NATS_PASS", true},
+	{"DIRECTOR_NATS_PASS_FILE", true},
 	{"ANTHROPIC_API_KEY", true},
 	{"ANTHROPIC_AUTH_TOKEN", true},
 	{"CLAUDE_CODE_OAUTH_TOKEN", true},
@@ -351,8 +352,8 @@ func TestRecipeRefusesThePinnedCredentialSet(t *testing.T) {
 // only by editing it.
 func TestRecipeCredentialListIsMergeRoleEnvsList(t *testing.T) {
 	keys := api.CredentialKeys()
-	if len(keys) != 5 {
-		t.Fatalf("api.CredentialKeys holds %d keys, want five", len(keys))
+	if len(keys) != 6 {
+		t.Fatalf("api.CredentialKeys holds %d keys, want six", len(keys))
 	}
 	for _, k := range keys {
 		t.Run(k, func(t *testing.T) {

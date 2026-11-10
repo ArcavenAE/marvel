@@ -187,15 +187,35 @@ func (m *Manager) byFile(sess *api.Session) bool {
 // digest of the key, so two keys cannot collapse to one file and the key's own
 // characters never reach the filesystem.
 func (m *Manager) tokenFilePath(key string) string {
+	return m.secretFilePath(key, ".token")
+}
+
+// passFilePath names the session's bus password file beside its token file.
+func (m *Manager) passFilePath(key string) string {
+	return m.secretFilePath(key, ".pass")
+}
+
+func (m *Manager) secretFilePath(key, ext string) string {
 	sum := sha256.Sum256([]byte(key))
-	return filepath.Join(m.TokenDir, hex.EncodeToString(sum[:16])+".token")
+	return filepath.Join(m.TokenDir, hex.EncodeToString(sum[:16])+ext)
 }
 
 // writeTokenFile writes the session's token for a by-file launch: the
 // directory at mode 0700, the file at 0600, replaced by rename so a reader
 // never sees half a token. A session with no token has no file and no error.
 func (m *Manager) writeTokenFile(sess *api.Session) (string, error) {
-	if sess.HeartbeatToken == "" {
+	return m.writeSecretFile(m.tokenFilePath(sess.Key()), sess.HeartbeatToken)
+}
+
+// writePassFile is writeTokenFile for the team's bus password.
+func (m *Manager) writePassFile(sess *api.Session, password string) (string, error) {
+	return m.writeSecretFile(m.passFilePath(sess.Key()), password)
+}
+
+// writeSecretFile places value at path under the private token directory. An
+// empty value has no file and no error.
+func (m *Manager) writeSecretFile(path, value string) (string, error) {
+	if value == "" {
 		return "", nil
 	}
 	if m.TokenDir == "" {
@@ -215,8 +235,7 @@ func (m *Manager) writeTokenFile(sess *api.Session) (string, error) {
 	if !fi.IsDir() || fi.Mode().Perm() != 0o700 || !ownedByMe(fi) {
 		return "", fmt.Errorf("token dir %s is not a private directory of this user (mode %v)", m.TokenDir, fi.Mode())
 	}
-	path := m.tokenFilePath(sess.Key())
-	tmp, err := os.CreateTemp(m.TokenDir, ".token-*")
+	tmp, err := os.CreateTemp(m.TokenDir, ".secret-*")
 	if err != nil {
 		return "", fmt.Errorf("create token file: %w", err)
 	}
@@ -225,7 +244,7 @@ func (m *Manager) writeTokenFile(sess *api.Session) (string, error) {
 		_ = tmp.Close()
 		return "", fmt.Errorf("chmod token file: %w", err)
 	}
-	if _, err := tmp.WriteString(sess.HeartbeatToken); err != nil {
+	if _, err := tmp.WriteString(value); err != nil {
 		_ = tmp.Close()
 		return "", fmt.Errorf("write token file: %w", err)
 	}
@@ -238,14 +257,44 @@ func (m *Manager) writeTokenFile(sess *api.Session) (string, error) {
 	return path, nil
 }
 
-// removeTokenFile removes the session's token file. Best effort: a missing
-// file is not an error.
+// busPassEnv and busPassFileEnv are the director shim's two ways to be handed
+// the team's bus password: the value, or the path of a file holding it.
+const (
+	busPassEnv     = "DIRECTOR_NATS_PASS"
+	busPassFileEnv = "DIRECTOR_NATS_PASS_FILE"
+)
+
+// passwordByFile moves the bus password out of a launch environment into a
+// private file and leaves only the file's path, so the password is not on the
+// tmux command line. When the file cannot be written the launch carries no
+// password at all, as for the token: falling back to the value would put the
+// secret on the command line the file was meant to keep it off.
+func (m *Manager) passwordByFile(sess *api.Session, env map[string]string) {
+	pass, ok := env[busPassEnv]
+	if !ok {
+		return
+	}
+	delete(env, busPassEnv)
+	path, err := m.writePassFile(sess, pass)
+	if err != nil {
+		log.Printf("session %s: bus password file: %v; launching without a bus password", sess.Key(), err)
+		return
+	}
+	if path != "" {
+		env[busPassFileEnv] = path
+	}
+}
+
+// removeTokenFile removes the session's token file and its password file.
+// Best effort: a missing file is not an error.
 func (m *Manager) removeTokenFile(key string) {
 	if m.TokenDir == "" {
 		return
 	}
-	if err := os.Remove(m.tokenFilePath(key)); err != nil && !os.IsNotExist(err) {
-		log.Printf("warning: remove token file for %s: %v", key, err)
+	for _, p := range []string{m.tokenFilePath(key), m.passFilePath(key)} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			log.Printf("warning: remove secret file for %s: %v", key, err)
+		}
 	}
 }
 
@@ -1609,6 +1658,7 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	if byFile && tokenFile == "" {
 		delete(plan.env, api.HeartbeatTokenEnv)
 	}
+	m.passwordByFile(sess, plan.env)
 	sess.SettingSources = result.SettingSources
 	sess.SettingSourcesDelivery = result.SettingSourcesDelivery
 	sess.FirstPromptSha256 = result.FirstPrompt.Sha256
