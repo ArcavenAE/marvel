@@ -283,8 +283,10 @@ jobs:
         # signs the marvel binary at its top level.
         run: |
           set -euo pipefail
+          # No -q: grep must read the whole listing, or tar takes a SIGPIPE
+          # mid-write and pipefail fails the step on a match.
           for a in dist/marvel_*_darwin_*.tar.gz; do
-            tar tzf "$a" | grep -Eqx '(\./)?marvel' || { echo "$a has no top-level marvel"; exit 1; }
+            tar tzf "$a" | grep -Ex '(\./)?marvel' > /dev/null || { echo "$a has no top-level marvel"; exit 1; }
           done
 
       - name: List the formulas the snapshot wrote
