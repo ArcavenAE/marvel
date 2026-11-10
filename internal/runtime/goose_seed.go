@@ -174,7 +174,7 @@ func writeGooseYAML(path string, v any) error {
 	if err != nil {
 		return fmt.Errorf("check %s: %w", filepath.Base(path), err)
 	}
-	if st, ok := opened.Sys().(*syscall.Stat_t); !opened.Mode().IsRegular() || !ok || uint64(st.Nlink) != 1 {
+	if st, ok := opened.Sys().(*syscall.Stat_t); !opened.Mode().IsRegular() || !ok || st.Nlink != 1 {
 		return fmt.Errorf("check %s: not a regular file with one link", filepath.Base(path))
 	}
 	if err := f.Truncate(0); err != nil {
