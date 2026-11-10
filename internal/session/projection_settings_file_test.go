@@ -9,6 +9,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/runtime"
 )
 
 // A policy's settings_file is read verbatim at projection, re-read on each
@@ -485,5 +486,118 @@ func TestPlanLaunchHoldsWhenTheSettingsFileCannotBeRead(t *testing.T) {
 	writeSettingsFile(t, dir, reviewerSettingsJSON)
 	if plan := mgr.planLaunch(holdSession()); plan.hold != nil || plan.command == "" {
 		t.Errorf("plan once the file reads = %+v, want a command and no hold", plan)
+	}
+}
+
+// A role whose policy resolves to settings must not start without the file that
+// carries them: a write failure holds the spawn instead of launching unprojected.
+func TestPlanLaunchHoldsWhenThePolicyCannotBeProjected(t *testing.T) {
+	t.Parallel()
+	mgr, ring := projectionManager(t)
+	m, err := api.ParseManifestBytes([]byte(projectionManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(mgr.ProjectionDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(mgr.ProjectionDir, 0o700) })
+
+	plan := mgr.planLaunch(holdSession())
+	if plan.hold == nil {
+		t.Fatalf("plan with an unwritable projection = %+v, want hold set", plan)
+	}
+	if plan.command != "" {
+		t.Errorf("held plan carries command %q, want none", plan.command)
+	}
+	// The hold is reported where the caller emits it, once per change.
+	if err := mgr.holdSpawn(holdSession(), plan.hold); err == nil {
+		t.Error("holdSpawn returned nil for a held plan")
+	}
+	if n := len(ring.Snapshot(events.Filter{Kind: events.KindPolicyProjectionFailed}, 0)); n != 1 {
+		t.Errorf("policy.projection-failed events = %d, want 1", n)
+	}
+}
+
+// The context feed alone stays best-effort: a role with no policy launches when
+// its feed file cannot be written.
+func TestPlanLaunchLaunchesWhenOnlyTheContextFeedCannotBeProjected(t *testing.T) {
+	t.Parallel()
+	mgr, _ := projectionManager(t)
+	m, err := api.ParseManifestBytes([]byte(projectionManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(mgr.ProjectionDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(mgr.ProjectionDir, 0o700) })
+
+	sess := holdSession()
+	sess.Role = "nopolicy"
+	sess.Runtime.ContextFeed = api.ContextFeedStatusline
+	lctx := &runtime.LaunchContext{
+		Session:   sess,
+		Workspace: &api.Workspace{Name: "acme"},
+		Role:      &api.Role{Name: "nopolicy"},
+	}
+	adapter := mgr.adapters.Resolve("claude")
+	if err := mgr.projectForLaunch(lctx, adapter); err != nil {
+		t.Errorf("a feed-only projection failure held the spawn: %v", err)
+	}
+}
+
+// A policy that resolves to no settings loses nothing but the feed when the
+// file cannot be written, so it stays best-effort too.
+func TestProjectForLaunchLaunchesWhenTheDeclaredPolicyIsEmpty(t *testing.T) {
+	t.Parallel()
+	mgr, _ := projectionManager(t)
+	m, err := api.ParseManifestBytes([]byte(`
+[workspace]
+name = "acme"
+
+[[policy]]
+name = "empty"
+version = "1.0"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "reviewer"
+  replicas = 1
+  policy = "empty"
+
+    [team.role.runtime]
+    image = "claude"
+    command = "claude"
+    context_feed = "statusline"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply(mgr.store); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(mgr.ProjectionDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(mgr.ProjectionDir, 0o700) })
+
+	sess := holdSession()
+	sess.Runtime.ContextFeed = api.ContextFeedStatusline
+	lctx := &runtime.LaunchContext{
+		Session:   sess,
+		Workspace: &api.Workspace{Name: "acme"},
+		Role:      &api.Role{Name: "reviewer", Policy: "empty"},
+	}
+	if err := mgr.projectForLaunch(lctx, mgr.adapters.Resolve("claude")); err != nil {
+		t.Errorf("an empty policy held the spawn: %v", err)
 	}
 }

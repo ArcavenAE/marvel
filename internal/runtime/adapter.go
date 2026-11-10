@@ -191,8 +191,13 @@ type SessionHomeSpec struct {
 	// operator's own trust decisions and identity cannot have that file
 	// linked in, so marvel writes a file of its own instead, naming each
 	// key it sets and nothing else (marvel#308). Nil means nothing is
-	// written. An error is logged and the session still launches.
+	// written. An error is logged and the session still launches, unless
+	// SeedRequired is set.
 	Seed func(dir string) error
+	// SeedRequired makes a Seed error hold the spawn. It is set where the
+	// seeded files carry the seat's rules (goose's permission file), so a
+	// seat is never started without them.
+	SeedRequired bool
 	// Socket names, relative to the home, the unix socket the harness opens
 	// under it, if any. The manager checks the resolved path against the
 	// sun_path limit at spawn and logs a path that would not fit, because

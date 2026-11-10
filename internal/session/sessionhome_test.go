@@ -322,6 +322,43 @@ DIRECTOR_AGENT_ID = "ops/operator"
 	}
 }
 
+// A goose seed that cannot be written holds the spawn: the seed carries the
+// seat's permission file, and a goose seat without it would run without its
+// deny list.
+func TestGooseSeedFailureHoldsTheSpawn(t *testing.T) {
+	t.Parallel()
+	mgr := homeManager(t)
+	sess := sessionFor("coder", "goose")
+	sess.Runtime.Goose = &api.GooseRuntime{Posture: api.GoosePostureAuto}
+	home := mgr.harnessHomeFor(sess.Key())
+	if err := os.MkdirAll(filepath.Join(home, "config", "config.yaml"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plan := mgr.planLaunch(sess)
+	if plan.homeRefusal == "" {
+		t.Fatal("a goose seed that could not be written did not hold the spawn")
+	}
+	if !strings.Contains(plan.homeRefusal, "seeding") {
+		t.Errorf("refusal = %q, want it to say the seed failed", plan.homeRefusal)
+	}
+}
+
+// A codex seed that fails (it needs the installed codex) does not hold the
+// spawn: the hold is for a seed whose absence leaves the seat without its rules.
+func TestCodexSeedFailureStillLaunches(t *testing.T) {
+	// No t.Parallel: this one sets CODEX_HOME for the process.
+	mgr := homeManager(t)
+	t.Setenv("CODEX_HOME", t.TempDir())
+	sess := sessionFor("coder", "codex")
+	home := mgr.harnessHomeFor(sess.Key())
+	if err := os.MkdirAll(filepath.Join(home, "config.toml"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if plan := mgr.planLaunch(sess); plan.homeRefusal != "" {
+		t.Errorf("a codex seed failure held the spawn: %s", plan.homeRefusal)
+	}
+}
+
 // The account key's config home is the login the private home is linked from,
 // not the private home, which differs for every session.
 func TestPrivateHomeRecordsTheLoginSourceAsTheAccountHome(t *testing.T) {
