@@ -1606,6 +1606,16 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		lctx.GlobalRole = m.Bus.GlobalRole(*role)
 		if user, pass, ok := m.Bus.Credential(team.Name, sess.Role); ok {
 			lctx.BusUser, lctx.BusPassword = user, pass
+			// File the password before the launch is built, as the token is,
+			// so the environment adapters name (codex's env_vars) already
+			// carries the file variable. A password that cannot be filed is
+			// dropped: the launch carries none, as passwordByFile does.
+			if path, perr := m.writePassFile(sess, pass); perr != nil {
+				log.Printf("session %s: bus password file: %v; launching without a bus password", sess.Key(), perr)
+				lctx.BusPassword = ""
+			} else {
+				lctx.BusPasswordFile = path
+			}
 		}
 	}
 
