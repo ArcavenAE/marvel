@@ -58,3 +58,15 @@ func TestEveryForwardedNameIsInTheConstructedEnvironment(t *testing.T) {
 		}
 	}
 }
+
+// With no password to carry (the filing failed), codex is told to forward
+// neither password variable.
+func TestCodexForwardsNeitherPasswordVariableWhenThereIsNoPassword(t *testing.T) {
+	t.Parallel()
+	names := codexForwardedEnv(busCtx())
+	for _, n := range []string{"DIRECTOR_NATS_PASS", "DIRECTOR_NATS_PASS_FILE"} {
+		if slices.Contains(names, n) {
+			t.Errorf("forwarded names %v name %s with no password", names, n)
+		}
+	}
+}

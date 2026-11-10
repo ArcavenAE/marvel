@@ -137,3 +137,39 @@ func TestThePasswordFileExistsBeforeTheAdapterSeedsTheSeatHome(t *testing.T) {
 		t.Errorf("%s is in the launch environment", busPassEnv)
 	}
 }
+
+// A password that cannot be filed is dropped from the launch context before
+// the adapter sees it, so the names codex seeds from that context name
+// neither password variable, and the final environment has neither.
+func TestAFailedPasswordFilingLeavesTheAdapterNoPasswordToName(t *testing.T) {
+	t.Parallel()
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mgr := tokenManager(t, filepath.Join(blocker, "tokens")) // a directory cannot be made under a file
+	mgr.Bus = admittedBus{}
+	mgr.HarnessHomeDir = t.TempDir()
+	mgr.skipBaseCheck = true
+	probe := &homeProbeAdapter{}
+	mgr.adapters.Register(probe)
+	sess := seat("plain", "claude")
+	sess.Runtime.Name = "homeprobe"
+
+	plan := mgr.planLaunch(sess)
+
+	if probe.atHome == nil {
+		t.Fatal("the adapter was never asked for the seat home")
+	}
+	if probe.seen.BusPassword != "" {
+		t.Errorf("the adapter saw BusPassword %q after the filing failed", probe.seen.BusPassword)
+	}
+	if probe.seen.BusPasswordFile != "" {
+		t.Errorf("the adapter saw BusPasswordFile %q after the filing failed", probe.seen.BusPasswordFile)
+	}
+	for _, name := range []string{busPassEnv, busPassFileEnv} {
+		if _, present := plan.env[name]; present {
+			t.Errorf("%s is in the launch environment after the filing failed", name)
+		}
+	}
+}
