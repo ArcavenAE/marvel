@@ -156,7 +156,8 @@ func ensurePlainDir(dir string) error {
 }
 
 // writeGooseYAML writes one seed file in place. The open refuses a link at the
-// path, and the opened file must be a regular file with a single name before
+// path and does not block on a FIFO there (O_NONBLOCK; the type check below
+// then refuses it), and the opened file must be a regular file with a single name before
 // anything is truncated, so a hard link to a file outside the home is refused
 // and not emptied.
 func writeGooseYAML(path string, v any) error {
@@ -164,7 +165,7 @@ func writeGooseYAML(path string, v any) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", filepath.Base(path), err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", filepath.Base(path), err)
 	}

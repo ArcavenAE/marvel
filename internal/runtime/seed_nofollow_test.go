@@ -3,7 +3,9 @@ package runtime
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // The seeders write fixed-name files into a seat's kept home. A seat can plant
@@ -189,5 +191,63 @@ func TestGooseSeedRewritesItsOwnFilesOnRelaunch(t *testing.T) {
 		if err != nil || !fi.Mode().IsRegular() {
 			t.Fatalf("%s: %v %v", name, fi, err)
 		}
+	}
+}
+
+// A FIFO planted at a seed path must be refused, not waited on: an open of a
+// FIFO for writing blocks until a reader appears, which would hang the launch.
+func TestGooseSeedRefusesAFIFOAtASeedPath(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	cfg := filepath.Join(home, "config")
+	if err := os.MkdirAll(cfg, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(cfg, "config.yaml"), 0o600); err != nil {
+		t.Skipf("no FIFOs here: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- seedGooseInto(t, home, nil) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Seed accepted a FIFO at a seed path")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Seed blocked on a FIFO at a seed path")
+	}
+}
+
+// The codex seed is written to a temp file and renamed over the final path, so
+// a reader never sees half of it and an existing hard link to the old file is
+// not rewritten. A write straight to the final path keeps the old inode and
+// fails this test.
+func TestWriteSeedFileReplacesTheFinalPathByRename(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	if err := os.WriteFile(path, []byte("old seed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(home, "old-name")
+	if err := os.Link(path, keep); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSeedFile(path, codexSeed{HookCommand: "marvel codex-ctx"}); err != nil {
+		t.Fatalf("writeSeedFile: %v", err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Fatal("the final path is the same file as before: the write did not go through a rename")
+	}
+	if got := string(readFile(t, keep)); got != "old seed" {
+		t.Fatalf("the old file changed to %q: the write went to it directly", got)
 	}
 }
