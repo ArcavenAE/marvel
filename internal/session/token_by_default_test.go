@@ -9,13 +9,16 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 )
 
-// noSecretValue fails when any value in env is the heartbeat token, whatever
+// noSecretValue fails when any value in env is the heartbeat token or the bus
+// password, whatever
 // the key: the environment is what tmux new-window carries as -e arguments.
 func noSecretValue(t *testing.T, env map[string]string) {
 	t.Helper()
 	for k, v := range env {
-		if strings.Contains(v, testToken) {
-			t.Errorf("%s carries the token; it would reach the tmux command line", k)
+		for _, secret := range []string{testToken, testBusPass} {
+			if strings.Contains(v, secret) {
+				t.Errorf("%s carries a secret value; it would reach the tmux command line", k)
+			}
 		}
 	}
 }

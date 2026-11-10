@@ -12,7 +12,7 @@ import (
 func TestNewPaneAtNeverPutsASecretOnTheCommandLine(t *testing.T) {
 	t.Parallel()
 	const secret = "s3cr3t-value-0042"
-	for _, key := range []string{"MARVEL_HEARTBEAT_TOKEN"} {
+	for _, key := range []string{"MARVEL_HEARTBEAT_TOKEN", "DIRECTOR_NATS_PASS"} {
 		d, log := fakeTmux(t)
 
 		_, err := d.NewPaneAt("sess", "true", "title", "", map[string]string{key: secret}, false)
