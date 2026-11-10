@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -459,7 +460,19 @@ func TestFailedCredentialLinkLaunchesAndEmitsOneEvent(t *testing.T) {
 	if !strings.Contains(ev.Message, "auth.json") {
 		t.Errorf("message %q does not name the entry", ev.Message)
 	}
-	if strings.Contains(ev.Message, "operator-secret") {
-		t.Errorf("message %q carries the credential value", ev.Message)
+	// No field of the event may carry the credential value, the operator's
+	// source path or the private-home destination: the ring is read by more
+	// people than the daemon log is.
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"operator-secret", source, home, mgr.HarnessHomeDir} {
+		if strings.Contains(string(raw), leak) {
+			t.Errorf("event %s carries %q", raw, leak)
+		}
+	}
+	if !strings.Contains(ev.Message, "permission denied") {
+		t.Errorf("message %q does not carry the unwrapped error", ev.Message)
 	}
 }

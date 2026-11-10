@@ -1394,8 +1394,17 @@ func (m *Manager) prepareSessionHome(lctx *runtime.LaunchContext, adapter runtim
 			continue
 		}
 		if err := os.Symlink(src, dst); err != nil {
-			msg := fmt.Sprintf("could not link %s into the private %s: %v", name, spec.EnvVar, err)
-			log.Printf("session %s: %s", lctx.Session.Key(), msg)
+			log.Printf("session %s: could not link %s into the private %s: %v",
+				lctx.Session.Key(), name, spec.EnvVar, err)
+			// The ring carries the entry name and the bare errno, not the
+			// os.LinkError, whose text holds the operator's source path and the
+			// private-home destination.
+			cause := err
+			var le *os.LinkError
+			if errors.As(err, &le) {
+				cause = le.Err
+			}
+			msg := fmt.Sprintf("could not link %s into the private %s: %v", name, spec.EnvVar, cause)
 			// The seat still starts, and reports its own auth state; the ring
 			// says which entry it is missing. One event per failed link per
 			// launch, since a launch that is not held happens once.
