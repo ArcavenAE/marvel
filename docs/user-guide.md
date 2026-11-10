@@ -900,6 +900,14 @@ marker, or the role declares no handoff path, marvel records
 `team.shift-handoff-missing` and leaves the seat running; the team's supervisor
 decides whether to call `marvel shift`.
 
+While the request stays escalated, marvel tells the supervisor again, backing
+off so a request nobody decides does not send one notice a window for days. The
+escalation and the first three repeats go one window apart, then the gap
+doubles with each send up to 24 hours, and the notices never stop on their own.
+`handoff_repeat_flat` (a whole number, at least 1, default 3) and
+`handoff_repeat_ceiling` (a duration, default `24h`) on the shift block change
+that. A ceiling shorter than the window is read as the window.
+
 These events carry the condition that asked (`cause`: `max-age` or
 `context-pressure`) and the generation the seat itself runs at, which can be
 behind the team's. `team.shift-handoff-missing` carries `reason` `window-expired`

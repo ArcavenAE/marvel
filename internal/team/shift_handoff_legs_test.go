@@ -446,6 +446,27 @@ func TestReplicaLegRepeatsEveryWindowWhileTheDirectorKeepsItsCap(t *testing.T) {
 	}
 }
 
+// The replica leg backs off like the supervisor leg: four sends one window
+// apart, then the next waits two windows, not one.
+func TestReplicaLegBacksOffAfterTheFlatRepeats(t *testing.T) {
+	f := newLegFixture(t, "test-legs-backoff", 2)
+	f.escalateRole()
+	for i := 0; i < 3; i++ {
+		f.tick(api.DefaultShiftHandoffWindow + time.Second)
+	}
+	if n := len(f.pub.seats()); n != 4 {
+		t.Fatalf("replica sends over four windows = %d, want 4", n)
+	}
+	f.tick(api.DefaultShiftHandoffWindow + time.Second)
+	if n := len(f.pub.seats()); n != 4 {
+		t.Errorf("a fifth send went out one window after the fourth: %d sends, want it to wait two windows", n)
+	}
+	f.tick(api.DefaultShiftHandoffWindow + time.Second)
+	if n := len(f.pub.seats()); n != 5 {
+		t.Errorf("replica sends after two windows = %d, want 5", n)
+	}
+}
+
 // Name problems still read as before for a supervisor: no managed bus and a
 // team name the schema cannot address.
 func TestSupervisorEscalationStillNamesNoBusAndUnaddressableTeams(t *testing.T) {

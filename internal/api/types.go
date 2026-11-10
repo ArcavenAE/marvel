@@ -876,6 +876,11 @@ const (
 	DefaultShiftAskPause      = 5 * time.Minute
 	DefaultShiftMaxDefer      = 30 * time.Minute
 	DefaultShiftHandoffWindow = 5 * time.Minute
+	// DefaultShiftRepeatFlat is how many repeats of an escalated request's
+	// notice follow the escalation at one window each, before the gap doubles.
+	DefaultShiftRepeatFlat = 3
+	// DefaultShiftRepeatCeiling is the longest gap between those repeats.
+	DefaultShiftRepeatCeiling = 24 * time.Hour
 	MinShiftMaxAge            = 15 * time.Minute
 )
 
@@ -925,6 +930,12 @@ type ShiftPolicy struct {
 	// HandoffWindow is how long after a request marvel waits for the marker
 	// before it escalates. Zero means DefaultShiftHandoffWindow.
 	HandoffWindow time.Duration `toml:"-"`
+	// HandoffRepeatFlat and HandoffRepeatCeiling shape how an escalated
+	// request's notices back off (marvel#1381): the escalation and this many
+	// repeats go one window apart, then the gap doubles up to the ceiling. Zero
+	// means DefaultShiftRepeatFlat and DefaultShiftRepeatCeiling.
+	HandoffRepeatFlat    int           `toml:"-"`
+	HandoffRepeatCeiling time.Duration `toml:"-"`
 	// HandoffVia names how a seat that cannot write a file hands off. Empty
 	// means the seat writes the declared file itself; ShiftHandoffViaTool means
 	// it calls the submit_handoff tool and marvel writes the file for it
@@ -967,6 +978,38 @@ func (p *ShiftPolicy) HandoffWindowOrDefault() time.Duration {
 		return DefaultShiftHandoffWindow
 	}
 	return p.HandoffWindow
+}
+
+// HandoffRepeatFlatOrDefault returns the number of flat repeats, defaulted.
+func (p *ShiftPolicy) HandoffRepeatFlatOrDefault() int {
+	if p == nil || p.HandoffRepeatFlat <= 0 {
+		return DefaultShiftRepeatFlat
+	}
+	return p.HandoffRepeatFlat
+}
+
+// HandoffRepeatCeilingOrDefault returns the longest repeat gap, defaulted.
+func (p *ShiftPolicy) HandoffRepeatCeilingOrDefault() time.Duration {
+	if p == nil || p.HandoffRepeatCeiling <= 0 {
+		return DefaultShiftRepeatCeiling
+	}
+	return p.HandoffRepeatCeiling
+}
+
+// HandoffRepeatGap is how long after the delivered-th send of an escalated
+// request the next one is due. The escalation and the flat repeats go one
+// handoff window apart; after that the gap doubles with each send, up to the
+// ceiling. A window longer than the ceiling is never shortened. The supervisor
+// stays told for as long as the request stands, without a request nobody
+// decides sending once a window for days.
+func (p *ShiftPolicy) HandoffRepeatGap(delivered int) time.Duration {
+	window := p.HandoffWindowOrDefault()
+	ceiling := max(p.HandoffRepeatCeilingOrDefault(), window)
+	gap := window
+	for i := p.HandoffRepeatFlatOrDefault(); i < delivered && gap < ceiling; i++ {
+		gap *= 2
+	}
+	return min(gap, ceiling)
 }
 
 // PredecessorEnv and HandoffRequestedAtEnv carry a successor's lineage into

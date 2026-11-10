@@ -147,7 +147,7 @@ func (c *Controller) deliverMissingFor(t *api.Team, role *api.Role, sess api.Ses
 	case !holder:
 		due = false // queued once; hold until a seat holds the role
 	default:
-		due = req.LastDeliveryQueued || now.Sub(req.LastDeliveredAt) >= window
+		due = req.LastDeliveryQueued || now.Sub(req.LastDeliveredAt) >= role.Shift.HandoffRepeatGap(req.DeliveredCount)
 	}
 	if !due {
 		if rec.outcome == "" || strings.HasPrefix(rec.outcome, "none, ") {

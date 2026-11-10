@@ -218,6 +218,19 @@ func (r *ManifestRole) shiftPolicy(where string) (*ShiftPolicy, error) {
 		}
 		p.HandoffWindow = d
 	}
+	if s.HandoffRepeatFlat != nil {
+		if *s.HandoffRepeatFlat < 1 {
+			return nil, fmt.Errorf("%s.handoff_repeat_flat %d must be at least 1", prefix, *s.HandoffRepeatFlat)
+		}
+		p.HandoffRepeatFlat = *s.HandoffRepeatFlat
+	}
+	if s.HandoffRepeatCeiling != "" {
+		d, err := positiveDuration(prefix+".handoff_repeat_ceiling", s.HandoffRepeatCeiling)
+		if err != nil {
+			return nil, err
+		}
+		p.HandoffRepeatCeiling = d
+	}
 	return p, nil
 }
 

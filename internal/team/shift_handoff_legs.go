@@ -141,7 +141,7 @@ func (c *Controller) deliverFromSupervisor(t *api.Team, role *api.Role, sess api
 	case req.DeliveredCount == 0:
 		due = true
 	default:
-		due = now.Sub(req.LastDeliveredAt) >= window
+		due = now.Sub(req.LastDeliveredAt) >= role.Shift.HandoffRepeatGap(req.DeliveredCount)
 	}
 
 	var parts []string

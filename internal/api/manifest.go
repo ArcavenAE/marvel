@@ -241,6 +241,10 @@ type ManifestShift struct {
 	HandoffMarker  string                   `toml:"handoff_marker,omitempty"  yaml:"handoff_marker,omitempty"`
 	HandoffWindow  string                   `toml:"handoff_window,omitempty"  yaml:"handoff_window,omitempty"`
 	HandoffVia     string                   `toml:"handoff_via,omitempty"     yaml:"handoff_via,omitempty"`
+	// HandoffRepeatFlat and HandoffRepeatCeiling are pointers so that a written
+	// zero is refused and not read as unset.
+	HandoffRepeatFlat    *int   `toml:"handoff_repeat_flat,omitempty"    yaml:"handoff_repeat_flat,omitempty"`
+	HandoffRepeatCeiling string `toml:"handoff_repeat_ceiling,omitempty" yaml:"handoff_repeat_ceiling,omitempty"`
 }
 
 // ManifestShiftCondition is one entry of a shift table's any list.
