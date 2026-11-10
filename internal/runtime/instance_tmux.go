@@ -220,6 +220,9 @@ func (i *TmuxInstance) startReader() {
 		})
 		if perr != nil && !errors.Is(perr, context.Canceled) && !errors.Is(perr, io.EOF) {
 			i.emitTransportError(ctx, perr)
+			// Keep reading to EOF. Closing the read end here would make the
+			// harness's next write fail with EPIPE while the seat runs on.
+			_, _ = io.Copy(io.Discard, f)
 		}
 	}()
 }

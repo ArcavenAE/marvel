@@ -66,23 +66,28 @@ func NewParserWithSeq(cfg Config, seq *events.SeqAssigner) *Parser {
 // error{kind:"unmapped"} with the raw line preserved. ctx cancellation is
 // polled between lines.
 func (p *Parser) Parse(ctx context.Context, r io.Reader, emit func(events.Event)) error {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	for scanner.Scan() {
+	br := bufio.NewReaderSize(r, 64*1024)
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
+		line, size, err := events.ReadLine(br)
+		switch {
+		case size > 0:
+			emit(p.newEvent(events.KindError, events.ErrorData{
+				Kind:    events.ErrKindParse,
+				Message: events.LongLineMessage(line, size),
+			}, nil))
+		case len(line) > 0:
+			p.handleLine(line, emit)
 		}
-		p.handleLine(line, emit)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("read stream: %w", err)
+		}
 	}
-	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("read stream: %w", err)
-	}
-	return nil
 }
 
 func (p *Parser) handleLine(line []byte, emit func(events.Event)) {
