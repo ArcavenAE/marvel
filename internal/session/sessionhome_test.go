@@ -396,3 +396,25 @@ func TestAccountHomeIsClearedWhenThereIsNoPrivateHome(t *testing.T) {
 		t.Fatalf("account home = %q, want it cleared for a harness with no private home", sess.AccountHome)
 	}
 }
+
+// The same symlinked seed path holds a goose spawn.
+func TestGooseSeedThroughALinkHoldsTheSpawn(t *testing.T) {
+	t.Parallel()
+	mgr := homeManager(t)
+	sess := sessionFor("coder", "goose")
+	sess.Runtime.Goose = &api.GooseRuntime{Posture: api.GoosePostureAuto}
+	cfgDir := filepath.Join(mgr.harnessHomeFor(sess.Key()), "config")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere.yaml")
+	if err := os.WriteFile(elsewhere, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(cfgDir, "config.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if plan := mgr.planLaunch(sess); plan.homeRefusal == "" {
+		t.Fatal("a goose seed that went through a link did not hold the spawn")
+	}
+}
