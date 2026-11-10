@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -203,5 +206,65 @@ func TestRehydrateLoadsRowsThatKeepTheNameRule(t *testing.T) {
 	}
 	if _, err := s.GetPolicy(pol.Key()); err != nil {
 		t.Fatalf("policy not loaded: %v", err)
+	}
+}
+
+// The workspace half of a row's key is checked on its own: a good name under a
+// bad workspace is still outside the rule.
+func TestRehydrateSkipsATeamRowWhoseWorkspaceIsBad(t *testing.T) {
+	bad := Team{Name: "team-a", Workspace: "ws.bad"}
+	s, err := openSeeded(t, map[string]map[string]any{"teams": {bad.Key(): bad}})
+	if err != nil {
+		t.Fatalf("OpenBolt refused over a team row: %v", err)
+	}
+	if _, err := s.GetTeam(bad.Key()); err == nil {
+		t.Fatal("a team row under a bad workspace was loaded")
+	}
+	if got := s.RehydrateSkipped(); len(got) != 1 || !strings.Contains(got[0], "workspace") {
+		t.Fatalf("want one skip record naming the workspace, got %q", got)
+	}
+}
+
+func TestRehydrateSkipsAnEndpointRowWhoseWorkspaceIsBad(t *testing.T) {
+	bad := Endpoint{Name: "ep-a", Workspace: "ws.bad"}
+	s, err := openSeeded(t, map[string]map[string]any{"endpoints": {bad.Key(): bad}})
+	if err != nil {
+		t.Fatalf("OpenBolt refused over an endpoint row: %v", err)
+	}
+	if _, err := s.GetEndpoint(bad.Key()); err == nil {
+		t.Fatal("an endpoint row under a bad workspace was loaded")
+	}
+	if got := s.RehydrateSkipped(); len(got) != 1 || !strings.Contains(got[0], "workspace") {
+		t.Fatalf("want one skip record naming the workspace, got %q", got)
+	}
+}
+
+func TestRehydrateRefusesAPolicyRowWhoseWorkspaceIsBad(t *testing.T) {
+	p := Policy{Name: "no-writes", Workspace: "ws.bad"}
+	_, err := openSeeded(t, map[string]map[string]any{"policies": {p.Key(): p}})
+	requireRefusal(t, err, "polic", p.Key())
+	if err != nil && !strings.Contains(err.Error(), "workspace") {
+		t.Fatalf("refusal %q does not name the workspace field", err)
+	}
+}
+
+// A skipped row is logged once, naming the bucket and the key, beside its
+// ring event.
+func TestRehydrateLogsEachSkippedRow(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	bad := Team{Name: "team_b", Workspace: "ws"}
+	if _, err := openSeeded(t, map[string]map[string]any{"teams": {bad.Key(): bad}}); err != nil {
+		t.Fatalf("OpenBolt: %v", err)
+	}
+	out := buf.String()
+	if n := strings.Count(out, "rehydrate: leaving out"); n != 1 {
+		t.Fatalf("want one log line for the skipped row, got %d in %q", n, out)
+	}
+	for _, want := range []string{"teams", bad.Key()} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log %q does not name %q", out, want)
+		}
 	}
 }
