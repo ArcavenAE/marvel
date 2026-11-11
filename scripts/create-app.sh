@@ -8,6 +8,13 @@ BINARY_PATH="${1:?Usage: create-app.sh <binary-path> <version> <output-dir>}"
 VERSION="${2:?Version required}"
 OUTPUT_DIR="${3:?Output directory required}"
 
+# VERSION goes into a sed expression below, so it must be a plain version
+# string: no sed delimiter, quote, space or shell character.
+if [[ ! "$VERSION" =~ ^[0-9A-Za-z.+-]+$ ]]; then
+  echo "Error: version has characters outside [0-9A-Za-z.+-]: $VERSION" >&2
+  exit 1
+fi
+
 if [[ ! -f "$BINARY_PATH" ]]; then
   echo "Error: binary not found: $BINARY_PATH" >&2
   exit 1

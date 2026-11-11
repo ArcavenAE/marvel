@@ -64,7 +64,10 @@ func signStep(t *testing.T, job ciJob, name string) string {
 	t.Helper()
 	for _, s := range job.Steps {
 		if s.Name == name {
-			return strings.ReplaceAll(s.Run, "${{ github.ref_name }}", "v1.0.0")
+			if strings.Contains(s.Run, "${{") {
+				t.Fatalf("step %q puts an expression in its script; pass it through env: and quote the variable", name)
+			}
+			return s.Run
 		}
 	}
 	t.Fatalf("sign-release has no step named %q", name)
@@ -111,7 +114,7 @@ func runSignSteps(t *testing.T, platforms []string) (errs map[string]error, scra
 
 	env := append(os.Environ()[:0:0],
 		"PATH="+stubs+":/usr/bin:/bin", "HOME="+scratch, "LANG=C",
-		"SCRATCH="+scratch, "FIXTURES="+fixtures, "VERSION=1.0.0", "GH_TOKEN=unused",
+		"SCRATCH="+scratch, "FIXTURES="+fixtures, "VERSION=1.0.0", "TAG=v1.0.0", "GH_TOKEN=unused",
 		"APPLE_SIGNING_IDENTITY=id", "APPLE_INSTALLER_IDENTITY=id",
 		"APPLE_NOTARIZATION_APPLE_ID=id", "APPLE_NOTARIZATION_PASSWORD=pw", "APPLE_NOTARIZATION_TEAM_ID=team")
 	errs = map[string]error{}
