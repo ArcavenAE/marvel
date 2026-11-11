@@ -181,7 +181,7 @@ func TestResolveLadderPrecedence(t *testing.T) {
 	for _, c := range cases {
 		r := NewResolver(table)
 		if c.learn != "" {
-			r.Learn(c.learn, c.learnValue, api.BackendDefault)
+			r.Learn("", c.learn, c.learnValue, api.BackendDefault)
 		}
 		// Precedence is exercised on the vendor default, so the keyed rungs
 		// resolve rather than being refused by the backend guard.
@@ -241,7 +241,7 @@ func TestResolveWarnsWhenLearnedContradictsManifest(t *testing.T) {
 			defer log.SetOutput(restore)
 
 			r := NewResolver(Table{})
-			r.Learn("claude-haiku-4-5", c.learnValue, api.BackendDefault)
+			r.Learn("", "claude-haiku-4-5", c.learnValue, api.BackendDefault)
 			limit, src, _ := r.Resolve(Request{
 				Harness:       "claude",
 				StreamModel:   "claude-haiku-4-5",
@@ -278,13 +278,13 @@ func TestResolveWarnsWhenLearnedContradictsManifest(t *testing.T) {
 func TestLearnKeepsTheSuffixInItsKey(t *testing.T) {
 	t.Parallel()
 	r := NewResolver(Table{})
-	r.Learn("claude-sonnet-4-6[1m]", 1_000_000, api.BackendDefault)
+	r.Learn("", "claude-sonnet-4-6[1m]", 1_000_000, api.BackendDefault)
 
-	if w, ok := r.Learned("claude-sonnet-4-6[1m]", api.BackendDefault); !ok || w != 1_000_000 {
+	if w, ok := r.Learned("", "claude-sonnet-4-6[1m]", api.BackendDefault); !ok || w != 1_000_000 {
 		t.Errorf("learned[1m] = %d (%v), want 1000000", w, ok)
 	}
 	// The 200k sibling must not inherit the 1M window.
-	if _, ok := r.Learned("claude-sonnet-4-6", api.BackendDefault); ok {
+	if _, ok := r.Learned("", "claude-sonnet-4-6", api.BackendDefault); ok {
 		t.Error("the 200k sibling inherited the 1M window; the learned key must keep [1m]")
 	}
 }
@@ -296,17 +296,17 @@ func TestLearnKeepsTheSuffixInItsKey(t *testing.T) {
 func TestLearnedIsSegregatedByBackend(t *testing.T) {
 	t.Parallel()
 	r := NewResolver(Table{})
-	r.Learn("claude-haiku-4-5", 200_000, api.BackendDefault)
-	r.Learn("claude-haiku-4-5", 180_000, api.BackendRedirected)
+	r.Learn("", "claude-haiku-4-5", 200_000, api.BackendDefault)
+	r.Learn("", "claude-haiku-4-5", 180_000, api.BackendRedirected)
 
-	if w, ok := r.Learned("claude-haiku-4-5", api.BackendDefault); !ok || w != 200_000 {
+	if w, ok := r.Learned("", "claude-haiku-4-5", api.BackendDefault); !ok || w != 200_000 {
 		t.Errorf("default-backend learned = %d (%v), want 200000", w, ok)
 	}
-	if w, ok := r.Learned("claude-haiku-4-5", api.BackendRedirected); !ok || w != 180_000 {
+	if w, ok := r.Learned("", "claude-haiku-4-5", api.BackendRedirected); !ok || w != 180_000 {
 		t.Errorf("redirected-backend learned = %d (%v), want 180000", w, ok)
 	}
 	// A verdict nobody learned under sees nothing, even for a known model.
-	if _, ok := r.Learned("claude-haiku-4-5", api.BackendUnknown); ok {
+	if _, ok := r.Learned("", "claude-haiku-4-5", api.BackendUnknown); ok {
 		t.Error("a window leaked across backend verdicts; the learned key must carry the verdict")
 	}
 }
@@ -314,10 +314,10 @@ func TestLearnedIsSegregatedByBackend(t *testing.T) {
 func TestLearnIgnoresNonsense(t *testing.T) {
 	t.Parallel()
 	r := NewResolver(Table{})
-	r.Learn("", 200_000, api.BackendDefault)
-	r.Learn("claude-haiku-4-5", 0, api.BackendDefault)
-	r.Learn("claude-haiku-4-5", -1, api.BackendDefault)
-	if _, ok := r.Learned("claude-haiku-4-5", api.BackendDefault); ok {
+	r.Learn("", "", 200_000, api.BackendDefault)
+	r.Learn("", "claude-haiku-4-5", 0, api.BackendDefault)
+	r.Learn("", "claude-haiku-4-5", -1, api.BackendDefault)
+	if _, ok := r.Learned("", "claude-haiku-4-5", api.BackendDefault); ok {
 		t.Error("a zero or negative window was cached")
 	}
 }
@@ -674,7 +674,7 @@ func TestResolveGradedGradesEachRung(t *testing.T) {
 	for _, c := range cases {
 		r := NewResolver(table)
 		if c.learn != "" {
-			r.Learn(c.learn, c.learnValue, api.BackendDefault)
+			r.Learn("", c.learn, c.learnValue, api.BackendDefault)
 		}
 		// These pin the per-rung grade on the vendor default, where the
 		// entitlement axis stands alone. The backend axis is exercised
@@ -755,7 +755,7 @@ func TestResolveGradedBackendVerdictOnKeyedRungs(t *testing.T) {
 			if c.learn != "" {
 				// Learn under the same verdict the request carries, so the
 				// D-key lookup matches and the case exercises a learned hit.
-				r.Learn(c.learn, c.learnValue, c.redirection)
+				r.Learn("", c.learn, c.learnValue, c.redirection)
 			}
 			c.req.Redirection = c.redirection
 			_, src, key, _ := r.ResolveGraded(c.req)
@@ -836,7 +836,7 @@ func TestRedirectedSessionResolvesOnceLearned(t *testing.T) {
 	}
 
 	// The harness declares its window under this backend.
-	r.Learn("claude-haiku-4-5", 180_000, api.BackendRedirected)
+	r.Learn("", "claude-haiku-4-5", 180_000, api.BackendRedirected)
 
 	limit, src, key, _ := r.ResolveGraded(req)
 	if limit != 180_000 || src != LimitLearned {
