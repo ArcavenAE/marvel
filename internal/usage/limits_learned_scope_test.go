@@ -71,3 +71,36 @@ func TestClearDropsOnlyOneWorkspacesLearnedWindows(t *testing.T) {
 		t.Errorf("a second Clear(alpha) = %d, want 0", n)
 	}
 }
+
+// Bind resolves a session's denominator eagerly, and it must resolve through
+// the session's own workspace: a window learned in W serves a session bound in
+// W and no session bound elsewhere.
+func TestBindResolvesTheLearnedWindowOfItsOwnWorkspace(t *testing.T) {
+	t.Parallel()
+	res := NewResolver(Table{})
+	a := New(newRecordSink(), res, WithClock(fixedClock()))
+	res.Learn("ws", "claude-haiku-4-5", 180_000, api.BackendDefault)
+
+	inWS := Coords{AgentID: "ws/a-0", Workspace: "ws", Team: "squad", Role: "worker"}
+	elsewhere := Coords{AgentID: "other/a-0", Workspace: "other", Team: "squad", Role: "worker"}
+	b := Bind{Harness: "claude", Model: "claude-haiku-4-5", Redirection: api.BackendDefault}
+	a.Bind(inWS, b)
+	a.Bind(elsewhere, b)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	st := a.state[inWS.AgentID]
+	if st == nil {
+		t.Fatal("no state for the session bound in ws")
+	}
+	if st.limit != 180_000 || st.limitSrc != LimitLearned {
+		t.Fatalf("session bound in ws: limit %d from %q, want 180000 from learned", st.limit, st.limitSrc)
+	}
+	other := a.state[elsewhere.AgentID]
+	if other == nil {
+		t.Fatal("no state for the session bound in another workspace")
+	}
+	if other.limitSrc == LimitLearned {
+		t.Fatalf("session bound in another workspace: limit %d from learned, want no window from ws", other.limit)
+	}
+}
