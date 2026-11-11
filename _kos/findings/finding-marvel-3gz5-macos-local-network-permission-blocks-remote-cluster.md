@@ -24,7 +24,7 @@ Host kinu, macOS 27.2.1 (26B131), freshly upgraded and rebooted. marvel client a
 
 ## Reading
 
-- macOS attributes the LAN connection of a CLI binary to its responsible app, the terminal (Ghostty here), not to `marvel`. A UUID cache miss for that app at the failing call, followed three seconds later by a configuration change, fits a Local Network decision being made at that moment. Whether a prompt was shown and answered was not recorded.
+- macOS attributes the LAN connection of a CLI binary to its responsible app, the terminal (Ghostty here), not to `marvel`. A UUID cache miss for that app at the failing call, followed three seconds later by a configuration change, fits a Local Network decision being made at that moment. The operator confirmed afterwards that, after the upgrade, they clicked Allow on the Local Network prompts they saw and recognized; which prompt matched this call was not recorded.
 - `nc` and `ping` are system binaries and are exempt, so they succeed where marvel fails. This contradicts the admin guide's "every LAN connection from that terminal fails", and it sends diagnosis toward marvel or the peer.
 - marvel had reached these clusters from the same terminal before the upgrade. That the upgrade reset the terminal's grant is consistent with the evidence but not proven: no pre-upgrade permission state was captured.
 
@@ -32,7 +32,7 @@ Host kinu, macOS 27.2.1 (26B131), freshly upgraded and rebooted. marvel client a
 
 1. One host, one terminal, one upgrade. No second terminal and no fresh user account was tried.
 2. The permission state before the upgrade was not read, so "the upgrade reset it" is inferred.
-3. Whether a prompt appeared, and who answered it, is not known.
+3. The operator answered several Local Network prompts after the upgrade, approving those they saw and recognized. A first-time user may not recognize a prompt that names the terminal rather than marvel, and a prompt nobody sees leaves the call failing; neither case was tested.
 4. Not tested: whether the launchd-started daemon (`com.arcaven.marvel-daemon`, no responsible GUI app) is subject to the permission for its own outbound LAN connections (leaf or federation), and whether it could ever show a prompt. Both clusters it was tested against accepted inbound reads from kinu's client; the daemon's own outbound path was not exercised.
 
 ## Possible follow-ups (not filed)
