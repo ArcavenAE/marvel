@@ -58,3 +58,5 @@ These are already ratified, so any design for the missing stages starts from the
 ## Not filed
 
 No tickets. This finding records the gap and the evidence so a design can start from them.
+
+This is a record of intent, not a build order. The operator, 2026-11-11: "we do not have to design and build to the gap, but I want it obvious to a future claude session the intent". The cluster was put back in service with these gaps open, on purpose. A session that picks this up starts with a design, not with code.
