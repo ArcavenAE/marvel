@@ -366,7 +366,10 @@ before it starts.
 - **No bypass.** Validation refuses `schedule` on a role with
   `dangerous_permissions`, or with a permission mode that skips checks. A
   scheduled run that needs a check skipped is a design problem to escalate,
-  not a flag to set.
+  not a flag to set. A scheduled role's `runtime.command` must also be in the
+  simple form (`api.CommandWordsReadable`: no quote, expansion, pipe or second
+  line), because a quote can split a flag's name where no text match sees it;
+  its flags go in `runtime.args`.
 - **A refusal is recorded, and nothing retries around it.** A denied action
   does not by itself fail a run: a headless run whose tool call was denied
   usually carries on and exits 0. The run record keeps any permission

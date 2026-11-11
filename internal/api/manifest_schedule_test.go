@@ -291,6 +291,48 @@ func TestScheduleRefusals(t *testing.T) {
 			want:     []string{"runtime.command", "bypassPermissions", "skips permission checks"},
 		},
 		{
+			name:     "a quote that splits the flag name in runtime.command",
+			mode:     "headless",
+			command:  "claude --dangerously-skip-'permissions'",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "refused on a scheduled role"},
+		},
+		{
+			name:     "a double quote that splits the flag name in runtime.command",
+			mode:     "headless",
+			command:  "claude --dangerously-skip-\"permissions\"",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "refused on a scheduled role"},
+		},
+		{
+			name:     "an empty quote pair inside the mode value in runtime.command",
+			mode:     "headless",
+			command:  "claude --permission-mode bypass''Permissions",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "refused on a scheduled role"},
+		},
+		{
+			name:     "an empty double quote pair inside the mode value in runtime.command",
+			mode:     "headless",
+			command:  "claude --permission-mode=bypass\"\"Permissions",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "refused on a scheduled role"},
+		},
+		{
+			name:     "an ANSI-C quoted flag in runtime.command",
+			mode:     "headless",
+			command:  "claude $'--dangerously-skip-permissions'",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "refused on a scheduled role"},
+		},
+		{
+			name:     "a backslash before the flag in runtime.command",
+			mode:     "headless",
+			command:  "claude \\--dangerously-skip-permissions",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.command", "refused on a scheduled role"},
+		},
+		{
 			// projectPolicy writes the policy to the --settings file, and
 			// with permissions unset on the role nothing overrides it.
 			name:      "an inline policy whose defaultMode is bypassPermissions",
