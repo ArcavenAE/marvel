@@ -349,6 +349,14 @@ func TestScheduleRefusals(t *testing.T) {
 			want:     []string{"runtime.image", "refused on a scheduled role"},
 		},
 		{
+			name:     "the bypass flag in runtime.args with a runtime.image and no command",
+			mode:     "headless",
+			image:    "claude",
+			args:     `args = ["--dangerously-skip-permissions"]`,
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.args", "skips permission checks"},
+		},
+		{
 			name:     "the bypass mode value in runtime.image with no command",
 			mode:     "headless",
 			image:    "claude --permission-mode bypassPermissions",
