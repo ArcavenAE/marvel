@@ -52,8 +52,10 @@ func TestScheduleRefusals(t *testing.T) {
 		// args, when set, is a runtime.args line for the role, command
 		// replaces the runtime command, and policy is appended to the
 		// manifest as top-level policy tables.
-		args     string
-		command  string
+		args    string
+		command string
+		// image replaces the runtime command with a runtime image.
+		image    string
 		policy   string
 		schedule string
 		want     []string
@@ -333,6 +335,35 @@ func TestScheduleRefusals(t *testing.T) {
 			want:     []string{"runtime.command", "refused on a scheduled role"},
 		},
 		{
+			name:     "the bypass flag in runtime.image with no command",
+			mode:     "headless",
+			image:    "claude --dangerously-skip-permissions",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.image", "skips permission checks"},
+		},
+		{
+			name:     "a quote that splits the flag name in runtime.image with no command",
+			mode:     "headless",
+			image:    "claude --dangerously-skip-'permissions'",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.image", "refused on a scheduled role"},
+		},
+		{
+			name:     "the bypass flag in runtime.args with a runtime.image and no command",
+			mode:     "headless",
+			image:    "claude",
+			args:     `args = ["--dangerously-skip-permissions"]`,
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.args", "skips permission checks"},
+		},
+		{
+			name:     "the bypass mode value in runtime.image with no command",
+			mode:     "headless",
+			image:    "claude --permission-mode bypassPermissions",
+			schedule: "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"",
+			want:     []string{"runtime.image", "skips permission checks"},
+		},
+		{
 			// projectPolicy writes the policy to the --settings file, and
 			// with permissions unset on the role nothing overrides it.
 			name:      "an inline policy whose defaultMode is bypassPermissions",
@@ -352,6 +383,9 @@ func TestScheduleRefusals(t *testing.T) {
 			}
 			if c.command != "" {
 				doc = strings.Replace(doc, `command = "claude"`, fmt.Sprintf("command = %q", c.command), 1)
+			}
+			if c.image != "" {
+				doc = strings.Replace(doc, `command = "claude"`, fmt.Sprintf("image = %q", c.image), 1)
 			}
 			if c.policy != "" {
 				doc += "\n" + c.policy + "\n"
@@ -395,6 +429,18 @@ func TestScheduleAccepts(t *testing.T) {
 		if _, err := ParseManifestBytes([]byte(scheduleManifest("headless", "", schedule))); err != nil {
 			t.Errorf("schedule %q refused: %v", schedule, err)
 		}
+	}
+}
+
+// TestScheduleAcceptsAnImageOnly: a scheduled role that names a known adapter
+// as its image, with no command and clean args, is accepted.
+func TestScheduleAcceptsAnImageOnly(t *testing.T) {
+	t.Parallel()
+	doc := scheduleManifest("headless", "", "cron = \"17 6 * * *\"\ntimezone = \"Etc/UTC\"")
+	doc = strings.Replace(doc, `command = "claude"`, `image = "claude"`, 1)
+	doc = strings.Replace(doc, `prompt = "/refresh"`, "prompt = \"/refresh\"\n    args = [\"--model\", \"sonnet\"]", 1)
+	if _, err := ParseManifestBytes([]byte(doc)); err != nil {
+		t.Fatalf("image-only scheduled role with clean args refused: %v", err)
 	}
 }
 

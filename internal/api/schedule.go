@@ -150,19 +150,32 @@ func validateSchedule(team string, r ManifestRole, now time.Time) error {
 		return fmt.Errorf("%s: permissions %q skips permission checks and is refused on a scheduled role; use \"dontAsk\" with an allow list", where, r.Permissions)
 	}
 	// The same bypass spelled as harness flags in runtime.args, or as words
-	// of runtime.command, which the adapter passes to the harness too. Flags
-	// a wrapper command adds on its own are not visible here at parse.
+	// of the command the role will run, which the adapter passes to the
+	// harness too. That is runtime.command, or runtime.image when no command
+	// is set: the generic adapter runs the image name as the program. Flags a
+	// wrapper command adds on its own are not visible here at parse.
 	if flag := bypassArg(r.Runtime.Args); flag != "" {
 		return fmt.Errorf("%s: runtime.args %q skips permission checks and is refused on a scheduled role; use permissions = \"dontAsk\" with an allow list", where, flag)
 	}
-	if flag := bypassArg(strings.Fields(r.Runtime.Command)); flag != "" {
-		return fmt.Errorf("%s: runtime.command %q skips permission checks and is refused on a scheduled role; use permissions = \"dontAsk\" with an allow list", where, flag)
+	field, command := "runtime.command", r.Runtime.Command
+	if command == "" {
+		field, command = "runtime.image", r.Runtime.Image
+	}
+	if flag := bypassArg(strings.Fields(command)); flag != "" {
+		return fmt.Errorf("%s: %s %q skips permission checks and is refused on a scheduled role; use permissions = \"dontAsk\" with an allow list", where, field, flag)
 	}
 	// A command may be shell text, where quotes can sit anywhere in a word,
 	// so the command is also refused when either bypass spelling appears in
 	// it at all.
-	if word := bypassText(r.Runtime.Command); word != "" {
-		return fmt.Errorf("%s: runtime.command names %q, which skips permission checks and is refused on a scheduled role; use permissions = \"dontAsk\" with an allow list", where, word)
+	if word := bypassText(command); word != "" {
+		return fmt.Errorf("%s: %s names %q, which skips permission checks and is refused on a scheduled role; use permissions = \"dontAsk\" with an allow list", where, field, word)
+	}
+	// Matching text cannot settle it: a quote can split a flag's name across
+	// the shell's word boundary and the shell rejoins it. A scheduled run has
+	// no human at a prompt, so its command is held to the simple form whose
+	// words are the words the harness receives; flags go in runtime.args.
+	if command != "" && !CommandWordsReadable(command) {
+		return fmt.Errorf("%s: %s is shell text (a quote, an expansion, a pipe or a second line), so its words cannot be read and it is refused on a scheduled role; name the program alone and put its flags in runtime.args", where, field)
 	}
 	// Matching text cannot settle it: a quote can split a flag's name across
 	// the shell's word boundary and the shell rejoins it. A scheduled run has
