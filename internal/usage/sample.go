@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"math"
 	"time"
 
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
@@ -156,4 +157,45 @@ func sampleFromEvent(c Coords, ev rtevents.Event, prof profile, primaryRaw strin
 		return base, true
 	}
 	return Sample{}, false
+}
+
+// maxClassTokens bounds each token class a sample may carry. A session total
+// on a long run reaches billions of cache-read tokens, so the bound sits far
+// above anything real while keeping a sum of many samples inside an int.
+const maxClassTokens = 1 << 40
+
+// maxCostUSD bounds one sample's cost. It exists only to keep a later sum
+// finite; no real turn or session costs this much.
+const maxCostUSD = 1e9
+
+// Malformed names what is wrong with a sample's numbers, or returns "" for a
+// sound one. A seat's own stream feeds these values into daemon-wide state
+// (spend that admission reads, occupancy that shifts read), so a negative
+// class would lower a total another check depends on, and an enormous one
+// could overflow a later sum.
+func (s Sample) Malformed() string {
+	for _, c := range [...]struct {
+		name string
+		v    int
+	}{
+		{"input", s.In},
+		{"output", s.Out},
+		{"cache read", s.CacheReadIn},
+		{"cache creation", s.CacheCreationIn},
+		{"reasoning", s.ReasoningOut},
+		{"total", s.Total},
+	} {
+		if c.v < 0 {
+			return c.name + " tokens are negative"
+		}
+		if c.v > maxClassTokens {
+			return c.name + " tokens exceed the plausible maximum"
+		}
+	}
+	if s.CostUSD != nil {
+		if v := *s.CostUSD; math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > maxCostUSD {
+			return "cost is not a plausible amount"
+		}
+	}
+	return ""
 }

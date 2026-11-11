@@ -59,4 +59,9 @@ type Stats struct {
 	// is the signature of a cumulative series read as levels. This is the
 	// runtime guard against reintroducing the defect doc.go describes.
 	CumulationViolations uint64
+	// MalformedSamples counts samples rejected before any fold because a
+	// token class or the cost was negative or implausibly large. A seat's
+	// own stream supplies these numbers, and they feed totals that other
+	// sessions' admission and shift decisions read.
+	MalformedSamples uint64
 }

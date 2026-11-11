@@ -420,6 +420,20 @@ func (a *Accountant) fold(c Coords, ev rtevents.Event, prof profile) foldResult 
 		return res
 	}
 
+	// A negative or implausibly large number from the seat's own stream must
+	// not reach spend or occupancy: it could lower a total that admission
+	// reads, or overflow a later sum. Reject it, count it, say so once.
+	if why := s.Malformed(); why != "" {
+		a.stats.MalformedSamples++
+		if a.warnOnceLocked("malformed:" + c.AgentID) {
+			res.warnings = append(res.warnings, fmt.Sprintf(
+				"session %s: usage sample rejected, %s; further malformed samples from it are counted, not logged",
+				c.AgentID, why,
+			))
+		}
+		return res
+	}
+
 	if s.Terminal {
 		a.foldTerminalLocked(st, s, &res)
 		return res
