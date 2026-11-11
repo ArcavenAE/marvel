@@ -177,6 +177,13 @@ func validateSchedule(team string, r ManifestRole, now time.Time) error {
 	if command != "" && !CommandWordsReadable(command) {
 		return fmt.Errorf("%s: %s is shell text (a quote, an expansion, a pipe or a second line), so its words cannot be read and it is refused on a scheduled role; name the program alone and put its flags in runtime.args", where, field)
 	}
+	// Matching text cannot settle it: a quote can split a flag's name across
+	// the shell's word boundary and the shell rejoins it. A scheduled run has
+	// no human at a prompt, so its command is held to the simple form whose
+	// words are the words the harness receives; flags go in runtime.args.
+	if r.Runtime.Command != "" && !CommandWordsReadable(r.Runtime.Command) {
+		return fmt.Errorf("%s: runtime.command is shell text (a quote, an expansion, a pipe or a second line), so its words cannot be read and it is refused on a scheduled role; name the program alone and put its flags in runtime.args", where)
+	}
 	if s.Cron == "" {
 		return fmt.Errorf("%s: schedule.cron is required", where)
 	}
