@@ -67,8 +67,9 @@ jobs:
       - name: Download release archives
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
-          gh release download "${{ github.ref_name }}" --pattern "*.tar.gz"
+          gh release download "$TAG" --pattern "*.tar.gz"
           # One directory per archive. The archives hold their files at the
           # root, so extracting them together would overwrite one platform's
           # binary with the next and leave no directory for the signing loop
@@ -166,6 +167,7 @@ jobs:
       - name: Upload signed artifacts to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
           ASSETS=()
           for f in marvel-darwin-* marvel-*.dmg marvel-*.pkg; do
@@ -176,7 +178,7 @@ jobs:
             echo "::error::no signed artifacts to upload" >&2
             exit 1
           fi
-          gh release upload "${{ github.ref_name }}" "${ASSETS[@]}" --clobber
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber
 
       - name: Cleanup keychain
         if: always()
