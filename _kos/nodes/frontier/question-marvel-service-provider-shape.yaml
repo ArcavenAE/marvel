@@ -184,3 +184,9 @@ notes: >
   Related bd: aae-orc-dqhf, aae-orc-vxn8, aae-orc-b64o and the probe tickets
   above. The aae-orc copy of this id is a mis-file, relocation-pending; this
   copy is authoritative.
+
+  2026-11-11, finding-marvel-lt30: the service record covers declare, run and
+  monitor (bus only); install, first configure, upgrade and persistence across
+  a reboot are not covered for any provider. Operator intent: marvel sets up
+  and manages the user's chosen services (install, configure, upgrade, monitor,
+  manage). Six open questions there.
