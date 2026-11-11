@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -12,8 +13,9 @@ import (
 
 // Reasons an opencode launch is refused, as the exit-78 stub prints them.
 const (
-	openCodeRefuseAutoUnsandboxed = "auto-unsandboxed"
-	openCodeRefuseRoleEnvConflict = "role-env-conflict"
+	openCodeRefuseAutoUnsandboxed   = "auto-unsandboxed"
+	openCodeRefuseRoleEnvConflict   = "role-env-conflict"
+	openCodeRefuseUnreadableCommand = "command-unreadable"
 )
 
 // openCodeRoleEnvLevers are the env names that carry opencode's permission
@@ -60,14 +62,25 @@ func openCodePermissionBlock(dataHome string) ([]byte, string) {
 }
 
 // openCodeLaunchRefusal returns the reason an opencode launch must not start,
-// or "" when it may: a headless launch with --auto on, no sandbox profile and no
-// container placement. Both unset counts as unsandboxed, so a manager that set
-// neither refuses (goose reads it the same way).
+// or "" when it may: a headless launch, with no sandbox profile and no container
+// placement, that has --auto on in its args or its command's words, or whose
+// command cannot be read as plain words. Both unset counts as unsandboxed, so a
+// manager that set neither refuses (goose reads it the same way).
 func openCodeLaunchRefusal(ctx *LaunchContext) string {
 	if ctx.Session.Runtime.Mode != api.RuntimeModeHeadless {
 		return ""
 	}
-	if ctx.Placement != api.PlacementContainer && ctx.SandboxProfile == "" && openCodeAutoOn(ctx.Session.Runtime.Args) {
+	if ctx.Placement == api.PlacementContainer || ctx.SandboxProfile != "" {
+		return ""
+	}
+	// The adapter passes the command's words to opencode too, so a flag may sit
+	// there. A command whose words cannot be read (a quote, an expansion, a pipe
+	// or a second line) may carry it where nothing here can see it.
+	command := resolveCommand(&ctx.Session.Runtime)
+	if !api.CommandWordsReadable(command) {
+		return openCodeRefuseUnreadableCommand
+	}
+	if openCodeAutoOn(slices.Concat(strings.Fields(command), ctx.Session.Runtime.Args)) {
 		return openCodeRefuseAutoUnsandboxed
 	}
 	return ""

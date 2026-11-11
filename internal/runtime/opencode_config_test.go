@@ -186,3 +186,47 @@ func TestOpenCodePrepareDoesNotCallRoleEnvConflict(t *testing.T) {
 		t.Errorf("a role env that names a lever refused the launch: %q", res.Command)
 	}
 }
+
+// The refusal reads the words of runtime.command as well as runtime.args,
+// because the adapter passes a command's words to opencode too. A headless
+// unsandboxed launch whose command cannot be read as plain words is refused,
+// since the flag may sit where nothing here can see it.
+func TestOpenCodeLaunchRefusalReadsTheCommandWords(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		args    []string
+		place   api.Placement
+		prof    string
+		want    string
+	}{
+		{"--auto in the command", "opencode --auto", nil, "", "", openCodeRefuseAutoUnsandboxed},
+		{"--auto=true in the command", "opencode --auto=true", nil, "", "", openCodeRefuseAutoUnsandboxed},
+		{"--auto=false in the command", "opencode --auto=false", nil, "", "", ""},
+		{"a quote splitting the flag", "opencode --au'to'", nil, "", "", openCodeRefuseUnreadableCommand},
+		{"an expansion in the command", "opencode $FLAGS", nil, "", "", openCodeRefuseUnreadableCommand},
+		{"a pipe in the command", "opencode | tee x", nil, "", "", openCodeRefuseUnreadableCommand},
+		{"a plain command and no flag", "opencode", nil, "", "", ""},
+		{"an unreadable command under a sandbox profile", "opencode --au'to'", nil, "", "/tmp/p.sb", ""},
+		{"an unreadable command in a container", "opencode --au'to'", nil, api.PlacementContainer, "", ""},
+		{"--auto in the command under a sandbox profile", "opencode --auto", nil, "", "/tmp/p.sb", ""},
+		{"--auto in args still refuses", "opencode", []string{"--auto"}, "", "", openCodeRefuseAutoUnsandboxed},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := autoCtx(t, api.RuntimeModeHeadless, c.args...)
+			ctx.Session.Runtime.Command = c.command
+			ctx.Placement, ctx.SandboxProfile = c.place, c.prof
+			if got := openCodeLaunchRefusal(ctx); got != c.want {
+				t.Fatalf("refusal = %q, want %q", got, c.want)
+			}
+		})
+	}
+
+	// An interactive launch is not covered, as before.
+	ctx := autoCtx(t, api.RuntimeModeInteractive)
+	ctx.Session.Runtime.Command = "opencode --au'to'"
+	if got := openCodeLaunchRefusal(ctx); got != "" {
+		t.Errorf("interactive refusal = %q, want none", got)
+	}
+}
