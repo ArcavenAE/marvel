@@ -176,7 +176,7 @@ func TestResolveAgreesWithTheLadder(t *testing.T) {
 				if lo.learn {
 					w = lo.limit
 				}
-				res.Learn(model, w, api.BackendDefault)
+				res.Learn("", model, w, api.BackendDefault)
 			}
 
 			limit, src, _ := res.Resolve(req)

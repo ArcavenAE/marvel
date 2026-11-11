@@ -758,12 +758,12 @@ func TestTerminalDeclarationLearnsWindow(t *testing.T) {
 	))
 
 	// Learned under the session's backend verdict (default here).
-	if w, ok := res.Learned("claude-fable-5[1m]", api.BackendDefault); !ok || w != 1_000_000 {
+	if w, ok := res.Learned(testCoords.Workspace, "claude-fable-5[1m]", api.BackendDefault); !ok || w != 1_000_000 {
 		t.Errorf("learned window = %d (%v), want 1000000", w, ok)
 	}
 	// The [1m] suffix must survive into the cache key: it changes the
 	// window 5x, so a key that strips it collapses two models into one.
-	if _, ok := res.Learned("claude-fable-5", api.BackendDefault); ok {
+	if _, ok := res.Learned(testCoords.Workspace, "claude-fable-5", api.BackendDefault); ok {
 		t.Error("the learned key dropped the [1m] suffix, which changes the window 5x")
 	}
 

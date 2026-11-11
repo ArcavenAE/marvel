@@ -40,6 +40,7 @@ func gradedSession(t *testing.T, s *Store, manifestLimit int) (token string) {
 // the label "feed" and actually climbing the ladder (aae-orc-38yr, MUST
 // NOT MISS #1).
 type resolverCall struct {
+	workspace     string
 	harness       string
 	model         string
 	args          []string
@@ -55,8 +56,8 @@ type resolverCall struct {
 // makes that contribution assertable in isolation; the daemon package
 // tests the real usage.Resolver end to end.
 func ladderResolver(rec *resolverCall) ContextLimitResolveFunc {
-	return func(harness, model string, args []string, manifestLimit, feedLimit int, redirection BackendRedirection) (int, string) {
-		*rec = resolverCall{harness, model, args, manifestLimit, feedLimit, redirection}
+	return func(workspace, harness, model string, args []string, manifestLimit, feedLimit int, redirection BackendRedirection) (int, string) {
+		*rec = resolverCall{workspace, harness, model, args, manifestLimit, feedLimit, redirection}
 		// The real ladder: an operator's manifest override outranks a
 		// side-channel feed (limitLadder in internal/usage).
 		if manifestLimit > 0 {
@@ -93,6 +94,9 @@ func TestHeartbeatCarriesNumeratorAndDenominator(t *testing.T) {
 		t.Fatalf("update heartbeat: %v", err)
 	}
 
+	if rec.workspace != "ws" {
+		t.Fatalf("resolver workspace = %q, want %q: a learned window is scoped to the session's workspace", rec.workspace, "ws")
+	}
 	got, _ := s.GetSession(gradedSessionKey)
 	if got.ContextSource != ContextSourceHeartbeat {
 		t.Fatalf("ContextSource = %q, want %q", got.ContextSource, ContextSourceHeartbeat)

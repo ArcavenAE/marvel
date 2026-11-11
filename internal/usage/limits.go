@@ -425,7 +425,10 @@ func ModelFromArgs(args []string) string {
 
 // Request is one denominator resolution.
 type Request struct {
-	Harness string
+	// Workspace scopes the learned rung: a window one workspace's seat
+	// taught is served only to sessions in that workspace.
+	Workspace string
+	Harness   string
 	// StreamModel is the model the harness named in-stream, "" when it
 	// named none.
 	StreamModel string
@@ -462,7 +465,16 @@ type Request struct {
 	Redirection api.BackendRedirection
 }
 
-// learnedKey identifies a learned window by model AND the backend verdict
+// The learned rung accepts a declared window only inside this range. A
+// seat's own stream supplies the number, and the learned entry then serves
+// later sessions, so an absurd value (zero-adjacent or astronomically large)
+// would set the denominator other sessions are measured against.
+const (
+	MinLearnedWindow = 1_000
+	MaxLearnedWindow = 10_000_000
+)
+
+// learnedKey identifies a learned window by workspace, model AND the backend verdict
 // the learning session ran under (the D-key of finding-031 §5). One Resolver
 // is shared across a daemon's sessions, so keying on the model alone lets a
 // window measured under one backend be served to a session on another. The
@@ -476,8 +488,9 @@ type Request struct {
 // accepted (finding-031 §5, "smaller than today's, not zero"); putting the
 // provider in the key is option B, deferred behind the eooi standing trigger.
 type learnedKey struct {
-	model   string
-	backend api.BackendRedirection
+	workspace string
+	model     string
+	backend   api.BackendRedirection
 }
 
 // Resolver walks the denominator ladder and caches windows a harness has
@@ -578,7 +591,7 @@ func (r *Resolver) ResolveGraded(req Request) (int, LimitSource, KeyConfidence, 
 
 	if model != "" {
 		r.mu.RLock()
-		w, ok := r.learned[learnedKey{NormalizeModel(model), req.Redirection}]
+		w, ok := r.learned[learnedKey{req.Workspace, NormalizeModel(model), req.Redirection}]
 		r.mu.RUnlock()
 		if ok {
 			if req.ManifestLimit > 0 && req.ManifestLimit != w {
@@ -713,12 +726,17 @@ func applyRedirection(entitlement KeyConfidence, r api.BackendRedirection) KeyCo
 // table stays keyed on the model alone — the table is the direct-API window,
 // and a redirected declaration disagreeing with it is expected, not drift —
 // so drift is only flagged for a default-backend declaration.
-func (r *Resolver) Learn(model string, window int, backend api.BackendRedirection) {
+func (r *Resolver) Learn(workspace, model string, window int, backend api.BackendRedirection) {
 	if model == "" || window <= 0 {
 		return
 	}
 	mkey := NormalizeModel(model)
-	lk := learnedKey{mkey, backend}
+	if window < MinLearnedWindow || window > MaxLearnedWindow {
+		r.warnOnce("range:"+workspace+":"+mkey, "context window: a session in workspace %q declared %d for %q, outside the plausible range %d to %d; not learned",
+			workspace, window, mkey, MinLearnedWindow, MaxLearnedWindow)
+		return
+	}
+	lk := learnedKey{workspace, mkey, backend}
 
 	r.mu.Lock()
 	prev, had := r.learned[lk]
@@ -731,18 +749,34 @@ func (r *Resolver) Learn(model string, window int, backend api.BackendRedirectio
 			window, mkey, shipped)
 	}
 	if had && prev != window {
-		r.warnOnce("changed:"+mkey+":"+string(backend), "context window for %q changed from %d to %d", mkey, prev, window)
+		r.warnOnce("changed:"+workspace+":"+mkey+":"+string(backend), "context window for %q changed from %d to %d", mkey, prev, window)
 	}
 }
 
 // Learned reports the cached window for a model under a backend verdict, for
 // tests and diagnostics. The backend is part of the key (see learnedKey), so
 // a window learned under one backend is invisible under another.
-func (r *Resolver) Learned(model string, backend api.BackendRedirection) (int, bool) {
+func (r *Resolver) Learned(workspace, model string, backend api.BackendRedirection) (int, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	w, ok := r.learned[learnedKey{NormalizeModel(model), backend}]
+	w, ok := r.learned[learnedKey{workspace, NormalizeModel(model), backend}]
 	return w, ok
+}
+
+// Clear drops every window learned in a workspace and reports how many it
+// removed, so an operator can discard a value a seat taught wrongly without
+// restarting the daemon. It is a method only; no RPC or command reaches it.
+func (r *Resolver) Clear(workspace string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for k := range r.learned {
+		if k.workspace == workspace {
+			delete(r.learned, k)
+			n++
+		}
+	}
+	return n
 }
 
 func (r *Resolver) warnOnce(key, format string, args ...any) {

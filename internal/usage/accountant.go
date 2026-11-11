@@ -252,6 +252,7 @@ func (a *Accountant) Bind(c Coords, b Bind) {
 	prof, _ := profileFor(b.Harness)
 	catalogLimit := a.catalogLimit(b)
 	limit, src, model := a.limits.Resolve(Request{
+		Workspace:     c.Workspace,
 		Harness:       b.Harness,
 		StreamModel:   b.Model,
 		RuntimeArgs:   b.Args,
@@ -342,7 +343,7 @@ func (a *Accountant) Observe(c Coords, ev rtevents.Event) {
 		log.Print(w)
 	}
 	if res.learnWindow > 0 {
-		a.limits.Learn(res.learnModel, res.learnWindow, res.learnVerdict)
+		a.limits.Learn(c.Workspace, res.learnModel, res.learnWindow, res.learnVerdict)
 	}
 	if res.unresolved {
 		events.Emit(a.ev, events.Event{
@@ -385,6 +386,7 @@ func (a *Accountant) observeStart(c Coords, ev rtevents.Event, prof profile) {
 	a.mu.Unlock()
 
 	limit, src, model := a.limits.Resolve(Request{
+		Workspace:     c.Workspace,
 		Harness:       ev.Harness,
 		StreamModel:   d.Model,
 		RuntimeArgs:   args,
