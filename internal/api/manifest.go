@@ -664,7 +664,7 @@ func validateManifestBudget(i int, t ManifestTeam) error {
 	if b.MaxSessions > 0 {
 		declared := 0
 		for _, r := range t.Roles {
-			declared += r.Replicas
+			declared = AddSat(declared, r.Replicas)
 		}
 		if declared > b.MaxSessions {
 			return fmt.Errorf("parse manifest: team[%d] declares %d replicas across %d role(s) but budget.max_sessions is %d", i, declared, len(t.Roles), b.MaxSessions)

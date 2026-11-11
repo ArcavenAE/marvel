@@ -373,7 +373,9 @@ func countClause(limit int, s Snapshot, r Request) ClauseResult {
 		}
 		return res
 	}
-	if s.LiveSessions+r.Want > limit {
+	// Compared as Want > limit-Live so a Want near math.MaxInt cannot wrap the
+	// sum negative and read as within the limit.
+	if r.Want > limit-s.LiveSessions {
 		res.State = Exceeded
 	}
 	return res
