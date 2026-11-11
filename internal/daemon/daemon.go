@@ -1213,9 +1213,10 @@ func (d *Daemon) recoverRequest(method string, handle func() daemonrpc.Response)
 	return handle()
 }
 
-// reportInvalidReplicas names every stored role whose replica count is below
-// the scale minimum, once at startup. Such a row can only come from a daemon
-// that predates the marvel#365 check. It is reported and left as it is:
+// reportInvalidReplicas names every stored role whose replica count is outside
+// the scale bounds, once at startup. A negative row can only come from a daemon
+// that predates the marvel#365 check, and one above the maximum from a daemon
+// that predates the upper bound. It is reported and left as it is:
 // refusing to start would strand the adopted agents, and rewriting stored
 // state silently would hide what happened (SOUL section 5). planRole treats
 // it as steady until the operator scales the role.

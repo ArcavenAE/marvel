@@ -142,7 +142,7 @@ func (c *Controller) setAdmissionState(t *api.Team, st api.AdmissionState) {
 func (c *Controller) declaredSessions(t *api.Team) int {
 	n := 0
 	for i := range t.Roles {
-		n += t.Roles[i].Replicas
+		n = api.AddSat(n, t.Roles[i].Replicas)
 	}
 	return n
 }

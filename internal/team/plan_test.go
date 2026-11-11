@@ -501,3 +501,25 @@ func TestPlanRoleNegativeDesiredIsSteady(t *testing.T) {
 		t.Errorf("plan = %+v, want steady with nothing deleted or spawned", plan)
 	}
 }
+
+// TestPlanRoleDesiredAboveTheBoundIsSteady: a stored count above
+// api.MaxScaleReplicas plans nothing, so the reconciler does not try to spawn
+// it. The message the startup report gives for it says it is treated as steady.
+func TestPlanRoleDesiredAboveTheBoundIsSteady(t *testing.T) {
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	const team, role = "team", "worker"
+	addAliveSessions(t, store, team, role, 1)
+	tm := api.Team{
+		Name: team, Workspace: planTestWS, Generation: planTestGen,
+		Roles: []api.Role{{Name: role, Replicas: api.MaxScaleReplicas + 1}},
+	}
+	plan := ctrl.planRole(&tm, &tm.Roles[0], tm.Generation)
+	if plan.Action != RoleSteady || len(plan.Delete) != 0 || plan.Spawn != 0 {
+		t.Errorf("plan = %+v, want steady with nothing deleted or spawned", plan)
+	}
+	tm.Roles[0].Replicas = api.MaxScaleReplicas
+	if plan := ctrl.planRole(&tm, &tm.Roles[0], tm.Generation); plan.Action != RoleSpawn {
+		t.Errorf("a count at the bound planned %v, want a spawn: the bound itself is valid", plan.Action)
+	}
+}
