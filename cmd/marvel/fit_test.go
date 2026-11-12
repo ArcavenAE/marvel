@@ -72,7 +72,7 @@ func TestFitDropsByPriorityAt200(t *testing.T) {
 	got := fitSessionTable([]api.Session{fitSession("agent-0")}, defaultSessionColumns(), fitOptions{width: 200})
 	want := []string{
 		"WORKSPACE", "TEAM", "ROLE", "GEN", "AGENT NAME", "STATE", "HEALTH", "CTX%", "ACTIVE%", "LAST-ACTIVE", "AGE", "LLM",
-		"CPU%", "RSS", "DESK", "RUNTIME", "WORKDIR", "TOUT", "RATE",
+		"mCPU", "RSS", "DESK", "RUNTIME", "WORKDIR", "TOUT", "RATE",
 	}
 	if !reflect.DeepEqual(fitHeaders(got.table), want) {
 		t.Errorf("columns at 200 = %v, want %v", fitHeaders(got.table), want)

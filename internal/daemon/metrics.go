@@ -113,12 +113,18 @@ func (d *Daemon) SampleMetricsOnce(sampler *procstat.Sampler) {
 		if !ok {
 			continue
 		}
-		d.store.UpdateSessionMetrics(s.Key(), api.SessionMetrics{
-			CPUPercent:   sample.CPUPercent,
-			RSSBytes:     sample.RSSBytes,
-			IOReadBytes:  sample.IOReadBytes,
-			IOWriteBytes: sample.IOWriteBytes,
-			IOAvailable:  sample.IOAvailable,
-		})
+		d.store.UpdateSessionMetrics(s.Key(), metricsFrom(sample))
+	}
+}
+
+// metricsFrom is the stored reading for one process-subtree sample.
+func metricsFrom(sample procstat.Sample) api.SessionMetrics {
+	return api.SessionMetrics{
+		CPUPercent:   sample.CPUPercent,
+		Millicpu:     api.MillicpuFromPercent(sample.CPUPercent),
+		RSSBytes:     sample.RSSBytes,
+		IOReadBytes:  sample.IOReadBytes,
+		IOWriteBytes: sample.IOWriteBytes,
+		IOAvailable:  sample.IOAvailable,
 	}
 }

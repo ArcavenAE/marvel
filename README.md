@@ -183,7 +183,7 @@ marvel stop                                          # stop daemon, detach (agen
 marvel stop --teardown                               # stop daemon and end every agent
 
 # Inspect
-marvel get sessions                                  # list sessions (-w for watch mode); --columns cpu,rss adds CPU% and RSS
+marvel get sessions                                  # list sessions (-w for watch mode); --columns cpu,rss adds mCPU (millicpu, 1000 is one core) and RSS
 marvel get teams                                     # list teams and roles
 marvel get workspaces                                # list workspaces
 marvel get endpoints                                 # list endpoints

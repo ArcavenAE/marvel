@@ -4,6 +4,7 @@ package api
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"time"
 
@@ -702,7 +703,11 @@ const (
 // convincing 0.0.
 type SessionMetrics struct {
 	CPUPercent float64
-	RSSBytes   int64
+	// Millicpu is CPUPercent in the unit Kubernetes uses: 1000 is one core. It is
+	// CPUPercent times ten, rounded, so 968.1 reads 9681. CPUPercent keeps its
+	// meaning; a reader of an older daemon's output has only CPUPercent.
+	Millicpu int64
+	RSSBytes int64
 	// IOReadBytes and IOWriteBytes are cumulative block-layer bytes over
 	// the subtree. IOAvailable is false where the platform exposes no
 	// per-process counter (darwin today).
@@ -710,6 +715,11 @@ type SessionMetrics struct {
 	IOWriteBytes int64
 	IOAvailable  bool
 	MetricsAt    time.Time
+}
+
+// MillicpuFromPercent converts a percent of one core to millicpu.
+func MillicpuFromPercent(percent float64) int64 {
+	return int64(math.Round(percent * 10))
 }
 
 // The values a role's global_role may take. The word is the global address

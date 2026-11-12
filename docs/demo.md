@@ -521,10 +521,10 @@ and tags every event with workspace, team, role, and session.
 ```sh
 ./bin/marvel work examples/mixed-adapters.toml
 sleep 4
-./bin/marvel get sessions --columns name,cpu,rss   # CPU% and RSS populated for all four sessions
+./bin/marvel get sessions --columns name,cpu,rss   # mCPU and RSS populated for all four sessions
 ```
 
-`marvel get sessions` samples the process table, so CPU% and RSS are real for
+`marvel get sessions` samples the process table, so mCPU and RSS are real for
 every session regardless of harness, and need no auth. Watch the normalized
 agent stream from the three headless roles:
 
@@ -559,7 +559,7 @@ the ring carries; `marvel events --list-kinds` prints the rest.
 
 Deterministic vs auth-dependent:
 
-- Deterministic (no auth): the three sessions spawn, and the CPU% and RSS
+- Deterministic (no auth): the three sessions spawn, and the mCPU and RSS
   columns populate.
 - Auth-dependent: the `agent.*` token, message, and cost events require each
   harness to authenticate and take a real model turn. Without auth a harness

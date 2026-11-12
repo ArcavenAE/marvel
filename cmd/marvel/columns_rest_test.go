@@ -127,7 +127,7 @@ func wideNames() []string { return slices.Clone(wideSessionColumns) }
 // fitPriority order.
 var restCutOrder = []string{
 	"SERVICE", "ACCT", "SPEC", "PROMPT", "LAST-TURN",
-	"WORKSPACE", "GEN", "DESK", "RSS", "CPU%", "RUNTIME", "ACTIVE%", "AGE", "WORKDIR", "ROLE", "TEAM",
+	"WORKSPACE", "GEN", "DESK", "RSS", "mCPU", "RUNTIME", "ACTIVE%", "AGE", "WORKDIR", "ROLE", "TEAM",
 	"RATE", "TOUT", "LAST-ACTIVE", "CTX%", "HEALTH", "STATE",
 }
 
