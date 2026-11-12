@@ -148,7 +148,7 @@ func checkGetOutput(resource, format string) error {
 // fetchGet reads one resource type through the daemon into out.
 func fetchGet(resourceType string, out any) error {
 	params, _ := json.Marshal(map[string]string{"resource_type": resourceType})
-	resp, err := send(daemonrpc.Request{Method: "get", Params: params})
+	resp, err := sendTimed(daemonrpc.Request{Method: "get", Params: params})
 	if err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ func getWithOutput(resource, format string) error {
 		}
 		// Redact for the same reason the team document does: an older daemon
 		// sends Env values unredacted.
-		out, err := renderGetOutput(api.Redact(sessions), format)
+		out, err := renderGetOutput(sessionsWithSkew(api.Redact(sessions), lastActiveClock(), clockTolerance), format)
 		if err != nil {
 			return err
 		}

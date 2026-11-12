@@ -41,8 +41,8 @@ func lastActiveAsOf(s api.Session, now time.Time) asof.Cell[time.Duration] {
 // tool call reads quiet.
 func lastActiveCell(s api.Session, now time.Time) string {
 	c := lastActiveAsOf(s, now)
-	out := c.Render(now, ageWords)
-	if c.State(now) == asof.Fresh && c.Source == string(api.ContextSourceHeartbeat) {
+	out := c.RenderWithin(now, clockTolerance, ageWords)
+	if c.StateWithin(now, clockTolerance) == asof.Fresh && c.Source == string(api.ContextSourceHeartbeat) {
 		out += sourceMark
 	}
 	return out

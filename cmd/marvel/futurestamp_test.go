@@ -128,7 +128,7 @@ func TestClockSkewReasonInJSON(t *testing.T) {
 	}
 	var list []struct {
 		Name      string      `json:"name"`
-		ContextAt time.Time   `json:"context_at"`
+		ContextAt time.Time   `json:"ContextAt"`
 		ClockSkew *[]skewNote `json:"clock_skew"`
 	}
 	if err := json.Unmarshal(out, &list); err != nil {
@@ -140,8 +140,8 @@ func TestClockSkewReasonInJSON(t *testing.T) {
 	if list[0].ClockSkew == nil || len(*list[0].ClockSkew) != 1 {
 		t.Fatalf("ahead session clock_skew = %v, want one note", list[0].ClockSkew)
 	}
-	if n := (*list[0].ClockSkew)[0]; n != (skewNote{Field: "context_at", State: "future", Skew: "1h0m0s"}) {
-		t.Errorf("note = %+v, want context_at, future, 1h0m0s", n)
+	if n := (*list[0].ClockSkew)[0]; n != (skewNote{Field: "ContextAt", State: "future", Skew: "1h0m0s"}) {
+		t.Errorf("note = %+v, want ContextAt, future, 1h0m0s", n)
 	}
 	if !list[0].ContextAt.Equal(ahead.ContextAt) {
 		t.Errorf("context_at was rewritten to %v, want %v", list[0].ContextAt, ahead.ContextAt)
