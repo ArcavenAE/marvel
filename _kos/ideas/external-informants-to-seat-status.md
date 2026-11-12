@@ -1,4 +1,4 @@
-# External informants: how a watcher tells marvel what it found about a seat
+# External informants: a watcher that follows marvel and tells it what it found
 
 - **Status:** idea (pre-hypothesis, no commitment). Exploration only: no
   frontier node, probe or ticket, and it may sit in tension with the nodes
@@ -9,7 +9,7 @@
   [the watcher service] or the majordomo function which has not been fully defined
   yet. but imagine that we need some way for [the watcher service] to update or inform
   marvel about discoveries it makes when it's watching or fixing agents"
-- **Subject:** marvel (what marvel knows about a seat's health and status,
+- **Subject:** marvel (what marvel knows and shares about a seat's health and status,
   and who may add to it). The watcher service and the majordomo are objects here:
   they are informants, not owners of the status. Filed in the marvel graph
   per the subject test.
@@ -30,6 +30,12 @@ Today marvel's view of a seat comes only from what marvel itself observes
 the watcher service, or a future majordomo, learns things marvel cannot see while it
 watches or repairs a seat, and needs a way to hand those discoveries back so
 that `get sessions`, `describe` and the event ring reflect them.
+
+The channel runs both ways. Operator addendum, same day: "and it needs to be
+able to participate in getting updates for events and status from marvel
+also". An informant is first a subscriber: it follows marvel's event ring
+and session status as they change, so it acts on what marvel already knows,
+and then reports what it found. One identity, one channel, two directions.
 
 ## What a discovery might be
 
@@ -57,7 +63,13 @@ that `get sessions`, `describe` and the event ring reflect them.
 5. **Text.** The watcher service's read contract drops free text because pane rows
    can reach it. Reports flowing the other way need the same rule: kinds and
    fields from an allowlist, no pane text, no credential material.
-6. **Independence.** marvel must work with no informant at all, and an
+6. **The read side.** What does an informant subscribe to: `events.watch`
+   (the existing ring subscription, bounded queue, drop-oldest, gap
+   reported), a session-status stream that does not exist yet, or both? A
+   gap the ring reports must reach the informant as a gap, never as quiet.
+   Scope matches the write side: an informant reads the seats it may report
+   on, and its read grant and its write grant are one record.
+7. **Independence.** marvel must work with no informant at all, and an
    informant must degrade to its own records when marvel is absent
    (component independence, ADR-005). The channel is optional on both ends.
 
