@@ -50,6 +50,12 @@ func reexecMain() {
 		os.Exit(97)
 	}
 	switch os.Args[3] {
+	case "leakparent":
+		// leakparent <dir>: see lifeline_test.go.
+		if len(os.Args) != 5 {
+			os.Exit(96)
+		}
+		os.Exit(leakParent(os.Args[4]))
 	case "guard":
 		fs := flag.NewFlagSet("guard", flag.ExitOnError)
 		grace := fs.Duration("grace", 0, "")
