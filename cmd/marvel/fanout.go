@@ -504,6 +504,12 @@ func applyQualifiedKey(cmd *cobra.Command, args []string, key string) error {
 	if cluster == "" || bare == "" {
 		return fmt.Errorf("the key %q is qualified as <cluster>:<workspace>/<name>; one side of the ':' is empty", drawn(key))
 	}
+	// --socket outranks any cluster in the resolver and names none, so the
+	// key and the address could disagree and the write or read would go to the
+	// socket's daemon without a word.
+	if socketPath != "" {
+		return fmt.Errorf("the key %q names cluster %q but --socket names no cluster; drop --socket and use --cluster %s", drawn(key), drawn(cluster), drawn(cluster))
+	}
 	if qualifiedWrites[path] && !clusterFlagGiven {
 		return fmt.Errorf("a write given the qualified key %q needs --cluster %s typed as well", drawn(key), drawn(cluster))
 	}
