@@ -151,5 +151,17 @@ func checkWorkDir(label, root, dir string) error {
 // is missing or not a directory there is refused. A relative or ~ root is left to
 // ValidateWorkDirs, which refuses it as not absolute.
 func CheckDeclaredRoot(root string) error {
+	if root == "" || strings.HasPrefix(root, "~") || !filepath.IsAbs(root) {
+		return nil
+	}
+	info, err := os.Stat(root)
+	switch {
+	case os.IsNotExist(err):
+		return fmt.Errorf("workspace.root %q declared by the manifest does not exist on this host", root)
+	case err != nil:
+		return fmt.Errorf("workspace.root %q declared by the manifest: %w", root, err)
+	case !info.IsDir():
+		return fmt.Errorf("workspace.root %q declared by the manifest is not a directory", root)
+	}
 	return nil
 }
