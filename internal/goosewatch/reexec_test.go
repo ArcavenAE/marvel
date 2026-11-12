@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"syscall"
 	"time"
 )
 
@@ -39,6 +40,23 @@ func testGuardArgv() []string {
 	return []string{"/usr/bin/env", reexecEnv + "=" + tok, exe, reexecFlag, tok, "guard"}
 }
 
+// endWithParent ends this process when the test run that started it is gone. A
+// child made with Setpgid leads its own group, so a SIGKILL or a panic in the
+// test run does not reach it, and its cleanup never runs. The child watches its
+// parent pid: a parent that dies makes the kernel give the child to pid 1, and
+// the pid changes. The process kills itself with SIGKILL, so a wrapper is ended
+// as a killed wrapper is in production, and its guard ends goose's group.
+func endWithParent() {
+	ppid := os.Getppid()
+	go func() {
+		for range time.Tick(100 * time.Millisecond) {
+			if os.Getppid() != ppid {
+				_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
+			}
+		}
+	}()
+}
+
 // reexecMain runs first in TestMain. It returns when this is a normal test run.
 func reexecMain() {
 	if len(os.Args) < 4 || os.Args[1] != reexecFlag {
@@ -48,6 +66,11 @@ func reexecMain() {
 	if tok == "" || os.Getenv(reexecEnv) != tok {
 		fmt.Fprintln(os.Stderr, "reexec: the token does not match")
 		os.Exit(97)
+	}
+	// The guard is left out: it outlives a killed wrapper on purpose, to end
+	// goose's group, and ends itself when it has.
+	if os.Args[3] != "guard" {
+		endWithParent()
 	}
 	switch os.Args[3] {
 	case "leakparent":
