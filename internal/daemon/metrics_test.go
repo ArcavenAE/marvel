@@ -151,3 +151,14 @@ func TestMetricsPassIsHeldWhileSuspendedAndReseedsAfter(t *testing.T) {
 		t.Fatal("the second pass after the hold lifted did not publish")
 	}
 }
+
+// The stored reading carries CPU in millicpu beside the percent, which keeps its meaning.
+func TestMetricsFromCarriesMillicpu(t *testing.T) {
+	got := metricsFrom(procstat.Sample{CPUPercent: 968.1, RSSBytes: 7})
+	if got.Millicpu != 9681 {
+		t.Errorf("Millicpu = %d, want 9681", got.Millicpu)
+	}
+	if got.CPUPercent != 968.1 || got.RSSBytes != 7 {
+		t.Errorf("CPUPercent = %v, RSSBytes = %d, want 968.1 and 7", got.CPUPercent, got.RSSBytes)
+	}
+}

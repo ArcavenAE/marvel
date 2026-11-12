@@ -20,11 +20,11 @@ func headersOf(cols []sessionColumn) []string {
 
 var todaysHeaders = []string{
 	"WORKSPACE", "TEAM", "ROLE", "GEN", "AGENT NAME", "STATE", "HEALTH",
-	"CTX%", "CPU%", "RSS", "DESK", "RUNTIME", "LLM",
+	"CTX%", "mCPU", "RSS", "DESK", "RUNTIME", "LLM",
 }
 
 // defaultHeaders is the default table: who the seat is, whether it is doing
-// work, then which model. CPU%, RSS, DESK and RUNTIME stay selectable and in
+// work, then which model. mCPU, RSS, DESK and RUNTIME stay selectable and in
 // the wide set.
 var defaultHeaders = []string{
 	"WORKSPACE", "TEAM", "ROLE", "GEN", "AGENT NAME", "STATE", "HEALTH",

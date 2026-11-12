@@ -219,8 +219,8 @@ func TestRenderSessionTableUnsampled(t *testing.T) {
 		Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
 		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "forestage"},
 	}}, columnsOrFatal(t, "name,cpu,rss", nil))
-	if got := column(t, table, "CPU%"); got != "-" {
-		t.Errorf("CPU%% = %q before the first sampler pass, want %q", got, "-")
+	if got := column(t, table, "mCPU"); got != "-" {
+		t.Errorf("mCPU = %q before the first sampler pass, want %q", got, "-")
 	}
 	if got := column(t, table, "RSS"); got != "-" {
 		t.Errorf("RSS = %q before the first sampler pass, want %q", got, "-")
@@ -237,8 +237,8 @@ func TestRenderSessionTableSampled(t *testing.T) {
 			MetricsAt:  time.Now().UTC(),
 		},
 	}}, columnsOrFatal(t, "name,cpu,rss", nil))
-	if got := column(t, table, "CPU%"); got != "12.8" {
-		t.Errorf("CPU%% = %q, want %q", got, "12.8")
+	if got := column(t, table, "mCPU"); got != "128" {
+		t.Errorf("mCPU = %q, want %q", got, "128")
 	}
 	if got := column(t, table, "RSS"); got != "512M" {
 		t.Errorf("RSS = %q, want %q", got, "512M")
@@ -252,8 +252,8 @@ func TestRenderSessionTableSampledIdle(t *testing.T) {
 		State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "forestage"},
 		SessionMetrics: api.SessionMetrics{MetricsAt: time.Now().UTC()},
 	}}, columnsOrFatal(t, "name,cpu,rss", nil))
-	if got := column(t, table, "CPU%"); got != "0.0" {
-		t.Errorf("CPU%% = %q for a sampled idle session, want %q", got, "0.0")
+	if got := column(t, table, "mCPU"); got != "0" {
+		t.Errorf("mCPU = %q for a sampled idle session, want %q", got, "0")
 	}
 	if got := column(t, table, "RSS"); got != "0B" {
 		t.Errorf("RSS = %q for a sampled idle session, want %q", got, "0B")
@@ -620,8 +620,8 @@ func TestRenderSessionTableEndedRowRendersAbsence(t *testing.T) {
 				State: st, Runtime: api.Runtime{Name: "forestage"},
 				SessionMetrics: api.SessionMetrics{MetricsAt: time.Now().UTC()},
 			}}, columnsOrFatal(t, "name,cpu,rss", nil))
-			if got := column(t, table, "CPU%"); got != "-" {
-				t.Errorf("CPU%% = %q for a %s row, want %q", got, st, "-")
+			if got := column(t, table, "mCPU"); got != "-" {
+				t.Errorf("mCPU = %q for a %s row, want %q", got, st, "-")
 			}
 			if got := column(t, table, "RSS"); got != "-" {
 				t.Errorf("RSS = %q for a %s row, want %q", got, st, "-")
@@ -763,5 +763,22 @@ func TestRenderBudgetTableObservedOneDecimal(t *testing.T) {
 	}
 	if l := line("e"); !strings.Contains(l, "62.4% (34m ago)") {
 		t.Errorf("stale with a value = %q, want \"62.4%% (34m ago)\"", l)
+	}
+}
+
+// mCPU reads in millicpu as Kubernetes does: 1000 is one core, as an integer.
+func TestRenderSessionTableMillicpu(t *testing.T) {
+	for _, c := range []struct {
+		percent float64
+		want    string
+	}{{968.1, "9681"}, {0.1, "1"}, {100, "1000"}} {
+		table := renderSessionTableCols([]api.Session{{
+			Name: "agent-0", Workspace: "ws", Team: "squad", Role: "worker",
+			State: api.SessionRunning, PaneID: "%3", Runtime: api.Runtime{Name: "forestage"},
+			SessionMetrics: api.SessionMetrics{CPUPercent: c.percent, MetricsAt: time.Now().UTC()},
+		}}, columnsOrFatal(t, "name,cpu", nil))
+		if got := column(t, table, "mCPU"); got != c.want {
+			t.Errorf("mCPU for %v%% = %q, want %q", c.percent, got, c.want)
+		}
 	}
 }
