@@ -1659,10 +1659,12 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		return daemonrpc.Response{Error: "prune needs a manifest source; nothing was applied"}
 	}
 
-	// A root the manifest declares must exist on this host. It is read here, before
-	// the workspace_root param below replaces it with the client's directory, which
-	// exists on the client and so hid a missing tree (marvel#1417).
-	if err := api.CheckDeclaredRoot(m.Workspace.Root); err != nil {
+	// A root the manifest declares must exist on this host. ValidateWorkDirs below
+	// treats a root this host lacks as client-only and drops it with an advisory,
+	// which is right for a root derived from the client's directory and wrong for one
+	// the manifest declares. A relative declared root is checked as marvel work posts
+	// it (marvel#1417).
+	if err := declaredRootRefusal(m, p.WorkspaceRoot); err != nil {
 		return daemonrpc.Response{Error: err.Error() + "; nothing was applied"}
 	}
 

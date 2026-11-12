@@ -32,7 +32,7 @@ func (d *Daemon) handlePrunePlan(params json.RawMessage) daemonrpc.Response {
 	// manifest apply would not take: a declared root this host lacks (read before
 	// the workspace_root param replaces it), and a team or role workdir it lacks
 	// (marvel#1417).
-	if err := api.CheckDeclaredRoot(m.Workspace.Root); err != nil {
+	if err := declaredRootRefusal(m, p.WorkspaceRoot); err != nil {
 		return daemonrpc.Response{Error: err.Error()}
 	}
 	if p.WorkspaceRoot != "" {

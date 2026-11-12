@@ -165,3 +165,22 @@ func CheckDeclaredRoot(root string) error {
 	}
 	return nil
 }
+
+// RolesPlacedFromRoot names, as team/role, the roles that take the workspace
+// root as their working directory: those with no workdir of their own and no
+// team workdir. A refusal of the root lists them so the message names who it
+// leaves unplaced.
+func (m *Manifest) RolesPlacedFromRoot() []string {
+	var names []string
+	for _, t := range m.Teams {
+		if t.WorkDir != "" {
+			continue
+		}
+		for _, r := range t.Roles {
+			if r.WorkDir == "" {
+				names = append(names, t.Name+"/"+r.Name)
+			}
+		}
+	}
+	return names
+}

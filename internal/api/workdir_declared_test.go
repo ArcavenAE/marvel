@@ -42,3 +42,15 @@ func TestCheckDeclaredRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestRolesPlacedFromRoot(t *testing.T) {
+	t.Parallel()
+	m := &Manifest{Teams: []ManifestTeam{
+		{Name: "a", Roles: []ManifestRole{{Name: "one"}, {Name: "two", WorkDir: "/x"}}},
+		{Name: "b", WorkDir: "/y", Roles: []ManifestRole{{Name: "three"}}},
+	}}
+	got := strings.Join(m.RolesPlacedFromRoot(), ",")
+	if got != "a/one" {
+		t.Errorf("RolesPlacedFromRoot = %q, want a/one", got)
+	}
+}
