@@ -142,3 +142,45 @@ func checkWorkDir(label, root, dir string) error {
 	}
 	return nil
 }
+
+// CheckDeclaredRoot is the placement check for a workspace.root the manifest
+// itself declares, read before marvel work's workspace_root parameter replaces it.
+// A root marvel work derived from the client's own directory may be client-only,
+// since the daemon may be remote. A root the manifest declares is a directory the
+// manifest's author expects on the daemon's host, so a declared absolute root that
+// is missing or not a directory there is refused. A relative or ~ root is left to
+// ValidateWorkDirs, which refuses it as not absolute.
+func CheckDeclaredRoot(root string) error {
+	if root == "" || strings.HasPrefix(root, "~") || !filepath.IsAbs(root) {
+		return nil
+	}
+	info, err := os.Stat(root)
+	switch {
+	case os.IsNotExist(err):
+		return fmt.Errorf("workspace.root %q declared by the manifest does not exist on this host", root)
+	case err != nil:
+		return fmt.Errorf("workspace.root %q declared by the manifest: %w", root, err)
+	case !info.IsDir():
+		return fmt.Errorf("workspace.root %q declared by the manifest is not a directory", root)
+	}
+	return nil
+}
+
+// RolesPlacedFromRoot names, as team/role, the roles that take the workspace
+// root as their working directory: those with no workdir of their own and no
+// team workdir. A refusal of the root lists them so the message names who it
+// leaves unplaced.
+func (m *Manifest) RolesPlacedFromRoot() []string {
+	var names []string
+	for _, t := range m.Teams {
+		if t.WorkDir != "" {
+			continue
+		}
+		for _, r := range t.Roles {
+			if r.WorkDir == "" {
+				names = append(names, t.Name+"/"+r.Name)
+			}
+		}
+	}
+	return names
+}
