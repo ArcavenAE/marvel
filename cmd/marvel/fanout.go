@@ -491,6 +491,54 @@ func typedKey(cmd *cobra.Command, args []string) (string, bool) {
 	return args[i], true
 }
 
+// qualifiedReads and qualifiedWrites are the commands that accept a key
+// written cluster:workspace/name (#829). A read may use the qualified key
+// alone; a write also needs a typed --cluster that matches, so a cluster
+// copied out of a view cannot change a different one by accident. Every
+// other command that takes a key still refuses a key holding ':'.
+var (
+	qualifiedReads  = map[string]bool{"marvel describe": true, "marvel capture": true}
+	qualifiedWrites = map[string]bool{"marvel inject": true}
+)
+
+// applyQualifiedKey handles a typed key holding ':'. It splits at the first
+// ':', points the command at the named cluster and puts the bare key back in
+// args, so the daemon never sees the cluster. A key holding U+FFFD is
+// refused: the placeholder stands for bytes marvel could not draw, so the
+// key cannot name a real session.
+func applyQualifiedKey(cmd *cobra.Command, args []string, key string) error {
+	path := cmd.CommandPath()
+	if !qualifiedReads[path] && !qualifiedWrites[path] {
+		return fmt.Errorf("the key %q holds ':', which reads as a qualified key; qualified keys are not supported yet (#829), so name the cluster with --cluster", drawn(key))
+	}
+	if strings.ContainsRune(key, '\ufffd') {
+		return fmt.Errorf("the key %q holds U+FFFD, which stands for bytes marvel could not draw, so it cannot name a session; read the raw name with get sessions -o json", drawn(key))
+	}
+	cluster, bare, _ := strings.Cut(key, ":")
+	if cluster == "" || bare == "" {
+		return fmt.Errorf("the key %q is qualified as <cluster>:<workspace>/<name>; one side of the ':' is empty", drawn(key))
+	}
+	// --socket outranks any cluster in the resolver and names none, so the
+	// key and the address could disagree and the write or read would go to the
+	// socket's daemon without a word.
+	if socketPath != "" {
+		return fmt.Errorf("the key %q names cluster %q but --socket names no cluster; drop --socket and use --cluster %s", drawn(key), drawn(cluster), drawn(cluster))
+	}
+	if qualifiedWrites[path] && !clusterFlagGiven {
+		return fmt.Errorf("a write given the qualified key %q needs --cluster %s typed as well", drawn(key), drawn(cluster))
+	}
+	if clusterFlagGiven && clusterName != cluster {
+		return fmt.Errorf("the key %q names cluster %q but --cluster is %q; they must match", drawn(key), drawn(cluster), drawn(clusterName))
+	}
+	clusterName, clusterFlagGiven = cluster, true
+	i := keyArgCommands[path]
+	if i < 0 {
+		i = len(args) - 1
+	}
+	args[i] = bare
+	return nil
+}
+
 // keyArgCommands maps each command that takes a session or team key to the
 // position of that argument; -1 is the last one. A test walks the command
 // tree and fails for a command whose Use line takes a key and is missing here.

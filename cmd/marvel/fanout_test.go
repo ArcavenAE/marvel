@@ -653,21 +653,20 @@ var (
 	_ = errors.New
 )
 
-// Until #829 lands, any key holding ':' reads as qualified (plan section 2,
-// line 55, ruled 2026-10-10), so a key the operator TYPES that holds ':' is
+// Any key holding ':' reads as qualified (plan section 2,
+// line 55, ruled 2026-10-10). describe, capture and inject take one; on every
+// other command a key the operator TYPES that holds ':' is
 // refused at exit 1 before any dial, with one line naming #829 (plan section 3,
 // line 97). A row the daemon RETURNS whose workspace or name holds ':' is a
 // different thing: it is drawn as usual, filtered, and the set still exits 0.
-func TestColonKeyRefusedUntil829(t *testing.T) {
+func TestColonKeyRefusedOutside829Commands(t *testing.T) {
 	a := startFake(t, fakeAnswers, []api.Session{row("w", "ok"), row("w", "bad:name")})
 	b := startFake(t, fakeAnswers, []api.Session{row("w:x", "fine")})
 	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "b", Socket: b.sock})
 
 	for _, args := range [][]string{
 		{"kill", "w:seat-1", "--cluster", "a"},
-		{"inject", "a:w/seat-1", "hello", "--cluster", "a"},
-		{"capture", "w:seat-1", "--cluster", "a"},
-		{"describe", "session", "w:seat-1", "--cluster", "a"},
+		{"delete", "session", "a:w/seat-1", "--cluster", "a"},
 		{"view", "refresh", "w:seat-1", "--cluster", "a"},
 	} {
 		code, _, stderr := runFanGet(t, args...)
