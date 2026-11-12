@@ -16,6 +16,16 @@ import (
 // it (aae-orc SOUL section 8).
 var clockTolerance time.Duration
 
+// rowTolerance is the slack a row's stamps get: the round trip of the read that
+// produced the row when the client set one (a cluster set times each cluster's
+// own call), else the one-shot read's clockTolerance.
+func rowTolerance(s api.Session) time.Duration {
+	if s.ClockTolerance > 0 {
+		return s.ClockTolerance
+	}
+	return clockTolerance
+}
+
 // stampSkew is the reason a cell reads ?: which stamp, the state future, and
 // how far it sits past the client's now. Skew is a Go duration string.
 type stampSkew struct {

@@ -15,7 +15,7 @@ import (
 //
 // A seat whose feed never carried totals prints a dash. A record that cannot be
 // read prints the same ? a stale cell prints: totals with no stamp, a stamp
-// with no totals, or a stamp after now plus the round trip (clockTolerance), which LAST-ACTIVE's age words would
+// with no totals, or a stamp after now plus the round trip (rowTolerance), which LAST-ACTIVE's age words would
 // clamp to 0s, an age that reads as just now. The cell is display only; no
 // health, restart or ACTIVE% path reads it.
 func lastTurnCell(s api.Session, now time.Time) string {
@@ -24,7 +24,7 @@ func lastTurnCell(s api.Session, now time.Time) string {
 	switch {
 	case !hasTotals && !stamped:
 		return asof.DashNone
-	case !hasTotals || !stamped || s.TotalsChangedAt.After(now.Add(clockTolerance)):
+	case !hasTotals || !stamped || s.TotalsChangedAt.After(now.Add(rowTolerance(s))):
 		return asof.MarkStale
 	}
 	return ageWords(now.Sub(s.TotalsChangedAt))

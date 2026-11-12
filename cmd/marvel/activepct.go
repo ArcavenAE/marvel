@@ -64,8 +64,8 @@ func apiActivePctAsOf(s api.Session, now time.Time, pct float64, kind api.APIAct
 // and carries the source mark where a statusline or heartbeat reported it.
 func activePctCell(s api.Session, now time.Time) string {
 	c := activePctAsOf(s, now)
-	out := c.RenderWithin(now, clockTolerance, func(v float64) string { return fmt.Sprintf("%.0f%%", v) })
-	if c.StateWithin(now, clockTolerance) == asof.Fresh && c.Source == string(api.ContextSourceHeartbeat) {
+	out := c.RenderWithin(now, rowTolerance(s), func(v float64) string { return fmt.Sprintf("%.0f%%", v) })
+	if c.StateWithin(now, rowTolerance(s)) == asof.Fresh && c.Source == string(api.ContextSourceHeartbeat) {
 		out += sourceMark
 	}
 	return out

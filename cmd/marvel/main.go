@@ -3508,7 +3508,7 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 	ctx := "-"
 	switch {
 	case s.ContextAt.IsZero():
-	case s.ContextAt.After(lastActiveClock().Add(clockTolerance)):
+	case s.ContextAt.After(lastActiveClock().Add(rowTolerance(s))):
 		// A stamp later than the client's clock allows: the reading's age
 		// cannot be told, so it reads ? (aae-orc-nprld).
 		ctx = "?"
