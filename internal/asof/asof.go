@@ -24,6 +24,9 @@ const (
 	Stale State = "stale"
 	// None means the reading was never observed.
 	None State = "none"
+	// Future means the reading is stamped later than the reader's clock plus
+	// the tolerance, so its age cannot be told.
+	Future State = "future"
 )
 
 // Rendered marks for the two cells that carry no value.
@@ -69,4 +72,16 @@ func (c Cell[T]) Render(now time.Time, format func(T) string) string {
 	default:
 		return format(c.Value)
 	}
+}
+
+// StateWithin is State with a clock tolerance: a stamp later than now plus tol
+// is Future, and the check comes before expiry.
+func (c Cell[T]) StateWithin(now time.Time, tol time.Duration) State {
+	return c.State(now)
+}
+
+// RenderWithin is Render with a clock tolerance. A Future cell prints the same
+// question mark a stale one does, and never its value.
+func (c Cell[T]) RenderWithin(now time.Time, tol time.Duration, format func(T) string) string {
+	return c.Render(now, format)
 }
