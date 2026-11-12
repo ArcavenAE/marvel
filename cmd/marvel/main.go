@@ -233,7 +233,7 @@ func bindRootFlags(root *cobra.Command) {
 		clusterFlagGiven = cmd.Flags().Changed("cluster")
 		if key, ok := typedKey(cmd, args); ok && strings.Contains(key, ":") {
 			cmd.SilenceUsage = true
-			return fmt.Errorf("the key %q holds ':', which reads as a qualified key; qualified keys are not supported yet (#829), so name the cluster with --cluster", drawn(key))
+			return applyQualifiedKey(cmd, args, key)
 		}
 		return nil
 	}

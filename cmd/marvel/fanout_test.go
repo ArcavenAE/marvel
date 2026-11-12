@@ -665,9 +665,7 @@ func TestColonKeyRefusedUntil829(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"kill", "w:seat-1", "--cluster", "a"},
-		{"inject", "a:w/seat-1", "hello", "--cluster", "a"},
-		{"capture", "w:seat-1", "--cluster", "a"},
-		{"describe", "session", "w:seat-1", "--cluster", "a"},
+		{"delete", "session", "a:w/seat-1", "--cluster", "a"},
 		{"view", "refresh", "w:seat-1", "--cluster", "a"},
 	} {
 		code, _, stderr := runFanGet(t, args...)
