@@ -121,6 +121,7 @@ func (d *Daemon) SampleMetricsOnce(sampler *procstat.Sampler) {
 func metricsFrom(sample procstat.Sample) api.SessionMetrics {
 	return api.SessionMetrics{
 		CPUPercent:   sample.CPUPercent,
+		Millicpu:     api.MillicpuFromPercent(sample.CPUPercent),
 		RSSBytes:     sample.RSSBytes,
 		IOReadBytes:  sample.IOReadBytes,
 		IOWriteBytes: sample.IOWriteBytes,

@@ -418,7 +418,7 @@ dev        squad  worker  1    squad-worker-g1-1  running  unknown  -     2%    
 ```
 
 The default reads who the session is, whether it is doing work, then which
-model it talks to. `CPU%`, `RSS`, `DESK`, `RUNTIME`, `WORKDIR`, `TOUT` and
+model it talks to. `mCPU`, `RSS`, `DESK`, `RUNTIME`, `WORKDIR`, `TOUT` and
 `RATE` are not in it; name them with `--columns`, or use `--columns wide`.
 
 Two columns you can add are easy to read as one thing, and they are not:
@@ -465,10 +465,10 @@ you name the others. Name them with `--columns`, for example
 so they are in no default or named set. Only a listing that asks for one of
 them makes the daemon read panes.
 
-`CPU%` and `RSS` (add them with `--columns cpu,rss`) come from a sampler that runs every 5 seconds and rolls
+`mCPU` and `RSS` (add them with `--columns cpu,rss`) come from a sampler that runs every 5 seconds and rolls
 up each agent's whole process subtree, not just the process tmux started
-(that one is a shell). CPU% is per core, so a session using two cores
-reads about 200.
+(that one is a shell). mCPU is millicpu, as Kubernetes reads it: 1000 is one
+core, so a session using two cores reads about 2000.
 
 A `-` means the value has never been measured, which is not the same as
 zero:
@@ -487,7 +487,7 @@ zero:
   Its `exec --json` usage object is a running total rather than a level,
   so there is no occupancy in it to read at any window. See "Codex
   context pressure" below for the channel that works.
-- `CPU%` and `RSS` are `-` before the first sampler pass, and on
+- `mCPU` and `RSS` are `-` before the first sampler pass, and on
   platforms where marvel has no process-table reader (anything other
   than macOS and Linux).
 

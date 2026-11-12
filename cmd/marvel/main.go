@@ -3519,7 +3519,9 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 	// absence too (aae-orc-wtavi).
 	gone := s.State == api.SessionCrashed || s.State == api.SessionFailed || s.State == api.SessionSucceeded
 	if !s.MetricsAt.IsZero() && !gone {
-		cpu = fmt.Sprintf("%.1f", s.CPUPercent)
+		// mCPU is millicpu, as Kubernetes reads it: 1000 is one core. It is derived from
+		// CPUPercent so a row from a daemon that predates the Millicpu field still reads.
+		cpu = fmt.Sprintf("%d", api.MillicpuFromPercent(s.CPUPercent))
 		rss = formatBytes(s.RSSBytes)
 	}
 	desk := strings.TrimPrefix(s.PaneID, "%")

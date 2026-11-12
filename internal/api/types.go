@@ -4,6 +4,7 @@ package api
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"time"
 
@@ -718,7 +719,7 @@ type SessionMetrics struct {
 
 // MillicpuFromPercent converts a percent of one core to millicpu.
 func MillicpuFromPercent(percent float64) int64 {
-	return 0
+	return int64(math.Round(percent * 10))
 }
 
 // The values a role's global_role may take. The word is the global address

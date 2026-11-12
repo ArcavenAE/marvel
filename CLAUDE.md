@@ -302,7 +302,7 @@ internal/
   tmux/                     tmux substrate
     driver.go               tmux session/pane CRUD, send-keys, capture-pane
 
-  procstat/                 Per-session process stats (CPU%, RSS) via pid-subtree sampler
+  procstat/                 Per-session process stats (mCPU, RSS) via pid-subtree sampler
     procstat.go, proc.go, ps.go
     read_darwin.go, read_linux.go, read_other.go   platform samplers
 

@@ -37,7 +37,7 @@ var sessionColumnRegistry = []sessionColumn{
 	{name: "composer", header: "COMPOSER", pick: func(r sessionRow) string { return r.composer }},
 	{name: "pane", header: "PANE", pick: func(r sessionRow) string { return r.pane }},
 	{name: "context", header: "CTX%", pick: func(r sessionRow) string { return r.context }},
-	{name: "cpu", header: "CPU%", pick: func(r sessionRow) string { return r.cpu }},
+	{name: "cpu", header: "mCPU", pick: func(r sessionRow) string { return r.cpu }},
 	{name: "rss", header: "RSS", pick: func(r sessionRow) string { return r.rss }},
 	{name: "desk", header: "DESK", pick: func(r sessionRow) string { return r.desk }},
 	{name: "runtime", header: "RUNTIME", pick: func(r sessionRow) string { return r.runtime }},
