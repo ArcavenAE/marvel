@@ -1829,7 +1829,7 @@ func deleteCmd() *cobra.Command {
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
-			fmt.Printf("%s/%s deleted\n", args[0], args[1])
+			fmt.Printf("%s/%s deleted%s\n", args[0], args[1], actedOn())
 			return nil
 		},
 	}
@@ -1858,7 +1858,7 @@ func scaleCmd() *cobra.Command {
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
-			fmt.Print(scaledLines(args[0], role, replicas, resp.Result))
+			fmt.Print(strings.Replace(scaledLines(args[0], role, replicas, resp.Result), "\n", actedOn()+"\n", 1))
 			return nil
 		},
 	}
@@ -2054,7 +2054,7 @@ func killCmd() *cobra.Command {
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
-			fmt.Printf("session/%s killed\n", args[0])
+			fmt.Printf("session/%s killed%s\n", args[0], actedOn())
 			return nil
 		},
 	}
@@ -2082,9 +2082,9 @@ func shiftCmd() *cobra.Command {
 				return fmt.Errorf("%s", resp.Error)
 			}
 			if role != "" {
-				fmt.Printf("shift initiated for team/%s role/%s\n", args[0], role)
+				fmt.Printf("shift initiated for team/%s role/%s%s\n", args[0], role, actedOn())
 			} else {
-				fmt.Printf("shift initiated for team/%s (all roles)\n", args[0])
+				fmt.Printf("shift initiated for team/%s (all roles)%s\n", args[0], actedOn())
 			}
 			return nil
 		},
@@ -2213,7 +2213,7 @@ at an empty composer and have no reader that can see a draft yet.`,
 					fmt.Fprintln(os.Stderr, verifyLine(resp.Result))
 				}
 			}
-			fmt.Println(describeInject(args[0], steps))
+			fmt.Println(describeInject(args[0], steps) + actedOn())
 			return unconfirmed
 		},
 	}

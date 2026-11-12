@@ -54,6 +54,22 @@ func clientClusterName(rung resolveRung) string {
 	return ""
 }
 
+// actedOn is the suffix a write's result line carries so an operator with
+// several clusters configured can read which one the write changed: the
+// cluster's name where the cluster rung chose the address, else the socket
+// it wrote to (a --socket or MARVEL_SOCKET names no cluster). It resolves
+// the address the same way send() does.
+func actedOn() string {
+	addr, _, rung, err := resolveDaemonRung()
+	if err != nil {
+		return ""
+	}
+	if name := clientClusterName(rung); name != "" {
+		return " (cluster " + drawn(name) + ")"
+	}
+	return " (socket " + drawn(addr) + ")"
+}
+
 // collectHeader resolves the address and rung and makes the one
 // daemon.status call. A daemon that cannot answer leaves Status nil with the
 // reason, so the listing itself is never refused for want of a header.
