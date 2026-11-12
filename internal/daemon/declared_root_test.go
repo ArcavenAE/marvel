@@ -10,49 +10,70 @@ import (
 )
 
 // A workspace.root the manifest declares and this host lacks is refused at apply
-// and at plan, before the client's workspace_root parameter replaces it. The
-// parameter is a directory that exists (the client's own), which is what hid the
-// missing tree from the earlier check.
+// and at plan. The tests post what marvel work posts (cmd/marvel/workroot.go): an
+// absolute declared root as the cleaned root itself, and a relative one joined to
+// the manifest file's directory, which exists on the client. The earlier check
+// dropped the posted root as client-only and accepted both with an advisory.
 func declaredRootManifest(root string) string {
 	return "workspace:\n  name: placed\n  root: " + root + "\nteams:\n  - name: crew\n    roles:\n      - name: crew\n        replicas: 0\n        runtime:\n          command: sleep\n          args: [\"300\"]\n"
 }
 
 func TestApplyRefusesAMissingDeclaredRoot(t *testing.T) {
-	d := newHandlerDaemon(t)
 	missing := filepath.Join(t.TempDir(), "absent-tree")
-	resp := applyWithRoot(t, d, declaredRootManifest(missing), t.TempDir())
-	if resp.Error == "" {
-		t.Fatalf("apply went through (advisories %q), want a refusal naming %s", advisoriesOf(t, resp), missing)
-	}
-	if !strings.Contains(resp.Error, "workspace.root") || !strings.Contains(resp.Error, missing) {
-		t.Errorf("error = %q, want it to name workspace.root and %s", resp.Error, missing)
-	}
-	if _, err := d.store.GetWorkspace("placed"); err == nil {
-		t.Error("the workspace was stored although the apply was refused")
+	manifestDir := t.TempDir()
+	for _, tc := range []struct{ name, declared, posted, named string }{
+		{"absolute", missing, missing, missing},
+		{"relative", "absent-tree", filepath.Join(manifestDir, "absent-tree"), filepath.Join(manifestDir, "absent-tree")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newHandlerDaemon(t)
+			resp := applyWithRoot(t, d, declaredRootManifest(tc.declared), tc.posted)
+			if resp.Error == "" {
+				t.Fatalf("apply went through (advisories %q), want a refusal naming %s", advisoriesOf(t, resp), tc.named)
+			}
+			if !strings.Contains(resp.Error, "workspace.root") || !strings.Contains(resp.Error, tc.named) {
+				t.Errorf("error = %q, want it to name workspace.root and %s", resp.Error, tc.named)
+			}
+			if !strings.Contains(resp.Error, "crew/crew") {
+				t.Errorf("error = %q, want it to name the role placed from the root", resp.Error)
+			}
+			if _, err := d.store.GetWorkspace("placed"); err == nil {
+				t.Error("the workspace was stored although the apply was refused")
+			}
+		})
 	}
 }
 
 func TestApplyAcceptsAnExistingDeclaredRoot(t *testing.T) {
 	d := newHandlerDaemon(t)
-	if resp := applyWithRoot(t, d, declaredRootManifest(t.TempDir()), t.TempDir()); resp.Error != "" {
+	root := t.TempDir()
+	if resp := applyWithRoot(t, d, declaredRootManifest(root), root); resp.Error != "" {
 		t.Fatalf("apply: %s", resp.Error)
 	}
 }
 
 func TestPrunePlanRefusesAMissingDeclaredRoot(t *testing.T) {
-	d := pruneDaemon(t)
 	missing := filepath.Join(t.TempDir(), "absent-tree")
-	params, err := json.Marshal(map[string]any{
-		"manifest_data":   []byte(declaredRootManifest(missing)),
-		"manifest_source": pruneSrc,
-		"workspace_root":  t.TempDir(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp := d.dispatchAs(daemonrpc.Request{Method: "prune_plan", Params: params}, caller{scope: ScopeAdmin, local: true})
-	if resp.Error == "" || !strings.Contains(resp.Error, missing) {
-		t.Fatalf("plan error = %q, want a refusal naming %s", resp.Error, missing)
+	manifestDir := t.TempDir()
+	for _, tc := range []struct{ name, declared, posted, named string }{
+		{"absolute", missing, missing, missing},
+		{"relative", "absent-tree", filepath.Join(manifestDir, "absent-tree"), filepath.Join(manifestDir, "absent-tree")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := pruneDaemon(t)
+			params, err := json.Marshal(map[string]any{
+				"manifest_data":   []byte(declaredRootManifest(tc.declared)),
+				"manifest_source": pruneSrc,
+				"workspace_root":  tc.posted,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp := d.dispatchAs(daemonrpc.Request{Method: "prune_plan", Params: params}, caller{scope: ScopeAdmin, local: true})
+			if resp.Error == "" || !strings.Contains(resp.Error, tc.named) {
+				t.Fatalf("plan error = %q, want a refusal naming %s", resp.Error, tc.named)
+			}
+		})
 	}
 }
 
