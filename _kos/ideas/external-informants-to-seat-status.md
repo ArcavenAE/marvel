@@ -53,7 +53,7 @@ and then reports what it found. One identity, one channel, two directions.
    three. Each has a different lifetime and a different reader.
 2. **Who may write it?** An informant needs an identity marvel issued and
    can revoke, scoped to the seats it watches. This is the audience test in
-   SOUL section 3 applied to a new caller, not a new credential class.
+   aae-orc SOUL.md section 3 applied to a new caller, not a new credential class.
 3. **Observed versus reported.** marvel's own readings and an informant's
    reports must stay distinguishable on every surface, so a wrong informant
    cannot overwrite what marvel measured. A report carries its source and
@@ -71,7 +71,7 @@ and then reports what it found. One identity, one channel, two directions.
    on, and its read grant and its write grant are one record.
 7. **Independence.** marvel must work with no informant at all, and an
    informant must degrade to its own records when marvel is absent
-   (component independence, ADR-005). The channel is optional on both ends.
+   (component independence, aae-orc decisions/adr-005-component-independence.md). The channel is optional on both ends.
 
 ## What this is not
 
