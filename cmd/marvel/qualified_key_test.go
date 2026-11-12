@@ -163,9 +163,13 @@ func TestQualifiedWriteNeedsMatchingCluster(t *testing.T) {
 	refused := [][]string{
 		{"inject", "beta:w/s1", "hello"},
 		{"inject", "beta:w/s1", "hello", "--cluster", "alpha"},
+		// A socket names no cluster and outranks --cluster in the resolver, so
+		// a qualified key beside one would write to the socket's daemon.
+		{"inject", "beta:w/s1", "hello", "--cluster", "beta", "--socket", "{alpha}"},
 	}
 	for _, args := range refused {
 		a, b := twoRecorders(t)
+		args = fillSocket(args, a)
 		code, _, errOut := runFanGet(t, args...)
 		if code != 1 {
 			t.Errorf("%v: exit %d, want 1", args, code)
@@ -208,6 +212,37 @@ func TestKeyHoldingPlaceholderRefused(t *testing.T) {
 		}
 		if !strings.Contains(errOut, "-o json") {
 			t.Errorf("%v: stderr %q does not point at -o json", args, errOut)
+		}
+		if n := len(a.seen()) + len(b.seen()); n != 0 {
+			t.Errorf("%v: %d requests before the refusal, want 0", args, n)
+		}
+	}
+}
+
+// fillSocket puts a recorder's socket where an argument reads "{alpha}".
+func fillSocket(args []string, r *recorder) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = strings.ReplaceAll(a, "{alpha}", r.sock)
+	}
+	return out
+}
+
+// A qualified read given --socket is refused too: the socket names no
+// cluster, so the cluster in the key and the address would disagree, and the
+// resolver would dial the socket without a word.
+func TestQualifiedKeyWithSocketRefused(t *testing.T) {
+	for _, args := range [][]string{
+		{"capture", "beta:w/s1", "--socket", "{alpha}"},
+		{"describe", "session", "beta:w/s1", "--socket", "{alpha}"},
+	} {
+		a, b := twoRecorders(t)
+		code, _, errOut := runFanGet(t, fillSocket(args, a)...)
+		if code != 1 {
+			t.Errorf("%v: exit %d, want 1", args, code)
+		}
+		if !strings.Contains(errOut, "socket") || !strings.Contains(errOut, "no cluster") {
+			t.Errorf("%v: stderr %q does not say the socket names no cluster", args, errOut)
 		}
 		if n := len(a.seen()) + len(b.seen()); n != 0 {
 			t.Errorf("%v: %d requests before the refusal, want 0", args, n)
