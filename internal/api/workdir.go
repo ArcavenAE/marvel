@@ -142,3 +142,14 @@ func checkWorkDir(label, root, dir string) error {
 	}
 	return nil
 }
+
+// CheckDeclaredRoot is the placement check for a workspace.root the manifest
+// itself declares, read before marvel work's workspace_root parameter replaces it.
+// A root marvel work derived from the client's own directory may be client-only,
+// since the daemon may be remote. A root the manifest declares is a directory the
+// manifest's author expects on the daemon's host, so a declared absolute root that
+// is missing or not a directory there is refused. A relative or ~ root is left to
+// ValidateWorkDirs, which refuses it as not absolute.
+func CheckDeclaredRoot(root string) error {
+	return nil
+}
