@@ -182,7 +182,14 @@ func readCluster(t clusterTarget, params json.RawMessage, timer time.Duration) (
 	opts.OfferOneKey = true
 	opts.Timeout = timer
 	opts.OnVerifiedHostKey = func(v string) { fpMu.Lock(); fp = v; fpMu.Unlock() }
-	resp, err := daemonrpc.SendRequestWith(t.Addr, daemonrpc.Request{Method: "get", Params: params}, opts)
+	// Each cluster's call is timed on its own, so its rows are judged against
+	// its own round trip (aae-orc-nprld).
+	var resp *daemonrpc.Response
+	rtt, err := measureRoundTrip(func() error {
+		var e error
+		resp, e = daemonrpc.SendRequestWith(t.Addr, daemonrpc.Request{Method: "get", Params: params}, opts)
+		return e
+	})
 	if err != nil {
 		rec.Outcome, rec.Phase, rec.Fingerprint, rec.Cause = classifyDialError(err, timer)
 		var noID *daemonrpc.NoIdentityError
@@ -206,6 +213,7 @@ func readCluster(t clusterTarget, params json.RawMessage, timer time.Duration) (
 	}
 	for i := range rows {
 		rows[i].Cluster = t.Name
+		rows[i].ClockTolerance = rtt
 	}
 	rec.Outcome = outcomeAnswered
 	if resp.Starting {
@@ -374,6 +382,9 @@ func fanOutRefusals() error {
 type fanOutRow struct {
 	Cluster string `json:"cluster"`
 	api.Session
+	// ClockSkew says why a cell of this row reads ?: a stamp later than the
+	// client's now plus this cluster's round trip. Omitted when there is none.
+	ClockSkew []stampSkew `json:"clock_skew,omitempty"`
 }
 
 // fanOutDocument is what `get sessions -o` prints for a cluster set: one
@@ -391,8 +402,11 @@ func buildFanOutDocument(records []clusterRecord, rows []api.Session) fanOutDocu
 	rows = api.Redact(rows)
 	sort.SliceStable(rows, func(i, j int) bool { return sessionTieLess(rows[i], rows[j]) })
 	doc := fanOutDocument{Clusters: records, Sessions: make([]fanOutRow, 0, len(rows))}
+	now := lastActiveClock()
 	for _, r := range rows {
-		doc.Sessions = append(doc.Sessions, fanOutRow{Cluster: r.Cluster, Session: r})
+		doc.Sessions = append(doc.Sessions, fanOutRow{
+			Cluster: r.Cluster, Session: r, ClockSkew: skewNotes(r, now, rowTolerance(r)),
+		})
 	}
 	return doc
 }

@@ -3,7 +3,8 @@
 // when it holds, and where it came from.
 //
 // A cell renders in three states. A value means the reading is fresh. A
-// question mark means it expired, and the expired number is never shown. A
+// question mark means it expired, or that its stamp is later than the reader's
+// clock allows, and the number is never shown. A
 // dash means it was never observed, and a cell with no sample never prints
 // zero. The state is computed from the clock at render time and is not
 // stored, so a cell read off the wire ages correctly.
@@ -24,6 +25,9 @@ const (
 	Stale State = "stale"
 	// None means the reading was never observed.
 	None State = "none"
+	// Future means the reading is stamped later than the reader's clock plus
+	// the tolerance, so its age cannot be told.
+	Future State = "future"
 )
 
 // Rendered marks for the two cells that carry no value.
@@ -45,12 +49,25 @@ type Cell[T any] struct {
 	Source     string    `json:"source,omitempty"`
 }
 
-// State reports the cell's freshness at now. A reading is still fresh at
-// exactly ValidUntil.
-func (c Cell[T]) State(now time.Time) State {
+// State reports the cell's freshness at now, with no clock tolerance. A
+// reading is still fresh at exactly ValidUntil.
+func (c Cell[T]) State(now time.Time) State { return c.StateWithin(now, 0) }
+
+// Render prints the cell at now with no clock tolerance. format renders a
+// fresh value and is never called for a stale, future or absent one.
+func (c Cell[T]) Render(now time.Time, format func(T) string) string {
+	return c.RenderWithin(now, 0, format)
+}
+
+// StateWithin is State with a clock tolerance: a stamp later than now plus tol
+// is Future, and that check comes before expiry. A stamp exactly at now plus
+// tol is still inside the tolerance.
+func (c Cell[T]) StateWithin(now time.Time, tol time.Duration) State {
 	switch {
 	case c.ObservedAt.IsZero():
 		return None
+	case c.ObservedAt.After(now.Add(tol)):
+		return Future
 	case !c.ValidUntil.IsZero() && now.After(c.ValidUntil):
 		return Stale
 	default:
@@ -58,13 +75,13 @@ func (c Cell[T]) State(now time.Time) State {
 	}
 }
 
-// Render prints the cell at now. format renders a fresh value and is never
-// called for a stale or absent one.
-func (c Cell[T]) Render(now time.Time, format func(T) string) string {
-	switch c.State(now) {
+// RenderWithin is Render with a clock tolerance. A Future cell prints the same
+// question mark a stale one does, and never its value.
+func (c Cell[T]) RenderWithin(now time.Time, tol time.Duration, format func(T) string) string {
+	switch c.StateWithin(now, tol) {
 	case None:
 		return DashNone
-	case Stale:
+	case Stale, Future:
 		return MarkStale
 	default:
 		return format(c.Value)

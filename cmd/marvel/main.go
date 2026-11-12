@@ -1458,7 +1458,7 @@ func (o *optionalString) Type() string            { return "seconds" }
 
 func getResources(resourceType string, cols []sessionColumn, header string, fit fitOptions) error {
 	params, _ := json.Marshal(getRequest(resourceType, wantsComposer(cols)))
-	resp, err := send(daemonrpc.Request{
+	resp, err := sendTimed(daemonrpc.Request{
 		Method: "get",
 		Params: params,
 	})
@@ -1647,7 +1647,7 @@ func describeCmd() *cobra.Command {
 				"resource_type": args[0],
 				"name":          args[1],
 			})
-			resp, err := send(daemonrpc.Request{
+			resp, err := sendTimed(daemonrpc.Request{
 				Method: "describe",
 				Params: params,
 			})
@@ -1658,9 +1658,20 @@ func describeCmd() *cobra.Command {
 				return fmt.Errorf("%s", resp.Error)
 			}
 
+			// A session with a stamp later than the client's clock allows
+			// gains a clock_skew list that says why its cells read ?.
+			result := resp.Result
+			if args[0] == "session" || args[0] == "sessions" {
+				marked, err := withClockSkew(result, lastActiveClock(), clockTolerance)
+				if err != nil {
+					return err
+				}
+				result = marked
+			}
+
 			// Pretty print JSON.
 			var v any
-			_ = json.Unmarshal(resp.Result, &v)
+			_ = json.Unmarshal(result, &v)
 			out, _ := json.MarshalIndent(v, "", "  ")
 			fmt.Println(string(out))
 			return nil
@@ -3497,6 +3508,10 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 	ctx := "-"
 	switch {
 	case s.ContextAt.IsZero():
+	case s.ContextAt.After(lastActiveClock().Add(rowTolerance(s))):
+		// A stamp later than the client's clock allows: the reading's age
+		// cannot be told, so it reads ? (aae-orc-nprld).
+		ctx = "?"
 	case s.ContextLimit == 0 && s.ContextSource != api.ContextSourceHeartbeat:
 		// No window resolved, so a percentage would be a fiction.
 		// The heartbeat is the one legitimate exception: a feed that

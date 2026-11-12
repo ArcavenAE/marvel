@@ -312,6 +312,11 @@ type Session struct {
 	PaneID        string       `toml:"-"`
 	PID           int          `toml:"-"`
 	LastHeartbeat time.Time    `toml:"-"`
+	// ClockTolerance is the round trip of the read that produced this row, the
+	// slack the client allows a daemon stamp past its own clock before the
+	// stamp reads as a future one. The client sets it per read and per cluster;
+	// it is not on the wire. Zero means the client measured none.
+	ClockTolerance time.Duration `json:"-" toml:"-"`
 	// LastBusBeat is when the director shim last reported that it reached the
 	// bus (the bus.beat RPC). It is a second liveness stamp beside LastHeartbeat,
 	// not a replacement: LastHeartbeat belongs to the statusline feed and moves
