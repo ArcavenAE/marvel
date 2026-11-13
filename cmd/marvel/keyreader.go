@@ -105,16 +105,23 @@ type keyReader struct {
 	fd           int
 	wakeR, wakeW int
 	keys         chan byte // unbuffered on purpose; see above
-	pauseReq     chan struct{}
+	hint         chan struct{}
 	ack          chan struct{}
 	resume       chan struct{}
 	stop         chan struct{}
 	done         chan struct{}
 	waits        atomic.Int64 // calls to waitReadable
 
-	mu     sync.Mutex
-	paused bool
-	closed bool
+	// The pause request is state under mu, not a message: Pause counts it in
+	// pauseGen and the reader answers it by catching seenGen up. A wake byte
+	// or a hint with no request behind it is therefore harmless, and the
+	// reader parks only for a request it has not answered. Pause and Resume
+	// are for one caller at a time.
+	mu       sync.Mutex
+	paused   bool
+	closed   bool
+	pauseGen int
+	seenGen  int
 }
 
 func newKeyReader(fd int) (*keyReader, error) {
@@ -135,12 +142,12 @@ func newKeyReader(fd int) (*keyReader, error) {
 	}
 	r := &keyReader{
 		fd: fd, wakeR: p[0], wakeW: p[1],
-		keys:     make(chan byte),
-		pauseReq: make(chan struct{}, 1),
-		ack:      make(chan struct{}),
-		resume:   make(chan struct{}, 1),
-		stop:     make(chan struct{}),
-		done:     make(chan struct{}),
+		keys:   make(chan byte),
+		hint:   make(chan struct{}, 1),
+		ack:    make(chan struct{}),
+		resume: make(chan struct{}, 1),
+		stop:   make(chan struct{}),
+		done:   make(chan struct{}),
 	}
 	go r.run()
 	return r, nil
@@ -163,9 +170,10 @@ func (r *keyReader) Pause() {
 		return
 	}
 	r.paused = true
+	r.pauseGen++
 	r.wake()
 	select {
-	case r.pauseReq <- struct{}{}:
+	case r.hint <- struct{}{}:
 	default:
 	}
 	r.mu.Unlock()
@@ -173,6 +181,18 @@ func (r *keyReader) Pause() {
 	case <-r.ack:
 	case <-r.done:
 	}
+}
+
+// takePause answers an unanswered pause request, and says whether there was
+// one.
+func (r *keyReader) takePause() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pauseGen == r.seenGen {
+		return false
+	}
+	r.seenGen = r.pauseGen
+	return true
 }
 
 // Resume lets a paused reader read again. Resume on a reader that is not
@@ -244,13 +264,14 @@ func (r *keyReader) run() {
 		if woke {
 			r.drainWake()
 			select {
-			case <-r.pauseReq:
+			case <-r.stop:
+				return
 			default:
 			}
-			if !r.park() {
+			if r.takePause() && !r.park() {
 				return
 			}
-			continue
+			continue // a wake with no request behind it is spurious
 		}
 		if !in {
 			continue
@@ -277,16 +298,21 @@ const (
 
 // deliver hands b to the receiver, or stops trying when a pause or Close
 // arrives first. The watch loop does not receive while it hands the terminal
-// over, so a reader blocked here must still be able to park.
+// over, so a reader blocked here must still be able to park. A hint with no
+// request behind it is ignored.
 func (r *keyReader) deliver(b byte) handOver {
-	select {
-	case r.keys <- b:
-		return delivered
-	case <-r.pauseReq:
-		r.drainWake()
-		return pausedFirst
-	case <-r.stop:
-		return stopped
+	for {
+		select {
+		case r.keys <- b:
+			return delivered
+		case <-r.hint:
+			if r.takePause() {
+				r.drainWake()
+				return pausedFirst
+			}
+		case <-r.stop:
+			return stopped
+		}
 	}
 }
 
