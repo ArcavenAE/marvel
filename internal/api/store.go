@@ -76,6 +76,9 @@ type Store struct {
 	// bucket/key, so an update that changes nothing the file lacks can skip its
 	// transaction (persistPutIfChanged). Guarded by mu.
 	persisted map[string][]byte
+	// encodes counts the record encodes the skip-if-unchanged compare has done,
+	// so a test can assert that an unchanged record is encoded once. Guarded by mu.
+	encodes uint64
 
 	// contextResolver walks the context-window ladder for the heartbeat
 	// path. Nil means no resolution: a heartbeat carrying a window is

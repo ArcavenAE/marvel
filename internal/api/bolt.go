@@ -395,7 +395,7 @@ func (s *Store) persistPut(bucket []byte, key string, value any) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s/%s: %w", bucket, key, err)
 	}
-	return s.putBytes(bucket, key, data, compareImage(value, data))
+	return s.putBytes(bucket, key, data, s.compareImage(value, data))
 }
 
 // putBytes writes one already-marshalled record and bumps the version, in one
@@ -438,15 +438,22 @@ func (s *Store) persistPutIfChanged(bucket []byte, key string, value any) error 
 	if s.bolt == nil {
 		return nil
 	}
-	data, err := json.Marshal(value)
+	data, err := s.marshalCounted(value)
 	if err != nil {
 		return fmt.Errorf("marshal %s/%s: %w", bucket, key, err)
 	}
-	image := compareImage(value, data)
+	image := s.compareImage(value, data)
 	if last, ok := s.persisted[persistedKey(bucket, key)]; ok && bytes.Equal(last, image) {
 		return nil
 	}
 	return s.putBytes(bucket, key, data, image)
+}
+
+// marshalCounted is json.Marshal for the compare, counted in s.encodes. The
+// caller holds the Store's lock.
+func (s *Store) marshalCounted(v any) ([]byte, error) {
+	s.encodes++
+	return json.Marshal(v)
 }
 
 // compareImage is the form two writes of one record are compared in: the
@@ -457,14 +464,14 @@ func (s *Store) persistPutIfChanged(bucket []byte, key string, value any) error 
 // HealthState and FailureCount hold. The file still gets the full record
 // whenever anything else changes, so the field it holds is at most one change
 // old. data is the full marshalled record, used when there is nothing to clear.
-func compareImage(value any, data []byte) []byte {
+func (s *Store) compareImage(value any, data []byte) []byte {
 	sess, ok := value.(*Session)
 	if !ok || sess.LastHealthCheck.IsZero() {
 		return data
 	}
 	c := *sess
 	c.LastHealthCheck = time.Time{}
-	img, err := json.Marshal(&c)
+	img, err := s.marshalCounted(&c)
 	if err != nil {
 		return data
 	}

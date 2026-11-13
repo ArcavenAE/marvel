@@ -18,72 +18,65 @@ func healthCheckedSession() *Session {
 	}
 }
 
-// unchangedFlushAllocs is the allocations of one WriteSet pass over a session
-// whose callback and bytes are unchanged, for a session with or without a
-// LastHealthCheck.
-func unchangedFlushAllocs(t *testing.T, withHealthCheck bool) float64 {
-	t.Helper()
-	s, _ := openCountedStore(t)
-	sess := healthCheckedSession()
-	if !withHealthCheck {
-		sess.LastHealthCheck = time.Time{}
-	}
-	if err := s.CreateSession(sess); err != nil {
-		t.Fatal(err)
-	}
-	noop := func(*Session) error { return nil }
-	pass := func() {
-		w := s.NewWriteSet()
-		if err := w.UpdateSession(sess.Key(), noop); err != nil {
-			t.Fatal(err)
-		}
-		if err := w.Flush(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	pass() // first sight of the key writes
-	return testing.AllocsPerRun(50, pass)
+// encodesOf is how many record encodes the store's compare has done so far.
+func encodesOf(s *Store) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.encodes
 }
 
-func unchangedUpdateAllocs(t *testing.T, withHealthCheck bool) float64 {
-	t.Helper()
-	s, _ := openCountedStore(t)
-	sess := healthCheckedSession()
-	if !withHealthCheck {
-		sess.LastHealthCheck = time.Time{}
-	}
-	if err := s.CreateSession(sess); err != nil {
-		t.Fatal(err)
-	}
-	noop := func(*Session) error { return nil }
-	if err := s.UpdateSession(sess.Key(), noop); err != nil {
-		t.Fatal(err)
-	}
-	return testing.AllocsPerRun(50, func() {
-		if err := s.UpdateSession(sess.Key(), noop); err != nil {
-			t.Fatal(err)
-		}
-	})
-}
-
-// The second encode exists only for a session with a LastHealthCheck, so the
-// pair of runs differs by exactly that encode. After the change the pair is
-// equal: the compare image is encoded once and the full record only on a write.
+// The encodes are counted, not the allocations they cost: CI runs this package
+// under the race detector, whose instrumentation moves allocation counts.
 func TestUnchangedWriteSetFlushEncodesASessionOnce(t *testing.T) {
-	without := unchangedFlushAllocs(t, false)
-	with := unchangedFlushAllocs(t, true)
-	t.Logf("unchanged Flush: %.0f allocations without a LastHealthCheck, %.0f with", without, with)
-	if with > without+1 {
-		t.Errorf("a session with a LastHealthCheck cost %.0f allocations in Flush against %.0f without: the record is encoded twice", with, without)
+	for _, withHealthCheck := range []bool{false, true} {
+		s, _ := openCountedStore(t)
+		sess := healthCheckedSession()
+		if !withHealthCheck {
+			sess.LastHealthCheck = time.Time{}
+		}
+		if err := s.CreateSession(sess); err != nil {
+			t.Fatal(err)
+		}
+		noop := func(*Session) error { return nil }
+		pass := func() {
+			w := s.NewWriteSet()
+			if err := w.UpdateSession(sess.Key(), noop); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.Flush(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pass() // first sight of the key writes
+		before := encodesOf(s)
+		pass()
+		if n := encodesOf(s) - before; n != 1 {
+			t.Errorf("an unchanged pass (LastHealthCheck set: %v) encoded the session %d times in Flush, want 1", withHealthCheck, n)
+		}
 	}
 }
 
 func TestUnchangedStoreUpdateEncodesASessionOnce(t *testing.T) {
-	without := unchangedUpdateAllocs(t, false)
-	with := unchangedUpdateAllocs(t, true)
-	t.Logf("unchanged UpdateSession: %.0f allocations without a LastHealthCheck, %.0f with", without, with)
-	if with > without+1 {
-		t.Errorf("a session with a LastHealthCheck cost %.0f allocations in UpdateSession against %.0f without: the record is encoded twice", with, without)
+	for _, withHealthCheck := range []bool{false, true} {
+		s, _ := openCountedStore(t)
+		sess := healthCheckedSession()
+		if !withHealthCheck {
+			sess.LastHealthCheck = time.Time{}
+		}
+		if err := s.CreateSession(sess); err != nil {
+			t.Fatal(err)
+		}
+		noop := func(*Session) error { return nil }
+		if err := s.UpdateSession(sess.Key(), noop); err != nil {
+			t.Fatal(err)
+		}
+		before := encodesOf(s)
+		if err := s.UpdateSession(sess.Key(), noop); err != nil {
+			t.Fatal(err)
+		}
+		if n := encodesOf(s) - before; n != 1 {
+			t.Errorf("an unchanged update (LastHealthCheck set: %v) encoded the session %d times, want 1", withHealthCheck, n)
+		}
 	}
 }
 

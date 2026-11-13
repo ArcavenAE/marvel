@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 
 	bolt "go.etcd.io/bbolt"
@@ -138,11 +137,11 @@ func (w *WriteSet) Flush() error {
 			}
 			bucket, value = bucketTeams, t
 		}
-		data, err := json.Marshal(value)
+		data, err := s.marshalCounted(value)
 		if err != nil {
 			return fmt.Errorf("marshal %s/%s: %w", bucket, k.key, err)
 		}
-		image := compareImage(value, data)
+		image := s.compareImage(value, data)
 		if last, ok := s.persisted[persistedKey(bucket, k.key)]; ok && bytes.Equal(last, image) {
 			continue
 		}
