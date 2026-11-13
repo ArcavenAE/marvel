@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -15,6 +16,14 @@ import (
 
 // ErrNotFound is returned when a resource is not found in the store.
 var ErrNotFound = fmt.Errorf("resource not found")
+
+// ErrUnchanged is what an update callback returns to say it changed nothing.
+// The update returns nil and neither encodes the record nor queues it for a
+// write, so a tick that visits many records and changes few pays for the few.
+// It is opt-in: a callback that returns nil is still compared with the file,
+// because memory-only changes (UpdateSessionContext and the like) are carried
+// to the file by the next update that does not say it changed nothing.
+var ErrUnchanged = errors.New("record unchanged")
 
 // ErrAlreadyExists is returned when a resource already exists in the store.
 var ErrAlreadyExists = fmt.Errorf("resource already exists")
@@ -520,6 +529,9 @@ func (s *Store) UpdateSession(key string, fn func(*Session) error) error {
 		return fmt.Errorf("session %s: %w", key, ErrNotFound)
 	}
 	if err := fn(sess); err != nil {
+		if errors.Is(err, ErrUnchanged) {
+			return nil
+		}
 		return err
 	}
 	return s.persistPutIfChanged(bucketSessions, sess.Key(), sess)
@@ -589,6 +601,9 @@ func (s *Store) UpdateTeam(key string, fn func(*Team) error) error {
 		return fmt.Errorf("team %s: %w", key, ErrNotFound)
 	}
 	if err := fn(t); err != nil {
+		if errors.Is(err, ErrUnchanged) {
+			return nil
+		}
 		return err
 	}
 	return s.persistPutIfChanged(bucketTeams, t.Key(), t)
@@ -780,6 +795,20 @@ func (s *Store) ListPolicies() []Policy {
 		result = append(result, clonePolicy(p))
 	}
 	return result
+}
+
+// HasFileBackedPolicy reports whether any policy reads its settings from a
+// file, without copying a policy. The reconcile pass asks it every tick to know
+// whether there is anything to re-project.
+func (s *Store) HasFileBackedPolicy() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, p := range s.policies {
+		if p.SettingsFile != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) DeletePolicy(key string) error {

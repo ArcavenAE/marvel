@@ -1,8 +1,7 @@
 package api
 
 import (
-	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
 
 	bolt "go.etcd.io/bbolt"
@@ -59,6 +58,9 @@ func (w *WriteSet) UpdateSession(key string, fn func(*Session) error) error {
 		return fmt.Errorf("session %s: %w", key, ErrNotFound)
 	}
 	if err := fn(sess); err != nil {
+		if errors.Is(err, ErrUnchanged) {
+			return nil
+		}
 		return err
 	}
 	w.note(writeKey{writeSession, sess.Key()})
@@ -75,6 +77,9 @@ func (w *WriteSet) UpdateTeam(key string, fn func(*Team) error) error {
 		return fmt.Errorf("team %s: %w", key, ErrNotFound)
 	}
 	if err := fn(t); err != nil {
+		if errors.Is(err, ErrUnchanged) {
+			return nil
+		}
 		return err
 	}
 	w.note(writeKey{writeTeam, t.Key()})
@@ -138,12 +143,12 @@ func (w *WriteSet) Flush() error {
 			}
 			bucket, value = bucketTeams, t
 		}
-		data, err := json.Marshal(value)
+		last, seen := s.persisted[persistedKey(bucket, k.key)]
+		data, image, changed, err := encodeIfChanged(value, last, seen)
 		if err != nil {
 			return fmt.Errorf("marshal %s/%s: %w", bucket, k.key, err)
 		}
-		image := compareImage(value, data)
-		if last, ok := s.persisted[persistedKey(bucket, k.key)]; ok && bytes.Equal(last, image) {
+		if !changed {
 			continue
 		}
 		recs = append(recs, rec{bucket, k.key, data, image})

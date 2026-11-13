@@ -36,7 +36,7 @@ func (d *Daemon) evaluateLimits(now time.Time) {
 		err := ws.UpdateSession(sess.Key(), func(live *api.Session) error {
 			next, ch, why := api.EvaluateLimit(live.Limit, key, reading, state, now)
 			if ch == api.LimitUnchanged {
-				return nil
+				return api.ErrUnchanged
 			}
 			change, reason = ch, why
 			prov = next

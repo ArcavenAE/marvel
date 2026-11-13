@@ -24,11 +24,19 @@ func (c *Controller) TeamLoad() []api.TeamLoad {
 // evaluation tick left them, with each session's tick-ring reading stamped the
 // way `get sessions` stamps it. Local only: nothing here leaves the daemon.
 func (c *Controller) refreshTeamLoad(now time.Time) {
+	teams := c.store.ListTeams()
+	roles := make(map[string]*api.Team, len(teams))
+	for i := range teams {
+		roles[teams[i].Key()] = &teams[i]
+	}
 	sessions := c.store.ListSessions()
 	for i := range sessions {
-		sessions[i].ActiveTicks = c.ActivityOf(sessions[i], now)
+		var role *api.Role
+		if t := roles[sessions[i].Workspace+"/"+sessions[i].Team]; t != nil {
+			role = roleNamed(t, sessions[i].Role)
+		}
+		sessions[i].ActiveTicks = c.activityOfRole(sessions[i], role, now)
 	}
-	teams := c.store.ListTeams()
 	rows := make([]api.TeamLoad, 0, len(teams))
 	for _, t := range teams {
 		rows = append(rows, api.RollTeamLoad(t, sessions, now))

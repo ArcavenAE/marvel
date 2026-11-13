@@ -76,6 +76,12 @@ func (m *Manager) reproject(fileBackedOnly bool, detail string) int {
 	if m.ProjectionDir == "" {
 		return 0
 	}
+	// With no policy that reads a file, a file-backed pass has no session to
+	// visit. It still runs while a failure is remembered, so the prune below
+	// can forget the failures of sessions that are gone.
+	if fileBackedOnly && !m.store.HasFileBackedPolicy() && !m.failures.any() {
+		return 0
+	}
 	changedCount := 0
 	sessions := m.store.ListSessions()
 	m.pruneSettingsFileFailures(sessions)
@@ -550,6 +556,13 @@ func (m *Manager) settingsFilePolicy(sess *api.Session) (api.Policy, bool) {
 		return p, true
 	}
 	return api.Policy{}, false
+}
+
+// any reports whether a failure is remembered.
+func (f *settingsFileFailures) any() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.last) > 0
 }
 
 // pruneSettingsFileFailures drops the remembered failure of every session that

@@ -52,7 +52,7 @@ func (r *TickRing) Counts(window time.Duration, now time.Time) (active, total in
 			continue
 		}
 		total++
-		if !api.Quiet(&api.Session{SessionContext: api.SessionContext{ContextAt: s.workAt}}, window, s.at) {
+		if !api.QuietAt(s.workAt, window, s.at) {
 			active++
 		}
 	}
@@ -124,13 +124,25 @@ func (c *Controller) ClusterQuietWindow() time.Duration {
 func (c *Controller) ActivityOf(sess api.Session, now time.Time) api.ActiveTicks {
 	var role *api.Role
 	if t, err := c.store.GetTeam(sess.Workspace + "/" + sess.Team); err == nil {
-		for i := range t.Roles {
-			if t.Roles[i].Name == sess.Role {
-				role = &t.Roles[i]
-				break
-			}
+		role = roleNamed(&t, sess.Role)
+	}
+	return c.activityOfRole(sess, role, now)
+}
+
+// roleNamed is the team's role of that name, nil when it has none.
+func roleNamed(t *api.Team, name string) *api.Role {
+	for i := range t.Roles {
+		if t.Roles[i].Name == name {
+			return &t.Roles[i]
 		}
 	}
+	return nil
+}
+
+// activityOfRole is ActivityOf for a caller that already holds the session's
+// role, so a pass over every session does not fetch and clone the team once per
+// session.
+func (c *Controller) activityOfRole(sess api.Session, role *api.Role, now time.Time) api.ActiveTicks {
 	c.ringMu.Lock()
 	defer c.ringMu.Unlock()
 	window := api.QuietWindow(role, c.clusterWindow)

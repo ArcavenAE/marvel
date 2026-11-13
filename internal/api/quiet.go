@@ -30,8 +30,13 @@ func QuietWindow(role *Role, cluster time.Duration) time.Duration {
 // it directly; ACTIVE% calls it over the tick ring, which records each tick's
 // WorkAt (marvel#801).
 func Quiet(s *Session, window time.Duration, now time.Time) bool {
-	w := WorkAt(s)
-	return w.IsZero() || now.Sub(w) > window
+	return QuietAt(WorkAt(s), window, now)
+}
+
+// QuietAt is Quiet for a caller that holds the work stamp itself, as the tick
+// ring does for each tick it recorded.
+func QuietAt(workAt time.Time, window time.Duration, now time.Time) bool {
+	return workAt.IsZero() || now.Sub(workAt) > window
 }
 
 // WorkAt is the last time the session showed a sign of work: when its reading
