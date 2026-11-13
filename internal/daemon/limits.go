@@ -22,6 +22,13 @@ func (d *Daemon) evaluateLimits(now time.Time) {
 			log.Printf("warning: limits tick: %v", err)
 		}
 	}()
+	// A tick that finds nothing to change skips the write only for a session the
+	// health tick evaluates, because that tick carries a record's memory-only
+	// changes to the file. Any other session is still compared with the file.
+	healthVisits := func(*api.Session) bool { return false }
+	if d.teamCtrl != nil {
+		healthVisits = d.teamCtrl.HealthVisits()
+	}
 	for _, sess := range d.store.ListSessions() {
 		if !sess.State.CountsAsAlive() && sess.Limit == nil {
 			continue
@@ -36,7 +43,10 @@ func (d *Daemon) evaluateLimits(now time.Time) {
 		err := ws.UpdateSession(sess.Key(), func(live *api.Session) error {
 			next, ch, why := api.EvaluateLimit(live.Limit, key, reading, state, now)
 			if ch == api.LimitUnchanged {
-				return api.ErrUnchanged
+				if healthVisits(live) {
+					return api.ErrUnchanged
+				}
+				return nil
 			}
 			change, reason = ch, why
 			prov = next

@@ -11,7 +11,8 @@ var ringEpoch = time.Date(2026, 10, 7, 9, 0, 0, 0, time.UTC)
 
 // feed records a tick every step from ringEpoch for span, the session always
 // active (ContextAt at the tick), and returns the time of the last tick.
-func feed(r *TickRing, step, span time.Duration) time.Time {
+func feed(r *TickRing, span time.Duration) time.Time {
+	const step = 2 * time.Second
 	var at time.Time
 	for off := time.Duration(0); off <= span; off += step {
 		at = ringEpoch.Add(off)
@@ -24,7 +25,7 @@ func feed(r *TickRing, step, span time.Duration) time.Time {
 // older: 450 of them, counted when read.
 func TestTickRingHoldsFifteenMinutes(t *testing.T) {
 	r := &TickRing{}
-	last := feed(r, 2*time.Second, 20*time.Minute)
+	last := feed(r, 20*time.Minute)
 
 	active, total, full := r.Counts(10*time.Minute, last)
 	if total != 450 || active != 450 || !full {
@@ -39,7 +40,7 @@ func TestTickRingHoldsFifteenMinutes(t *testing.T) {
 // says it is not full, so the reader can show a dash.
 func TestTickRingIsNotFullBeforeTheWindowFills(t *testing.T) {
 	r := &TickRing{}
-	last := feed(r, 2*time.Second, 10*time.Minute)
+	last := feed(r, 10*time.Minute)
 	active, total, full := r.Counts(10*time.Minute, last)
 	if full || total != 301 || active != 301 {
 		t.Fatalf("counts = %d of %d, full %v; want 301 of 301, not full", active, total, full)
@@ -80,7 +81,7 @@ func TestTickRingCountsQuietByTheOneQuietPredicate(t *testing.T) {
 // Ticks older than the window are not counted even before a Record trims them.
 func TestTickRingCountsOnlyTheLastWindowWhenRead(t *testing.T) {
 	r := &TickRing{}
-	last := feed(r, 2*time.Second, 20*time.Minute)
+	last := feed(r, 20*time.Minute)
 	_, total, _ := r.Counts(10*time.Minute, last.Add(5*time.Minute))
 	if total != 300 {
 		t.Fatalf("total five minutes later = %d, want the 300 ticks still inside the window", total)

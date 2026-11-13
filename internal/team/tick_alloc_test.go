@@ -17,7 +17,7 @@ import (
 // fullRing returns a ring that has watched the whole TickRingWindow.
 func fullRing() (*TickRing, time.Time) {
 	r := &TickRing{}
-	now := feed(r, 2*time.Second, TickRingWindow+time.Minute)
+	now := feed(r, TickRingWindow+time.Minute)
 	return r, now
 }
 
