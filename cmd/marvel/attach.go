@@ -101,6 +101,29 @@ func planAttach(desk string, sessions []api.Session, tgt attachTarget, tmuxEnv s
 	return attachPlan{Argv: attach, Exec: true}, nil
 }
 
+// checkNewWindowTarget asks marvel's tmux server whether the desk's pane still
+// exists, before a window is opened for it. The window command exits 0 once
+// the window exists, whatever the attach inside it does, so a pane that closed
+// since the plan, or a server that is gone, would otherwise show the operator
+// a window that closes at once. A pane id is resolved by has-session, which
+// fails on a missing pane; display-message falls back to the current pane
+// (from $TMUX_PANE) and exits 0. Plans that run in place are not checked,
+// since the attach they run reports its own error.
+func checkNewWindowTarget(plan attachPlan, socket, desk string) error {
+	if len(plan.Argv) < 2 || plan.Argv[1] != "new-window" {
+		return nil
+	}
+	out, err := exec.Command("tmux", "-L", socket, "has-session", "-t", "%"+desk).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	why := strings.TrimSpace(string(out))
+	if why == "" {
+		why = err.Error()
+	}
+	return fmt.Errorf("%s; to attach by hand: %s", why, quoteArgv(plan.Argv[2:]))
+}
+
 // insideTmuxServer reports whether $TMUX names the tmux server with this
 // socket name. $TMUX is "<socket path>,<server pid>,<session id>"; the
 // socket's name is the last element of that path.
@@ -231,6 +254,9 @@ func runAttach(w io.Writer, arg string, printOnly bool, env attachEnv) error {
 	// A failed write to stderr must not stop the attach it only announces.
 	_, _ = fmt.Fprintf(stderr, "%s is desk %s\n", resolved.Key, resolved.Desk)
 	if plan.Exec {
+		if err := checkNewWindowTarget(plan, st.TmuxSocket, resolved.Desk); err != nil {
+			return err
+		}
 		return env.Exec(plan.Argv)
 	}
 	if plan.Note != "" {
