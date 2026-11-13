@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
@@ -78,19 +80,145 @@ func TestPlanAttachInsideMarvelTmuxSwitches(t *testing.T) {
 	}
 }
 
-// Inside any other tmux server a nested attach is the footgun, so the verb
-// prints and says why. What to do there is an open operator question.
-func TestPlanAttachInsideOtherTmuxPrintsOnly(t *testing.T) {
+// Inside any other tmux server the verb opens a new window on that server,
+// and the window runs the attach to marvel's server (operator ruling
+// lj44u-attach-inside-own-tmux).
+func TestPlanAttachInsideOtherTmuxOpensNewWindow(t *testing.T) {
 	env := "/private/tmp/tmux-501/default,4242,0"
 	plan, err := planAttach("23", deskRows("%23"), localTarget, env, false)
 	if err != nil {
 		t.Fatalf("planAttach: %v", err)
 	}
-	if plan.Exec {
-		t.Errorf("plan = %+v, want print only inside another tmux server", plan)
+	want := []string{"tmux", "new-window", "tmux", "-L", "marvel-ab12cd34", "attach", "-t", "%23"}
+	if !reflect.DeepEqual(plan.Argv, want) || !plan.Exec {
+		t.Errorf("plan = %+v, want exec of %v", plan, want)
 	}
-	if plan.Argv[3] != "attach" || plan.Note == "" {
-		t.Errorf("plan = %+v, want the attach command and a note naming why", plan)
+	if plan.Note != "" {
+		t.Errorf("plan.Note = %q, want no nesting note", plan.Note)
+	}
+}
+
+// --print inside another tmux still prints the plain attach command and runs
+// nothing.
+func TestPlanAttachPrintInsideOtherTmuxIsUnchanged(t *testing.T) {
+	env := "/private/tmp/tmux-501/default,4242,0"
+	plan, err := planAttach("23", deskRows("%23"), localTarget, env, true)
+	if err != nil {
+		t.Fatalf("planAttach: %v", err)
+	}
+	want := []string{"tmux", "-L", "marvel-ab12cd34", "attach", "-t", "%23"}
+	if !reflect.DeepEqual(plan.Argv, want) || plan.Exec {
+		t.Errorf("plan = %+v, want print of %v", plan, want)
+	}
+}
+
+// scratchTmuxPair starts two scratch tmux servers, marvel's stand-in with two
+// windows (the second is the desk, the first stays active) and the operator's
+// stand-in with one, and returns a runner per server. TMUX_TMPDIR is moved into
+// a scratch directory first: tmux reads it, not TMPDIR, to place its sockets,
+// and the outer new-window falls back to the default server when TMUX is gone,
+// so both must stay out of the live socket directory.
+func scratchTmuxPair(t *testing.T) (mv, op func(args ...string) (string, error), opEnv, pane, active string) {
+	t.Helper()
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Fatal("tmux is not on PATH; CI runner images carry it and a missing one must not read as a pass")
+	}
+	// A short fixed parent keeps the socket path under the 104-character limit.
+	parent := "/tmp"
+	if _, err := os.Stat("/private/tmp"); err == nil {
+		parent = "/private/tmp"
+	}
+	dir, err := os.MkdirTemp(parent, "nw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
+	t.Setenv("TMPDIR", dir)
+	// The scratch servers read no configuration file: -f /dev/null below, and
+	// HOME is moved so nothing else resolves to the operator's.
+	t.Setenv("HOME", dir)
+	t.Setenv("MARVEL_SOCKET", "")
+	t.Setenv("TMUX", "")
+	if err := os.Unsetenv("TMUX"); err != nil {
+		t.Fatal(err)
+	}
+	runner := func(sock string) func(args ...string) (string, error) {
+		return func(args ...string) (string, error) {
+			out, err := exec.Command("tmux", append([]string{"-f", "/dev/null", "-L", sock}, args...)...).CombinedOutput()
+			return strings.TrimSpace(string(out)), err
+		}
+	}
+	mv, op = runner("nwm"), runner("nwo")
+	t.Cleanup(func() { _, _ = mv("kill-server"); _, _ = op("kill-server") })
+	if out, err := mv("new-session", "-d", "-x", "80", "-y", "24", "sleep 60"); err != nil {
+		t.Fatalf("marvel scratch server: %v: %s", err, out)
+	}
+	if active, err = mv("display-message", "-p", "#{pane_id}"); err != nil {
+		t.Fatalf("active pane: %v: %s", err, active)
+	}
+	// The desk is a second window, created detached so the first stays active.
+	if pane, err = mv("new-window", "-d", "-P", "-F", "#{pane_id}", "sleep 60"); err != nil {
+		t.Fatalf("desk pane: %v: %s", err, pane)
+	}
+	if out, err := op("new-session", "-d", "-x", "80", "-y", "24", "sleep 60"); err != nil {
+		t.Fatalf("operator scratch server: %v: %s", err, out)
+	}
+	// A failed inner command leaves its error in the window for a diagnostic.
+	if out, err := op("set-option", "-g", "remain-on-exit", "on"); err != nil {
+		t.Fatalf("remain-on-exit: %v: %s", err, out)
+	}
+	if opEnv, err = op("display-message", "-p", "#{socket_path},#{pid},0"); err != nil {
+		t.Fatalf("operator env: %v: %s", err, opEnv)
+	}
+	return mv, op, opEnv, pane, active
+}
+
+func windowCount(t *testing.T, run func(args ...string) (string, error)) int {
+	t.Helper()
+	out, err := run("list-windows", "-a", "-F", "#{window_id}")
+	if err != nil {
+		t.Fatalf("list-windows: %v: %s", err, out)
+	}
+	return len(strings.Fields(out))
+}
+
+// On a scratch tmux, the plan opens exactly one new window on the operator's
+// server, none on marvel's, and that window's client lands on the desk pane,
+// which is not the pane the marvel session had active.
+func TestAttachNewWindowClientLandsOnPane(t *testing.T) {
+	mv, op, opEnv, pane, active := scratchTmuxPair(t)
+	if active == pane {
+		t.Fatalf("active pane %q and desk pane %q must differ", active, pane)
+	}
+	opBefore, mvBefore := windowCount(t, op), windowCount(t, mv)
+	plan, err := planAttach(strings.TrimPrefix(pane, "%"), []api.Session{{Name: "s", PaneID: pane}}, attachTarget{Socket: "nwm"}, opEnv, false)
+	if err != nil || !plan.Exec {
+		t.Fatalf("planAttach = %+v, %v, want an exec plan", plan, err)
+	}
+	cmd := exec.Command(plan.Argv[0], plan.Argv[1:]...)
+	cmd.Env = append(os.Environ(), "TMUX="+opEnv)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run %v: %v: %s", plan.Argv, err, out)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		out, _ := mv("list-clients", "-F", "#{pane_id}")
+		if out == pane {
+			break
+		}
+		if time.Now().After(deadline) {
+			wins, _ := op("list-windows", "-F", "#{window_index} #{pane_dead}")
+			text, _ := op("capture-pane", "-p", "-t", "{end}")
+			t.Fatalf("marvel clients' panes = %q, want %q within 5s; operator windows: %s; new window text: %s", out, pane, wins, text)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if got := windowCount(t, op); got != opBefore+1 {
+		t.Errorf("operator server windows = %d, want %d: exactly one new window", got, opBefore+1)
+	}
+	if got := windowCount(t, mv); got != mvBefore {
+		t.Errorf("marvel server windows = %d, want %d unchanged", got, mvBefore)
 	}
 }
 
@@ -101,15 +229,16 @@ func TestPlanAttachSocketMatchIsExact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planAttach: %v", err)
 	}
-	if plan.Exec {
-		t.Errorf("plan = %+v, a different socket name must not read as marvel's", plan)
+	want := []string{"tmux", "new-window", "tmux", "-L", "marvel-ab12cd34", "attach", "-t", "%23"}
+	if !reflect.DeepEqual(plan.Argv, want) || !plan.Exec {
+		t.Errorf("plan = %+v, a different socket name must not read as marvel's: want exec of %v", plan, want)
 	}
 }
 
 // A remote desk always prints the ssh command and never runs anything, under
 // any flag and from inside any tmux.
 func TestPlanAttachRemoteAlwaysPrintsSSH(t *testing.T) {
-	for _, tmuxEnv := range []string{"", "/private/tmp/tmux-501/marvel-ff00ff00,1,0"} {
+	for _, tmuxEnv := range []string{"", "/private/tmp/tmux-501/marvel-ff00ff00,1,0", "/private/tmp/tmux-501/default,1,0"} {
 		for _, printOnly := range []bool{false, true} {
 			plan, err := planAttach("23", deskRows("%23"), remoteTarget, tmuxEnv, printOnly)
 			if err != nil {
