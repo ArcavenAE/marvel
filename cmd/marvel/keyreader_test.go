@@ -267,6 +267,9 @@ func TestWakeByteIsDrainedAndTheReaderDoesNotSpin(t *testing.T) {
 	if readableNow(t, r.wakeR) {
 		t.Error("a wake byte is left in the pipe after Resume")
 	}
+	// Residual: a paused reader that spun without ever calling waitReadable
+	// (a busy loop on a flag) is not seen by this count, and CPU time was
+	// dropped as a check because getrusage covers the whole test process.
 	// Running and idle, the reader sits in one wait. An undrained wake byte
 	// would make that wait return at once, again and again.
 	before = r.waits.Load()
@@ -341,6 +344,34 @@ func TestWaitReadableRetriesInterruptedPollWithoutSelect(t *testing.T) {
 	}
 }
 
+func TestWaitReadableKeepsTheTimeoutAcrossAnInterruptedPoll(t *testing.T) {
+	prev := pollFn
+	var waits []int
+	pollFn = func(fds []unix.PollFd, ms int) (int, error) {
+		waits = append(waits, ms)
+		if len(waits) == 1 {
+			time.Sleep(60 * time.Millisecond)
+			return -1, unix.EINTR
+		}
+		return prev(fds, ms)
+	}
+	t.Cleanup(func() { pollFn = prev })
+
+	inR, _ := pipePair(t)
+	wR, _ := pipePair(t)
+	start := time.Now()
+	in, woke, err := waitReadable(inR, wR, 200*time.Millisecond)
+	if err != nil || in || woke {
+		t.Fatalf("in=%v woke=%v err=%v, want a timeout", in, woke, err)
+	}
+	if took := time.Since(start); took > 400*time.Millisecond {
+		t.Errorf("the wait took %v after an interrupted poll, want about the 200ms asked for", took)
+	}
+	if len(waits) < 2 || waits[1] >= waits[0] {
+		t.Errorf("poll was asked for %v ms, want the retry to ask for less than the first", waits)
+	}
+}
+
 func TestWaitReadableZeroTimeoutHasNoBound(t *testing.T) {
 	inR, inW := pipePair(t)
 	wR, _ := pipePair(t)
@@ -385,10 +416,18 @@ func TestCloseReleasesTheWakePipe(t *testing.T) {
 		t.Fatal("the reader has no wake pipe")
 	}
 	wake := r.wakeR
+	var before unix.Stat_t
+	if err := unix.Fstat(wake, &before); err != nil {
+		t.Fatal(err)
+	}
 	within(t, "Close", r.Close)
-	var st unix.Stat_t
-	if err := unix.Fstat(wake, &st); !errors.Is(err, unix.EBADF) {
-		t.Errorf("fstat on the wake pipe after Close = %v, want EBADF", err)
+	// The number may be reused by a descriptor another test opened; then it
+	// names a different file, and the pipe's own inode is gone.
+	var after unix.Stat_t
+	if err := unix.Fstat(wake, &after); err == nil && after.Ino == before.Ino {
+		t.Errorf("the wake pipe (inode %d) is still open after Close", before.Ino)
+	} else if err != nil && !errors.Is(err, unix.EBADF) {
+		t.Errorf("fstat on the wake pipe after Close = %v, want EBADF or another file", err)
 	}
 }
 
