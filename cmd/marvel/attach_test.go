@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
@@ -78,19 +80,94 @@ func TestPlanAttachInsideMarvelTmuxSwitches(t *testing.T) {
 	}
 }
 
-// Inside any other tmux server a nested attach is the footgun, so the verb
-// prints and says why. What to do there is an open operator question.
-func TestPlanAttachInsideOtherTmuxPrintsOnly(t *testing.T) {
+// Inside any other tmux server the verb opens a new window on that server,
+// and the window runs the attach to marvel's server (operator ruling
+// lj44u-attach-inside-own-tmux). TMUX is unset for the child, since tmux
+// refuses to attach a client while it is set.
+func TestPlanAttachInsideOtherTmuxOpensNewWindow(t *testing.T) {
 	env := "/private/tmp/tmux-501/default,4242,0"
 	plan, err := planAttach("23", deskRows("%23"), localTarget, env, false)
 	if err != nil {
 		t.Fatalf("planAttach: %v", err)
 	}
-	if plan.Exec {
-		t.Errorf("plan = %+v, want print only inside another tmux server", plan)
+	want := []string{"tmux", "new-window", "env", "-u", "TMUX", "tmux", "-L", "marvel-ab12cd34", "attach", "-t", "%23"}
+	if !reflect.DeepEqual(plan.Argv, want) || !plan.Exec {
+		t.Errorf("plan = %+v, want exec of %v", plan, want)
 	}
-	if plan.Argv[3] != "attach" || plan.Note == "" {
-		t.Errorf("plan = %+v, want the attach command and a note naming why", plan)
+	if plan.Note != "" {
+		t.Errorf("plan.Note = %q, want no nesting note", plan.Note)
+	}
+}
+
+// --print inside another tmux still prints the plain attach command and runs
+// nothing.
+func TestPlanAttachPrintInsideOtherTmuxIsUnchanged(t *testing.T) {
+	env := "/private/tmp/tmux-501/default,4242,0"
+	plan, err := planAttach("23", deskRows("%23"), localTarget, env, true)
+	if err != nil {
+		t.Fatalf("planAttach: %v", err)
+	}
+	want := []string{"tmux", "-L", "marvel-ab12cd34", "attach", "-t", "%23"}
+	if !reflect.DeepEqual(plan.Argv, want) || plan.Exec {
+		t.Errorf("plan = %+v, want print of %v", plan, want)
+	}
+}
+
+// On a scratch tmux, the new window's client lands on the desk's pane. Two
+// scratch servers stand in for marvel's and the operator's; neither is the
+// live one.
+func TestAttachNewWindowClientLandsOnPane(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("no tmux on PATH")
+	}
+	dir, err := os.MkdirTemp("", "nw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("TMPDIR", dir)
+	t.Setenv("TMUX", "")
+	t.Setenv("MARVEL_SOCKET", "")
+	const mv, op = "nwm", "nwo"
+	tm := func(sock string, args ...string) (string, error) {
+		out, err := exec.Command("tmux", append([]string{"-L", sock}, args...)...).CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	t.Cleanup(func() { _, _ = tm(mv, "kill-server"); _, _ = tm(op, "kill-server") })
+	if out, err := tm(mv, "new-session", "-d", "-x", "80", "-y", "24", "sleep 60"); err != nil {
+		t.Fatalf("marvel scratch server: %v: %s", err, out)
+	}
+	if out, err := tm(op, "new-session", "-d", "-x", "80", "-y", "24", "sleep 60"); err != nil {
+		t.Fatalf("operator scratch server: %v: %s", err, out)
+	}
+	pane, err := tm(mv, "display-message", "-p", "#{pane_id}")
+	if err != nil {
+		t.Fatalf("pane id: %v: %s", err, pane)
+	}
+	opEnv, err := tm(op, "display-message", "-p", "#{socket_path},#{pid},0")
+	if err != nil {
+		t.Fatalf("operator env: %v: %s", err, opEnv)
+	}
+	plan, err := planAttach(strings.TrimPrefix(pane, "%"), []api.Session{{Name: "s", PaneID: pane}}, attachTarget{Socket: mv}, opEnv, false)
+	if err != nil || !plan.Exec {
+		t.Fatalf("planAttach = %+v, %v, want an exec plan", plan, err)
+	}
+	cmd := exec.Command(plan.Argv[0], plan.Argv[1:]...)
+	cmd.Env = append(os.Environ(), "TMUX="+opEnv)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run %v: %v: %s", plan.Argv, err, out)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		out, _ := tm(mv, "list-clients", "-F", "#{client_session}")
+		if out != "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			wins, _ := tm(op, "list-windows", "-F", "#{window_index} #{pane_dead} #{pane_current_command}")
+			t.Fatalf("no client attached to the marvel scratch server within 5s; operator windows: %s", wins)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -101,8 +178,8 @@ func TestPlanAttachSocketMatchIsExact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planAttach: %v", err)
 	}
-	if plan.Exec {
-		t.Errorf("plan = %+v, a different socket name must not read as marvel's", plan)
+	if len(plan.Argv) < 2 || plan.Argv[1] != "new-window" {
+		t.Errorf("plan = %+v, a different socket name must not read as marvel's: want a new-window plan", plan)
 	}
 }
 
