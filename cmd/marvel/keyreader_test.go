@@ -445,3 +445,55 @@ func TestKeyReaderCloseStopsIt(t *testing.T) {
 		}
 	}
 }
+
+// A wake with no pause behind it, such as a byte a pause left in the pipe,
+// must not park the reader: nothing would ever Resume it, and every key after
+// it would be stranded.
+func TestSpuriousWakeDoesNotParkTheReader(t *testing.T) {
+	r, w := startReader(t)
+	if _, err := unix.Write(r.wakeW, []byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	writeBytes(t, w, "k")
+	if got := recvKey(t, r); got != 'k' {
+		t.Fatalf("got %q after a stray wake byte, want k", got)
+	}
+}
+
+// A pause and a resume, then a key, again and again with a receiver that is
+// always ready. A request left over from one pause must not park the reader
+// at a later key: that strands every key, q included, until Close.
+func TestKeyReaderLosesNoKeyAcrossManyPauseCycles(t *testing.T) {
+	const cycles = 150000
+	r, w := startReader(t)
+	failed := make(chan int, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		for i := 0; i < cycles; i++ {
+			r.Pause()
+			r.Resume()
+			if _, err := unix.Write(w, []byte{'k'}); err != nil {
+				failed <- -1
+				return
+			}
+			select {
+			case <-r.Keys():
+			case <-time.After(2 * time.Second):
+				failed <- i
+				return
+			}
+		}
+	}()
+	select {
+	case <-finished:
+	case <-time.After(90 * time.Second):
+		t.Fatal("150000 pause cycles did not finish in 90s")
+	}
+	select {
+	case i := <-failed:
+		t.Fatalf("the key after pause cycle %d never arrived within 2s: the reader parked with nothing to resume it", i)
+	default:
+	}
+}
