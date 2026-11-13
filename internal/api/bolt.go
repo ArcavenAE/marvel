@@ -438,25 +438,69 @@ func (s *Store) persistPutIfChanged(bucket []byte, key string, value any) error 
 	if s.bolt == nil {
 		return nil
 	}
-	data, err := json.Marshal(value)
+	last, seen := s.persisted[persistedKey(bucket, key)]
+	data, image, changed, err := s.encodeIfChanged(value, last, seen)
 	if err != nil {
 		return fmt.Errorf("marshal %s/%s: %w", bucket, key, err)
 	}
-	image := compareImage(value, data)
-	if last, ok := s.persisted[persistedKey(bucket, key)]; ok && bytes.Equal(last, image) {
+	if !changed {
 		return nil
 	}
 	return s.putBytes(bucket, key, data, image)
 }
 
-// compareImage is the form two writes of one record are compared in: the
-// record's marshalled bytes, with the fields that change on every tick and
-// carry nothing a restart needs cleared. Today that is a session's
-// LastHealthCheck, the time evaluateHealth last ran a heartbeat check; nothing
-// reads it back (marvel#1214), and a restart only needs the verdict, which
-// HealthState and FailureCount hold. The file still gets the full record
-// whenever anything else changes, so the field it holds is at most one change
-// old. data is the full marshalled record, used when there is nothing to clear.
+// encodeIfChanged encodes a record for the skip-if-unchanged compare and
+// reports whether it differs from last, the compare image written for it before
+// (seen says whether there is one). The compare image is the record's marshalled
+// bytes with the fields that change on every tick and carry nothing a restart
+// needs cleared. Today that is a session's LastHealthCheck, the time
+// evaluateHealth last ran a heartbeat check; nothing reads it back (marvel#1214),
+// and a restart only needs the verdict, which HealthState and FailureCount hold.
+// The file still gets the full record whenever anything else changes, so the
+// field it holds is at most one change old.
+//
+// The image is encoded first and alone: a record with nothing to clear has an
+// image equal to its data, and one with a LastHealthCheck gets its full encode
+// only when the compare says it will be written. data is nil when changed is
+// false.
+func (s *Store) encodeIfChanged(value any, last []byte, seen bool) (data, image []byte, changed bool, err error) {
+	sess, isSession := value.(*Session)
+	if isSession && !sess.LastHealthCheck.IsZero() {
+		c := *sess
+		c.LastHealthCheck = time.Time{}
+		image, err = s.marshalCounted(&c)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if seen && bytes.Equal(last, image) {
+			return nil, nil, false, nil
+		}
+		data, err = s.marshalCounted(value)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		return data, image, true, nil
+	}
+	data, err = s.marshalCounted(value)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if seen && bytes.Equal(last, data) {
+		return nil, nil, false, nil
+	}
+	return data, data, true, nil
+}
+
+// marshalCounted is json.Marshal for the compare, counted in s.encodes. The
+// caller holds the Store's lock.
+func (s *Store) marshalCounted(v any) ([]byte, error) {
+	s.encodes++
+	return json.Marshal(v)
+}
+
+// compareImage is the compare form of a record whose data is already encoded:
+// data itself, or for a session with a LastHealthCheck the encode without it.
+// persistPut, which always writes, uses it to remember what it wrote.
 func compareImage(value any, data []byte) []byte {
 	sess, ok := value.(*Session)
 	if !ok || sess.LastHealthCheck.IsZero() {

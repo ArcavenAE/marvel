@@ -67,3 +67,106 @@ func TestEvaluateLimitsWritesChangedSessionsInOneTransaction(t *testing.T) {
 		}
 	}
 }
+
+// A limits tick that finds nothing to change should not encode the sessions it
+// looked at. Each seat's callback changes nothing, so the tick has no record to
+// compare against the file.
+func TestUnchangedLimitsTickEncodesNoSession(t *testing.T) {
+	const seats = 15
+	d := newHandlerDaemon(t)
+	if err := d.store.OpenBolt(filepath.Join(t.TempDir(), "marvel.bolt")); err != nil {
+		t.Fatalf("open bolt: %v", err)
+	}
+	t.Cleanup(func() { _ = d.store.CloseBolt() })
+	// The seats run in a team the store holds, which is where the health tick
+	// carries a record's memory-only changes and the limits tick may skip it.
+	if err := d.store.CreateTeam(&api.Team{Workspace: "ws", Name: "crew"}); err != nil {
+		t.Fatalf("create team: %v", err)
+	}
+	for i := 0; i < seats; i++ {
+		sess := accountSession(fmt.Sprintf("seat%d", i), "claude")
+		sess.Team, sess.Role = "crew", "worker"
+		if err := d.store.CreateSession(&sess); err != nil {
+			t.Fatalf("create session: %v", err)
+		}
+	}
+	now := acctT0.Add(time.Minute)
+	d.evaluateLimits(now) // first sight of each key writes
+	allocs := testing.AllocsPerRun(20, func() { d.evaluateLimits(now) })
+	perSeat := allocs / seats
+	t.Logf("evaluateLimits, nothing changed: %.0f allocations for %d seats, %.1f per seat", allocs, seats, perSeat)
+	const maxPerSeat = 6
+	if perSeat > maxPerSeat {
+		t.Errorf("an unchanged limits tick allocated %.1f times per seat, want at most %d", perSeat, maxPerSeat)
+	}
+}
+
+// The limits tick visits more seats than the health tick does, and a
+// memory-only change (a context reading) reaches the file by the next update of
+// the record that does not say it changed nothing. For a seat the health tick
+// never visits, that update is the limits tick's, so it must still carry the
+// reading: a daemon that stops after the tick has to find it in the file.
+func TestLimitsTickCarriesMemoryOnlyChangesOfSeatsTheHealthTickSkips(t *testing.T) {
+	cases := []struct {
+		name  string
+		state api.SessionState
+		team  string // "" for a seat with no team in the store
+		retir bool
+	}{
+		{"pending seat", api.SessionPending, "crew", false},
+		{"crashloop-backoff seat", api.SessionCrashLoopBackOff, "crew", false},
+		{"running seat with no team", api.SessionRunning, "", false},
+		{"running seat being retired", api.SessionRunning, "crew", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newHandlerDaemon(t)
+			path := filepath.Join(t.TempDir(), "marvel.bolt")
+			if err := d.store.OpenBolt(path); err != nil {
+				t.Fatalf("open bolt: %v", err)
+			}
+			closed := false
+			t.Cleanup(func() {
+				if !closed {
+					_ = d.store.CloseBolt()
+				}
+			})
+			sess := accountSession("seat0", "claude")
+			sess.State = tc.state
+			sess.Team = tc.team
+			sess.Role = "worker"
+			if err := d.store.CreateSession(&sess); err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			if tc.team != "" {
+				team := &api.Team{Workspace: "ws", Name: tc.team}
+				if tc.retir {
+					team.Retiring = map[string]api.RetireRequest{sess.Key(): {}}
+				}
+				if err := d.store.CreateTeam(team); err != nil {
+					t.Fatalf("create team: %v", err)
+				}
+			}
+
+			d.store.UpdateSessionContext(sess.Key(), api.SessionContext{ContextSource: api.ContextSourceHeartbeat, ContextPercent: 40})
+			d.evaluateLimits(acctT0.Add(time.Minute))
+
+			if err := d.store.CloseBolt(); err != nil {
+				t.Fatal(err)
+			}
+			closed = true
+			s2 := api.NewStore()
+			if err := s2.OpenBolt(path); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = s2.CloseBolt() })
+			got, err := s2.GetSession(sess.Key())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.ContextPercent != 40 {
+				t.Errorf("ContextPercent in the file after a limits tick = %v, want 40", got.ContextPercent)
+			}
+		})
+	}
+}

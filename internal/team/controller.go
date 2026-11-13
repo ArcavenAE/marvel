@@ -1660,16 +1660,13 @@ func (c *Controller) evaluateHealth() {
 		c.recordTick(sess.Key(), now, api.WorkAt(&sess))
 		ringed[sess.Key()] = true
 
-		teamKey := fmt.Sprintf("%s/%s", sess.Workspace, sess.Team)
-		t, ok := teamCache[teamKey]
-		if !ok {
+		// A seat with no team in the cache is not evaluated, and a retiring
+		// seat is not restarted: its retirement records how it ended (the
+		// step 4 ruling, Q12).
+		if !healthVisits(teamCache, &sess) {
 			continue
 		}
-		// A retiring seat is not restarted: its retirement records how it
-		// ended (the step 4 ruling, Q12).
-		if isRetiring(&t, sess.Key()) {
-			continue
-		}
+		t := teamCache[sess.Workspace+"/"+sess.Team]
 
 		var role *api.Role
 		for i := range t.Roles {
@@ -2935,4 +2932,32 @@ func (c *Controller) holdForFiring(st api.ScheduleStatus, plan *RolePlan) bool {
 	plan.Hold = HoldSchedule
 	plan.HoldDetail = detail
 	return true
+}
+
+// healthVisits reports whether the health tick evaluates a session and so
+// writes its record through the update that carries its memory-only changes to
+// the file: a running seat whose team is in the cache and is not retiring it.
+func healthVisits(teamCache map[string]api.Team, sess *api.Session) bool {
+	if sess.State != api.SessionRunning {
+		return false
+	}
+	t, ok := teamCache[sess.Workspace+"/"+sess.Team]
+	if !ok {
+		return false
+	}
+	// Most teams retire no one; skip building the session key for them.
+	return len(t.Retiring) == 0 || !isRetiring(&t, sess.Key())
+}
+
+// HealthVisits returns a test, over one snapshot of the teams, of whether the
+// health tick evaluates a session. A caller that skips a record's write because
+// it changed nothing may do so only for a session this says the health tick
+// will write, since the health tick is what carries a record's memory-only
+// changes (a context reading) to the file.
+func (c *Controller) HealthVisits() func(*api.Session) bool {
+	teamCache := make(map[string]api.Team)
+	for _, t := range c.store.ListTeams() {
+		teamCache[t.Key()] = t
+	}
+	return func(sess *api.Session) bool { return healthVisits(teamCache, sess) }
 }
