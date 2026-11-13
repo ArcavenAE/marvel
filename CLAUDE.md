@@ -558,6 +558,8 @@ install target; gated on a workspace-VFS study.
 
 Open question: `_kos/nodes/frontier/question-pack-integration.yaml`.
 
+Vocabulary: "pack" is sideshow's term only (operator, 2026-10-15). Marvel's bundle is a company, a library of team, workflow and agent definitions (operator, 2026-10-16), and a cast is the teams running on a cluster, each drawn from a company (operator, 2026-10-19). Neither is a pack.
+
 ## CLI
 
 ```sh
@@ -609,6 +611,7 @@ marvel upgrade                                        # self-upgrade
   (Max, API key, Bedrock, Vertex) is permitted. Orchestrating agents that route
   other people's consumer credentials is not — multi-user distribution requires
   API key auth. See SOUL.md §3.
+- **Releases:** no marvel release has been decided. A release ticket is preparation, not a decision to release (operator, 2026-11-09, I-315, the same point as I-260).
 - **PR and issue bodies:** the first one or two sentences say why to read it and why merging is worth the risk.
 - **No file deletion:** Never delete user files. Overwrite only with explicit intent.
 - **Parallel-safe:** Each session gets a UUID. Volumes provide isolation.
