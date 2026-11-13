@@ -91,10 +91,12 @@ func planAttach(desk string, sessions []api.Session, tgt attachTarget, tmuxEnv s
 	case insideTmuxServer(tmuxEnv, tgt.Socket):
 		return attachPlan{Argv: []string{"tmux", "-L", tgt.Socket, "switch-client", "-t", pane}, Exec: true}, nil
 	case tmuxEnv != "":
-		return attachPlan{
-			Argv: attach,
-			Note: "this shell is inside a tmux server that is not marvel's, and attaching from here would nest one tmux in another; run the command from a shell outside tmux",
-		}, nil
+		// Inside another tmux server: open a window on the operator's server
+		// that runs the attach to marvel's. The outer tmux finds its server
+		// through $TMUX; the window's own client is a client of marvel's
+		// server, which tmux does not treat as nesting because $TMUX names a
+		// different server.
+		return attachPlan{Argv: []string{"tmux", "new-window", "tmux", "-L", tgt.Socket, "attach", "-t", pane}, Exec: true}, nil
 	}
 	return attachPlan{Argv: attach, Exec: true}, nil
 }
@@ -264,8 +266,8 @@ the pane.
   - Outside tmux it replaces itself with ` + "`tmux -L <socket> attach -t %<desk>`" + `.
   - Inside marvel's own tmux server it runs switch-client, so the client moves
     to the pane and nothing nests.
-  - Inside any other tmux server it prints the attach command and does not run
-    it: attaching from there would nest one tmux in another.
+  - Inside any other tmux server it opens a new window on that server, running
+    the attach to marvel's server.
   - --print prints the command and exits 0 in every case.
 
 A desk on a remote cluster is always printed, never run:
