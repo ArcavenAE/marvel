@@ -67,3 +67,30 @@ func TestEvaluateLimitsWritesChangedSessionsInOneTransaction(t *testing.T) {
 		}
 	}
 }
+
+// A limits tick that finds nothing to change should not encode the sessions it
+// looked at. Each seat's callback changes nothing, so the tick has no record to
+// compare against the file.
+func TestUnchangedLimitsTickEncodesNoSession(t *testing.T) {
+	const seats = 15
+	d := newHandlerDaemon(t)
+	if err := d.store.OpenBolt(filepath.Join(t.TempDir(), "marvel.bolt")); err != nil {
+		t.Fatalf("open bolt: %v", err)
+	}
+	t.Cleanup(func() { _ = d.store.CloseBolt() })
+	for i := 0; i < seats; i++ {
+		sess := accountSession(fmt.Sprintf("seat%d", i), "claude")
+		if err := d.store.CreateSession(&sess); err != nil {
+			t.Fatalf("create session: %v", err)
+		}
+	}
+	now := acctT0.Add(time.Minute)
+	d.evaluateLimits(now) // first sight of each key writes
+	allocs := testing.AllocsPerRun(20, func() { d.evaluateLimits(now) })
+	perSeat := allocs / seats
+	t.Logf("evaluateLimits, nothing changed: %.0f allocations for %d seats, %.1f per seat", allocs, seats, perSeat)
+	const maxPerSeat = 6
+	if perSeat > maxPerSeat {
+		t.Errorf("an unchanged limits tick allocated %.1f times per seat, want at most %d", perSeat, maxPerSeat)
+	}
+}
