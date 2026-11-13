@@ -3235,6 +3235,14 @@ type watchSort struct {
 	noTrunc      bool // --no-trunc
 	showHeader   bool // print the daemon header on each frame
 
+	// The cursor (slice 1 of the jump key): the selected session by
+	// identity, the status line under the table, the screen height the frame
+	// must fit (0 means no limit), and what Enter resolves a desk against.
+	sel    watchSelection
+	status string
+	height int
+	target func(cluster string) (attachTarget, error)
+
 	// What the last fetch brought back; the frame is drawn from this, not
 	// from a call to the daemon.
 	header       headerInfo
