@@ -118,18 +118,26 @@ func TestPlanAttachPrintInsideOtherTmuxIsUnchanged(t *testing.T) {
 // a scratch directory first: tmux reads it, not TMPDIR, to place its sockets,
 // and the outer new-window falls back to the default server when TMUX is gone,
 // so both must stay out of the live socket directory.
-func scratchTmuxPair(t *testing.T) (mv, op func(args ...string) (string, error), opEnv, pane string) {
+func scratchTmuxPair(t *testing.T) (mv, op func(args ...string) (string, error), opEnv, pane, active string) {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Fatal("tmux is not on PATH; CI runner images carry it and a missing one must not read as a pass")
 	}
-	dir, err := os.MkdirTemp("", "nw")
+	// A short fixed parent keeps the socket path under the 104-character limit.
+	parent := "/tmp"
+	if _, err := os.Stat("/private/tmp"); err == nil {
+		parent = "/private/tmp"
+	}
+	dir, err := os.MkdirTemp(parent, "nw")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	t.Setenv("TMUX_TMPDIR", dir)
 	t.Setenv("TMPDIR", dir)
+	// The scratch servers read no configuration file: -f /dev/null below, and
+	// HOME is moved so nothing else resolves to the operator's.
+	t.Setenv("HOME", dir)
 	t.Setenv("MARVEL_SOCKET", "")
 	t.Setenv("TMUX", "")
 	if err := os.Unsetenv("TMUX"); err != nil {
@@ -137,19 +145,21 @@ func scratchTmuxPair(t *testing.T) (mv, op func(args ...string) (string, error),
 	}
 	runner := func(sock string) func(args ...string) (string, error) {
 		return func(args ...string) (string, error) {
-			out, err := exec.Command("tmux", append([]string{"-L", sock}, args...)...).CombinedOutput()
+			out, err := exec.Command("tmux", append([]string{"-f", "/dev/null", "-L", sock}, args...)...).CombinedOutput()
 			return strings.TrimSpace(string(out)), err
 		}
 	}
 	mv, op = runner("nwm"), runner("nwo")
 	t.Cleanup(func() { _, _ = mv("kill-server"); _, _ = op("kill-server") })
-	for _, c := range [][]string{
-		{"new-session", "-d", "-x", "80", "-y", "24", "sleep 60"},
-		{"new-window", "-d", "sleep 60"},
-	} {
-		if out, err := mv(c...); err != nil {
-			t.Fatalf("marvel scratch server %v: %v: %s", c, err, out)
-		}
+	if out, err := mv("new-session", "-d", "-x", "80", "-y", "24", "sleep 60"); err != nil {
+		t.Fatalf("marvel scratch server: %v: %s", err, out)
+	}
+	if active, err = mv("display-message", "-p", "#{pane_id}"); err != nil {
+		t.Fatalf("active pane: %v: %s", err, active)
+	}
+	// The desk is a second window, created detached so the first stays active.
+	if pane, err = mv("new-window", "-d", "-P", "-F", "#{pane_id}", "sleep 60"); err != nil {
+		t.Fatalf("desk pane: %v: %s", err, pane)
 	}
 	if out, err := op("new-session", "-d", "-x", "80", "-y", "24", "sleep 60"); err != nil {
 		t.Fatalf("operator scratch server: %v: %s", err, out)
@@ -158,13 +168,10 @@ func scratchTmuxPair(t *testing.T) (mv, op func(args ...string) (string, error),
 	if out, err := op("set-option", "-g", "remain-on-exit", "on"); err != nil {
 		t.Fatalf("remain-on-exit: %v: %s", err, out)
 	}
-	if pane, err = mv("display-message", "-p", "-t", ":1", "#{pane_id}"); err != nil {
-		t.Fatalf("desk pane: %v: %s", err, pane)
-	}
 	if opEnv, err = op("display-message", "-p", "#{socket_path},#{pid},0"); err != nil {
 		t.Fatalf("operator env: %v: %s", err, opEnv)
 	}
-	return mv, op, opEnv, pane
+	return mv, op, opEnv, pane, active
 }
 
 func windowCount(t *testing.T, run func(args ...string) (string, error)) int {
@@ -180,10 +187,9 @@ func windowCount(t *testing.T, run func(args ...string) (string, error)) int {
 // server, none on marvel's, and that window's client lands on the desk pane,
 // which is not the pane the marvel session had active.
 func TestAttachNewWindowClientLandsOnPane(t *testing.T) {
-	mv, op, opEnv, pane := scratchTmuxPair(t)
-	active, err := mv("display-message", "-p", "-t", ":0", "#{pane_id}")
-	if err != nil || active == pane {
-		t.Fatalf("active pane %q and desk pane %q must differ: %v", active, pane, err)
+	mv, op, opEnv, pane, active := scratchTmuxPair(t)
+	if active == pane {
+		t.Fatalf("active pane %q and desk pane %q must differ", active, pane)
 	}
 	opBefore, mvBefore := windowCount(t, op), windowCount(t, mv)
 	plan, err := planAttach(strings.TrimPrefix(pane, "%"), []api.Session{{Name: "s", PaneID: pane}}, attachTarget{Socket: "nwm"}, opEnv, false)
@@ -203,7 +209,7 @@ func TestAttachNewWindowClientLandsOnPane(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			wins, _ := op("list-windows", "-F", "#{window_index} #{pane_dead}")
-			text, _ := op("capture-pane", "-p", "-t", ":1")
+			text, _ := op("capture-pane", "-p", "-t", "{end}")
 			t.Fatalf("marvel clients' panes = %q, want %q within 5s; operator windows: %s; new window text: %s", out, pane, wins, text)
 		}
 		time.Sleep(100 * time.Millisecond)
