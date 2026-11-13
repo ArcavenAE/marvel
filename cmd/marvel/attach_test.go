@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -219,6 +221,74 @@ func TestAttachNewWindowClientLandsOnPane(t *testing.T) {
 	}
 	if got := windowCount(t, mv); got != mvBefore {
 		t.Errorf("marvel server windows = %d, want %d unchanged", got, mvBefore)
+	}
+}
+
+// runAttachInForeignTmux runs the verb against the scratch pair with the real
+// command runner, from inside the operator's scratch tmux. The daemon fake says
+// the desk is pane `row`; killMarvel stops marvel's scratch server first.
+func runAttachInForeignTmux(t *testing.T, row string, killMarvel bool) (opBefore, opAfter int, err error) {
+	t.Helper()
+	resolveFixture(t, false)
+	mv, op, opEnv, _, _ := scratchTmuxPair(t)
+	socket, _ := attachFakeDaemon(t, []api.Session{{Name: "s", PaneID: row}}, daemon.DaemonStatus{TmuxSocket: "nwm"})
+	t.Setenv(config.SocketEnv, socket)
+	if killMarvel {
+		if out, kerr := mv("kill-server"); kerr != nil {
+			t.Fatalf("kill marvel scratch server: %v: %s", kerr, out)
+		}
+	}
+	opBefore = windowCount(t, op)
+	env := attachEnv{
+		Getenv: func(k string) string {
+			if k == "TMUX" {
+				return opEnv
+			}
+			return ""
+		},
+		Exec: func(argv []string) error {
+			cmd := exec.Command(argv[0], argv[1:]...)
+			cmd.Env = append(os.Environ(), "TMUX="+opEnv)
+			if out, rerr := cmd.CombinedOutput(); rerr != nil {
+				return fmt.Errorf("%v: %s", rerr, out)
+			}
+			return nil
+		},
+		Stderr: io.Discard,
+	}
+	err = runAttach(&bytes.Buffer{}, strings.TrimPrefix(row, "%"), false, env)
+	return opBefore, windowCount(t, op), err
+}
+
+// The window's exit status covers only the window, not the attach inside it, so
+// a desk pane that closed since the plan must be refused before any window is
+// opened, with tmux's own words and the command to run by hand.
+func TestAttachInForeignTmuxRefusesAMissingPane(t *testing.T) {
+	before, after, err := runAttachInForeignTmux(t, "%99", false)
+	if err == nil {
+		t.Fatal("attach to a pane that does not exist returned nil")
+	}
+	for _, want := range []string{"can't find", "tmux -L nwm attach -t %99"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to contain %q", err, want)
+		}
+	}
+	if after != before {
+		t.Errorf("operator server windows = %d, want %d: no window for a pane that is gone", after, before)
+	}
+}
+
+// The same for marvel's server being gone.
+func TestAttachInForeignTmuxRefusesADeadMarvelServer(t *testing.T) {
+	before, after, err := runAttachInForeignTmux(t, "%1", true)
+	if err == nil {
+		t.Fatal("attach to a server that is gone returned nil")
+	}
+	if !strings.Contains(err.Error(), "tmux -L nwm attach -t %1") {
+		t.Errorf("err = %q, want it to carry the attach command", err)
+	}
+	if after != before {
+		t.Errorf("operator server windows = %d, want %d: no window for a dead server", after, before)
 	}
 }
 
