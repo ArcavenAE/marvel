@@ -144,7 +144,7 @@ func (w *WriteSet) Flush() error {
 			bucket, value = bucketTeams, t
 		}
 		last, seen := s.persisted[persistedKey(bucket, k.key)]
-		data, image, changed, err := encodeIfChanged(value, last, seen)
+		data, image, changed, err := s.encodeIfChanged(value, last, seen)
 		if err != nil {
 			return fmt.Errorf("marshal %s/%s: %w", bucket, k.key, err)
 		}

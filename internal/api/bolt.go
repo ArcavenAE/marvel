@@ -439,7 +439,7 @@ func (s *Store) persistPutIfChanged(bucket []byte, key string, value any) error 
 		return nil
 	}
 	last, seen := s.persisted[persistedKey(bucket, key)]
-	data, image, changed, err := encodeIfChanged(value, last, seen)
+	data, image, changed, err := s.encodeIfChanged(value, last, seen)
 	if err != nil {
 		return fmt.Errorf("marshal %s/%s: %w", bucket, key, err)
 	}
@@ -463,25 +463,25 @@ func (s *Store) persistPutIfChanged(bucket []byte, key string, value any) error 
 // image equal to its data, and one with a LastHealthCheck gets its full encode
 // only when the compare says it will be written. data is nil when changed is
 // false.
-func encodeIfChanged(value any, last []byte, seen bool) (data, image []byte, changed bool, err error) {
+func (s *Store) encodeIfChanged(value any, last []byte, seen bool) (data, image []byte, changed bool, err error) {
 	sess, isSession := value.(*Session)
 	if isSession && !sess.LastHealthCheck.IsZero() {
 		c := *sess
 		c.LastHealthCheck = time.Time{}
-		image, err = json.Marshal(&c)
+		image, err = s.marshalCounted(&c)
 		if err != nil {
 			return nil, nil, false, err
 		}
 		if seen && bytes.Equal(last, image) {
 			return nil, nil, false, nil
 		}
-		data, err = json.Marshal(value)
+		data, err = s.marshalCounted(value)
 		if err != nil {
 			return nil, nil, false, err
 		}
 		return data, image, true, nil
 	}
-	data, err = json.Marshal(value)
+	data, err = s.marshalCounted(value)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -489,6 +489,13 @@ func encodeIfChanged(value any, last []byte, seen bool) (data, image []byte, cha
 		return nil, nil, false, nil
 	}
 	return data, data, true, nil
+}
+
+// marshalCounted is json.Marshal for the compare, counted in s.encodes. The
+// caller holds the Store's lock.
+func (s *Store) marshalCounted(v any) ([]byte, error) {
+	s.encodes++
+	return json.Marshal(v)
 }
 
 // compareImage is the compare form of a record whose data is already encoded:
