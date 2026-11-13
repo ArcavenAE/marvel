@@ -3810,8 +3810,8 @@ func newWatchScreen(cols []sessionColumn, explicit, noTrunc bool) *watchSort {
 // a terminal.
 func withWatchTerminal(interval time.Duration, run func(keys <-chan byte, ticks <-chan time.Time, out func(string))) error {
 	fd := int(os.Stdin.Fd())
-	if !term.IsTerminal(fd) {
-		return errNeedTerminal
+	if err := requireTerminal(fd); err != nil {
+		return err
 	}
 
 	oldState, err := term.MakeRaw(fd)
@@ -3820,20 +3820,16 @@ func withWatchTerminal(interval time.Duration, run func(keys <-chan byte, ticks 
 	}
 	defer func() { _ = term.Restore(fd, oldState) }()
 
-	// Read keys in a goroutine.
-	keys := make(chan byte, 1)
-	go func() {
-		buf := make([]byte, 1)
-		for {
-			n, err := os.Stdin.Read(buf)
-			if n > 0 {
-				keys <- buf[0]
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
+	// Keys come from a reader that can be paused and stopped. It hands over
+	// one byte at a time on an unbuffered channel, where this used to be a
+	// goroutine blocked in Read with a one-slot buffer: the buffer would let a
+	// paused reader hold a second keystroke that belongs to a child.
+	reader, err := newKeyReader(fd)
+	if err != nil {
+		return fmt.Errorf("read keys: %w", err)
+	}
+	defer reader.Close()
+	keys := reader.Keys()
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
