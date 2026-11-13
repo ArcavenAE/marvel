@@ -558,7 +558,7 @@ install target; gated on a workspace-VFS study.
 
 Open question: `_kos/nodes/frontier/question-pack-integration.yaml`.
 
-Vocabulary: "pack" is sideshow's term only. Marvel's own bundles are `company/` and cast, and prose, flags and docs here do not call them packs (operator, 2026-10-15).
+Vocabulary: "pack" is sideshow's term only (operator, 2026-10-15). A seat's application of later rulings, taken from the review of this change and not the operator's words: marvel's bundle is a company, a library of team, workflow and agent definitions (ruled 2026-10-16), and a cast is the teams running on a cluster, each drawn from a company (2026-10-19). Neither is a pack.
 
 ## CLI
 
