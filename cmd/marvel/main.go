@@ -3242,6 +3242,9 @@ type watchSort struct {
 	status string
 	height int
 	target func(cluster string) (attachTarget, error)
+	// exec runs a plan's argv. Slice 1 never calls it: Enter only shows the
+	// plan. The field is here so a test can fail on any call.
+	exec func(argv []string) error
 
 	// What the last fetch brought back; the frame is drawn from this, not
 	// from a call to the daemon.
