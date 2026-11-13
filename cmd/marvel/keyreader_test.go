@@ -69,8 +69,19 @@ func within(t *testing.T, what string, f func()) {
 	}
 }
 
+// scratchEnv keeps a test from reaching the operator's home, the daemon or
+// the tmux the seat runs in. The reader does not touch any of them; the
+// children slice 3 starts will, and these tests set the pattern.
+func scratchEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MARVEL_SOCKET", "")
+	t.Setenv("TMUX", "")
+}
+
 func startReader(t *testing.T) (r *keyReader, stdinW int) {
 	t.Helper()
+	scratchEnv(t)
 	in, w := pipePair(t)
 	kr, err := newKeyReader(in)
 	if err != nil {
@@ -245,8 +256,8 @@ func TestWakeByteIsDrainedAndTheReaderDoesNotSpin(t *testing.T) {
 	within(t, "Pause", r.Pause)
 	before := r.waits.Load()
 	time.Sleep(150 * time.Millisecond)
-	if spun := r.waits.Load() - before; spun > 2 {
-		t.Errorf("a paused reader waited %d times in 150ms, want no spin", spun)
+	if spun := r.waits.Load() - before; spun != 0 {
+		t.Errorf("a paused reader waited %d times in 150ms, want none", spun)
 	}
 	if readableNow(t, r.wakeR) {
 		t.Error("the wake byte is still in the pipe after the pause was acknowledged")
@@ -255,6 +266,129 @@ func TestWakeByteIsDrainedAndTheReaderDoesNotSpin(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if readableNow(t, r.wakeR) {
 		t.Error("a wake byte is left in the pipe after Resume")
+	}
+	// Running and idle, the reader sits in one wait. An undrained wake byte
+	// would make that wait return at once, again and again.
+	before = r.waits.Load()
+	time.Sleep(150 * time.Millisecond)
+	if spun := r.waits.Load() - before; spun > 1 {
+		t.Errorf("an idle reader waited %d times in 150ms after Resume, want at most one in flight", spun)
+	}
+}
+
+func TestIdleReaderDoesNotSpin(t *testing.T) {
+	r, _ := startReader(t)
+	time.Sleep(50 * time.Millisecond)
+	before := r.waits.Load()
+	if before == 0 {
+		t.Fatal("the running reader never waited for input")
+	}
+	time.Sleep(150 * time.Millisecond)
+	if spun := r.waits.Load() - before; spun > 1 {
+		t.Errorf("an idle reader waited %d times in 150ms, want at most one in flight", spun)
+	}
+}
+
+// A reader holds at most the one byte it read. Taking more from stdin than it
+// can hand over would eat keystrokes meant for the child that gets the
+// terminal while it is paused.
+func TestKeyReaderTakesOneByteAtATime(t *testing.T) {
+	r, w := startReader(t)
+	writeBytes(t, w, "kyz")
+	time.Sleep(100 * time.Millisecond) // the reader has read k and waits to hand it over
+	within(t, "Pause with a key waiting", r.Pause)
+
+	stdin := r.stdinFD()
+	if !readableNow(t, stdin) {
+		t.Fatal("nothing is left on stdin: the reader took more than one byte")
+	}
+	buf := make([]byte, 4)
+	n, err := unix.Read(stdin, buf)
+	if err != nil || string(buf[:n]) != "yz" {
+		t.Fatalf("stdin held %q (err %v), want yz", buf[:n], err)
+	}
+	r.Resume()
+	if got := recvKey(t, r); got != 'k' {
+		t.Fatalf("got %q, want the held key k", got)
+	}
+}
+
+func TestWaitReadableRetriesInterruptedPollWithoutSelect(t *testing.T) {
+	prevPoll, prevSel := pollFn, selectFn
+	calls, selects := 0, 0
+	pollFn = func(fds []unix.PollFd, ms int) (int, error) {
+		calls++
+		if calls == 1 {
+			return -1, unix.EINTR
+		}
+		return prevPoll(fds, ms)
+	}
+	selectFn = func(n int, r, w, e *unix.FdSet, tv *unix.Timeval) (int, error) {
+		selects++
+		return prevSel(n, r, w, e, tv)
+	}
+	t.Cleanup(func() { pollFn, selectFn = prevPoll, prevSel })
+
+	inR, inW := pipePair(t)
+	wR, _ := pipePair(t)
+	writeBytes(t, inW, "x")
+	in, woke, err := waitReadable(inR, wR, time.Second)
+	if err != nil || !in || woke {
+		t.Fatalf("in=%v woke=%v err=%v, want input only", in, woke, err)
+	}
+	if calls < 2 || selects != 0 {
+		t.Errorf("poll calls=%d select calls=%d, want the interrupted poll retried and select unused", calls, selects)
+	}
+}
+
+func TestWaitReadableZeroTimeoutHasNoBound(t *testing.T) {
+	inR, inW := pipePair(t)
+	wR, _ := pipePair(t)
+	type result struct{ in, woke bool }
+	out := make(chan result, 1)
+	go func() {
+		in, woke, _ := waitReadable(inR, wR, 0)
+		out <- result{in, woke}
+	}()
+	select {
+	case got := <-out:
+		t.Fatalf("a zero timeout returned at once with %+v, want it to wait", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	writeBytes(t, inW, "x")
+	select {
+	case got := <-out:
+		if !got.in {
+			t.Errorf("woke without input: %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the wait did not end when input arrived")
+	}
+}
+
+func TestKeyReaderPauseAndResumeAreIdempotent(t *testing.T) {
+	r, w := startReader(t)
+	within(t, "Resume without a Pause", r.Resume)
+	within(t, "first Pause", r.Pause)
+	within(t, "second Pause", r.Pause)
+	r.Resume()
+	within(t, "second Resume", r.Resume)
+	writeBytes(t, w, "a")
+	if got := recvKey(t, r); got != 'a' {
+		t.Fatalf("got %q, want a", got)
+	}
+}
+
+func TestCloseReleasesTheWakePipe(t *testing.T) {
+	r, _ := startReader(t)
+	if r.wakeR <= 0 {
+		t.Fatal("the reader has no wake pipe")
+	}
+	wake := r.wakeR
+	within(t, "Close", r.Close)
+	var st unix.Stat_t
+	if err := unix.Fstat(wake, &st); !errors.Is(err, unix.EBADF) {
+		t.Errorf("fstat on the wake pipe after Close = %v, want EBADF", err)
 	}
 }
 
