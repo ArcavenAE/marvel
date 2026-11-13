@@ -18,6 +18,16 @@ func healthCheckedSession() *Session {
 	}
 }
 
+// skipAllocCountUnderRace skips a test that compares allocation counts. The
+// race detector's instrumentation adds allocations that differ between the two
+// sides of the comparison, so the figures are stable only in a plain build.
+func skipAllocCountUnderRace(t *testing.T) {
+	t.Helper()
+	if raceEnabled {
+		t.Skip("allocation counts are not stable under the race detector")
+	}
+}
+
 // unchangedFlushAllocs is the allocations of one WriteSet pass over a session
 // whose callback and bytes are unchanged, for a session with or without a
 // LastHealthCheck.
@@ -70,6 +80,7 @@ func unchangedUpdateAllocs(t *testing.T, withHealthCheck bool) float64 {
 // pair of runs differs by exactly that encode. After the change the pair is
 // equal: the compare image is encoded once and the full record only on a write.
 func TestUnchangedWriteSetFlushEncodesASessionOnce(t *testing.T) {
+	skipAllocCountUnderRace(t)
 	without := unchangedFlushAllocs(t, false)
 	with := unchangedFlushAllocs(t, true)
 	t.Logf("unchanged Flush: %.0f allocations without a LastHealthCheck, %.0f with", without, with)
@@ -79,6 +90,7 @@ func TestUnchangedWriteSetFlushEncodesASessionOnce(t *testing.T) {
 }
 
 func TestUnchangedStoreUpdateEncodesASessionOnce(t *testing.T) {
+	skipAllocCountUnderRace(t)
 	without := unchangedUpdateAllocs(t, false)
 	with := unchangedUpdateAllocs(t, true)
 	t.Logf("unchanged UpdateSession: %.0f allocations without a LastHealthCheck, %.0f with", without, with)
