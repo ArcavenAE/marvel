@@ -2,6 +2,7 @@ package main
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -176,4 +177,27 @@ func TestKeyParserArrows(t *testing.T) {
 			t.Fatal("the loop did not return after ESC and q")
 		}
 	})
+}
+
+// The multi-cluster watch loop reads keys the same way: an arrow moves its
+// cursor.
+func TestKeyParserArrowsInTheFanWatch(t *testing.T) {
+	r := newFanRig(t, time.Minute, time.Minute, "a")
+	r.waitStarted("a", 1)
+	r.answer("a", 1, "one", "two", "three")
+	r.frame("the answered rows", contains("three"))
+	highlightedRow := func(f string) string {
+		for _, l := range strings.Split(f, "\n") {
+			if strings.Contains(l, "\x1b[7m") {
+				return strings.Join(strings.Fields(strings.ReplaceAll(l, "\x1b[7m", " ")), " ")
+			}
+		}
+		return ""
+	}
+	r.keys <- 'j'
+	r.frame("the first row highlighted", func(f string) bool { return strings.Contains(highlightedRow(f), "one") })
+	for _, b := range []byte{esc, '[', 'B'} {
+		r.keys <- b
+	}
+	r.frame("the second row (three, by name order) highlighted by ESC [ B", func(f string) bool { return strings.Contains(highlightedRow(f), "three") })
 }
