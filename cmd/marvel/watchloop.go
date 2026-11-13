@@ -73,6 +73,9 @@ func handleWatchKey(ws *watchSort, key byte) (quit, redraw bool) {
 // passes, the frame keeps the last good data under a stale banner, and the
 // banner clears when the fetch answers.
 func watchLoop(ws *watchSort, cfg watchLoopConfig, keys <-chan byte, ticks <-chan time.Time) {
+	done := make(chan struct{})
+	defer close(done)
+	keys = parseKeys(keys, escWait, done)
 	var (
 		results  = make(chan watchData, 1)
 		inflight bool

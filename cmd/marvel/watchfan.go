@@ -92,6 +92,9 @@ type fanTimer struct {
 // watchLoop, a fetch runs in its own goroutine and the loop never waits on
 // one, so keys are always read.
 func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-chan time.Time) {
+	done := make(chan struct{})
+	defer close(done)
+	keys = parseKeys(keys, escWait, done)
 	states := make([]*fanState, len(cfg.clusters))
 	byName := map[string]*fanState{}
 	for i, c := range cfg.clusters {
