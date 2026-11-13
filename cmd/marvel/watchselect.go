@@ -155,6 +155,9 @@ func (ws *watchSort) enter() {
 	}
 }
 
+// watchTargetFor is the target resolver the single-cluster watch installs.
+func watchTargetFor(*watchSort) func(string) (attachTarget, error) { return daemonAttachTarget }
+
 // daemonAttachTarget is what Enter resolves a desk against in the
 // single-cluster watch: the tmux socket the selected daemon reports, and the
 // host when it is not on this machine. It asks the daemon, so a daemon that

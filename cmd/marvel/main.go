@@ -3849,7 +3849,7 @@ func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, n
 	return withWatchTerminal(interval, func(keys <-chan byte, ticks <-chan time.Time, out func(string)) {
 		ws := newWatchScreen(cols, explicit, noTrunc)
 		ws.heightFn = terminalHeight
-		ws.target = daemonAttachTarget
+		ws.target = watchTargetFor(ws)
 		watchLoop(ws, watchLoopConfig{
 			interval: interval,
 			deadline: watchFetchDeadline,
