@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -155,21 +156,22 @@ func (ws *watchSort) enter() {
 	}
 }
 
-// daemonAttachTarget is what Enter resolves a desk against in the
-// single-cluster watch: the tmux socket the selected daemon reports, and the
-// host when it is not on this machine. It asks the daemon, so a daemon that
-// is not answering holds the key until its own timeout.
-func daemonAttachTarget(string) (attachTarget, error) {
-	addr, _, _, err := resolveDaemonRung()
-	if err != nil {
-		return attachTarget{}, err
+// watchTargetFor is the target resolver the single-cluster watch installs.
+func watchTargetFor(ws *watchSort) func(string) (attachTarget, error) { return ws.headerTarget }
+
+// headerTarget is what Enter resolves a desk against in the single-cluster
+// watch: the tmux socket and address from the daemon status the last fetch
+// brought back. It makes no call, so Enter never waits on the daemon.
+func (ws *watchSort) headerTarget(string) (attachTarget, error) {
+	h := ws.header
+	if h.Status == nil {
+		if h.StatusErr == "" {
+			return attachTarget{}, errors.New("no daemon status yet")
+		}
+		return attachTarget{}, fmt.Errorf("no daemon status yet (%s)", h.StatusErr)
 	}
-	st, err := fetchDaemonStatus()
-	if err != nil {
-		return attachTarget{}, err
-	}
-	host, remote := attachHost(addr)
-	return attachTarget{Socket: st.TmuxSocket, Remote: remote, Host: host}, nil
+	host, remote := attachHost(h.Address)
+	return attachTarget{Socket: h.Status.TmuxSocket, Remote: remote, Host: host}, nil
 }
 
 // sessionsView is renderSessionsView for the watch screen: the selected row is
@@ -190,7 +192,7 @@ func (ws *watchSort) sessionsView(sessions []api.Session, header string, fit fit
 		}
 	}
 
-	lo, hi := 0, len(rows)
+	lo, hi, cut := 0, len(rows), false
 	h := ws.height
 	if ws.heightFn != nil {
 		h = ws.heightFn()
@@ -201,6 +203,10 @@ func (ws *watchSort) sessionsView(sessions []api.Session, header string, fit fit
 			fixed++
 		}
 		budget := max(h-fixed, 1)
+		if len(rows) > budget {
+			budget = max(h-fixed-1, 1) // one line says which rows are shown
+			cut = true
+		}
 		top := ws.top
 		if sel >= 0 {
 			if sel < top {
@@ -224,6 +230,9 @@ func (ws *watchSort) sessionsView(sessions []api.Session, header string, fit fit
 			continue
 		}
 		b.WriteString(rows[i] + "\n")
+	}
+	if cut {
+		fmt.Fprintf(&b, "showing rows %d-%d of %d\n", lo+1, hi, len(rows))
 	}
 	b.WriteString(post)
 	return b.String()
