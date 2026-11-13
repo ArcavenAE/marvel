@@ -3245,6 +3245,12 @@ type watchSort struct {
 	// exec runs a plan's argv. Slice 1 never calls it: Enter only shows the
 	// plan. The field is here so a test can fail on any call.
 	exec func(argv []string) error
+	// heightFn, when set, reads the screen height for each frame, so a resize
+	// shows on the next draw; height is used when it is nil.
+	heightFn func() int
+	// top is the first table row on screen, kept between frames so the view
+	// scrolls only as far as the selection needs.
+	top int
 
 	// What the last fetch brought back; the frame is drawn from this, not
 	// from a call to the daemon.
@@ -3289,6 +3295,7 @@ func (ws *watchSort) apply(d watchData) {
 	ws.disconnected = false
 	ws.lastSessions = d.sessions
 	ws.asOf = d.at
+	ws.reconcileSelection()
 }
 
 func toggleSort(ws *watchSort, col string, descFirst bool) {
@@ -3770,13 +3777,15 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 		if len(ws.lastSessions) > 0 {
 			fmt.Fprintf(&buf, "last known state:\n")
 			sortSessions(ws.lastSessions, ws)
-			buf.WriteString(renderSessionsView(ws.lastSessions, ws.columns, "", fit))
+			buf.WriteString(ws.sessionsView(ws.lastSessions, "", fit, buf.String()))
 		}
+		ws.writeStatus(&buf)
 		return buf.String()
 	}
 
 	sortSessions(ws.lastSessions, ws)
-	buf.WriteString(renderSessionsView(ws.lastSessions, ws.columns, header, fit))
+	buf.WriteString(ws.sessionsView(ws.lastSessions, header, fit, buf.String()))
+	ws.writeStatus(&buf)
 	return buf.String()
 }
 
@@ -3839,6 +3848,8 @@ func withWatchTerminal(interval time.Duration, run func(keys <-chan byte, ticks 
 func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, noTrunc bool) error {
 	return withWatchTerminal(interval, func(keys <-chan byte, ticks <-chan time.Time, out func(string)) {
 		ws := newWatchScreen(cols, explicit, noTrunc)
+		ws.heightFn = terminalHeight
+		ws.target = daemonAttachTarget
 		watchLoop(ws, watchLoopConfig{
 			interval: interval,
 			deadline: watchFetchDeadline,
@@ -3871,6 +3882,15 @@ func printSessions(data json.RawMessage, cols []sessionColumn, header string, fi
 // prints into a pipe. When a source mark is on screen, one legend line joins
 // the header on a terminal; piped output keeps the mark and drops the legend.
 func renderSessionsView(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) string {
+	pre, table, post := renderSessionsParts(sessions, cols, header, fit)
+	return pre + table + post
+}
+
+// renderSessionsParts is renderSessionsView in three pieces: what comes before
+// the table (the header), the table, and what follows it (the warning, the
+// hidden-columns note, the composer gaps and the undrawable tally). The watch
+// view cuts and marks rows of the table and keeps the rest.
+func renderSessionsParts(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) (pre, table, post string) {
 	allCols := append(append([]sessionColumn(nil), fit.lead...), cols...)
 	fit.lead = drawableColumns(fit.lead)
 	res := fitSessionTable(sessions, drawableColumns(cols), fit)
@@ -3880,8 +3900,6 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 	var tally undrawTally
 	tally.cells(sessions, shownColumns(allCols, res.cols))
 	var b strings.Builder
-	b.WriteString(header)
-	b.WriteString(res.table)
 	if res.warn != "" {
 		b.WriteString(res.warn + "\n")
 	}
@@ -3892,7 +3910,7 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 		b.WriteString(composerGapLines(sessions, &tally))
 	}
 	b.WriteString(tally.line())
-	return b.String()
+	return header, res.table, b.String()
 }
 
 // composerGapLines names each seat whose COMPOSER cell is unknown for a reason

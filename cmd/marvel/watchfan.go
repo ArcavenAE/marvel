@@ -308,6 +308,7 @@ func renderFanFrame(ws *watchSort, cfg fanWatchConfig, states []*fanState, now t
 		}
 	}
 	ws.lastSessions = rows
+	ws.reconcileSelection()
 	sortSessions(ws.lastSessions, ws)
 	fit := fitOptions{
 		width:    terminalWidth(),
@@ -315,7 +316,8 @@ func renderFanFrame(ws *watchSort, cfg fanWatchConfig, states []*fanState, now t
 		noTrunc:  ws.noTrunc,
 		lead:     []sessionColumn{fanOutKeyColumn()},
 	}
-	buf.WriteString(renderSessionsView(ws.lastSessions, ws.columns, "", fit))
+	buf.WriteString(ws.sessionsView(ws.lastSessions, "", fit, buf.String()))
+	ws.writeStatus(&buf)
 	return buf.String()
 }
 
@@ -412,6 +414,7 @@ func runFanWatch(names []string, columns string, noTrunc bool, interval time.Dur
 	return withWatchTerminal(interval, func(keys <-chan byte, ticks <-chan time.Time, out func(string)) {
 		ws := newWatchState(cols)
 		ws.explicit, ws.noTrunc = explicit, noTrunc
+		ws.heightFn = terminalHeight
 		cfg := newFanWatchConfig(targets, params, interval)
 		cfg.out = out
 		fanWatchLoop(ws, cfg, keys, ticks)
