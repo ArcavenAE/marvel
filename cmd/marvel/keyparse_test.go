@@ -14,7 +14,7 @@ import (
 const (
 	esc           = 0x1b
 	arrowDeadline = 50 * time.Millisecond
-	splitGap      = arrowDeadline / 10
+	splitGap      = arrowDeadline / 20
 	pastDelay     = 4 * arrowDeadline
 	quietFor      = 150 * time.Millisecond
 )
@@ -195,7 +195,9 @@ func TestKeyParserArrows(t *testing.T) {
 		r.send(esc)
 		time.Sleep(pastDelay)
 		r.send('[', 'B')
-		r.settle("seat00") // two plain bytes, neither a key
+		// Two plain bytes, neither a key. This settle must stay paired with the
+		// move below: the move is what catches a wrong frame that arrives late.
+		r.settle("seat00")
 		r.send('j')
 		r.settle("seat01")
 	})
@@ -211,6 +213,8 @@ func TestKeyParserArrows(t *testing.T) {
 		r.send('j')
 		r.settle("seat00")
 		r.send(esc, '[', 'Z')
+		// As above: keep this paired with the move below, which catches a late
+		// wrong frame.
 		r.settle("seat00")
 		r.send('j')
 		r.settle("seat01")
