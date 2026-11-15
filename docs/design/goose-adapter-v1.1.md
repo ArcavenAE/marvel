@@ -52,7 +52,9 @@ The arm 2 run used goose 1.57.0 and Ollama. This run used goose 1.59.1 (the Home
 `us.anthropic.claude-haiku-4-5-20251001-v1:0`. goose 1.59.1 lists no Bedrock Haiku 4.5 id of its own
 (its Bedrock default is Sonnet 4.5), so that id was supplied. The long-term Bedrock key came from the
 operator's keychain and was passed in goose's process environment only, as `AWS_BEARER_TOKEN_BEDROCK`
-(read from goose source at v1.59.1, `crates/goose/src/providers/bedrock.rs`). Two measured launches:
+(read from goose source at v1.59.1, `crates/goose/src/providers/bedrock.rs`). This was a one-run
+exception for the measurement; the adapter's credential rule in goose-adapter-v1.md section 6 is
+unchanged. Two measured launches:
 B-1 ("Reply with the single word ready.") and B-2 ("Run the shell command: echo b2. Then say done.").
 Both exited 0 with empty stderr. Two launches are a sample, not a bound.
 
