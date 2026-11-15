@@ -31,7 +31,8 @@ func oneSleepRole() []api.Role {
 }
 
 func TestReconcileOverrunEmitsEvent(t *testing.T) {
-	slowTmux(t, "0.05")
+	// 0.2s a call, so even a pass of a single tmux call clears the 100ms budget.
+	slowTmux(t, "0.2")
 	store, _, ctrl, cleanup := setup(t)
 	t.Cleanup(cleanup)
 	ring := events.NewRing(64)
