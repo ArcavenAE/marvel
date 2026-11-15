@@ -7,6 +7,9 @@
 - **Evidence:** the arm 2 run on mokuzai. Ollama 0.34.2 with qwen3:0.6b (Q4_K_M, context 4096) and
   qwen3:8b (Q4_K_M), inside the arm 2 sandbox-exec profile. That profile allows the network only to
   localhost port 11434 and keeps the bus port denies; its 11 controls passed.
+- **Bedrock evidence (section 2a):** two launches of goose 1.59.1 against Amazon Bedrock, 2026-11-15,
+  inside a sandbox-exec profile that allowed the network only to localhost and reached Bedrock only
+  through a single-port CONNECT proxy; its write and network controls passed.
 
 ## 1. Why
 
@@ -41,6 +44,30 @@ extension tool-call timeout (L8) are separate timers.
 
 Pending, one measurement: a stub stdio extension whose tool blocks for 120 s, run headless, to
 show that a 120 s bus wait returns inside the 300 s extension timeout (L8).
+
+## 2a. Facts from the Bedrock run (goose 1.59.1)
+
+The arm 2 run used goose 1.57.0 and Ollama. This run used goose 1.59.1 (the Homebrew formula
+`block-goose-cli`) with provider `aws_bedrock` in `us-east-1`, model
+`us.anthropic.claude-haiku-4-5-20251001-v1:0`. goose 1.59.1 lists no Bedrock Haiku 4.5 id of its own
+(its Bedrock default is Sonnet 4.5), so that id was supplied. The long-term Bedrock key came from the
+operator's keychain and was passed in goose's process environment only, as `AWS_BEARER_TOKEN_BEDROCK`
+(read from goose source at v1.59.1, `crates/goose/src/providers/bedrock.rs`). Two measured launches:
+B-1 ("Reply with the single word ready.") and B-2 ("Run the shell command: echo b2. Then say done.").
+Both exited 0 with empty stderr. Two launches are a sample, not a bound.
+
+| # | fact | run |
+|---|---|---|
+| B1 | The stream and `complete` match Ollama's envelope: `message` lines with `content` items, and one `complete` per run with `total_tokens`, `input_tokens`, `output_tokens`, `cache_read_input_tokens` and `cache_write_input_tokens`. Differences: message ids are `msg_<uuid>` (Ollama: `chatcmpl-N`) and tool ids are `tooluse_...`; every assistant `message` carries `metadata.inference` (`provider`, `requestedModel`) and `metadata.operations.llm.advertised_tools`; `complete` carries `cost_usd`. Usage appears only on `complete`, never on a `message` line. Cache read and write were 0 in both runs (`BEDROCK_ENABLE_CACHING` was not set). B-1's "ready" arrived as one line and B-2's "Done." as two chunks under one message id | B-1, B-2 |
+| B2 | `cost_usd` on `complete` is filled for Bedrock: 0.0025718 for B-1 (2,318 input, 4 output tokens) and 0.0055121 for B-2 (4,716 input, 59 output). Neither figure was checked against Bedrock pricing | B-1, B-2 |
+| B3 | goose works through a single-port CONNECT proxy: the proxy allowed `bedrock-runtime.us-east-1.amazonaws.com:443` and both launches completed. goose also dials `models.dev:443` on every launch; the proxy refused it, goose tolerated the refusal, and stderr stayed empty | B-1, B-2 |
+| B4 | goose runs under a private `GOOSE_PATH_ROOT` set to an absolute scratch path, authenticating with the key from its environment; it created its config, data and state directories under that root and nothing else was observed outside scratch. `AWS_REGION` is required: the bearer-token path needs a region. goose's own keyring was not consulted for the key | B-1, B-2 |
+
+B-2's order was `toolRequest`, `toolResponse`, text, text, `complete`, with no `error` line.
+
+Not measured: the K1 case (an existing goose keyring entry for the provider key); reach to Bedrock
+other than by B-1's first call; any Bedrock model other than the one above; a stream idle or
+first-byte gap.
 
 ## 3. Changes to v1
 
@@ -167,13 +194,23 @@ Each test runs against recorded fixtures from arm 2 and a fake goose, so no mode
    `session.ended` with exit 0 and a denied count of 1. No event says the command ran. A second
    fixture, with `isError` false on the same shape, counts one run.
 
-## 5. Named, not designed (waiting on a Bedrock run)
+## 5. Named, not designed
 
-- Bedrock streaming and usage: whether the stream and `complete` look the same as Ollama's.
-- `cost_usd` on `complete`, and whether it is filled for Bedrock.
-- The proxy path for a remote provider through the sandbox's single allowed port.
-- The keyring read under a private root (v1 section 6, ruled 2026-10-10) on a host with a real
-  provider key.
+The Bedrock run answered the four items this section waited on (facts B1 to B4, section 2a). What
+remains open:
+
+- **The `models.dev` call.** goose contacts `models.dev` on every launch, a third-party host that is
+  not the provider (B3). A refusal there is tolerated today. Whether the adapter lets that call
+  through, blocks it, or sets a goose option to stop it is the adapter's policy and is not decided
+  here. It is an open question for the architect and director, since it decides what a seat's
+  network allow list must name.
+- **The keyring case (K1).** The read under a private root with a key already in goose's keyring was
+  not measured (B4). v1 section 6, ruled 2026-10-10, still stands for it.
+- **`cost_usd` accuracy.** B2 shows the field is filled, not that it is right. Until it is compared
+  with Bedrock pricing, nothing should bill from it.
+- **Fixtures.** The two raw streams (B-1 and B-2) belong beside `internal/runtime/testdata/goose-arm2`
+  as a Bedrock set, after their ids and paths are redacted the way the arm 2 files were. This brief
+  adds none, since it names no fixture home; that is a follow-up.
 
 ## 6. Decisions past the adapter
 
@@ -244,7 +281,7 @@ run before its entry changes. The alternatives considered were a role field besi
 ## 7. Tickets
 
 There are no new tickets. v1's tickets change as follows:
-- **A:** done for Ollama by arm 2, open for Bedrock (section 5).
+- **A:** done for Ollama by arm 2 and for Bedrock by the 2026-11-15 run (section 2a); the K1 case and the `models.dev` policy stay open (section 5).
 - **C:** takes C2 (no `--resume` on the launch line, v1 section 3), C3, C4 and C5, with the
   ceiling table seeded as section 6b says.
 - **D:** takes C1's faults. `smart-approve-headless` is already one of v1's five refusal reasons,
