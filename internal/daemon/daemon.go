@@ -41,6 +41,7 @@ import (
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/suspend"
 	"github.com/arcavenae/marvel/internal/team"
+	"github.com/arcavenae/marvel/internal/timing"
 	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/usage"
 	"github.com/arcavenae/marvel/internal/view"
@@ -73,6 +74,8 @@ const DefaultLogBufferLines = 10000
 
 // Daemon is the marvel daemon.
 type Daemon struct {
+	// timing holds the timing histograms and the overrun throttle.
+	timing *timing.Registry
 	// adoptingSince is the unix-nano time the listener began serving ahead of
 	// start-time adoption, and zero once adoption has finished. While it is set,
 	// dispatchAs answers only the methods in startingAllows.

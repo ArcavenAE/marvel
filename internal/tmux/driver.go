@@ -22,6 +22,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/timing"
 )
 
 // DefaultHistoryLimit is the tmux history-limit (scrollback lines) marvel
@@ -46,6 +47,8 @@ var ErrTmuxTimeout = errors.New("tmux did not answer in time")
 
 // Driver manages tmux sessions and panes by shelling out to the tmux binary.
 type Driver struct {
+	// timing records each tmux subcommand's duration. Nil records nothing.
+	timing *timing.Registry
 	binary string
 
 	// gate reports whether the cluster is suspended; while it does, every tmux
@@ -246,6 +249,10 @@ func (clusterSuspendedError) Error() string { return "cluster suspended; run mar
 
 // Is makes the sentinel a member of the ErrTmuxTimeout family.
 func (clusterSuspendedError) Is(target error) bool { return target == ErrTmuxTimeout }
+
+// SetTiming sets where each tmux call's duration is recorded. Set it before the
+// driver is shared between goroutines.
+func (d *Driver) SetTiming(r *timing.Registry) { d.timing = r }
 
 // SetSuspendGate sets the func that says whether the cluster is suspended. The
 // daemon wires it once at construction.

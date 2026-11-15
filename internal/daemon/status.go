@@ -9,6 +9,7 @@ import (
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
+	"github.com/arcavenae/marvel/internal/timing"
 )
 
 // MRVLState is how far the mrvl:// listener reaches, read from the address the
@@ -54,6 +55,10 @@ type DaemonStatus struct {
 	// AdoptingSince is when the daemon began serving ahead of start-time
 	// adoption. Present only while adoption is still running.
 	AdoptingSince *time.Time `json:"adopting_since,omitempty"`
+	// Timings is each timed site's histogram, its budget and its overrun count,
+	// plus the missed-tick counter (I-451). Absent from a daemon older than this
+	// field.
+	Timings *timing.Report `json:"timings,omitempty"`
 }
 
 // classifyBind maps a bound address to its reach.

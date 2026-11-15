@@ -18,10 +18,13 @@ import (
 	"github.com/arcavenae/marvel/internal/backoff"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/session"
+	"github.com/arcavenae/marvel/internal/timing"
 )
 
 // Controller reconciles desired team state with actual running sessions.
 type Controller struct {
+	// Timing records the reconcile pass and missed ticks. Nil records nothing.
+	Timing *timing.Registry
 	// hibernateSaid is the Since of the hibernate mark team.hibernated was last
 	// emitted for, per team, so it is said once. In memory: a restart says it again.
 	hibernateSaid map[string]time.Time
