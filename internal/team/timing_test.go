@@ -45,7 +45,7 @@ func TestReconcileOverrunEmitsEvent(t *testing.T) {
 
 	evs := ring.Snapshot(events.Filter{Kind: events.KindDaemonOverrun}, 0)
 	if len(evs) != 1 {
-		t.Fatalf("a pass of about a second against a 100ms budget emitted %d overrun events, want 1", len(evs))
+		t.Fatalf("a pass of at least 200ms a tmux call against a 100ms budget emitted %d overrun events, want 1", len(evs))
 	}
 	if evs[0].Reason != timing.SiteReconcilePass || evs[0].Severity != events.SeverityWarning {
 		t.Errorf("event reason/severity = %q/%s, want %q/warning", evs[0].Reason, evs[0].Severity, timing.SiteReconcilePass)

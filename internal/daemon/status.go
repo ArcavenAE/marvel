@@ -122,6 +122,10 @@ func (d *Daemon) handleDaemonStatus() daemonrpc.Response {
 		}
 	}
 	st.TmuxSocket = d.driver.Socket()
+	if d.timing != nil {
+		rep := d.timing.Report()
+		st.Timings = &rep
+	}
 	if b, ok := d.busStatus(); ok {
 		st.Bus = &b
 	}

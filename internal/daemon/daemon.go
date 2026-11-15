@@ -427,6 +427,10 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	}
 	sessMgr.Events = evRing
 	teamCtrl.Events = evRing
+	tm := timing.NewRegistry(evRing, time.Now)
+	tm.UseProvisionalBudgets()
+	driver.SetTiming(tm)
+	teamCtrl.Timing = tm
 	// The migration committed before this point; announce what it stamped,
 	// once, so an operator can see which teams were pinned to the old
 	// directory and declare a root for them.
@@ -518,6 +522,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		home:          home,
 		logs:          buf,
 		events:        evRing,
+		timing:        tm,
 		usage:         acct,
 		accounts:      api.NewAccountReadings(),
 		accountSeries: api.NewAccountSeries("", api.DefaultSeriesRetention),
@@ -1345,6 +1350,23 @@ func startingAllows(req daemonrpc.Request) bool {
 // dispatchAs enforces the caller's scope, then routes the request. A method
 // the scope does not permit is refused before any handler runs.
 func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response {
+	start := time.Now()
+	resp := d.dispatchUntimed(req, c)
+	method := req.Method
+	if strings.HasPrefix(resp.Error, unknownMethodPrefix) {
+		// One site for every method the daemon does not serve, so a client
+		// cannot mint a site of its own by inventing a name.
+		method = "other"
+	}
+	d.timing.Record(timing.RPCSite(method), time.Since(start))
+	return resp
+}
+
+// unknownMethodPrefix starts the error dispatchUntimed returns for a method it
+// does not serve; dispatchAs reads it to bucket those calls together.
+const unknownMethodPrefix = "unknown method: "
+
+func (d *Daemon) dispatchUntimed(req daemonrpc.Request, c caller) daemonrpc.Response {
 	if resp, refused := d.scopeRefusal(req, c); refused {
 		return resp
 	}
@@ -1458,7 +1480,7 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 	case "plan":
 		return d.handlePlan()
 	default:
-		return daemonrpc.Response{Error: fmt.Sprintf("unknown method: %s", req.Method)}
+		return daemonrpc.Response{Error: unknownMethodPrefix + req.Method}
 	}
 }
 

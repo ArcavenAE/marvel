@@ -208,7 +208,7 @@ func (d *Driver) cmd(args ...string) *tmuxCmd {
 	// A killed tmux client can leave a child holding its output pipe open;
 	// without a wait delay the read would outlive the kill.
 	c.WaitDelay = time.Second
-	tc := &tmuxCmd{Cmd: c, ctx: ctx, cancel: cancel, name: firstArg(args), bound: d.timeout()}
+	tc := &tmuxCmd{Cmd: c, ctx: ctx, cancel: cancel, name: firstArg(args), bound: d.timeout(), timing: d.timing}
 	if !d.ungated {
 		tc.gate = d.gate
 	}
@@ -269,6 +269,7 @@ func (d *Driver) Unguarded() *Driver {
 		execTimeout: d.execTimeout,
 		procs:       d.procs,
 		socket:      d.socket,
+		timing:      d.timing,
 		ungated:     true,
 	}
 }
@@ -286,6 +287,14 @@ type tmuxCmd struct {
 	// gate, when it reports suspended at run time, fails the call before a
 	// process is started.
 	gate func() bool
+	// timing records the call's duration under the subcommand's name. Nil
+	// records nothing.
+	timing *timing.Registry
+}
+
+// observe records one run of the command, from start to now.
+func (c *tmuxCmd) observe(start time.Time) {
+	c.timing.Record(timing.TmuxSite(c.name), time.Since(start))
 }
 
 // blocked reports whether the suspend gate stops this call, and releases the
@@ -314,6 +323,7 @@ func (c *tmuxCmd) Run() error {
 	if c.blocked() {
 		return ErrClusterSuspended
 	}
+	defer c.observe(time.Now())
 	return c.finish(c.Cmd.Run())
 }
 
@@ -322,6 +332,7 @@ func (c *tmuxCmd) Output() ([]byte, error) {
 	if c.blocked() {
 		return nil, ErrClusterSuspended
 	}
+	defer c.observe(time.Now())
 	out, err := c.Cmd.Output()
 	return out, c.finish(err)
 }
@@ -333,6 +344,7 @@ func (c *tmuxCmd) CombinedOutput() ([]byte, error) {
 	if c.blocked() {
 		return nil, ErrClusterSuspended
 	}
+	defer c.observe(time.Now())
 	out, err := c.Cmd.CombinedOutput()
 	return out, c.finish(err)
 }
