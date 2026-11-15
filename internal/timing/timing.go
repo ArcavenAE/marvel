@@ -24,8 +24,9 @@ var bounds = [...]time.Duration{
 }
 
 // Bounds returns a copy of the upper edge of each finite bucket, smallest
-// first, from 1ms to 30s. A duration lands in the first bucket whose bound it
-// does not exceed; a longer one lands in the overflow count.
+// first. The series is 1-2-5 from 1ms to 10s, then 30s as the design's cap. A
+// duration lands in the first bucket whose bound it does not exceed; a longer
+// one lands in the overflow count.
 func Bounds() []time.Duration { return append([]time.Duration(nil), bounds[:]...) }
 
 // Bucket is one finite bucket of a Snapshot.
