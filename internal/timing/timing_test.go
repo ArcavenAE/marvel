@@ -322,3 +322,25 @@ func TestThrottleIsSafeForConcurrentUse(t *testing.T) {
 		t.Errorf("%d concurrent callers were allowed in one interval, want exactly 1", allowed)
 	}
 }
+
+func TestThrottleHoldsBackWhenTheClockStepsBack(t *testing.T) {
+	t.Parallel()
+	clk := newClock()
+	th := NewThrottle(OverrunEventInterval, clk.now)
+	th.Allow("reconcile")
+	clk.advance(-time.Hour)
+	if ok, s := th.Allow("reconcile"); ok || s != 0 {
+		t.Errorf("Allow after the clock stepped back = (%v, %d), want (false, 0)", ok, s)
+	}
+}
+
+func TestThrottleReportsNoSuppressedCountWhenHoldingBack(t *testing.T) {
+	t.Parallel()
+	clk := newClock()
+	th := NewThrottle(OverrunEventInterval, clk.now)
+	th.Allow("reconcile")
+	th.Allow("reconcile")
+	if ok, s := th.Allow("reconcile"); ok || s != 0 {
+		t.Errorf("a held call = (%v, %d), want (false, 0): the count is reported only with an emit", ok, s)
+	}
+}
