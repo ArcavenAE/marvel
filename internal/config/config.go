@@ -1181,3 +1181,10 @@ func isMRVL(addr string) bool {
 func isSSH(addr string) bool {
 	return len(addr) >= 6 && addr[:6] == "ssh://"
 }
+
+// PartitionServices splits a cluster's Services list into the entries the
+// daemon can attach and the per-entry refusals of those it skips. Not
+// implemented yet: the red tests pin the contract.
+func PartitionServices(c *Cluster) ([]Service, []error) {
+	return nil, nil
+}
