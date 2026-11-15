@@ -52,7 +52,9 @@ The arm 2 run used goose 1.57.0 and Ollama. This run used goose 1.59.1 (the Home
 `us.anthropic.claude-haiku-4-5-20251001-v1:0`. goose 1.59.1 lists no Bedrock Haiku 4.5 id of its own
 (its Bedrock default is Sonnet 4.5), so that id was supplied. The long-term Bedrock key came from the
 operator's keychain and was passed in goose's process environment only, as `AWS_BEARER_TOKEN_BEDROCK`
-(read from goose source at v1.59.1, `crates/goose/src/providers/bedrock.rs`). Two measured launches:
+(read from goose source at v1.59.1, `crates/goose/src/providers/bedrock.rs`). This was a one-run
+exception for the measurement; the adapter's credential rule in goose-adapter-v1.md section 6 is
+unchanged. Two measured launches:
 B-1 ("Reply with the single word ready.") and B-2 ("Run the shell command: echo b2. Then say done.").
 Both exited 0 with empty stderr. Two launches are a sample, not a bound.
 
@@ -195,14 +197,9 @@ Each test runs against recorded fixtures from arm 2 and a fake goose, so no mode
 
 ## 5. Named, not designed
 
-The Bedrock run answered the four items this section waited on (facts B1 to B4, section 2a). What
-remains open:
+The Bedrock run answered the four items this section waited on (facts B1 to B4, section 2a). The
+`models.dev` question it raised is ruled, below. What remains open:
 
-- **The `models.dev` call.** goose contacts `models.dev` on every launch, a third-party host that is
-  not the provider (B3). A refusal there is tolerated today. Whether the adapter lets that call
-  through, blocks it, or sets a goose option to stop it is the adapter's policy and is not decided
-  here. It is an open question for the architect and director, since it decides what a seat's
-  network allow list must name.
 - **The keyring case (K1).** The read under a private root with a key already in goose's keyring was
   not measured (B4). v1 section 6, ruled 2026-10-10, still stands for it.
 - **`cost_usd` accuracy.** B2 shows the field is filled, not that it is right. Until it is compared
@@ -210,6 +207,26 @@ remains open:
 - **Fixtures.** The two raw streams (B-1 and B-2) belong beside `internal/runtime/testdata/goose-arm2`
   as a Bedrock set, after their ids and paths are redacted the way the arm 2 files were. This brief
   adds none, since it names no fixture home; that is a follow-up.
+
+### The `models.dev` call: allowed
+
+goose contacts `models.dev` on every launch (B3). The operator ruled on 2026-11-15, relayed by
+director: "models.dev allow it". The adapter's allowed egress therefore names `models.dev:443`
+beside the provider endpoint (for the Bedrock run, `bedrock-runtime.us-east-1.amazonaws.com:443`).
+This brief lists no egress set of its own elsewhere, so this paragraph is where the pair is
+recorded.
+
+What the call is, by source:
+- It is a GET of `https://models.dev/api.json`, a public model catalog. It sends the User-Agent
+  and nothing else, is ETag cached, and carries no user or usage data. goose has a bundled
+  fallback, which is why a refusal was tolerated in the Bedrock run.
+- It sits behind the build feature `online-model-meta`, which is on by default, and goose has no
+  runtime opt-out. A refusal is tolerated (B3), but the fetch then fails on every launch, and
+  no goose setting turns it off. Allowing it is the choice that matches how goose is built.
+
+Sources: the goose v1.59.1 tag (commit e62a656f), `crates/goose-cli/src/main.rs` lines 24 and 25
+and `crates/goose/src/model_catalog.rs`, read by the architect seat through the third-party
+collection tool; and director's separate read of goose main. This seat read neither.
 
 ## 6. Decisions past the adapter
 
@@ -280,7 +297,7 @@ run before its entry changes. The alternatives considered were a role field besi
 ## 7. Tickets
 
 There are no new tickets. v1's tickets change as follows:
-- **A:** done for Ollama by arm 2 and for Bedrock by the 2026-11-15 run (section 2a); the K1 case and the `models.dev` policy stay open (section 5).
+- **A:** done for Ollama by arm 2 and for Bedrock by the 2026-11-15 run (section 2a); the K1 case stays open and `models.dev` is allowed (section 5).
 - **C:** takes C2 (no `--resume` on the launch line, v1 section 3), C3, C4 and C5, with the
   ceiling table seeded as section 6b says.
 - **D:** takes C1's faults. `smart-approve-headless` is already one of v1's five refusal reasons,
