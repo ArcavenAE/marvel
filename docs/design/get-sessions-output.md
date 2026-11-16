@@ -164,6 +164,8 @@ column under the rules above.
 This partly reverses the marvel#816 vote that the fit never drops KEY, on the
 operator's ruling in section 9. Before it, `--columns key` was refused as
 unknown and a set read forced KEY in as a lead the user could not move or drop.
+The cost the operator accepted: a list without KEY can show two rows that look
+the same.
 
 ### 4.2 Width
 
@@ -501,18 +503,20 @@ These rulings apply only when neither `--socket` nor `MARVEL_SOCKET` is set. Eit
 
 ### Later rulings on the account split (I-450)
 
-The operator ruled on 2026-11-14, via director, on the panel's recommendation.
-The four rulings, in the operator's words:
+The operator ruled on 2026-11-14, via director, on four Desk cards. Three
+followed the panel's recommendation (i450c1113-1, -2 and -4). The `wide` ruling
+(i450c1113-3) took option 2, against the recommendation of option 1. The four
+rulings, in the operator's words:
 
-- KEY: "The list alone decides. KEY becomes a normal column. With no list, a
+- KEY (i450c1113-1): "The list alone decides. KEY becomes a normal column. With no list, a
   multi-cluster read still adds KEY first. With a list, naming key places it
   and leaving it out drops it." This partly reverses the marvel#816 vote that
   the fit never drops KEY.
-- Window start: "No start column. Show only the figures the harness reports:
+- Window start (i450c1113-2): "No start column. Show only the figures the harness reports:
   percent used and the reset offset."
-- `wide`: "As voted, plus READ in wide. wide gains account,7d,7d-reset,read, so a
+- `wide` (i450c1113-3, option 2): "As voted, plus READ in wide. wide gains account,7d,7d-reset,read, so a
   stale figure's age is in view wherever the figure is."
-- Order of work: "Doc first, in its own small docs pull request, then the TDD
+- Order of work (i450c1113-4): "Doc first, in its own small docs pull request, then the TDD
   build against it."
 
 ## 10. Notes from the build
