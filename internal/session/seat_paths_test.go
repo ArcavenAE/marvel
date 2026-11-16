@@ -169,3 +169,27 @@ func TestDefaultSeatDirsAreUnderTheMarvelHome(t *testing.T) {
 		}
 	}
 }
+
+// The path recorded at launch reaches the stored session, not only the local
+// copy the launch built, so it survives a daemon restart and Reproject can read
+// it for an adopted seat.
+func TestCreateStoresTheProjectionPathOfTheSeat(t *testing.T) {
+	r := newContainerRig(t, "test-recorded-path", api.PlacementLocalhost, api.Role{Name: "seat", Replicas: 1, Policy: "contract"})
+	r.mgr.ProjectionDir = t.TempDir()
+	if err := r.store.CreatePolicy(&api.Policy{
+		Name: "contract", Workspace: r.ws, Settings: map[string]any{"permissions": map[string]any{"allow": []any{"Read"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sess := r.session("claude")
+	if err := r.mgr.Create(sess); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	stored, err := r.store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProjectionPath == "" || !withinDir(r.mgr.ProjectionDir, stored.ProjectionPath) {
+		t.Errorf("stored ProjectionPath = %q, want a path inside %q", stored.ProjectionPath, r.mgr.ProjectionDir)
+	}
+}
