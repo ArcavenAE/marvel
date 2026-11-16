@@ -21,40 +21,44 @@ func svcSession(name string, intended, resolved api.Backend, src api.BackendCred
 	return s
 }
 
-// svcCells renders name,service for the sessions and returns the SERVICE cell
-// by agent name. The cell is the text after the name field.
+// svcCells renders name and the five columns the service set expands to, and
+// returns the cells after the name joined by one space, as the composite SERVICE
+// cell printed them. A login that is the dash is left off, as the composite cell
+// left an absent label off.
 func svcCells(t *testing.T, sessions ...api.Session) map[string]string {
 	t.Helper()
-	table := renderSessionTableCols(sessions, columnsOrFatal(t, "name,service", nil))
+	table := renderSessionTableCols(sessions, columnsOrFatal(t, "name,runtime,backend,cred,home,login", nil))
 	out := map[string]string{}
 	for _, line := range strings.Split(strings.TrimRight(table, "\n"), "\n")[1:] {
-		name, cell, _ := strings.Cut(strings.TrimSpace(line), " ")
-		out[name] = strings.TrimSpace(cell)
+		cells := splitColumns(line)
+		if n := len(cells); n > 0 && cells[n-1] == "-" && n == 6 {
+			cells = cells[:n-1]
+		}
+		out[cells[0]] = strings.Join(cells[1:], " ")
 	}
 	return out
 }
 
-// SERVICE is registered, selectable by name, opt-in, and not in the wide set:
-// it shows only when asked for (svccol-1).
+// The service set's columns are registered, opt-in and outside the wide set:
+// they show only when asked for (svccol-1). The composite SERVICE cell is gone;
+// service and acct stay as named sets.
 func TestServiceColumnIsOptInNotWide(t *testing.T) {
-	c, ok := lookupSessionColumn("service")
-	if !ok {
-		t.Fatal("service is not a registered column")
+	for _, name := range []string{"backend", "cred", "home", "login"} {
+		if _, ok := lookupSessionColumn(name); !ok {
+			t.Errorf("%s is not a registered column", name)
+		}
+		if !optInColumns[name] {
+			t.Errorf("%s is not opt-in, so the default table would gain a column", name)
+		}
+		if slices.Contains(wideSessionColumns, name) {
+			t.Errorf("%s is in the wide set", name)
+		}
+		if slices.Contains(fitPriority, name) {
+			t.Errorf("%s is in fitPriority, so it would not be cut first from rest", name)
+		}
 	}
-	if c.header != "SERVICE" {
-		t.Errorf("header = %q, want SERVICE", c.header)
-	}
-	if !optInColumns["service"] {
-		t.Error("service is not opt-in, so the default table would gain a column")
-	}
-	if slices.Contains(wideSessionColumns, "service") {
-		t.Error("service is in the wide set")
-	}
-	if slices.Contains(fitPriority, "service") {
-		t.Error("service is in fitPriority, so it would not be the first rest column cut")
-	}
-	if _, ok := lookupSessionColumn("acct"); !ok {
-		t.Error("acct is gone; SERVICE sits beside ACCT and does not replace it")
+	if _, ok := lookupSessionColumn("service"); ok {
+		t.Error("service is still a registered column; it is a named set")
 	}
 }
 
@@ -156,11 +160,11 @@ func TestServiceLabelPrintsAsWrittenAbsentPrintsNothing(t *testing.T) {
 	with := svcSession("a", api.BackendSubscription, api.BackendDefaultName, api.BackendCredentialAmbient, "/h/alt-ultra", "ultra")
 	without := svcSession("b", api.BackendSubscription, api.BackendDefaultName, api.BackendCredentialAmbient, "/h/alt-ultra", "")
 	homes := countServiceHomes([]api.Session{with, without})
-	if got, want := newSessionRow(with, homes).service, "claude subscription ambient alt-ultra ultra"; got != want {
-		t.Errorf("labelled cell = %q, want %q", got, want)
+	if got, want := newSessionRow(with, homes).login, "ultra"; got != want {
+		t.Errorf("labelled LOGIN = %q, want %q", got, want)
 	}
-	if got, want := newSessionRow(without, homes).service, "claude subscription ambient alt-ultra"; got != want {
-		t.Errorf("unlabelled cell = %q, want %q with no trailing space", got, want)
+	if got, want := newSessionRow(without, homes).login, "-"; got != want {
+		t.Errorf("unlabelled LOGIN = %q, want %q, a dash for an absent field", got, want)
 	}
 }
 
@@ -168,13 +172,13 @@ func TestServiceLabelPrintsAsWrittenAbsentPrintsNothing(t *testing.T) {
 // an escape in it is replaced, and the tally counts the field.
 func TestServiceLabelWithEscIsDrawnAsPlaceholder(t *testing.T) {
 	s := svcSession("a", "", api.BackendDefaultName, api.BackendCredentialAmbient, "/h/x", "ul\x1b[31mtra")
-	cols := drawableColumns(columnsOrFatal(t, "name,service", nil))
+	cols := drawableColumns(columnsOrFatal(t, "name,home,login", nil))
 	table := renderSessionTableCols([]api.Session{s}, cols)
 	if strings.ContainsRune(table, 0x1b) {
 		t.Errorf("the table carries an escape byte: %q", table)
 	}
 	var tally undrawTally
-	tally.cells([]api.Session{s}, columnsOrFatal(t, "name,service", nil))
+	tally.cells([]api.Session{s}, columnsOrFatal(t, "name,home,login", nil))
 	if tally.fields != 1 {
 		t.Errorf("tally counted %d fields, want 1 (the label)", tally.fields)
 	}
@@ -186,27 +190,27 @@ func TestServiceCellSameAcrossHoldLastActiveAndTable(t *testing.T) {
 	a := svcSession("a", "", api.BackendDefaultName, api.BackendCredentialAmbient, "/a/x", "")
 	b := svcSession("b", "", api.BackendDefaultName, api.BackendCredentialAmbient, "/b/x", "")
 	sessions := []api.Session{a, b}
-	table := svcCells(t, sessions...)
+	table := cellsOf(t, "home", sessions...)
 	rows := map[string]string{
-		"a": newSessionRow(a, countServiceHomes(sessions)).service,
-		"b": newSessionRow(b, countServiceHomes(sessions)).service,
+		"a": newSessionRow(a, countServiceHomes(sessions)).home,
+		"b": newSessionRow(b, countServiceHomes(sessions)).home,
 	}
 	for n, want := range rows {
-		if table[n] != want {
+		if len(table[n]) != 1 || table[n][0] != want {
 			t.Errorf("%s: table cell %q differs from the row cell %q", n, table[n], want)
 		}
 	}
-	if !strings.Contains(table["a"], "/a/x") {
+	if len(table["a"]) != 1 || !strings.Contains(table["a"][0], "/a/x") {
 		t.Errorf("a = %q, want the full path (a collision with b)", table["a"])
 	}
 	// The tally's cells and the legend scan take the whole reply, not a row.
 	var tally undrawTally
-	tally.cells(sessions, columnsOrFatal(t, "name,service", nil))
+	tally.cells(sessions, columnsOrFatal(t, "name,home,login", nil))
 	if tally.fields != 0 {
 		t.Errorf("tally counted %d fields on clean cells", tally.fields)
 	}
-	if sourceMarkOnScreen(sessions, columnsOrFatal(t, "name,service", nil)) {
-		t.Error("the legend scan found a source mark in SERVICE")
+	if sourceMarkOnScreen(sessions, columnsOrFatal(t, "name,home,login", nil)) {
+		t.Error("the legend scan found a source mark in HOME or LOGIN")
 	}
 }
 

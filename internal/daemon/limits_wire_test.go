@@ -58,11 +58,14 @@ func TestStampLimitReadingFreshnessEdgeIsFifteenMinutes(t *testing.T) {
 	d, key := limitDaemon(t, api.AccountWindow{Name: "five_hour", UsedPercent: acctPct(10), ResetsAt: acctT0.Add(3 * time.Hour)})
 
 	fresh := stamped(t, d, key, acctT0.Add(14*time.Minute+59*time.Second))
-	if fresh.LimitStale {
+	if fresh.LimitIsStale() {
 		t.Error("LimitStale is true at 14m59s, want fresh")
 	}
+	if fresh.LimitStale == nil || *fresh.LimitStale {
+		t.Errorf("LimitStale = %v at 14m59s, want a set false so the json says limit_stale:false", fresh.LimitStale)
+	}
 	stale := stamped(t, d, key, acctT0.Add(15*time.Minute))
-	if !stale.LimitStale {
+	if !stale.LimitIsStale() {
 		t.Error("LimitStale is false at 15m, want stale")
 	}
 	if len(stale.LimitWindows) != 1 || stale.LimitWindows[0].UsedPercent == nil {
@@ -96,7 +99,7 @@ func TestStampLimitReadingLeavesAnUnreadAccountEmpty(t *testing.T) {
 
 	got := stamped(t, d, key, acctT0)
 
-	if len(got.LimitWindows) != 0 || got.LimitReadAt != nil || got.LimitStale {
+	if len(got.LimitWindows) != 0 || got.LimitReadAt != nil || got.LimitStale != nil {
 		t.Errorf("an unread account got windows %+v, read-at %v, stale %v", got.LimitWindows, got.LimitReadAt, got.LimitStale)
 	}
 }
@@ -108,7 +111,7 @@ func TestStampLimitReadingIsNeverStored(t *testing.T) {
 	stamped(t, d, key, acctT0.Add(time.Minute))
 
 	stored, _ := d.store.GetSession(key)
-	if len(stored.LimitWindows) != 0 || stored.LimitReadAt != nil || stored.LimitStale {
+	if len(stored.LimitWindows) != 0 || stored.LimitReadAt != nil || stored.LimitStale != nil {
 		t.Errorf("the stored session carries the view fields: %+v", stored)
 	}
 }
@@ -170,7 +173,7 @@ func TestGetAndDescribeSessionCarryTheLimitFigures(t *testing.T) {
 	if err := json.Unmarshal(getResp.Result, &rows); err != nil {
 		t.Fatalf("decode get: %v", err)
 	}
-	if len(rows) != 1 || len(rows[0].LimitWindows) != 1 || !rows[0].LimitStale {
+	if len(rows) != 1 || len(rows[0].LimitWindows) != 1 || !rows[0].LimitIsStale() {
 		t.Errorf("get sessions rows = %+v, want one row with one window and LimitStale", rows)
 	}
 
@@ -182,7 +185,7 @@ func TestGetAndDescribeSessionCarryTheLimitFigures(t *testing.T) {
 	if err := json.Unmarshal(descResp.Result, &one); err != nil {
 		t.Fatalf("decode describe: %v", err)
 	}
-	if len(one.LimitWindows) != 1 || !one.LimitStale {
-		t.Errorf("describe session = windows %+v stale %v, want one window and LimitStale", one.LimitWindows, one.LimitStale)
+	if len(one.LimitWindows) != 1 || !one.LimitIsStale() {
+		t.Errorf("describe session = windows %+v stale %v, want one window and LimitStale", one.LimitWindows, one.LimitIsStale())
 	}
 }

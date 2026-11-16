@@ -1244,21 +1244,25 @@ func getCmd() *cobra.Command {
 AGE is the time since the session was created, as 45s, 9m, 2h9m or 3d4h; a - means
 the row has no creation time.
 
-ACCT (opt-in, --columns acct) is a short key for the account a session spends against and
-that account's limit reading: 87% (seven_day) while fresh, stale once the reading
-is old, a - when none was read. Sessions on one account repeat the same cell; it is
-never summed or averaged across rows. On a cluster-set read ACCT folds in the
-cluster, so its keys differ from a single-cluster read.
+The account columns (opt-in; the set acct names all six, and wide holds account, 7d,
+7d-reset and read) each carry one fact: ACCOUNT is the display name display.account_names
+gives the account, else the label the role declared, else a short key; 5H% and 7D% are
+the percent used, with a trailing ? once the reading is stale (the number is kept);
+5H-RESET and 7D-RESET are the time to reset as +2d3h or +47m, now once past; READ is
+the age of the reading. A - means no reading. Sessions on one account repeat the same
+cells; nothing is summed or averaged across rows. On a cluster-set read the ACCOUNT
+key folds in the cluster, so its keys differ from a single-cluster read.
 
-SERVICE (opt-in, --columns service) says in words which account a session spends
-against: harness, backend, credential source, the account home, then the login
-label the role or team declared with account_label. The backend is the one the
-environment resolved to, written backend!intent where the role declared another.
-The home is its last element, or the whole path where another home on the same
-cluster shares that element. The label is declared, never checked against the login.
-Every SERVICE cell is diagnostic only: nothing gates or acts on it.
-Example: 'claude subscription ambient alt-ultra ultra'. It is the first column
-cut on a narrow terminal when it came from rest.
+SERVICE (opt-in, --columns service) is a set: RUNTIME, BACKEND, CRED, HOME and LOGIN,
+which say in words which account a session spends against: harness, backend,
+credential source, the account home, then the login label the role or team declared
+with account_label. The backend is the one the environment resolved to, written
+backend!intent where the role declared another. The home is its last element, or the
+whole path where another home on the same cluster shares that element.
+The label is declared, never checked against the login. Every one of these cells
+is diagnostic only: nothing gates or acts on it. They are the first columns cut on a narrow terminal when
+they came from rest. KEY and CLUSTER are columns too: on a cluster-set read KEY leads
+the table when no column list is given, and a list decides whether it prints.
 For a session on the operator's own login the source reads ambient:api-key+oauth-token
 when those variable names were set in the tmux environment at spawn (names only, never
 values); plain ambient means none were seen or the session was spawned before it was
@@ -3481,13 +3485,15 @@ func formatBytes(n int64) string {
 // sessionRow is one session's cells, computed once so every selectable
 // column reads the same values the fixed table always printed.
 type sessionRow struct {
-	key                                                                                           string
-	workspace, team, role, generation, name                                                       string
-	state, health, context, cpu, rss                                                              string
-	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct, service string
-	lastTurn                                                                                      string
-	composer                                                                                      string
-	pane                                                                                          string
+	key                                                                            string
+	workspace, team, role, generation, name                                        string
+	state, health, context, cpu, rss                                               string
+	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec string
+	// The split account columns (I-450).
+	account, fiveH, sevenD, fiveReset, sevenReset, read, backend, cred, home, login, cluster string
+	lastTurn                                                                                 string
+	composer                                                                                 string
+	pane                                                                                     string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -3651,8 +3657,17 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 		age:        ageCell(s, lastActiveClock()),
 		active:     activePctCell(s, lastActiveClock()),
 		spec:       specCell(s),
-		acct:       acctCell(s),
-		service:    serviceCell(s, homes),
+		account:    accountCell(s),
+		fiveH:      limitPercentCell(s, "five_hour"),
+		sevenD:     limitPercentCell(s, "seven_day"),
+		fiveReset:  limitResetCell(s, "five_hour", lastActiveClock()),
+		sevenReset: limitResetCell(s, "seven_day", lastActiveClock()),
+		read:       limitReadCell(s, lastActiveClock()),
+		backend:    serviceBackend(s),
+		cred:       serviceSource(s),
+		home:       serviceHome(s, homes),
+		login:      loginCell(s),
+		cluster:    clusterCell(s),
 		composer:   composerCell(s),
 		pane:       paneCell(s),
 		workspace:  s.Workspace, team: s.Team, role: s.Role, generation: gen,

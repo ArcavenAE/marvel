@@ -2,7 +2,6 @@ package main
 
 import (
 	"path/filepath"
-	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
 )
@@ -43,20 +42,22 @@ func (h serviceHomes) collides(cluster, last string) bool {
 	return len(h[cluster][last]) > 1
 }
 
-// serviceCell renders the opt-in SERVICE cell, which says in words which account
-// a session spends against: harness, backend, credential source and home, then
-// the login label the operator declared. The label is declared and never
-// checked, and nothing here gates on the cell.
-func serviceCell(s api.Session, homes serviceHomes) string {
-	harness := s.Runtime.Name
-	if harness == "" {
-		harness = "-"
+// loginCell is the login label the operator declared on the role or team, or a
+// dash. It is declared and never checked against the real login, and nothing
+// gates on it.
+func loginCell(s api.Session) string {
+	if s.Runtime.AccountLabel == "" {
+		return "-"
 	}
-	fields := []string{harness, serviceBackend(s), serviceSource(s), serviceHome(s, homes)}
-	if s.Runtime.AccountLabel != "" {
-		fields = append(fields, s.Runtime.AccountLabel)
+	return s.Runtime.AccountLabel
+}
+
+// clusterCell is the cluster a row was read from, or a dash on a plain read.
+func clusterCell(s api.Session) string {
+	if s.Cluster == "" {
+		return "-"
 	}
-	return strings.Join(fields, " ")
+	return s.Cluster
 }
 
 // serviceBackend is the backend as resolved, with the intent only where it

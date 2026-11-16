@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 
@@ -250,6 +251,10 @@ type Config struct {
 	// Display holds client display preferences. Nothing here changes what
 	// a daemon does.
 	Display Display `yaml:"display,omitempty"`
+	// AccountNamesRefused is why Load dropped the display.account_names map, or nil.
+	// It is not part of the file; a display mistake never reaches the caller as a
+	// load error, so no caller can mistake it for an unreadable config.
+	AccountNamesRefused error `yaml:"-"`
 }
 
 // Display is the client's display preferences.
@@ -259,6 +264,11 @@ type Display struct {
 	// The name `rest` stands for every column not named elsewhere in the
 	// list, and `wide` for the wide set.
 	SessionColumns []string `yaml:"session_columns,omitempty"`
+	// AccountNames gives the ACCOUNT column display names. A key is the
+	// cluster-free account id a plain read prints, optionally qualified as
+	// "cluster/id" to name the account on one cluster; a value is the text to
+	// show. Display text only: loading refuses a value shaped like a credential.
+	AccountNames map[string]string `yaml:"account_names,omitempty"`
 }
 
 // Watchdog is the harness-state watchdog's own settings.
@@ -1059,6 +1069,13 @@ func Load() (*Config, error) {
 	// cluster (listing, removing the offender, resolving an unaffected
 	// cluster) checks errors.Is(err, ErrInvalidClusterName) and carries on;
 	// every other caller treats it as the failure it is.
+	// A refused display.account_names map is display text gone wrong, not an
+	// unreadable config, so it never comes back as a load error: it rides on the
+	// config for the column loader, and the file's own entry stays as written so
+	// a command that loads and saves the config does not erase it.
+	if err := cfg.Display.CheckAccountNames(); err != nil {
+		cfg.AccountNamesRefused = err
+	}
 	if err := cfg.Validate(); err != nil {
 		return &cfg, err
 	}
@@ -1236,4 +1253,66 @@ func isMRVL(addr string) bool {
 
 func isSSH(addr string) bool {
 	return len(addr) >= 6 && addr[:6] == "ssh://"
+}
+
+// ErrInvalidAccountNames marks a display.account_names map the loader refused.
+// The map is display text only, so a caller that can do without it matches this
+// with errors.Is and carries on with the rest of the config.
+var ErrInvalidAccountNames = errors.New("display.account_names")
+
+// accountNameKey is an account id: six lowercase hex characters, optionally
+// qualified with the cluster name and a slash.
+var accountNameKey = regexp.MustCompile(`^([A-Za-z0-9._-]+/)?[0-9a-f]{6}$`)
+
+// tokenPrefixed is a value that starts the way a known credential does.
+var tokenPrefixed = regexp.MustCompile(`^(sk-|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|xox[abprs]-|eyJ|AKIA)[A-Za-z0-9_-]{10,}`)
+
+// tokenRun is an unbroken run of 32 or more letters and digits. A - or _ ends a
+// run, so a hyphenated name such as platform-team-production-account-02 is not
+// one (director's ruling on #1443, option 2).
+var tokenRun = regexp.MustCompile(`[A-Za-z0-9]{32,}`)
+
+// looksLikeCredential reports whether v is shaped like a credential: a known
+// prefix, or one unbroken run of 32 or more letters and digits holding both a
+// letter and a digit. A long plain word has no digit and is display text, and a
+// run broken by - or _ is a name.
+func looksLikeCredential(v string) bool {
+	if tokenPrefixed.MatchString(v) {
+		return true
+	}
+	for _, run := range tokenRun.FindAllString(v, -1) {
+		var letter, digit bool
+		for _, r := range run {
+			switch {
+			case r >= '0' && r <= '9':
+				digit = true
+			default:
+				letter = true
+			}
+		}
+		if letter && digit {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckAccountNames checks the display.account_names map. The map is display
+// text only: a malformed key, an empty or padded value, a control character, or
+// a credential-shaped value is refused. No error carries the value, which could
+// be the secret; an error for a value names the key, which has passed the id
+// pattern by then. Each error wraps ErrInvalidAccountNames.
+func (d Display) CheckAccountNames() error {
+	var errs []error
+	for k, v := range d.AccountNames {
+		switch {
+		case !accountNameKey.MatchString(k):
+			errs = append(errs, fmt.Errorf("%w: a key is not an account id (six lowercase hex characters, optionally cluster/id)", ErrInvalidAccountNames))
+		case v == "" || strings.TrimSpace(v) != v || strings.ContainsFunc(v, unicode.IsControl):
+			errs = append(errs, fmt.Errorf("%w: the name for %s is empty, padded with spaces, or holds a control character", ErrInvalidAccountNames, k))
+		case looksLikeCredential(v):
+			errs = append(errs, fmt.Errorf("%w: the name for %s looks like a credential; names are display text only", ErrInvalidAccountNames, k))
+		}
+	}
+	return errors.Join(errs...)
 }

@@ -332,3 +332,196 @@ func TestLoadCarriesBusSectionAndReportsBadBus(t *testing.T) {
 		t.Errorf("bus section not parsed intact: %+v", b)
 	}
 }
+
+// The account name map holds display text only; a value shaped like a
+// credential is refused at load, and the error never echoes it.
+func TestAccountNamesRefuseATokenShapedValue(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{
+		"sk-ant-api03-AbCdEf0123456789xyzAbCdEf",
+		"ghp_1234567890abcdefghijklmnopqrstuvwxyz",
+		"eyJhbGciOiJIUzI1NiJ9abcdef0123456789",
+		"AKIAABCDEFGHIJKLMNOP1234",
+	} {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": bad}}}
+		err := cfg.Display.CheckAccountNames()
+		if err == nil {
+			t.Errorf("a token-shaped value %q passed Validate", bad[:8])
+			continue
+		}
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("the error echoes the value: %v", err)
+		}
+	}
+}
+
+func TestAccountNamesAcceptPlainDisplayText(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{Display: Display{AccountNames: map[string]string{
+		"ab12cd": "work", "k2/ab12cd": "alt ultra", "0f9e8d": "Ultra-2",
+	}}}
+	if err := cfg.Display.CheckAccountNames(); err != nil {
+		t.Errorf("plain display names were refused: %v", err)
+	}
+}
+
+// The shape that is refused is a credential's: a known prefix, or one unbroken run
+// of 32 or more token characters with both a letter and a digit. A long plain
+// word with no digit is display text, and a short mixed name is too.
+func TestAccountNamesTokenShapeIsDecidedOnPurpose(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		value  string
+		refuse bool
+	}{
+		{"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8", true},
+		{"internationalization-department-name", false},
+		{"ultra-2", false},
+		{"work account 2", false},
+		{"a1b2c3d4e5f6a7b8 c9d0e1f2a3b4c5d6e7f8", false},
+		// Director's ruling (option 2): a run counts only when it holds no - or _.
+		{"platform-team-production-account-02", false},
+		{"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a1b2", true},
+	}
+	for _, c := range cases {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": c.value}}}
+		if err := cfg.Display.CheckAccountNames(); (err != nil) != c.refuse {
+			t.Errorf("%q: Validate error = %v, want refused %v", c.value, err, c.refuse)
+		}
+	}
+}
+
+// A name map key is an account id, optionally cluster-qualified; anything else
+// is refused so a typo cannot silently match nothing.
+func TestAccountNamesRefuseAMalformedKey(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"", "ab12c", "ab12cdz", "k1/", "/ab12cd", "k1/k2/ab12cd", "AB12CD"} {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{key: "work"}}}
+		if err := cfg.Display.CheckAccountNames(); err == nil {
+			t.Errorf("the key %q passed Validate", key)
+		}
+	}
+	for _, key := range []string{"ab12cd", "k1/ab12cd", "my-cluster.2/0f9e8d"} {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{key: "work"}}}
+		if err := cfg.Display.CheckAccountNames(); err != nil {
+			t.Errorf("the key %q was refused: %v", key, err)
+		}
+	}
+}
+
+// The error for a refused name never carries the value, for each credential
+// shape the map refuses.
+func TestAccountNameErrorsNeverEchoTheValue(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{
+		"sk-ant-api03-AbCdEf0123456789xyzAbCdEf",
+		"ghp_1234567890abcdefghijklmnopqrstuvwxyz",
+		"eyJhbGciOiJIUzI1NiJ9abcdef0123456789",
+		"AKIAABCDEFGHIJKLMNOP1234",
+		"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8",
+	} {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": bad}}}
+		err := cfg.Display.CheckAccountNames()
+		if err == nil {
+			t.Errorf("%q passed", bad[:8])
+			continue
+		}
+		if strings.Contains(err.Error(), bad) || strings.Contains(err.Error(), bad[:12]) {
+			t.Errorf("the error echoes the value: %v", err)
+		}
+	}
+}
+
+// A value is trimmed text with no control character; an empty value is refused.
+// A name equal to another account's key is allowed: it is display text.
+func TestAccountNameValuesAreCleanText(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{"", " work", "work ", "wo\nrk", "wo\x1b[31mrk"} {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": bad}}}
+		if cfg.Display.CheckAccountNames() == nil {
+			t.Errorf("the value %q passed Validate", bad)
+		}
+	}
+	cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": "0f9e8d", "0f9e8d": "other"}}}
+	if err := cfg.Display.CheckAccountNames(); err != nil {
+		t.Errorf("a name equal to another account's key was refused: %v", err)
+	}
+}
+
+// The refusals carry the sentinel, so a caller that can do without a display
+// map matches it with errors.Is.
+func TestAccountNameRefusalsAreTheSentinel(t *testing.T) {
+	t.Parallel()
+	for name, names := range map[string]map[string]string{
+		"malformed key":    {"nope": "work"},
+		"padded value":     {"ab12cd": " work"},
+		"credential shape": {"ab12cd": "ghp_1234567890abcdefghijklmnopqrstuvwxyz"},
+	} {
+		cfg := &Config{Display: Display{AccountNames: names}}
+		if err := cfg.Display.CheckAccountNames(); !errors.Is(err, ErrInvalidAccountNames) {
+			t.Errorf("%s: CheckAccountNames error %v does not wrap ErrInvalidAccountNames", name, err)
+		}
+	}
+}
+
+// A refused name map is a display mistake, not a load failure: Load returns no
+// error for it, so no caller that refuses on any error can turn it into an
+// unreadable config. The refusal rides on the config, and the file's own entry is
+// kept so a command that loads and saves the config does not erase it.
+func TestLoadKeepsADisplayRefusalOffTheError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &Config{
+		Clusters: []Cluster{{Name: "a", Socket: "/scratch/a.sock"}},
+		Display:  Display{AccountNames: map[string]string{"ab12cd": " padded"}},
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned %v for a refused display name, want no error", err)
+	}
+	if !errors.Is(got.AccountNamesRefused, ErrInvalidAccountNames) {
+		t.Errorf("AccountNamesRefused = %v, want it to wrap ErrInvalidAccountNames", got.AccountNamesRefused)
+	}
+	if err := Save(got); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := Load()
+	if again == nil || again.Display.AccountNames["ab12cd"] != " padded" {
+		t.Errorf("a load and save dropped the operator's entry: %+v", again)
+	}
+}
+
+// A good map loads with no refusal, and a bad cluster name still comes back as
+// its own error, with no account-name sentinel in it.
+func TestLoadKeepsTheClusterErrorAndOnlyThatError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &Config{
+		Clusters: []Cluster{{Name: "bad name", Socket: "/scratch/a.sock"}},
+		Display:  Display{AccountNames: map[string]string{"ab12cd": " padded"}},
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load()
+	if !errors.Is(err, ErrInvalidClusterName) || errors.Is(err, ErrInvalidAccountNames) {
+		t.Errorf("Load error = %v, want the cluster-name error and not the account-name sentinel", err)
+	}
+}
+
+// A good map, or none, leaves the refusal unset.
+func TestLoadLeavesTheRefusalUnsetForAGoodMap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &Config{
+		Clusters: []Cluster{{Name: "a", Socket: "/scratch/a.sock"}},
+		Display:  Display{AccountNames: map[string]string{"ab12cd": "work"}},
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil || got.AccountNamesRefused != nil {
+		t.Errorf("Load = %v, refusal %v; want no error and no refusal", err, got.AccountNamesRefused)
+	}
+}
