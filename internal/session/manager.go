@@ -328,13 +328,13 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 
 // defaultStreamDir keeps one daemon's pipes away from another's.
 func defaultStreamDir() string {
-	return daemonTempDir("marvel-streams")
+	return seatDir("marvel-streams", paths.Layout.StreamsDir)
 }
 
 // defaultProjectionDir keeps one daemon's projected settings files away
 // from another's.
 func defaultProjectionDir() string {
-	return daemonTempDir("marvel-policies")
+	return seatDir("marvel-policies", paths.Layout.PoliciesDir)
 }
 
 // defaultHarnessHomeDir keeps one daemon's private harness homes away from
@@ -583,7 +583,20 @@ func defaultBackendOverlayDir() string {
 	if dir := os.Getenv("MARVEL_BACKEND_OVERLAY_DIR"); dir != "" {
 		return dir
 	}
-	return daemonTempDir("marvel-backend-overlays")
+	return seatDir("marvel-backend-overlays", paths.Layout.OverlaysDir)
+}
+
+// seatDir is the default for a directory the daemon writes a seat's files into:
+// under the marvel home, which is private to this user and which nothing
+// sweeps, so a running seat's file does not vanish with a temp cleanup. Where
+// the home cannot be resolved it falls back to the per-layout temp directory.
+// A seat launched before this default moved keeps the path it was started with,
+// recorded on the session, and Reproject still writes it (aae-orc-bc107).
+func seatDir(tempPrefix string, under func(paths.Layout) string) string {
+	if layout, err := paths.Default(); err == nil {
+		return under(layout)
+	}
+	return daemonTempDir(tempPrefix)
 }
 
 // daemonTempDir names a daemon-owned scratch directory that is unique per
@@ -1155,6 +1168,9 @@ func (m *Manager) Create(sess *api.Session) error {
 		live.BackendCredentialSource = sess.BackendCredentialSource
 		live.AmbientBearer = sess.AmbientBearer
 		live.BackendOverlayPath = sess.BackendOverlayPath
+		// The projected file this launch was started with, kept so a policy
+		// edit still reaches it after the projection directory moves.
+		live.ProjectionPath = sess.ProjectionPath
 		// What marvel named this launch, kept so the binding survives a
 		// daemon restart. Empty when the runtime has no id pin.
 		live.HarnessSessionID = sess.HarnessSessionID
@@ -1599,6 +1615,9 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// that gets a private home names one, so a re-plan that does not must not
 	// carry the previous launch's value forward.
 	sess.AccountHome = ""
+	// The projected file this launch passes the harness is recorded below, and a
+	// launch that projects none must not carry the previous launch's path.
+	sess.ProjectionPath = ""
 	// Look up team and role for full adapter context. Store returns
 	// snapshots — taking addresses of these locals is safe because the
 	// adapter is read-only and the LaunchContext doesn't outlive this

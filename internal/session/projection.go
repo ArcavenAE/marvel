@@ -57,6 +57,7 @@ func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.
 		return nil
 	}
 	lctx.PolicyProjectionPath = target.Path
+	lctx.Session.ProjectionPath = target.Path
 	m.emitProjected(lctx.Session, lctx.Role.Policy, target.Path, "projected at spawn", shadowed)
 	return nil
 }
@@ -114,6 +115,9 @@ func (m *Manager) reproject(fileBackedOnly bool, detail string) int {
 			continue
 		}
 		m.clearSettingsFileFailure(sess.Key())
+		if wrote {
+			m.writeRecordedPath(lctx.Session, target.Path)
+		}
 		if wrote && changed {
 			changedCount++
 			msg := detail
@@ -625,11 +629,16 @@ func (m *Manager) pruneSettingsFileFailures(sessions []api.Session) {
 			}
 			continue
 		}
-		if !alive[key] {
+		if !alive[strings.TrimSuffix(key, recordedProjectionKeySuffix)] {
 			delete(m.failures.last, key)
 		}
 	}
 }
+
+// recordedProjectionKeySuffix marks the failure record of the file a seat was
+// launched with, kept apart from the failure of its current file and pruned
+// with the same session.
+const recordedProjectionKeySuffix = "/recorded-projection"
 
 // roleExists reports whether "<workspace>/<team>/<role>" names a role in the store.
 func (m *Manager) roleExists(path string) bool {
@@ -655,4 +664,37 @@ func (m *Manager) clearSettingsFileFailure(key string) {
 	m.failures.mu.Lock()
 	delete(m.failures.last, key)
 	m.failures.mu.Unlock()
+}
+
+// writeRecordedPath copies the projection just written at current to the path
+// this seat was launched with, when that is a different file. A running seat
+// keeps reading the path it was started with, so after the projection directory
+// moves a policy edit would otherwise never reach it. The recorded path is held
+// to the same rule as the current directory: its directory must be a private
+// directory of this user, and a refusal is reported once per change and leaves
+// the seat on the file it has.
+func (m *Manager) writeRecordedPath(sess *api.Session, current string) {
+	old := sess.ProjectionPath
+	if old == "" || old == current {
+		return
+	}
+	key := sess.Key() + recordedProjectionKeySuffix
+	data, err := os.ReadFile(current)
+	if err != nil {
+		return
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return
+	}
+	if why := m.requirePrivateDir(filepath.Dir(old)); why != "" {
+		m.emitSettingsFileFailure(key, sess, fmt.Sprintf("the file this seat was launched with is not updated: %s; the seat keeps what it has",
+			(&privateDirError{dir: filepath.Dir(old), why: why}).Error()))
+		return
+	}
+	if _, err := writeProjectionFile(old, settings); err != nil {
+		m.emitSettingsFileFailure(key, sess, fmt.Sprintf("the file this seat was launched with is not updated: %v; the seat keeps what it has", err))
+		return
+	}
+	m.clearSettingsFileFailure(key)
 }
