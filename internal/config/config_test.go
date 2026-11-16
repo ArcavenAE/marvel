@@ -364,3 +364,44 @@ func TestAccountNamesAcceptPlainDisplayText(t *testing.T) {
 		t.Errorf("plain display names were refused: %v", err)
 	}
 }
+
+// The shape that is refused is a credential's: a known prefix, or one unbroken run
+// of 32 or more token characters with both a letter and a digit. A long plain
+// word with no digit is display text, and a short mixed name is too.
+func TestAccountNamesTokenShapeIsDecidedOnPurpose(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		value  string
+		refuse bool
+	}{
+		{"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8", true},
+		{"internationalization-department-name", false},
+		{"ultra-2", false},
+		{"work account 2", false},
+		{"a1b2c3d4e5f6a7b8 c9d0e1f2a3b4c5d6e7f8", false},
+	}
+	for _, c := range cases {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": c.value}}}
+		if err := cfg.Validate(); (err != nil) != c.refuse {
+			t.Errorf("%q: Validate error = %v, want refused %v", c.value, err, c.refuse)
+		}
+	}
+}
+
+// A name map key is an account id, optionally cluster-qualified; anything else
+// is refused so a typo cannot silently match nothing.
+func TestAccountNamesRefuseAMalformedKey(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"", "ab12c", "ab12cdz", "k1/", "/ab12cd", "k1/k2/ab12cd", "AB12CD"} {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{key: "work"}}}
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("the key %q passed Validate", key)
+		}
+	}
+	for _, key := range []string{"ab12cd", "k1/ab12cd", "my-cluster.2/0f9e8d"} {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{key: "work"}}}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("the key %q was refused: %v", key, err)
+		}
+	}
+}

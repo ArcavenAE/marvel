@@ -160,11 +160,11 @@ func TestServiceLabelPrintsAsWrittenAbsentPrintsNothing(t *testing.T) {
 	with := svcSession("a", api.BackendSubscription, api.BackendDefaultName, api.BackendCredentialAmbient, "/h/alt-ultra", "ultra")
 	without := svcSession("b", api.BackendSubscription, api.BackendDefaultName, api.BackendCredentialAmbient, "/h/alt-ultra", "")
 	homes := countServiceHomes([]api.Session{with, without})
-	if got, want := newSessionRow(with, homes).service, "claude subscription ambient alt-ultra ultra"; got != want {
-		t.Errorf("labelled cell = %q, want %q", got, want)
+	if got, want := newSessionRow(with, homes).login, "ultra"; got != want {
+		t.Errorf("labelled LOGIN = %q, want %q", got, want)
 	}
-	if got, want := newSessionRow(without, homes).service, "claude subscription ambient alt-ultra"; got != want {
-		t.Errorf("unlabelled cell = %q, want %q with no trailing space", got, want)
+	if got, want := newSessionRow(without, homes).login, "-"; got != want {
+		t.Errorf("unlabelled LOGIN = %q, want %q, a dash for an absent field", got, want)
 	}
 }
 

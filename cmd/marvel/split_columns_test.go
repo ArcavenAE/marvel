@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -355,5 +356,36 @@ func TestDefaultTableIgnoresTheNewFields(t *testing.T) {
 	want := []string{"WORKSPACE", "TEAM", "ROLE", "GEN", "AGENT NAME", "STATE", "HEALTH", "CTX%", "ACTIVE%", "LAST-ACTIVE", "AGE", "LLM"}
 	if got := headersOf(cols); !slices.Equal(got, want) {
 		t.Errorf("default headers = %v, want %v", got, want)
+	}
+}
+
+// -o json is the daemon's rows as sent, so the numeric percent, the reset time,
+// the reading time and the stale boolean reach a script unchanged, and the
+// column work adds nothing to it.
+func TestGetSessionsJSONCarriesTheLimitFiguresUnchanged(t *testing.T) {
+	s := splitSession("a")
+	s.LimitStale = true
+	cannedDaemon(t, map[string]any{"session": []api.Session{s}})
+	out, err := runGet(t, "sessions", "-o", "json")
+	if err != nil {
+		t.Fatalf("get sessions -o json: %v", err)
+	}
+	var list []struct {
+		Windows []struct {
+			Name        string   `json:"name"`
+			UsedPercent *float64 `json:"used_percent"`
+		} `json:"limit_windows"`
+		Stale  bool   `json:"limit_stale"`
+		ReadAt string `json:"limit_read_at"`
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil || len(list) != 1 {
+		t.Fatalf("decode: %v\n%s", err, out)
+	}
+	r := list[0]
+	if len(r.Windows) != 2 || r.Windows[0].UsedPercent == nil || *r.Windows[0].UsedPercent != 44 || !r.Stale || r.ReadAt == "" {
+		t.Errorf("json = %+v, want two windows with numeric percents, limit_stale true and a read time", r)
+	}
+	if strings.Contains(out, "44%?") {
+		t.Errorf("a table cell with its stale mark leaked into the json:\n%s", out)
 	}
 }
