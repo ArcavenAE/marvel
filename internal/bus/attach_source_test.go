@@ -81,7 +81,13 @@ func asExpr(n ast.Node) ast.Expr {
 // that never starts a broker, because it asks for the binary that is not there,
 // is the only exception.
 func TestEverySupervisorATestBuildsIsAttachedToAProcessTable(t *testing.T) {
-	allowed := map[string]bool{"TestNewSupervisorNamesMissingBinary": true}
+	// Tests that build a supervisor only to see it refused never start a broker.
+	allowed := map[string]bool{
+		"TestNewSupervisorNamesMissingBinary":                  true,
+		"TestSupervisorRefusesAMissingConfiguredBinary":        true,
+		"TestSupervisorRefusesAConfiguredBinaryThatCannotRun":  true,
+		"TestSupervisorRefusesARelativeOrShimConfiguredBinary": true,
+	}
 	paths, err := filepath.Glob("*_test.go")
 	if err != nil {
 		t.Fatal(err)

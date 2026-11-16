@@ -571,6 +571,29 @@ starts, and the daemon logs `bus: stream AGENT_INBOX max_age raised from <old>
 to <new>`. An age marvel finds longer is never lowered. `AGENT_AUDIT`, which
 holds the records `marvel bus audit` reads, keeps 30 days.
 
+### Choosing the nats-server binary
+
+By default the daemon takes the first `nats-server` on its PATH when it starts.
+Where PATH leads to a version manager's shim, the shim's answer depends on the
+working directory, so the same daemon can run different broker versions. A
+managed bus can name the file instead, with one key beside `listen` on the bus
+entry:
+
+```yaml
+        binary: /opt/nats/2.2.2/bin/nats-server
+```
+
+The path must be absolute. A bare name, a relative path, a `~` path and any path
+with a `shims` directory in it are refused when the config is read, and so is
+the key on an adopted or external bus, because marvel runs no broker there. At
+start the daemon checks that the file exists and is executable, and it refuses
+to start the bus when it is not. It never falls back to PATH: that binary
+receives the hub leaf seed in its environment, so a substitute you did not
+choose is not a safe default. With the key unset nothing changes. A symlink is
+followed by the operating system as usual; marvel checks the spelling of the
+path you gave, not where a link leads. The daemon logs the version of the binary
+it started, and `marvel bus status` shows it.
+
 ### Capping the stores, and the warning before one fills
 
 A managed bus can cap the JetStream stores. Two optional keys sit beside
