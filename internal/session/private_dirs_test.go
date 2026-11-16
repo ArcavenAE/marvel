@@ -39,7 +39,17 @@ func projectionReady(t *testing.T) *Manager {
 	if err := m.Apply(mgr.store); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	seedRunningSession(t, mgr, "acme", "squad", "reviewer", "squad-reviewer-g1-0", "claude")
+	sess := sessionFor("reviewer", "claude")
+	if err := mgr.store.CreateSession(sess); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := mgr.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.State = api.SessionRunning
+		live.PaneID = "%1"
+		return nil
+	}); err != nil {
+		t.Fatalf("mark running: %v", err)
+	}
 	return mgr
 }
 
