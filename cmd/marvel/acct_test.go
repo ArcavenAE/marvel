@@ -272,7 +272,8 @@ func TestAcctSingleClusterFlagDoesNotFold(t *testing.T) {
 
 // --all-clusters with one configured cluster is a set read and folds.
 func TestAcctAllClustersWithOneClusterFolds(t *testing.T) {
-	s := acctSession("a-one", "/acct/a", api.ReadingFresh, "fresh 87% (seven_day)")
+	s := splitSession("a-one")
+	s.LimitWindows[1].UsedPercent = pct(87)
 	a := startFake(t, fakeAnswers, []api.Session{s})
 	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock})
 	code, out, _ := runFanGet(t, "get", "sessions", "--all-clusters", "--columns", "name,acct")
@@ -281,5 +282,8 @@ func TestAcctAllClustersWithOneClusterFolds(t *testing.T) {
 	}
 	if strings.Contains(out, "613756") {
 		t.Errorf("a one-cluster set read kept the cluster-free key:\n%s", out)
+	}
+	if !strings.Contains(out, "87%") {
+		t.Errorf("the 7D%% figure did not survive a cluster-set read:\n%s", out)
 	}
 }
