@@ -1026,6 +1026,13 @@ func (m *Manager) Create(sess *api.Session) error {
 	if err != nil {
 		_ = m.store.DeleteSession(sess.Key())
 		m.teardownViews(sess.Key())
+		// An overlay directory that is not private is a standing refusal like
+		// the projection and stream ones, so describe lists it and the
+		// controller does not log a plain error on every pass.
+		var pde *privateDirError
+		if errors.As(err, &pde) {
+			return m.refuseSeatDir(sess, pde.Error())
+		}
 		return fmt.Errorf("create session %s: %w", sess.Key(), err)
 	}
 	// Classify the backend-selecting environment this session is launched into
