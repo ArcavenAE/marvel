@@ -1007,3 +1007,48 @@ func qw(words string) string {
 	}
 	return strings.Join(parts, " ")
 }
+
+// A role that declares the handoff pair and no on or any still tells its seat
+// the handoff path, so a seat shifted by hand finds the file marvel watches.
+// The role comes through the manifest, not a hand-built policy, so the test
+// covers the whole path from declaration to environment.
+func TestBaseEnvCarriesHandoffPathForARoleWithNoTrigger(t *testing.T) {
+	t.Parallel()
+
+	src := `
+[workspace]
+name = "acme"
+
+[[team]]
+name = "squad"
+
+  [[team.role]]
+  name = "worker"
+  replicas = 1
+
+    [team.role.runtime]
+    command = "claude"
+
+    [team.role.shift]
+    handoff = "/var/handoffs/{session}.md"
+    handoff_marker = "END HANDOFF"
+`
+	m, err := api.ParseManifestBytes([]byte(src))
+	if err != nil {
+		t.Fatalf("parse: a handoff pair with no on or any must validate, got: %v", err)
+	}
+	store := api.NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: a handoff pair with no on or any must validate, got: %v", err)
+	}
+	team, err := store.GetTeam("acme/squad")
+	if err != nil {
+		t.Fatalf("get team: %v", err)
+	}
+
+	ctx := testContext()
+	ctx.Role = &team.Roles[0]
+	if got := baseEnv(ctx)[api.HandoffPathEnv]; got != "/var/handoffs/squad-worker-g1-0.md" {
+		t.Errorf("%s = %q, want the declared path with {session} filled", api.HandoffPathEnv, got)
+	}
+}

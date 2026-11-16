@@ -596,3 +596,82 @@ func TestContextPressureWithoutHandoffPairIsRefused(t *testing.T) {
 		t.Fatalf("max-age without a pair: %v; want it accepted", err)
 	}
 }
+
+// A shift table that declares only the handoff pair is valid: the pair says
+// where a seat's handoff lives, not when marvel shifts it, so a role may
+// declare it and take no automatic shift (the handoff keys without on or any).
+func TestShiftHandoffPairWithoutTriggerIsAccepted(t *testing.T) {
+	t.Parallel()
+	for _, format := range []string{"toml", "yaml"} {
+		format := format
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+			src := shiftTOML("", pairTOML)
+			if format == "yaml" {
+				src = shiftYAML("", pairYAML)
+			}
+			m, err := ParseManifestBytes([]byte(src))
+			if err != nil {
+				t.Fatalf("parse: a handoff pair with no on or any must validate, got: %v", err)
+			}
+			store := NewStore()
+			if err := m.Apply(store); err != nil {
+				t.Fatalf("apply: a handoff pair with no on or any must validate, got: %v", err)
+			}
+			team, err := store.GetTeam("test/squad")
+			if err != nil {
+				t.Fatalf("get team: %v", err)
+			}
+			p := team.Roles[0].Shift
+			if p == nil {
+				t.Fatal("shift policy is nil, want the declared handoff pair kept")
+			}
+			if p.Handoff != "/tmp/handoffs/{session}.md" || p.HandoffMarker != "END HANDOFF" {
+				t.Errorf("handoff = %q, marker = %q, want the declared pair", p.Handoff, p.HandoffMarker)
+			}
+			if got := p.Conditions(); len(got) != 0 {
+				t.Errorf("conditions = %v, want none: the pair alone declares no automatic shift", got)
+			}
+		})
+	}
+}
+
+// Half a pair without a trigger is still refused, and the error names the
+// pair, not a missing trigger.
+func TestShiftHalfHandoffPairWithoutTriggerNamesThePair(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		toml, yaml string
+	}{
+		{
+			name: "handoff without marker",
+			toml: "    handoff = \"/tmp/handoffs/{session}.md\"\n",
+			yaml: "          handoff: /tmp/handoffs/{session}.md\n",
+		},
+		{
+			name: "marker without handoff",
+			toml: "    handoff_marker = \"END HANDOFF\"\n",
+			yaml: "          handoff_marker: END HANDOFF\n",
+		},
+	}
+	for _, tc := range cases {
+		for _, format := range []string{"toml", "yaml"} {
+			tc, format := tc, format
+			t.Run(tc.name+"/"+format, func(t *testing.T) {
+				t.Parallel()
+				src := shiftTOML("", tc.toml)
+				if format == "yaml" {
+					src = shiftYAML("", tc.yaml)
+				}
+				_, err := ParseManifestBytes([]byte(src))
+				if err == nil {
+					t.Fatal("parse succeeded, want an error naming handoff and handoff_marker")
+				}
+				if !strings.Contains(err.Error(), "must be set together") {
+					t.Errorf("error = %q, want it to say the pair must be set together", err)
+				}
+			})
+		}
+	}
+}
