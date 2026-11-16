@@ -115,12 +115,14 @@ func TestResolveLadderPrecedence(t *testing.T) {
 			wantSource: LimitFromStream,
 		},
 		{
-			name:       "learned beats manifest",
+			// Card ey9b3 option 1 (director ruling): a window learned
+			// in another session describes this session, it does not govern it.
+			name:       "manifest beats learned",
 			req:        Request{StreamModel: "claude-haiku-4-5", ManifestLimit: 111_111},
 			learn:      "claude-haiku-4-5",
 			learnValue: 222_222,
-			wantLimit:  222_222,
-			wantSource: LimitLearned,
+			wantLimit:  111_111,
+			wantSource: LimitFromManifest,
 		},
 		{
 			// The asymmetry, stated as a case so it cannot be quietly

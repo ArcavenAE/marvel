@@ -59,8 +59,8 @@ func TestLimitLadderIsTheRuledOrder(t *testing.T) {
 
 	want := []LimitSource{
 		LimitFromStream,
-		LimitLearned,
 		LimitFromManifest,
+		LimitLearned,
 		LimitFromFeed,
 		LimitFromTable,
 		LimitFromTableAlias,
