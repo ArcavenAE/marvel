@@ -357,6 +357,7 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.paneMenuSource d.driver.PaneForeground":             true,
 		"*Daemon.productionCollector d.driver.Unguarded":             true, // suspend: the two read-only pid calls, past the gate (tmux's unguarded-site test lists the calls)
 		"NewWithOptions driver.SetSuspendGate":                       true, // wires the suspend gate once, at construction
+		"NewWithOptions driver.SetTiming":                            true, // wires the timing registry once, at construction
 		"*Daemon.productionCollector drv.ServerPID":                  true, // read-only, through the unguarded view
 		"*Daemon.productionCollector drv.PanePIDs":                   true, // read-only, through the unguarded view
 	}
@@ -551,16 +552,18 @@ func keysOf(m map[string]bool) []string {
 func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 	t.Parallel()
 	want := map[string]map[string]int{
-		"handleInjectAs": {"*Daemon.dispatchAs": 1},
+		"handleInjectAs": {"*Daemon.dispatchUntimed": 1},
 		// The helper that presses the inject's keys. Its body is pinned by the
 		// key-press inventory; this pins who may call it, since it takes the
 		// driver as a value and a second caller would type into a pane.
-		"sendInject":  {"*Daemon.handleInjectAs": 1},
-		"dispatchAs":  {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
-		"dispatch":    {},
-		"handleRWCAs": {"*Daemon.handleConn": 1, "*Daemon.handleRWC": 1, "*SSHServer.handleConnection": 1},
-		"handleRWC":   {},
-		"handleConn":  {"*Daemon.Start": 1},
+		"sendInject": {"*Daemon.handleInjectAs": 1},
+		// dispatchAs times the call and hands it to dispatchUntimed, the switch.
+		"dispatchUntimed": {"*Daemon.dispatchAs": 1},
+		"dispatchAs":      {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
+		"dispatch":        {},
+		"handleRWCAs":     {"*Daemon.handleConn": 1, "*Daemon.handleRWC": 1, "*SSHServer.handleConnection": 1},
+		"handleRWC":       {},
+		"handleConn":      {"*Daemon.Start": 1},
 		// The client lives in internal/daemonrpc, which carries its own inventory
 		// of the same entry points and of every dial. Nothing in this package
 		// calls them (the tests that talk to a daemon are _test files, which this

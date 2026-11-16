@@ -18,10 +18,13 @@ import (
 	"github.com/arcavenae/marvel/internal/backoff"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/session"
+	"github.com/arcavenae/marvel/internal/timing"
 )
 
 // Controller reconciles desired team state with actual running sessions.
 type Controller struct {
+	// Timing records the reconcile pass and missed ticks. Nil records nothing.
+	Timing *timing.Registry
 	// hibernateSaid is the Since of the hibernate mark team.hibernated was last
 	// emitted for, per team, so it is said once. In memory: a restart says it again.
 	hibernateSaid map[string]time.Time
@@ -566,7 +569,9 @@ func (c *Controller) ClearRoleHealthForRole(workspace, team, role string) bool {
 // ReconcileOnce runs one reconciliation pass for all teams.
 // Reaps dead sessions first so the reconciler sees accurate state.
 func (c *Controller) ReconcileOnce() {
+	start := time.Now()
 	pruned := c.reconcileOnceLocked()
+	c.Timing.Record(timing.SiteReconcilePass, time.Since(start))
 	if len(pruned) > 0 && c.OnPruned != nil {
 		c.OnPruned(pruned)
 	}
@@ -2882,6 +2887,7 @@ func (c *Controller) nextIndex(t *api.Team, role *api.Role, generation int64) in
 func (c *Controller) Run(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	prev := c.nowUTC()
 
 	// Reconcile immediately on start.
 	c.ReconcileOnce()
@@ -2894,6 +2900,15 @@ func (c *Controller) Run(ctx context.Context, interval time.Duration) {
 			c.mu.Unlock()
 			return
 		case <-ticker.C:
+			// A Go ticker drops the ticks that fall inside a long pass and
+			// delivers one. The gap between successive receives, read through
+			// the controller's clock, says how many were dropped; the value on
+			// ticker.C is stale after a long pass.
+			now := c.nowUTC()
+			if n := int64(now.Sub(prev) / interval); n > 1 {
+				c.Timing.Add(timing.CounterMissedTicks, uint64(n-1))
+			}
+			prev = now
 			c.ReconcileOnce()
 		}
 	}
