@@ -32,7 +32,7 @@ func withCostRate(raw []byte, now time.Time) ([]byte, error) {
 // out, so a "-" in RATE and a "+" on TOUT can be read.
 const tokenSourceNote = "output tokens summed from the seat's claude transcript, main file only; subagents are excluded. " +
 	"A + marks a lower bound: the reader began at the file's end, or the file shrank or changed. " +
-	"The per-message figures are in memory, so the reader resets with the daemon, which marks the sum +. " +
+	"The reader's state resets with the daemon and is rebuilt from the file and the stored place, so a restart does not change the sum; a file replaced while the daemon was down marks it +. " +
 	"RATE is a dash on this source: the rate is not computed from the transcript in this release."
 
 // withTokenSource adds the note to a described session that has a token sum.
@@ -44,7 +44,9 @@ func withTokenSource(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return nil, fmt.Errorf("decode session for token source: %w", err)
 	}
-	if s.SpendOut == nil {
+	// Only where the transcript reader is the source: a claude seat with a sum
+	// the accountant did not write. A codex seat's sum comes from its hooks.
+	if s.SpendOut == nil || s.SpendPromptTokens != nil || s.Runtime.Name != "claude" {
 		return raw, nil
 	}
 	return withField(raw, "token_source", tokenSourceNote)

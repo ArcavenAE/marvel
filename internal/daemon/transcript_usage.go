@@ -52,6 +52,11 @@ const usageMaxTokens = 1 << 31
 
 // usageTail is the reader's memory of one seat's transcript.
 type usageTail struct {
+	// seeded is true when the store held a sum from a previous daemon life, so
+	// the per-id figures are rebuilt from the file; stored is the place that
+	// life left with it, nil when an older daemon wrote the sum without one.
+	seeded bool
+	stored *api.SpendTail
 	// located is true once the file has been found; path and inode are its.
 	located bool
 	path    string
@@ -162,7 +167,12 @@ func (u *txUsage) visit(key string, s api.Session) {
 	switch {
 	case !t.located:
 		t.located, t.path, t.inode = true, path, ino
-		if first && fi.Size() > 0 {
+		if t.seeded {
+			// A sum from a previous daemon life: rebuild the per-id figures, also
+			// when the file only appeared after the first pass.
+			t.seeded = false
+			u.seed(t, path, ino, fi.Size())
+		} else if first && fi.Size() > 0 {
 			// History already there at first sight: start at its end, so the
 			// sum is a lower bound.
 			t.offset, t.partial = fi.Size(), true
@@ -178,11 +188,16 @@ func (u *txUsage) visit(key string, s api.Session) {
 	if fi.Size() == t.size && fi.ModTime().Equal(t.mtime) {
 		return
 	}
-	data, err := u.tailRead(t.path, t.offset)
+	from := t.offset
+	data, err := u.tailRead(t.path, from)
 	if err != nil {
 		return
 	}
-	t.size, t.mtime = fi.Size(), fi.ModTime()
+	// The size and mtime are recorded only when this read reached the end of
+	// the file, so a read cut at the cap is continued on the next pass.
+	if from+int64(len(data)) >= fi.Size() {
+		t.size, t.mtime = fi.Size(), fi.ModTime()
+	}
 	end := bytes.LastIndexByte(data, '\n') + 1
 	if end == 0 && len(data) >= usageReadCap {
 		// One record longer than a whole read: drop its head and carry on.
@@ -190,7 +205,7 @@ func (u *txUsage) visit(key string, s api.Session) {
 	}
 	t.offset += int64(end)
 	for _, line := range bytes.Split(data[:end], []byte{'\n'}) {
-		t.count(line)
+		t.count(line, true)
 	}
 	u.publish(key, t)
 }
@@ -202,13 +217,19 @@ func (u *txUsage) newTail(s api.Session) *usageTail {
 	if s.SpendOut != nil {
 		t.total = *s.SpendOut
 		t.partial = true
+		t.seeded = true
+		if s.SpendTail != nil {
+			st := *s.SpendTail
+			t.stored = &st
+			t.partial = s.SpendPartial
+		}
 	}
 	return t
 }
 
 // count adds one transcript line. A line that is not an assistant record with
 // a message id and a usable output figure adds nothing.
-func (t *usageTail) count(line []byte) {
+func (t *usageTail) count(line []byte, add bool) {
 	if len(line) == 0 {
 		return
 	}
@@ -231,7 +252,9 @@ func (t *usageTail) count(line []byte) {
 	n := int(f)
 	if old := t.peak[rec.Message.ID]; n > old {
 		t.peak[rec.Message.ID] = n
-		t.total += n - old
+		if add {
+			t.total += n - old
+		}
 	}
 }
 
@@ -242,11 +265,20 @@ func (u *txUsage) publish(key string, t *usageTail) {
 	if err != nil {
 		return
 	}
-	if cur.SpendOut != nil && *cur.SpendOut == t.total && cur.SpendPartial == t.partial {
+	// The accountant may have metered the seat since this pass began.
+	if cur.SpendPromptTokens != nil {
+		return
+	}
+	var tail *api.SpendTail
+	if t.located {
+		tail = &api.SpendTail{Offset: t.offset, Inode: t.inode}
+	}
+	sameTail := (tail == nil && cur.SpendTail == nil) || (tail != nil && cur.SpendTail != nil && *tail == *cur.SpendTail)
+	if cur.SpendOut != nil && *cur.SpendOut == t.total && cur.SpendPartial == t.partial && sameTail {
 		return
 	}
 	out := t.total
-	u.store.UpdateSessionSpend(key, api.SessionSpend{Out: &out, PromptTokens: cur.SpendPromptTokens, OutRate: cur.OutRate, Partial: t.partial})
+	u.store.UpdateSessionSpend(key, api.SessionSpend{Out: &out, PromptTokens: cur.SpendPromptTokens, OutRate: cur.OutRate, Partial: t.partial, Tail: tail})
 }
 
 // startTxUsage runs the transcript usage reader beside the watchdog. It reads
@@ -258,4 +290,39 @@ func (d *Daemon) startTxUsage(ctx context.Context) {
 		defer d.wg.Done()
 		u.Run(ctx, d.clusterSuspended)
 	}()
+}
+
+// seed rebuilds the per-id figures of a seat the daemon already had a sum for,
+// adding nothing to the total. When the file is the one the store's place was
+// recorded in and has not shrunk, it reads up to that place and the sum stays
+// exact. Otherwise it reads the whole file, puts the offset at its end and marks
+// the sum partial: records only in the new file are not counted.
+func (u *txUsage) seed(t *usageTail, path string, ino uint64, size int64) {
+	upto := size
+	same := t.stored != nil && t.stored.Offset >= 0 && ino == t.stored.Inode && size >= t.stored.Offset
+	if same {
+		upto = t.stored.Offset
+	}
+	var off int64
+	for off < upto {
+		data, err := u.tailRead(path, off)
+		if err != nil || len(data) == 0 {
+			break
+		}
+		if room := upto - off; int64(len(data)) > room {
+			data = data[:room]
+		}
+		end := bytes.LastIndexByte(data, '\n') + 1
+		if end == 0 {
+			break
+		}
+		for _, line := range bytes.Split(data[:end], []byte{'\n'}) {
+			t.count(line, false)
+		}
+		off += int64(end)
+	}
+	t.offset = off
+	if !same || off < t.stored.Offset {
+		t.partial = true
+	}
 }

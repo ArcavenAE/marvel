@@ -583,3 +583,38 @@ func TestSessionWithoutAPlaceIsSeededWholeAndMarkedPlus(t *testing.T) {
 	u2.Once()
 	r.want(50, true)
 }
+
+// A stored place with a negative offset (a corrupt record) is not trusted: the
+// file is seeded whole, adds nothing, and the sum is marked +.
+func TestNegativeStoredOffsetIsNotTrusted(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(msg("m1", 40))
+	r.u.Once()
+	fi, err := os.Stat(r.path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	forty := 40
+	r.store.UpdateSessionSpend(r.key, api.SessionSpend{Out: &forty, Tail: &api.SpendTail{Offset: -5, Inode: inodeOf(fi)}})
+	u2 := r.restart()
+	u2.Once()
+	r.want(40, true)
+	r.lines(msg("m1", 50))
+	u2.Once()
+	r.want(50, true)
+}
+
+// A stored sum whose file is missing at the first pass and appears later is
+// seeded from that file, not read as new: the ids it holds are not counted
+// again.
+func TestFileThatAppearsAfterARestartIsSeededNotAdded(t *testing.T) {
+	r := newUsageRig(t)
+	forty := 40
+	r.store.UpdateSessionSpend(r.key, api.SessionSpend{Out: &forty, Tail: &api.SpendTail{Offset: 99, Inode: 7}})
+	u2 := r.restart()
+	u2.Once() // no file yet
+	r.lines(msg("m1", 40))
+	u2.Once()
+	r.want(40, true)
+}

@@ -204,8 +204,14 @@ TEAM stays reachable through `--columns` and `describe`.
     tokens once per message id, at the largest figure seen for that id, adding
     only the growth. On first sight of a file with history it starts at the end
     and marks the sum `+`; a shrunk file or a changed inode resets the offset,
-    never the total, and marks `+`. The per-id figures are in memory and reset
-    with the daemon, which marks the sum `+` again. Main transcript only:
+    never the total, and marks `+`. The per-id figures are rebuilt from the
+    transcript when the daemon starts, so a restart does not change the sum. If
+    the transcript was replaced while the daemon was down, records only in the
+    new file are not counted and the sum is shown with `+`, a lower bound. A
+    sum stored without the reader's place (an older daemon wrote it) is also
+    rebuilt from the whole file and marked `+`. The sum never counts a record
+    twice. The place (`spend_tail`: offset and inode) is stored in the same
+    write as the sum. Main transcript only:
     subagents are excluded, and `describe session` says so. Client workspaces
     are not read. A seat the usage accountant meters keeps the accountant's
     figures. The wire carries `spend_partial`, always, false included.
