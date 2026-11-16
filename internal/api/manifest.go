@@ -600,6 +600,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			if r.GlobalRole != "" && r.GlobalRole != GlobalRoleSupervisor && r.GlobalRole != GlobalRoleNone {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].global_role %q is not a valid global role (valid: %s, %s)", i, j, r.GlobalRole, GlobalRoleNone, GlobalRoleSupervisor)
 			}
+			if err := validateSupervises(t.Name, r.Supervises); err != nil {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].supervises: %w", i, j, err)
+			}
 			if r.Permissions != "" && !canonicalPermissionModes[r.Permissions] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].permissions %q is not a valid permission mode (valid: %s)", i, j, r.Permissions, permissionModeList())
 			}
@@ -1191,6 +1194,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				DangerousPermissions: mr.DangerousPermissions,
 				Persona:              mr.Persona,
 				GlobalRole:           mr.GlobalRole,
+				Supervises:           slices.Clone(mr.Supervises),
 				Duties:               slices.Clone(mr.Duties),
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
