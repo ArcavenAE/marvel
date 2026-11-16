@@ -751,8 +751,8 @@ type Event struct {
 	// no reason word.
 	Reason string `json:"reason,omitempty"`
 	// Since is when the state the event reports was entered (RFC3339, UTC),
-	// set on bus.leaf.up and bus.leaf.down (aae-orc-x2wz4). Not carried yet.
-	Since string `json:"-"`
+	// set on bus.leaf.up and bus.leaf.down (aae-orc-x2wz4).
+	Since string `json:"since,omitempty"`
 	// Message is a short human-readable description. Keep it one
 	// line — operators scan dozens of these at a time.
 	Message string `json:"message"`

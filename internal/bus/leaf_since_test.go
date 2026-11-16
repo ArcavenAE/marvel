@@ -104,3 +104,26 @@ func TestLeafUpAtFirstPollIsInfo(t *testing.T) {
 		t.Errorf("an up at the first poll has severity %q, want info", ups[0].Severity)
 	}
 }
+
+// A second cycle is judged on its own: the recovery after the second reported
+// down is a warning that names the second up entry, not the first.
+func TestLeafSecondRecoveryCarriesItsOwnSinceAndWarning(t *testing.T) {
+	s, ring := enrolledLeaf(t)
+	s.observeLeaf(1, sinceT0)
+	s.observeLeaf(0, sinceT0.Add(time.Minute))
+	s.observeLeaf(1, sinceT0.Add(2*time.Minute))
+	s.observeLeaf(0, sinceT0.Add(3*time.Minute))
+	secondUp := sinceT0.Add(4 * time.Minute)
+	s.observeLeaf(1, secondUp)
+	ups := leafUpEvents(ring)
+	if len(ups) != 3 {
+		t.Fatalf("bus.leaf.up events = %d, want 3", len(ups))
+	}
+	last := ups[2]
+	if last.Severity != events.SeverityWarning {
+		t.Errorf("second recovery severity = %q, want warning", last.Severity)
+	}
+	if want := secondUp.UTC().Format(time.RFC3339); last.Since != want {
+		t.Errorf("second recovery since = %q, want %q", last.Since, want)
+	}
+}

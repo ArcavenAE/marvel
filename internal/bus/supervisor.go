@@ -1009,6 +1009,9 @@ func (s *Supervisor) observeLeaf(leafnodes int, now time.Time) {
 	s.leafUp = &up
 	changed := prev == nil || *prev != up
 	s.leafObservedAt = now
+	// Read before the reset below: a recovery is a warning only when the down
+	// it ends was reported (aae-orc-x2wz4).
+	downWasReported := !s.leafReportedAt.IsZero()
 	if changed {
 		s.leafSince = now
 		s.leafReportedAt = time.Time{}
@@ -1021,13 +1024,18 @@ func (s *Supervisor) observeLeaf(leafnodes int, now time.Time) {
 	}
 	s.mu.Unlock()
 	hub := s.mgr.bus.HubURL
+	sinceStamp := since.UTC().Format(time.RFC3339)
 	switch {
 	case changed && up:
-		s.emit(events.KindBusLeafUp, events.SeverityInfo, fmt.Sprintf("leaf link to %s is up (%d leafnode connection(s))", hub, leafnodes))
+		sev := events.SeverityInfo
+		if downWasReported {
+			sev = events.SeverityWarning
+		}
+		s.emitSince(events.KindBusLeafUp, sev, fmt.Sprintf("leaf link to %s is up (%d leafnode connection(s))", hub, leafnodes), sinceStamp)
 	case report:
-		s.emit(events.KindBusLeafDown, events.SeverityWarning, fmt.Sprintf("leaf link to %s is down; local bus keeps serving, nothing is restarted", hub))
+		s.emitSince(events.KindBusLeafDown, events.SeverityWarning, fmt.Sprintf("leaf link to %s is down; local bus keeps serving, nothing is restarted", hub), sinceStamp)
 	case repeat:
-		s.emit(events.KindBusLeafDown, events.SeverityWarning, fmt.Sprintf("leaf link to %s is still down: down for %s; local bus keeps serving, nothing is restarted", hub, leafDuration(now.Sub(since))))
+		s.emitSince(events.KindBusLeafDown, events.SeverityWarning, fmt.Sprintf("leaf link to %s is still down: down for %s; local bus keeps serving, nothing is restarted", hub, leafDuration(now.Sub(since))), sinceStamp)
 	}
 }
 
@@ -1097,6 +1105,14 @@ func (s *Supervisor) emit(kind events.Kind, sev events.Severity, msg string) {
 	log.Printf("%s: %s", kind, msg)
 	if s.ring != nil {
 		events.Emit(s.ring, events.Event{Kind: kind, Severity: sev, Message: msg})
+	}
+}
+
+// emitSince is emit for an event that says when its state was entered.
+func (s *Supervisor) emitSince(kind events.Kind, sev events.Severity, msg, since string) {
+	log.Printf("%s: %s", kind, msg)
+	if s.ring != nil {
+		events.Emit(s.ring, events.Event{Kind: kind, Severity: sev, Message: msg, Since: since})
 	}
 }
 
