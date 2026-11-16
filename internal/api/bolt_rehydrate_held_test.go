@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -91,5 +92,42 @@ func TestRehydrateKeepsTheSiblingSeatOfAHeldRole(t *testing.T) {
 	got, err := s.GetSession(sess.Key())
 	if err != nil || got.State != SessionRunning {
 		t.Errorf("sibling session = %+v, %v; want the running seat kept", got, err)
+	}
+}
+
+// Held is derived at each start, never read back from the stored row: a row that
+// carries a stale Held on a role that is not refused now loads with Held empty,
+// so a rule that is later loosened frees the role without a re-apply.
+func TestRehydrateDoesNotCarryAStaleHeldMark(t *testing.T) {
+	t.Parallel()
+	team := Team{Name: "ops", Workspace: "ws", Roles: []Role{
+		headlessRole("fine", "claude", nil, "dontAsk", &SchedulePolicy{Cron: "0 6 * * *", Timezone: "Etc/UTC"}),
+	}}
+	// Write the row as a JSON object with a Held key, the way an earlier build
+	// that persisted the field would have left it.
+	raw, err := json.Marshal(team)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row map[string]any
+	if err := json.Unmarshal(raw, &row); err != nil {
+		t.Fatal(err)
+	}
+	roles, _ := row["Roles"].([]any)
+	if len(roles) != 1 {
+		t.Fatalf("row roles = %d, want 1", len(roles))
+	}
+	roles[0].(map[string]any)["Held"] = "a stale reason from an earlier start"
+
+	s, err := openSeeded(t, map[string]map[string]any{"teams": {team.Key(): row}})
+	if err != nil {
+		t.Fatalf("OpenBolt: %v", err)
+	}
+	got, err := s.GetTeam(team.Key())
+	if err != nil {
+		t.Fatalf("GetTeam: %v", err)
+	}
+	if got.Roles[0].Held != "" {
+		t.Errorf("Held = %q, want empty: the role is not refused now and the mark is derived at each start", got.Roles[0].Held)
 	}
 }
