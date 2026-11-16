@@ -182,6 +182,15 @@ write. The default conforms to the contract:
    was made, `MARVEL_HANDOFF_REQUESTED_AT`. Only then can a successor tell
    "my predecessor wrote nothing" from "I have no predecessor".
 
+**Manual shifts follow the same rule (marvel#1447).** `marvel shift --role <r>`
+on a role that declares `handoff` and `handoff_marker` sends the request
+(cause `manual`), waits up to `handoff_window`, and shifts when the marker
+arrives. With no marker the seat keeps running and `shift.handoff-missing` is
+emitted; running the shift again with `--no-handoff` proceeds without a
+handoff, which is the operator's explicit decision to shift without a watcher.
+An unscoped team shift that covers such a role is refused, naming it, unless
+`--no-handoff` is set. A role with no handoff keys shifts at once, as before.
+
 **Open, for the operator (conflict stated).** Proceeding with the shift after
 the window when no handoff exists would be an automatic shift with no handoff
 and no watcher, which the contract above forbids. If it is wanted for some

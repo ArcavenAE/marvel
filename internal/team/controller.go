@@ -2332,12 +2332,16 @@ roles:
 		}
 		conds := role.Shift.Conditions()
 		req, pending := t.ShiftRequests[role.Name]
-		if pending && !hasCondition(conds, req.Cause) {
+		// A manual request names no condition: an operator asked, so the policy
+		// cannot have removed the cause, and it is advanced on a role that
+		// declares no automatic trigger at all (marvel#1447).
+		manual := pending && req.Cause == api.HandoffCauseManual
+		if pending && !manual && !hasCondition(conds, req.Cause) {
 			// The policy that asked no longer declares the cause.
 			c.dropShiftRequest(t, role.Name, holdReasonPolicyRemoved)
 			pending = false
 		}
-		if len(conds) == 0 {
+		if len(conds) == 0 && !manual {
 			continue
 		}
 		if pending {
