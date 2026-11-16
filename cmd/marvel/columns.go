@@ -51,13 +51,23 @@ var sessionColumnRegistry = []sessionColumn{
 	{name: "active", header: "ACTIVE%", pick: func(r sessionRow) string { return r.active }},
 	{name: "prompt", header: "PROMPT", pick: func(r sessionRow) string { return r.prompt }},
 	{name: "spec", header: "SPEC", pick: func(r sessionRow) string { return r.spec }},
-	{name: "acct", header: "ACCT", pick: func(r sessionRow) string { return r.acct }},
-	{name: "service", header: "SERVICE", pick: func(r sessionRow) string { return r.service }},
+	{name: "account", header: "ACCOUNT", pick: func(r sessionRow) string { return r.account }},
+	{name: "5h", header: "5H%", pick: func(r sessionRow) string { return r.fiveH }},
+	{name: "7d", header: "7D%", pick: func(r sessionRow) string { return r.sevenD }},
+	{name: "5h-reset", header: "5H-RESET", pick: func(r sessionRow) string { return r.fiveReset }},
+	{name: "7d-reset", header: "7D-RESET", pick: func(r sessionRow) string { return r.sevenReset }},
+	{name: "read", header: "READ", pick: func(r sessionRow) string { return r.read }},
+	{name: "backend", header: "BACKEND", pick: func(r sessionRow) string { return r.backend }},
+	{name: "cred", header: "CRED", pick: func(r sessionRow) string { return r.cred }},
+	{name: "home", header: "HOME", pick: func(r sessionRow) string { return r.home }},
+	{name: "login", header: "LOGIN", pick: func(r sessionRow) string { return r.login }},
+	{name: "cluster", header: "CLUSTER", pick: func(r sessionRow) string { return r.cluster }},
+	{name: "key", header: "KEY", pick: func(r sessionRow) string { return r.key }},
 }
 
 // optInColumns are registered and selectable but not in the default table.
 // The width fit's wide tier is where they show by default.
-var optInColumns = map[string]bool{"composer": true, "pane": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-turn": true, "spec": true, "acct": true, "service": true, "cpu": true, "rss": true, "desk": true, "runtime": true}
+var optInColumns = map[string]bool{"composer": true, "pane": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-turn": true, "spec": true, "account": true, "5h": true, "7d": true, "5h-reset": true, "7d-reset": true, "read": true, "backend": true, "cred": true, "home": true, "login": true, "cluster": true, "key": true, "cpu": true, "rss": true, "desk": true, "runtime": true}
 
 // wantsComposer reports whether the COMPOSER or PANE column is selected. Only
 // then does the listing ask the daemon to read each seat's pane; both are
@@ -71,16 +81,28 @@ func wantsComposer(cols []sessionColumn) bool {
 	return false
 }
 
-// columnSetWide is the one named set. A set expands in place wherever its
-// name appears, because no `-o wide` exists (`-w` is --watch). It starts
-// as today's columns and is where later columns that belong in a wide view
-// are added.
+// columnSetWide is a named set. A set expands in place wherever its name
+// appears, because no `-o wide` exists (`-w` is --watch). wide starts as
+// today's columns plus the account figures; acct and service are the sets the
+// retired composite cells became (I-450), so a saved preference of acct or
+// service keeps working.
 const columnSetWide = "wide"
 
 var wideSessionColumns = []string{
 	"workspace", "team", "role", "generation", "name", "state", "health",
 	"context", "cpu", "rss", "desk", "runtime", "llm", "tout", "rate", "prompt", "last-active", "last-turn", "age", "active",
+	"account", "7d", "7d-reset", "read",
 }
+
+// columnSets maps each set name to its members, in print order.
+var columnSets = map[string][]string{
+	columnSetWide: wideSessionColumns,
+	"acct":        {"account", "5h", "7d", "5h-reset", "7d-reset", "read"},
+	"service":     {"runtime", "backend", "cred", "home", "login"},
+}
+
+// columnSetNames lists the sets in a fixed order for the error text.
+var columnSetNames = []string{columnSetWide, "acct", "service"}
 
 // columnRest is a reserved name that expands in place to every registered
 // column the list does not name elsewhere. No registry entry may take it.
@@ -137,7 +159,8 @@ func validColumnNames() string {
 	for _, c := range sessionColumnRegistry {
 		names = append(names, c.name)
 	}
-	names = append(names, columnSetWide, columnRest)
+	names = append(names, columnSetNames...)
+	names = append(names, columnRest)
 	return strings.Join(names, ", ")
 }
 
@@ -174,8 +197,8 @@ func expandColumnNames(names []string, source string) ([]sessionColumn, error) {
 			restAt = len(out)
 			continue
 		}
-		if name == columnSetWide {
-			cols, err := expandColumnNames(wideSessionColumns, source)
+		if members, isSet := columnSets[name]; isSet {
+			cols, err := expandColumnNames(members, source)
 			if err != nil {
 				return nil, err
 			}
@@ -233,6 +256,9 @@ func loadSessionColumns(flag string) ([]sessionColumn, error) {
 // operator named the columns, by the flag or the preference. The width fit
 // cuts only a default it chose itself.
 func loadSessionColumnsSel(flag string) ([]sessionColumn, bool, error) {
+	if cfg, _ := config.Load(); cfg != nil {
+		accountNames = cfg.Display.AccountNames
+	}
 	if flag != "" {
 		cols, err := selectSessionColumns(flag, nil)
 		return cols, true, err

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 
@@ -1107,6 +1108,9 @@ func (c *Config) Validate() error {
 			errs = append(errs, err)
 		}
 	}
+	if err := c.Display.validateAccountNames(); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
@@ -1241,4 +1245,57 @@ func isMRVL(addr string) bool {
 
 func isSSH(addr string) bool {
 	return len(addr) >= 6 && addr[:6] == "ssh://"
+}
+
+// accountNameKey is an account id: six lowercase hex characters, optionally
+// qualified with the cluster name and a slash.
+var accountNameKey = regexp.MustCompile(`^([A-Za-z0-9._-]+/)?[0-9a-f]{6}$`)
+
+// tokenPrefixed is a value that starts the way a known credential does.
+var tokenPrefixed = regexp.MustCompile(`^(sk-|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|xox[abprs]-|eyJ|AKIA)[A-Za-z0-9_-]{10,}`)
+
+// tokenRun is an unbroken run of 32 or more token characters.
+var tokenRun = regexp.MustCompile(`[A-Za-z0-9_-]{32,}`)
+
+// looksLikeCredential reports whether v is shaped like a credential: a known
+// prefix, or one unbroken run of 32 or more characters holding a letter and a
+// digit. A long plain word has no digit and is display text.
+func looksLikeCredential(v string) bool {
+	if tokenPrefixed.MatchString(v) {
+		return true
+	}
+	for _, run := range tokenRun.FindAllString(v, -1) {
+		var letter, digit bool
+		for _, r := range run {
+			switch {
+			case r >= '0' && r <= '9':
+				digit = true
+			case r != '-' && r != '_':
+				letter = true
+			}
+		}
+		if letter && digit {
+			return true
+		}
+	}
+	return false
+}
+
+// validateAccountNames checks the display.account_names map. The map is display
+// text only: a malformed key, an empty or padded value, a control character, or
+// a credential-shaped value is refused. No error carries the value or the key,
+// since either could be the secret.
+func (d Display) validateAccountNames() error {
+	var errs []error
+	for k, v := range d.AccountNames {
+		switch {
+		case !accountNameKey.MatchString(k):
+			errs = append(errs, errors.New("display.account_names: a key is not an account id (six lowercase hex characters, optionally cluster/id)"))
+		case v == "" || strings.TrimSpace(v) != v || strings.ContainsFunc(v, unicode.IsControl):
+			errs = append(errs, fmt.Errorf("display.account_names[%s]: the name is empty, padded with spaces, or holds a control character", k))
+		case looksLikeCredential(v):
+			errs = append(errs, fmt.Errorf("display.account_names[%s]: the name looks like a credential; names are display text only", k))
+		}
+	}
+	return errors.Join(errs...)
 }

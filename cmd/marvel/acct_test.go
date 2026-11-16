@@ -21,7 +21,8 @@ func acctSession(name, home string, state api.ReadingState, text string) api.Ses
 	return s
 }
 
-func acctCells(t *testing.T, sessions ...api.Session) (map[string]string, string) {
+// acctCells renders name,account and returns the ACCOUNT cell by agent name.
+func acctCells(t *testing.T, sessions ...api.Session) map[string]string {
 	t.Helper()
 	table := renderSessionTableCols(sessions, columnsOrFatal(t, "name,account", nil))
 	out := map[string]string{}
@@ -29,7 +30,7 @@ func acctCells(t *testing.T, sessions ...api.Session) (map[string]string, string
 		cells := splitColumns(line)
 		out[cells[0]] = cells[1]
 	}
-	return out, table
+	return out
 }
 
 var acctKeyShape = regexp.MustCompile(`^[0-9a-f]{6}$`)
@@ -86,7 +87,7 @@ func TestAcctNoReadingIsADash(t *testing.T) {
 // whatever HOME the client has.
 func TestAcctKeyDoesNotUseTheClientHome(t *testing.T) {
 	t.Setenv("HOME", "/home/c")
-	got, _ := acctCells(t,
+	got := acctCells(t,
 		acctSession("a-default", "", api.ReadingFresh, "fresh 10% (five_hour)"),
 		acctSession("b-clienthome", "/home/c/.claude", api.ReadingFresh, "fresh 10% (five_hour)"),
 		acctSession("c-daemonhome", "/home/d/.claude", api.ReadingFresh, "fresh 10% (five_hour)"),
@@ -98,7 +99,7 @@ func TestAcctKeyDoesNotUseTheClientHome(t *testing.T) {
 
 	before := key("c-daemonhome")
 	t.Setenv("HOME", "/home/other")
-	again, _ := acctCells(t, acctSession("c-daemonhome", "/home/d/.claude", api.ReadingFresh, "fresh 10% (five_hour)"))
+	again := acctCells(t, acctSession("c-daemonhome", "/home/d/.claude", api.ReadingFresh, "fresh 10% (five_hour)"))
 	if k, _, _ := strings.Cut(again["c-daemonhome"], " "); k != before {
 		t.Errorf("the same row prints %q under one client HOME and %q under another", before, k)
 	}
@@ -108,7 +109,7 @@ func TestAcctKeyDoesNotUseTheClientHome(t *testing.T) {
 // prints for them: AccountKey.String spells an empty home "default-home", so a
 // home literally named that must not read as the default row.
 func TestAcctKeyKeepsTheDefaultHomeApartFromAHomeNamedLikeIt(t *testing.T) {
-	got, _ := acctCells(t,
+	got := acctCells(t,
 		acctSession("a-default", "", api.ReadingFresh, "fresh 10% (five_hour)"),
 		acctSession("b-literal", "default-home", api.ReadingFresh, "fresh 10% (five_hour)"),
 		acctSession("c-dotslash", "./default-home", api.ReadingFresh, "fresh 10% (five_hour)"),
@@ -126,7 +127,7 @@ func TestAcctKeyKeepsTheDefaultHomeApartFromAHomeNamedLikeIt(t *testing.T) {
 // different logins and keep different keys, so a key built from the base name
 // alone would merge them.
 func TestAcctKeyKeepsHomesWithOneBaseNameApart(t *testing.T) {
-	got, _ := acctCells(t,
+	got := acctCells(t,
 		acctSession("a-c", "/home/c/.claude", api.ReadingFresh, "fresh 10% (five_hour)"),
 		acctSession("b-d", "/home/d/.claude", api.ReadingFresh, "fresh 10% (five_hour)"),
 	)
@@ -187,7 +188,7 @@ func acctEnvSession(name, dir string) api.Session {
 // column must not print one key for both: it is how an operator sees which
 // rows share a limit.
 func TestAcctKeyFollowsAClaudeSeatsConfigDir(t *testing.T) {
-	got, _ := acctCells(t,
+	got := acctCells(t,
 		acctEnvSession("a-none", ""),
 		acctEnvSession("b-one", "/home/d/.claude-a"),
 		acctEnvSession("c-one-again", "/home/d/.claude-a/"),
@@ -208,7 +209,7 @@ func TestAcctKeyFollowsAClaudeSeatsConfigDir(t *testing.T) {
 func TestAcctKeyPrefersARecordedHomeOverTheConfigDir(t *testing.T) {
 	both := acctEnvSession("a-both", "/home/d/.claude-env")
 	both.AccountHome = "/home/d/.claude-home"
-	got, _ := acctCells(t,
+	got := acctCells(t,
 		both,
 		acctSession("b-home-only", "/home/d/.claude-home", api.ReadingFresh, "fresh 10% (five_hour)"),
 		acctEnvSession("c-env-only", "/home/d/.claude-env"),

@@ -9,21 +9,29 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 )
 
-// acctCell renders the opt-in ACCT cell: a short key for the account the
-// session spends against, then that account's limit reading as the daemon
-// stamped it on the row (docs/design/get-sessions-output.md, section 4.3).
-//
-// The cell is per row and nothing more. Sessions on one account repeat the
-// same key and reading, and no code here or elsewhere totals, averages or
-// thresholds them across rows. A fresh reading prints its fullest window, a
-// stale one prints the word and not the old figure, and an account never read
-// prints a dash. A row the daemon did not stamp (a held role's synthetic row)
-// prints a bare dash.
-func acctCell(s api.Session) string {
+// accountCell is the ACCOUNT cell: the display name the client config maps the
+// account to, else the label the role or team declared, else a short key for the
+// account. A row the daemon did not stamp (a held role's synthetic row) prints a
+// bare dash. On a cluster-set read the key folds in the cluster; the map is
+// keyed on the cluster-free key, so one account carries one name on a plain read
+// and a set read, and "cluster/key" names it on one cluster.
+func accountCell(s api.Session) string {
 	if s.LimitReading == "" {
 		return "-"
 	}
-	return acctKeyIn(clientAccountKey(s), s.Cluster) + " " + acctReading(s)
+	id := acctKey(clientAccountKey(s))
+	if s.Cluster != "" {
+		if name, ok := accountNames[s.Cluster+"/"+id]; ok {
+			return name
+		}
+	}
+	if name, ok := accountNames[id]; ok {
+		return name
+	}
+	if s.Runtime.AccountLabel != "" {
+		return s.Runtime.AccountLabel
+	}
+	return acctKeyIn(clientAccountKey(s), s.Cluster)
 }
 
 // clientAccountKey is the account key with the home left as recorded. The
@@ -63,19 +71,4 @@ func acctKeyIn(k api.AccountKey, cluster string) string {
 	}
 	sum := sha256.Sum256([]byte(strings.Join(fields, "\x00")))
 	return hex.EncodeToString(sum[:3])
-}
-
-// acctReading is the reading half of the cell.
-func acctReading(s api.Session) string {
-	switch s.LimitReading {
-	case api.ReadingFresh:
-		if text, ok := strings.CutPrefix(s.LimitReadingText, "fresh "); ok {
-			return text
-		}
-		return "-"
-	case api.ReadingStale:
-		return "stale"
-	default:
-		return "-"
-	}
 }

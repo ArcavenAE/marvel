@@ -405,3 +405,42 @@ func TestAccountNamesRefuseAMalformedKey(t *testing.T) {
 		}
 	}
 }
+
+// The error for a refused name never carries the value, for each credential
+// shape the map refuses.
+func TestAccountNameErrorsNeverEchoTheValue(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{
+		"sk-ant-api03-AbCdEf0123456789xyzAbCdEf",
+		"ghp_1234567890abcdefghijklmnopqrstuvwxyz",
+		"eyJhbGciOiJIUzI1NiJ9abcdef0123456789",
+		"AKIAABCDEFGHIJKLMNOP1234",
+		"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8",
+	} {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": bad}}}
+		err := cfg.Validate()
+		if err == nil {
+			t.Errorf("%q passed", bad[:8])
+			continue
+		}
+		if strings.Contains(err.Error(), bad) || strings.Contains(err.Error(), bad[:12]) {
+			t.Errorf("the error echoes the value: %v", err)
+		}
+	}
+}
+
+// A value is trimmed text with no control character; an empty value is refused.
+// A name equal to another account's key is allowed: it is display text.
+func TestAccountNameValuesAreCleanText(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{"", " work", "work ", "wo\nrk", "wo\x1b[31mrk"} {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": bad}}}
+		if cfg.Validate() == nil {
+			t.Errorf("the value %q passed Validate", bad)
+		}
+	}
+	cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": "0f9e8d", "0f9e8d": "other"}}}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("a name equal to another account's key was refused: %v", err)
+	}
+}

@@ -315,7 +315,8 @@ func fanOutExit(records []clusterRecord) int {
 // fanOutKeyColumn is the KEY cell of a view that reads several clusters:
 // <cluster>:<workspace>/<name>.
 func fanOutKeyColumn() sessionColumn {
-	return sessionColumn{name: "key", header: "KEY", pick: func(r sessionRow) string { return r.key }}
+	c, _ := lookupSessionColumn("key")
+	return c
 }
 
 // clusterSet reads the cluster flags of get. It returns the clusters the

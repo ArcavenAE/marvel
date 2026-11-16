@@ -8,5 +8,8 @@ var accountNames map[string]string
 // set view still leads with KEY, so the default stays unambiguous; once the
 // operator names a list, the list alone decides whether KEY prints.
 func fanOutLead(explicit bool) []sessionColumn {
+	if explicit {
+		return nil
+	}
 	return []sessionColumn{fanOutKeyColumn()}
 }
