@@ -303,3 +303,15 @@ func varzNameQuiet(listen string) string {
 	_ = r.Body.Close()
 	return "up"
 }
+
+// A Supervisor built for a Manager is the Manager's BrokerNamer, with no step
+// for a caller to remember: without it a render goes back to naming the server
+// whatever the running broker holds, which is the refusal the omission exists
+// to avoid (aae-orc-a7h5h). The test never sets Manager.Broker itself.
+func TestNewSupervisorIsTheManagersBrokerNamer(t *testing.T) {
+	s, m, _ := newTestSupervisor(t, "")
+	writePidfile(t, s, reapedPid(t))
+	if conf := renderedConf(t, m); confHasAnyName(conf) {
+		t.Errorf("a manager whose supervisor was built still rendered a server_name beside a stale pidfile:\n%s", conf)
+	}
+}
