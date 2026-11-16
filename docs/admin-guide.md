@@ -133,11 +133,13 @@ on the same host.
 ### Custom socket path
 
 ```bash
-marvel daemon --socket /var/run/marvel.sock --mrvl
+marvel daemon --socket "$HOME/.marvel/run/second.sock" --mrvl
 ```
 
 **When to use:** System service configuration, multiple daemons on one
-host (each with a different socket path).
+host (each with a different socket path). Put the socket in a directory only
+the daemon's user can enter (mode 0700), such as `<marvel home>/run`, and not
+in a shared directory such as `/tmp` or `/var/run`.
 
 ### Background daemon
 
@@ -387,7 +389,7 @@ config; it tells the CLI how to reach each daemon.
 ```bash
 marvel config add-cluster <host> mrvl://<host>
 marvel config add-cluster staging mrvl://deploy@staging.example.com:7000
-marvel config add-cluster dev /tmp/marvel-dev.sock
+marvel config add-cluster dev ~/.marvel/run/dev.sock
 ```
 
 Use a DNS name for a remote host, not an IPv4 literal. A name lets the dial recover on
