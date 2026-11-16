@@ -475,6 +475,16 @@ type Session struct {
 	// view, filled on the copies get and describe return and never stored.
 	LimitReading     ReadingState `json:"limit_reading,omitempty" toml:"-"`
 	LimitReadingText string       `json:"limit_reading_text,omitempty" toml:"-"`
+	// LimitWindows, LimitReadAt and LimitStale are the same reading broken into
+	// figures a client can lay out in columns: each window's used percent and
+	// reset time as numbers, when the reading was taken, and whether it is old
+	// enough to show as stale. View-only, filled on the same copies, never
+	// stored, and absent when the account has no reading. A new client never
+	// parses LimitReadingText; against a daemon that sends none of these, the
+	// client prints "-" (docs/design/get-sessions-output.md section 4.3).
+	LimitWindows []LimitWindowView `json:"limit_windows,omitempty" toml:"-"`
+	LimitReadAt  *time.Time        `json:"limit_read_at,omitempty" toml:"-"`
+	LimitStale   bool              `json:"limit_stale,omitempty" toml:"-"`
 
 	// ActiveTicks is the share-of-ticks reading behind ACTIVE%, filled on read
 	// from the controller's in-memory tick ring and never stored. See ActiveTicks.
