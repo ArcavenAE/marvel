@@ -16,7 +16,7 @@ import (
 
 func adoptedUp(now time.Time) bus.Status {
 	return bus.Status{
-		Adopted: true, HubDeclared: true, Ready: true, Leaf: "up",
+		HubDeclared: true, Ready: true, Leaf: "up",
 		LeafObservedAt: now.Format(time.RFC3339), LeafValidUntil: now.Add(time.Minute).Format(time.RFC3339),
 	}
 }
@@ -52,7 +52,9 @@ func TestReexecPostcheckNamesEachNoHubState(t *testing.T) {
 			name: "adopted bus with no hub declared",
 			world: func() *world {
 				w := newWorld()
-				w.leaf = func(time.Duration, time.Time) bus.Status { return bus.Status{Adopted: true, Leaf: "n/a"} }
+				w.leaf = func(time.Duration, time.Time) bus.Status {
+					return bus.Status{Leaf: "n/a", URL: "nats://127.0.0.1:4222"}
+				}
 				return w
 			},
 			want:      "the adopted bus has not been given a hub in this cluster's config, so its leaf is not checked",
@@ -87,7 +89,7 @@ func TestReexecPostcheckAdoptedWithHubDeclaredErrors(t *testing.T) {
 		t.Run("leaf "+leaf, func(t *testing.T) {
 			w := newWorld()
 			w.leaf = func(time.Duration, time.Time) bus.Status {
-				return bus.Status{Adopted: true, HubDeclared: true, Ready: true, Leaf: leaf}
+				return bus.Status{HubDeclared: true, Ready: true, Leaf: leaf, URL: "nats://127.0.0.1:4222"}
 			}
 			out, err := run(t, w, "none")
 			var ce *reexecCheckError
@@ -110,4 +112,59 @@ func TestReexecPostcheckAdoptedWithHubDeclaredErrors(t *testing.T) {
 			t.Errorf("output does not say the leaf is up:\n%s", out)
 		}
 	})
+}
+
+// bus.Status.Adopted means a managed broker the daemon found already running
+// after a re-exec (supervisor.go, lifecycle.go), so it is not what marks an
+// adopted bus. The daemon's status for a real adopted bus has Managed false and
+// no Adopted, which is what the cases above now feed (marvel#1465 review).
+
+func TestReexecPostcheckAdoptedBusDownDoesNotAskForARepush(t *testing.T) {
+	w := newWorld()
+	w.leaf = func(time.Duration, time.Time) bus.Status {
+		return bus.Status{HubDeclared: true, Ready: true, Leaf: "down", URL: "nats://127.0.0.1:4222"}
+	}
+	out, err := run(t, w, "none")
+	var ce *reexecCheckError
+	if !errors.As(err, &ce) {
+		t.Fatalf("err = %v, want a reexecCheckError\n%s", err, out)
+	}
+	if strings.Contains(out, "marvel credential put") {
+		t.Errorf("output tells the operator to push a leaf credential to a broker marvel does not hold one for:\n%s", out)
+	}
+	if !strings.Contains(out, "broker owner") {
+		t.Errorf("output does not say the broker's owner restores the leaf:\n%s", out)
+	}
+}
+
+func TestReexecPostcheckAManagedBrokerFoundRunningStillAsksForARepush(t *testing.T) {
+	w := newWorld()
+	w.leaf = func(time.Duration, time.Time) bus.Status {
+		return bus.Status{Managed: true, Adopted: true, Ready: true, HubDeclared: true, Leaf: "down", LeafSource: "dropped-on-adopt"}
+	}
+	out, err := run(t, w, "none")
+	var ce *reexecCheckError
+	if !errors.As(err, &ce) {
+		t.Fatalf("err = %v, want a reexecCheckError\n%s", err, out)
+	}
+	if !strings.Contains(out, "marvel credential put bus/leaf") {
+		t.Errorf("output does not give the repush command for a managed broker:\n%s", out)
+	}
+	if strings.Contains(out, "broker owner") {
+		t.Errorf("output treats a managed broker found running as one marvel does not manage:\n%s", out)
+	}
+}
+
+func TestReexecPostcheckManagedBusWithNoHubIsNamedEvenWhenFoundRunning(t *testing.T) {
+	w := newWorld()
+	w.leaf = func(time.Duration, time.Time) bus.Status {
+		return bus.Status{Managed: true, Adopted: true, Leaf: "n/a"}
+	}
+	out, err := run(t, w, "none")
+	if err != nil {
+		t.Fatalf("a managed bus with no hub failed the check: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "the managed bus has no hub configured") {
+		t.Errorf("output does not name a managed bus found running as managed:\n%s", out)
+	}
 }

@@ -69,6 +69,16 @@ func closedMonitorListen(t *testing.T) string {
 	return "127.0.0.1:" + strconv.Itoa(mon-monitorPortOffset)
 }
 
+// monitorOf is the monitor address a client address from leafzServer maps to.
+func monitorOf(t *testing.T, listen string) string {
+	t.Helper()
+	mon, err := MonitorAddr(listen)
+	if err != nil {
+		t.Fatalf("monitor address: %v", err)
+	}
+	return mon
+}
+
 func adoptedBus(listen, hub string) config.ResolvedBus {
 	rb := config.ResolvedBus{Mode: service.ModeAdopted, Listen: listen, URL: "nats://" + listen}
 	if hub != "" {
@@ -129,6 +139,32 @@ func TestPostcheckAdoptedReadsLeafzWithoutCredential(t *testing.T) {
 		}
 		if n := len(headers()); n != 1 {
 			t.Errorf("loopback monitor requests = %d, want 1", n)
+		}
+	})
+
+	t.Run("a redirect from the monitor is not followed", func(t *testing.T) {
+		target, targetHeaders := leafzServer(t, `{"leafnodes":1}`)
+		_ = target
+		redirector := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "http://"+monitorOf(t, target)+"/leafz", http.StatusFound)
+		}))
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		redirector.Listener = l
+		redirector.Start()
+		t.Cleanup(redirector.Close)
+		mon := l.Addr().(*net.TCPAddr).Port
+		if mon <= monitorPortOffset {
+			t.Skipf("monitor port %d is too low to place a client port below it", mon)
+		}
+		listen := "127.0.0.1:" + strconv.Itoa(mon-monitorPortOffset)
+		if st := AdoptedStatus(adoptedBus(listen, hub), client(), now); st.Leaf != "unknown" {
+			t.Errorf("a redirecting monitor read as %q, want unknown", st.Leaf)
+		}
+		if n := len(targetHeaders()); n != 0 {
+			t.Errorf("the redirect target was read %d times, want 0", n)
 		}
 	})
 
