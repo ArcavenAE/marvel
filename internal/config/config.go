@@ -1247,6 +1247,11 @@ func isSSH(addr string) bool {
 	return len(addr) >= 6 && addr[:6] == "ssh://"
 }
 
+// ErrInvalidAccountNames marks a display.account_names map the loader refused.
+// The map is display text only, so a caller that can do without it matches this
+// with errors.Is and carries on with the rest of the config.
+var ErrInvalidAccountNames = errors.New("invalid display.account_names")
+
 // accountNameKey is an account id: six lowercase hex characters, optionally
 // qualified with the cluster name and a slash.
 var accountNameKey = regexp.MustCompile(`^([A-Za-z0-9._-]+/)?[0-9a-f]{6}$`)
