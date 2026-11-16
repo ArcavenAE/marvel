@@ -90,18 +90,18 @@ type Manager struct {
 	// credential helper. Empty means the cluster has no credential broker.
 	CredentialHelper string
 	// StreamDir holds the per-session FIFOs marvel reads agent output
-	// from. Defaults to a per-layout temp directory (see daemonTempDir).
+	// from. Defaults to <marvel home>/s.
 	// The pipes carry no content at rest, so nothing here needs to survive
 	// a restart; NewFIFO replaces a leftover pipe rather than failing on it.
 	StreamDir string
 	// TokenDir holds the per-session heartbeat token files.
 	TokenDir string
 	// ProjectionDir holds the per-session projected policy settings files
-	// (finding-024's contract half). Defaults to a per-layout temp
-	// directory (see daemonTempDir). The path must survive a restart even
-	// though the content need not: an adopted agent goes on reading the
-	// file it was launched with, and re-projection has to land on that
-	// same path to reach it.
+	// (finding-024's contract half). Defaults to <marvel home>/p. A seat
+	// launched under an older default keeps the path it was started with,
+	// recorded on the session as ProjectionPath, and re-projection writes
+	// that path as well as this directory, so an adopted agent that goes on
+	// reading the file it was launched with still sees a policy edit.
 	ProjectionDir string
 	// HarnessHomeDir holds the per-session private harness state homes
 	// (aae-orc-ca7y). Defaults to <marvel home>/h (marvel#1142), a durable
@@ -143,8 +143,8 @@ type Manager struct {
 	// is unexported and unreachable from config, flags or the API.
 	socketLimitOverride int
 	// BackendOverlayDir holds the per-session backend settings overlays
-	// (design-backend-swaps.md, Layer A). Defaults to a per-layout temp
-	// directory, overridable with MARVEL_BACKEND_OVERLAY_DIR so a shakedown
+	// (design-backend-swaps.md, Layer A). Defaults to <marvel home>/o,
+	// overridable with MARVEL_BACKEND_OVERLAY_DIR so a shakedown
 	// or an operator can point it at the design's on-repo location
 	// (.session/backend-swaps/overlays). Marvel-owned and ephemeral: the
 	// overlay is swept when its session is deleted, and a stale one left by
