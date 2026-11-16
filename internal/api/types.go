@@ -873,6 +873,11 @@ type Role struct {
 	// Schedule puts this headless role on a clock (ADR-010 Amendment 1).
 	// Nil means the role runs as an ordinary Job. See SchedulePolicy.
 	Schedule *SchedulePolicy `toml:"-"`
+	// Held is why a stored scheduled role is not started, or "" when it is not
+	// held. It is set when a team is read back at daemon start and the role
+	// would be refused at apply now; a re-apply of a valid manifest replaces
+	// the role and so clears it (aae-orc-iyun3 part c).
+	Held string `toml:"-"`
 	// MaxRestarts caps the number of restarts for any single replica
 	// slot in this role before the reconciler gives up and leaves the
 	// session in SessionFailed. Zero means unlimited; negative values

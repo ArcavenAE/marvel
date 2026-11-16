@@ -1179,6 +1179,9 @@ const (
 	// HoldExposure means the role writes a function its slot has read, or the
 	// record of what the slot has read could not be consulted (marvel#945).
 	HoldExposure HoldReason = "exposure"
+	// HoldScheduleRefused means the role is a stored scheduled role that is
+	// refused now, so it never launches (aae-orc-iyun3 part c).
+	HoldScheduleRefused HoldReason = "schedule_refused"
 	// HoldSchedule means the role is on a schedule and its firing record
 	// allows no spawn now: no firing is due yet, the firing settled, a
 	// retry is backing off, or on_failure froze the schedule. Without it a

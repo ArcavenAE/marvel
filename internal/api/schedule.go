@@ -126,6 +126,10 @@ func ScheduledLaunchRefusal(command string, args []string) string {
 	return ""
 }
 
+// StoredScheduleRefusal is the reason a stored scheduled role is refused now, or
+// "" when it is not. Skeleton: the rule is not applied yet.
+func StoredScheduleRefusal(r Role) string { return "" }
+
 // validateSchedulePolicy refuses a schedule on a role whose inline policy
 // sets permissions.defaultMode = "bypassPermissions": projectPolicy writes
 // the policy to the harness's --settings file. The contents of a
