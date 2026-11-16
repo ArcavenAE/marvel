@@ -610,7 +610,7 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 // records: the max-age and context-pressure asks are handoff requests,
 // anything else is a notice.
 func noticeNoun(origin string) string {
-	if origin == team.NoticeMaxAge || origin == team.NoticeContextPressure || origin == team.NoticeRetire {
+	if origin == team.NoticeMaxAge || origin == team.NoticeContextPressure || origin == team.NoticeRetire || origin == team.NoticeManual {
 		return "handoff"
 	}
 	return "notice"
@@ -2624,6 +2624,9 @@ func (d *Daemon) handleRun(params json.RawMessage) daemonrpc.Response {
 type shiftParams struct {
 	TeamKey string `json:"team_key"`
 	Role    string `json:"role,omitempty"`
+	// NoHandoff shifts without asking the seat for the handoff its role
+	// declares (marvel#1447).
+	NoHandoff bool `json:"no_handoff,omitempty"`
 }
 
 func (d *Daemon) handleShift(params json.RawMessage) daemonrpc.Response {
@@ -2632,15 +2635,25 @@ func (d *Daemon) handleShift(params json.RawMessage) daemonrpc.Response {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 
-	if err := d.teamCtrl.InitiateShift(p.TeamKey, p.Role); err != nil {
+	if err := d.teamCtrl.InitiateShiftOpts(p.TeamKey, p.Role, team.ShiftOpts{NoHandoff: p.NoHandoff}); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("initiate shift: %v", err)}
 	}
 
 	// Trigger immediate reconciliation to start the shift.
 	d.teamCtrl.ReconcileOnce()
 
+	// A role that declares a handoff is asked for it first; the shift follows
+	// on the marker, so say that and not "initiated".
+	status := "shift_initiated"
+	if p.Role != "" {
+		if t, err := d.store.GetTeam(p.TeamKey); err == nil && t.Shift.Phase == api.ShiftNone {
+			if req, ok := t.ShiftRequests[p.Role]; ok && req.Cause == api.HandoffCauseManual {
+				status = "handoff_requested"
+			}
+		}
+	}
 	return respond(map[string]string{
-		"status": "shift_initiated",
+		"status": status,
 		"team":   p.TeamKey,
 	})
 }

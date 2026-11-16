@@ -46,3 +46,57 @@ func TestDirectCommandWithoutArgsIsTheCommand(t *testing.T) {
 		t.Errorf("command = %q, want %q", cmd, "claude")
 	}
 }
+
+// marvel run --env K=V records the variables on the session, and the run
+// handler documents them as merged over the constructed environment. The
+// ad-hoc path must hand them to the process, through the same refusals the
+// role env gets for the credentials that prove identity and for the variables
+// that say where the seat reaches the bus and the daemon (marvel#1450).
+func TestDirectCommandCarriesTheRunEnv(t *testing.T) {
+	sess := &api.Session{Name: "s", Role: "r", Runtime: api.Runtime{
+		Command: "claude",
+		Env: map[string]string{
+			"TWIN_CWD":      "/work",
+			"MARVEL_ROLE":   "chosen-role",
+			"NATS_URL":      "nats://elsewhere:4222",
+			"MARVEL_SOCKET": "/elsewhere.sock",
+		},
+	}}
+	_, env := (&Manager{}).directCommand(sess)
+
+	if got := env["TWIN_CWD"]; got != "/work" {
+		t.Fatalf("TWIN_CWD = %q, want %q: --env values reach the process", got, "/work")
+	}
+	if got := env["MARVEL_ROLE"]; got != "chosen-role" {
+		t.Errorf("MARVEL_ROLE = %q, want the --env value, as the role env overrides a constructed value", got)
+	}
+	if v, ok := env["NATS_URL"]; ok {
+		t.Errorf("NATS_URL = %q, want it refused: marvel owns where a session reaches the bus", v)
+	}
+	if v, ok := env["MARVEL_SOCKET"]; ok {
+		t.Errorf("MARVEL_SOCKET = %q, want it refused: marvel owns where a session reaches the daemon", v)
+	}
+}
+
+// The credentials that decide who a session is never come from --env.
+func TestDirectCommandRefusesCredentialKeysInTheRunEnv(t *testing.T) {
+	keys := api.CredentialKeys()
+	if len(keys) == 0 {
+		t.Fatal("api.CredentialKeys is empty")
+	}
+	env := map[string]string{"TWIN_CWD": "/work"}
+	for _, k := range keys {
+		env[k] = "a-literal-value"
+	}
+	sess := &api.Session{Name: "s", Role: "r", Runtime: api.Runtime{Command: "claude", Env: env}}
+	_, got := (&Manager{}).directCommand(sess)
+
+	if got["TWIN_CWD"] != "/work" {
+		t.Fatalf("TWIN_CWD = %q, want %q: the allowed key must arrive for this check to mean anything", got["TWIN_CWD"], "/work")
+	}
+	for _, k := range keys {
+		if v, ok := got[k]; ok {
+			t.Errorf("%s = %q, want it refused: it proves who the session is", k, v)
+		}
+	}
+}

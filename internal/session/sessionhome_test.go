@@ -111,6 +111,9 @@ func TestRelaunchIgnoresARecordedHomeThatIsNotPrivate(t *testing.T) {
 	if err := os.Mkdir(open, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	if err := os.Chmod(open, 0o755); err != nil { // the umask of this package's tests is 0077
+		t.Fatal(err)
+	}
 	sess := sessionFor("coder", "codex")
 	sess.HarnessHome = open
 

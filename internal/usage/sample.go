@@ -68,14 +68,25 @@ func (s Sample) Occupancy() int {
 	return s.In + s.CacheReadIn + s.CacheCreationIn
 }
 
+// CacheRead is the cache-read figure the spend counts: CacheReadIn as reported,
+// and under a subsumptive layout (codex) at most the input, because cached input
+// is part of input there. A feed whose cached figure exceeds its input is not
+// well formed; capping keeps TIN + CR + CW = PROMPT true by construction, and the
+// sample still counts, so its output tokens are not lost.
+func (s Sample) CacheRead() int {
+	if s.Layout == rtevents.LayoutSubsumptive {
+		return min(s.CacheReadIn, s.In)
+	}
+	return s.CacheReadIn
+}
+
 // Fresh is the part of this sample's prompt that is neither a cache read nor a
 // cache write. Under an additive layout that is In as reported; under a
 // subsumptive one (codex) In counts the cached input, so it is In less
-// CacheReadIn. It is never negative, so a sample whose cached figure exceeds its
-// input reads as zero fresh rather than lowering a sum.
+// CacheRead, which is never above In, so Fresh is never negative.
 func (s Sample) Fresh() int {
 	if s.Layout == rtevents.LayoutSubsumptive {
-		return max(0, s.In-s.CacheReadIn)
+		return s.In - s.CacheRead()
 	}
 	return s.In
 }

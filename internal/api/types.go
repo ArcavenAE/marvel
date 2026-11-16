@@ -919,6 +919,10 @@ const ShiftTriggerMaxAge = "max-age"
 // seat on its marker and starts no successor.
 const HandoffCauseHibernate = "hibernate"
 
+// HandoffCauseManual is the cause of a handoff request made by a manual shift
+// of a role that declares a handoff (marvel#1447).
+const HandoffCauseManual = "manual"
+
 // Defaults and floor for the max-age trigger (design D4, D5; ruling 3).
 const (
 	DefaultShiftQuietFor      = 2 * time.Minute

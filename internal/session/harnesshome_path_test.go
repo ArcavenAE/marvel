@@ -70,6 +70,9 @@ func TestHarnessHomeBaseRefusesASquattedDir(t *testing.T) {
 	if err := os.Mkdir(open, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	if err := os.Chmod(open, 0o755); err != nil { // the umask of this package's tests is 0077
+		t.Fatal(err)
+	}
 	if got := harnessHomeBase(open, fallback); got != fallback {
 		t.Errorf("a group/world-readable base was used: %s", got)
 	}
@@ -190,6 +193,9 @@ func TestDurableHarnessHomeBaseRefusesAnOpenDir(t *testing.T) {
 	}
 	if err := os.Mkdir(layout.HarnessHomesDir(), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(layout.HarnessHomesDir(), 0o755); err != nil { // the umask of this package's tests is 0077
+		t.Fatal(err)
 	}
 	if got, ok := durableHarnessHomeBase(layout, 1<<20); ok {
 		t.Errorf("a group/world-readable base was used: %s", got)
