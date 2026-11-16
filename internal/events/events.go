@@ -150,7 +150,13 @@ const (
 	// KindDaemonReexec records a reexec into a binary the client named
 	// (exec_path): the old and new path and version and who asked. The ring
 	// does not survive the exec, so the same line is logged (marvel#592).
-	KindDaemonReexec      Kind = "daemon.reexec"
+	KindDaemonReexec Kind = "daemon.reexec"
+	// KindDaemonOverrun records one timed site (a reconcile pass, an RPC
+	// method, a tmux subcommand) running past its provisional budget. Reason
+	// names the site; the message carries the duration, the budget and how many
+	// overruns of the site the throttle held back since the last event. Warning
+	// severity, at most one per site per 10 minutes (I-451, aae-orc-qizfo).
+	KindDaemonOverrun     Kind = "daemon.overrun"
 	KindHealthCheckFailed Kind = "health.failed"
 	KindCrashLoopBackoff  Kind = "health.crashloop-backoff"
 	KindShiftStarted      Kind = "team.shift-started"
@@ -566,6 +572,7 @@ var allKinds = []Kind{
 	KindWatchdogUncovered,
 	KindDaemonEnvScrubbed,
 	KindDaemonReexec,
+	KindDaemonOverrun,
 	KindHealthCheckFailed,
 	KindCrashLoopBackoff,
 	KindShiftStarted,

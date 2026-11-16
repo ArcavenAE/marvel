@@ -31,26 +31,25 @@ func Bounds() []time.Duration { return append([]time.Duration(nil), bounds[:]...
 
 // Bucket is one finite bucket of a Snapshot.
 type Bucket struct {
-	UpperBound time.Duration
-	Count      uint64
+	UpperBound time.Duration `json:"upper_bound"`
+	Count      uint64        `json:"count"`
 }
 
 // Snapshot is a copy of a Histogram at one moment.
 type Snapshot struct {
-	Count    uint64
-	Sum      time.Duration
-	Max      time.Duration
-	Overruns uint64
-	Buckets  []Bucket
-	Overflow uint64
+	Count    uint64        `json:"count"`
+	Sum      time.Duration `json:"sum"`
+	Max      time.Duration `json:"max"`
+	Overruns uint64        `json:"overruns"`
+	Buckets  []Bucket      `json:"buckets"`
+	Overflow uint64        `json:"overflow"`
 }
 
 // Histogram counts durations into fixed buckets for one site. It is safe for
 // concurrent use.
 type Histogram struct {
-	budget time.Duration
-
 	mu       sync.Mutex
+	budget   time.Duration
 	count    uint64
 	sum      time.Duration
 	max      time.Duration
@@ -63,6 +62,14 @@ type Histogram struct {
 // does not count as an overrun. A zero budget means the site has none.
 func NewHistogram(budget time.Duration) *Histogram { return &Histogram{budget: budget} }
 
+// SetBudget changes the budget. Observations already counted keep the verdict
+// they got.
+func (h *Histogram) SetBudget(budget time.Duration) {
+	h.mu.Lock()
+	h.budget = budget
+	h.mu.Unlock()
+}
+
 // Observe records one duration and reports whether it ran past the budget. A
 // negative duration, which a clock that stepped back can produce, counts as
 // zero.
@@ -70,9 +77,9 @@ func (h *Histogram) Observe(d time.Duration) (overran bool) {
 	if d < 0 {
 		d = 0
 	}
-	overran = h.budget > 0 && d > h.budget
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	overran = h.budget > 0 && d > h.budget
 	h.count++
 	h.sum += d
 	if d > h.max {
@@ -89,6 +96,13 @@ func (h *Histogram) Observe(d time.Duration) (overran bool) {
 	}
 	h.overflow++
 	return overran
+}
+
+// budgetNow returns the budget the histogram holds now.
+func (h *Histogram) budgetNow() time.Duration {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.budget
 }
 
 // Snapshot returns a copy of the histogram's current state.
@@ -110,7 +124,8 @@ func (h *Histogram) Snapshot() Snapshot {
 }
 
 // Throttle lets one event per site through each interval and counts the ones
-// it held back. It is safe for concurrent use.
+// it held back. It is safe for concurrent use. Build it with NewThrottle: the
+// zero value has no clock and no table, and panics on its first Allow.
 type Throttle struct {
 	interval time.Duration
 	now      func() time.Time
