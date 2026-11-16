@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"strconv"
 	"testing"
 	"time"
@@ -69,6 +70,28 @@ func TestAServedMethodRefusedWhileAdoptingKeepsItsOwnSite(t *testing.T) {
 	}
 }
 
+// switchConstants resolves the switch cases that are written as constants.
+var switchConstants = map[string]string{
+	"MethodVersion":               MethodVersion,
+	"daemonrpc.MethodEventsWatch": daemonrpc.MethodEventsWatch,
+}
+
+// version and events.watch are cases written as constants. Each is timed under
+// its own name and never as other.
+func TestConstantCaseMethodsAreTimedUnderTheirOwnName(t *testing.T) {
+	for _, m := range []string{MethodVersion, daemonrpc.MethodEventsWatch} {
+		d := statusDaemon(t)
+		d.dispatchAs(daemonrpc.Request{Method: m}, localCaller())
+		sites := rpcSites(t, d)
+		if got := sites[timing.RPCSite(m)].Count; got != 1 {
+			t.Errorf("%s: rpc.%s Count = %d, want 1 (sites: %v)", m, m, got, sites)
+		}
+		if got := sites[timing.RPCSite("other")].Count; got != 0 {
+			t.Errorf("%s was timed as rpc.other (%d)", m, got)
+		}
+	}
+}
+
 // servedMethods must equal the string cases of dispatchUntimed's switch, so a
 // method added to the switch is timed under its own name and never as "other".
 func TestServedMethodsAreTheSwitchCases(t *testing.T) {
@@ -94,7 +117,17 @@ func TestServedMethodsAreTheSwitchCases(t *testing.T) {
 					if s, err := strconv.Unquote(lit.Value); err == nil {
 						cases[s] = true
 					}
+					continue
 				}
+				// A case written as a constant is resolved from the table
+				// below; any other expression fails the test, so the parse
+				// can never skip a case it cannot read.
+				text := types.ExprString(e)
+				if v, ok := switchConstants[text]; ok {
+					cases[v] = true
+					continue
+				}
+				t.Errorf("dispatchUntimed has a case %q the test cannot read as a method name; add it to switchConstants", text)
 			}
 			return true
 		})
