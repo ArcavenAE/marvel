@@ -879,6 +879,7 @@ func (d *Daemon) adoptAndRun(ctx context.Context, socketPath, network string) er
 	}()
 
 	d.startWatchdog(ctx)
+	d.startTxUsage(ctx)
 	if d.views != nil {
 		d.startViews(ctx)
 	}

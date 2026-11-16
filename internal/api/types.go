@@ -657,6 +657,14 @@ type SessionContext struct {
 	// section 3).
 	SpendOut          *int
 	SpendPromptTokens *int
+	// SpendPartial marks SpendOut as a lower bound: the transcript reader began
+	// at the file's end, or the file shrank or changed inode, so the sum may
+	// miss earlier output. Always emitted, false included (I-477 slice 1).
+	SpendPartial bool `json:"spend_partial"`
+	// SpendTail is where the transcript reader stopped: the byte offset and the
+	// file's inode. A restarted daemon seeds its per-id figures from the file up
+	// to the offset, so the sum survives a restart without counting twice.
+	SpendTail *SpendTail `json:"spend_tail,omitempty"`
 	// OutRate is the session's decaying output-token rate in tokens per
 	// second, as of ObservedAt. It is a level that ages, so it carries its
 	// own as-of stamp: the value shown later is the value decayed from
@@ -1516,7 +1524,11 @@ const HarnessStateParked = "parked"
 type SessionSpend struct {
 	Out          *int
 	PromptTokens *int
-	OutRate      asof.Cell[float64]
+	// Partial is SessionContext.SpendPartial.
+	Partial bool
+	// Tail is SessionContext.SpendTail.
+	Tail    *SpendTail
+	OutRate asof.Cell[float64]
 }
 
 // The two coverage states say the watchdog could not have matched this seat
@@ -1561,3 +1573,9 @@ const (
 	// carries sources and no delivery.
 	SettingSourcesNotRecorded = "delivery not recorded"
 )
+
+// SpendTail is the transcript reader's place in a seat's file.
+type SpendTail struct {
+	Offset int64  `json:"offset"`
+	Inode  uint64 `json:"inode"`
+}

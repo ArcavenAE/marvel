@@ -195,22 +195,46 @@ TEAM stays reachable through `--columns` and `describe`.
 
 ### 4.3 Tokens and accounts
 
-- **TOUT:** cumulative output tokens, quantized (`12k`, `1.4M`).
+- **TOUT:** cumulative output tokens, quantized (`12k`, `1.4M`). TOUT never
+  shows dollars. A trailing `+` marks a lower bound (`12k+`): the sum began
+  mid-session, or the transcript shrank or changed, or the daemon restarted.
+  `-` means never read, and a true zero prints `0`.
+  - **Claude seats.** The daemon reads the seat's transcript (the watchdog's
+    locator, `findTranscript`, so no path comes from the seat) and sums output
+    tokens once per message id, at the largest figure seen for that id, adding
+    only the growth. On first sight of a file with history it starts at the end
+    and marks the sum `+`; a shrunk file or a changed inode resets the offset,
+    never the total, and marks `+`. The per-id figures are rebuilt from the
+    transcript when the daemon starts, so a restart does not change the sum. If
+    the transcript was replaced while the daemon was down, records only in the
+    new file are not counted and the sum is shown with `+`, a lower bound. A
+    sum stored without the reader's place (an older daemon wrote it) is also
+    rebuilt from the whole file and marked `+`. The sum never counts a record
+    twice. The place (`spend_tail`: offset and inode) is stored in the same
+    write as the sum. Main transcript only:
+    subagents are excluded, and `describe session` says so. Client workspaces
+    are not read. A seat the usage accountant meters keeps the accountant's
+    figures. The wire carries `spend_partial`, always, false included.
 - **RATE:** a decaying output-token rate (aae-orc-o16q2). It is computed
-  in `Accountant.Observe` and drawn through the as-of cell.
-- **Dollar form (statusline seats).** A seat with no token stream and a
-  statusline feed shows the harness's running cost total as TOUT (`~$4.12`)
-  and its change per minute as RATE (`~$0.11/m`). The `~` marks an estimate:
-  Claude Code's list-price figure, not a bill. RATE reads a ring of stored
-  totals (`api.CostSample`, `internal/api/cost_samples.go`), one sample per 30
-  seconds at most and one hour deep, and takes the change since the sample at
-  the start of the quiet window. A total that goes down starts the ring over,
-  so RATE shows `-` until a window of readings exists and is never negative;
-  `?` once the feed has been silent past the window, or while a silence of
-  over three minutes is inside it (`CostGapLimit`; every beat stamps
-  `CostSeenAt`, so a silence tells itself apart from a flat run, and a daemon
-  restart reads the same way). A seat with a token
-  stream keeps the token cells (`cmd/marvel/cost.go`, marvel#801).
+  in `Accountant.Observe` and drawn through the as-of cell. A seat whose sum
+  comes from the transcript shows `-` in this release, because the rate is not
+  computed from that source; `describe session` says so. The rate follows in
+  the activity slice.
+- **COST (opt-in).** The harness's running cost total for a statusline seat,
+  as `~$4.12`. The `~` marks an estimate: Claude Code's list-price figure, not
+  a bill. `-` when the feed never carried one. COST is not in `wide`. The
+  change per minute (`~$0.11/m`) is not a column in this release: `describe
+  session` carries it as `cost_rate`. It is read from a ring of stored totals
+  (`api.CostSample`, `internal/api/cost_samples.go`), one sample per 30
+  seconds at most and one hour deep, as the change since the sample at the
+  start of the quiet window. A total that goes down starts the ring over, so the
+  rate shows `-` until a window of readings exists and is never negative; `?`
+  once the feed has been silent past the window, or while a silence of over
+  three minutes is inside it (`CostGapLimit`; every beat stamps `CostSeenAt`,
+  so a silence tells itself apart from a flat run, and a daemon restart reads
+  the same way). This moves the dollar figures out of TOUT and RATE so that
+  every column has one unit and no figure disappears (card i477c1113-2, read
+  by director as option 1; the operator may overrule it at review).
 - **No Tin column.** Raw input is not comparable across harnesses: codex's
   layout counts cached input inside input, while Claude's adds it
   separately. PROMPT (`PromptTokens`, normalized for layout) goes in

@@ -1671,6 +1671,12 @@ func describeCmd() *cobra.Command {
 					return err
 				}
 				result = marked
+				if result, err = withCostRate(result, rateClock()); err != nil {
+					return err
+				}
+				if result, err = withTokenSource(result); err != nil {
+					return err
+				}
 			}
 
 			// Pretty print JSON.
@@ -3492,6 +3498,7 @@ type sessionRow struct {
 	// The split account columns (I-450).
 	account, fiveH, sevenD, fiveReset, sevenReset, read, backend, cred, home, login, cluster string
 	lastTurn                                                                                 string
+	cost                                                                                     string
 	composer                                                                                 string
 	pane                                                                                     string
 }
@@ -3635,13 +3642,7 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 	if workdir == "" {
 		workdir = "-"
 	}
-	tout, rate := toutCell(s.SpendOut), rateCell(s, rateClock())
-	if v, ok := costTout(s); ok {
-		tout = v
-	}
-	if v, ok := costRate(s, rateClock()); ok {
-		rate = v
-	}
+	tout, rate := toutMarked(s.SpendOut, s.SpendPartial), rateCell(s, rateClock())
 	key := "-"
 	if s.Cluster != "" {
 		key = s.Cluster + ":" + s.Workspace + "/" + s.Name
@@ -3650,6 +3651,7 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 		key:        key,
 		workdir:    workdir,
 		tout:       tout,
+		cost:       costCell(s),
 		rate:       rate,
 		prompt:     promptCell(s.SpendPromptTokens),
 		lastActive: lastActiveCell(s, lastActiveClock()),

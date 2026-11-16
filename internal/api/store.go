@@ -174,6 +174,10 @@ func cloneSession(s *Session) Session {
 		out.Limit = &l
 	}
 	out.SpendOut = copyInt(s.SpendOut)
+	if s.SpendTail != nil {
+		t := *s.SpendTail
+		out.SpendTail = &t
+	}
 	out.SpendPromptTokens = copyInt(s.SpendPromptTokens)
 	out.CostSamples = slices.Clone(s.CostSamples)
 	out.APISamples = slices.Clone(s.APISamples)
@@ -1041,14 +1045,14 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	// must not take it along: a seat with a token stream and a statusline feed
 	// would flip between its total and "-" on every beat (marvel#779). A
 	// heartbeat-only seat stays nil.
-	spendOut, spendPrompt, outRate := sess.SpendOut, sess.SpendPromptTokens, sess.OutRate
+	spendOut, spendPrompt, outRate, spendPartial, spendTail := sess.SpendOut, sess.SpendPromptTokens, sess.OutRate, sess.SpendPartial, sess.SpendTail
 	// ReadingChangedAt is carried across the replace, and moves only when the
 	// beat's reading differs from the one it replaces (marvel#801).
 	prevTokens, prevPercent, prevChanged := sess.ContextTokens, sess.ContextPercent, sess.ReadingChangedAt
 	prevTotals := sess.TotalsChangedAt
 	sess.SessionContext = reading
 	sess.ReadingChangedAt = prevChanged
-	sess.SpendOut, sess.SpendPromptTokens, sess.OutRate = spendOut, spendPrompt, outRate
+	sess.SpendOut, sess.SpendPromptTokens, sess.OutRate, sess.SpendPartial, sess.SpendTail = spendOut, spendPrompt, outRate, spendPartial, spendTail
 	// A producer that reads the harness's own output total (the codex hook)
 	// supplies it here, and the TOUT cell reads the one field. The accountant
 	// owns the slice once it has metered a request: it writes SpendOut and
@@ -1199,6 +1203,12 @@ func (s *Store) UpdateSessionSpend(key string, sp SessionSpend) {
 	}
 	sess.SpendOut, sess.SpendPromptTokens = copyInt(sp.Out), copyInt(sp.PromptTokens)
 	sess.OutRate = sp.OutRate
+	sess.SpendPartial = sp.Partial
+	sess.SpendTail = nil
+	if sp.Tail != nil {
+		t := *sp.Tail
+		sess.SpendTail = &t
+	}
 }
 
 // copyInt returns a pointer to a copy of *p, or nil.

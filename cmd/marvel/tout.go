@@ -18,3 +18,14 @@ func toutCell(tokens *int) string {
 	}
 	return formatTokenCount(*tokens)
 }
+
+// toutMarked is the TOUT cell with the lower-bound mark: a sum that began
+// mid-session, or lost its place, ends in +. A figure never read stays "-"
+// and carries no mark.
+func toutMarked(tokens *int, partial bool) string {
+	cell := toutCell(tokens)
+	if tokens != nil && partial {
+		cell += "+"
+	}
+	return cell
+}
