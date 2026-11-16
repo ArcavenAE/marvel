@@ -116,20 +116,33 @@ func TestManualShiftWithoutMarkerKeepsTheSeatRunning(t *testing.T) {
 	}
 }
 
-func TestManualShiftNoHandoffProceedsWithoutAsking(t *testing.T) {
+// The caller's way past a missing handoff: after the seat was asked and the
+// window ended without a marker, running the shift again with NoHandoff
+// proceeds, and nothing is asked a second time.
+func TestManualShiftNoHandoffProceedsAfterAMissingHandoff(t *testing.T) {
 	dir := t.TempDir()
 	f := newListFixture(t, "test-manual-skip", manualHandoffRole(dir))
 	f.seed(time.Hour, 10*time.Minute, 0, 0)
+	if _, err := f.manualShift(ShiftOpts{}); err != nil {
+		t.Fatalf("manual shift: %v", err)
+	}
+	f.clock.Advance(api.DefaultShiftHandoffWindow + time.Second)
+	f.evaluate()
+	f.ctrl.handoffProbes.wait()
+	f.clock.Advance(time.Second)
+	if got := f.evaluate(); !got.ShiftRequests[testShiftRole].Escalated || got.Shift.Phase != api.ShiftNone {
+		t.Fatalf("phase = %q, requests = %+v, want an escalated request and no shift", got.Shift.Phase, got.ShiftRequests)
+	}
 
 	got, err := f.manualShift(ShiftOpts{NoHandoff: true})
 	if err != nil {
-		t.Fatalf("manual shift: %v", err)
+		t.Fatalf("manual shift with NoHandoff: %v", err)
 	}
 	if got.Shift.Phase != api.ShiftLaunching {
 		t.Fatalf("phase = %q, want launching: the operator chose to shift without a handoff", got.Shift.Phase)
 	}
-	if len(f.notices) != 0 {
-		t.Fatalf("notices = %q, want none when the handoff is skipped", f.notices)
+	if len(f.notices) != 1 {
+		t.Fatalf("notices = %d, want 1: the skip asks nothing again", len(f.notices))
 	}
 }
 
