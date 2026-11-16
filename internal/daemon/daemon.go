@@ -1353,9 +1353,10 @@ func (d *Daemon) dispatchAs(req daemonrpc.Request, c caller) daemonrpc.Response 
 	start := time.Now()
 	resp := d.dispatchUntimed(req, c)
 	method := req.Method
-	if strings.HasPrefix(resp.Error, unknownMethodPrefix) {
-		// One site for every method the daemon does not serve, so a client
-		// cannot mint a site of its own by inventing a name.
+	if !servedMethods[method] {
+		// One site for every method the daemon does not serve, whichever
+		// refusal answered it, so a client cannot mint a site of its own by
+		// inventing a name.
 		method = "other"
 	}
 	d.timing.Record(timing.RPCSite(method), time.Since(start))
