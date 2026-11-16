@@ -119,5 +119,29 @@ func (d *Daemon) stampLimitReading(sessions []api.Session, now time.Time) {
 		reading, state := d.accounts.Reading(api.AccountKeyOf(sessions[i]), now)
 		sessions[i].LimitReading = state
 		sessions[i].LimitReadingText = api.LimitReadingText(reading, state)
+		stampLimitWindows(&sessions[i], reading, state, now)
 	}
+}
+
+// stampLimitWindows fills the per-window figures a client lays out in columns.
+// An account with no reading gets none. The stale flag follows the design's
+// edge, fresh until the reading is 15 minutes old and stale from 15 minutes
+// (docs/design/get-sessions-output.md section 4.3); the reading state above
+// keeps its own rule, strictly older than api.ReadingMaxAge, and is untouched.
+func stampLimitWindows(s *api.Session, reading api.AccountReading, state api.ReadingState, now time.Time) {
+	if state == api.ReadingNone {
+		return
+	}
+	s.LimitWindows = make([]api.LimitWindowView, len(reading.Windows))
+	for i, w := range reading.Windows {
+		v := api.LimitWindowView{Name: w.Name, UsedPercent: w.UsedPercent}
+		if !w.ResetsAt.IsZero() {
+			reset := w.ResetsAt
+			v.ResetsAt = &reset
+		}
+		s.LimitWindows[i] = v
+	}
+	at := reading.At
+	s.LimitReadAt = &at
+	s.LimitStale = now.Sub(reading.At) >= api.ReadingMaxAge
 }
