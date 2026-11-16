@@ -1069,6 +1069,13 @@ func Load() (*Config, error) {
 	// cluster (listing, removing the offender, resolving an unaffected
 	// cluster) checks errors.Is(err, ErrInvalidClusterName) and carries on;
 	// every other caller treats it as the failure it is.
+	// A refused display.account_names map is display text gone wrong, not an
+	// unreadable config, so it never comes back as a load error: it rides on the
+	// config for the column loader, and the file's own entry stays as written so
+	// a command that loads and saves the config does not erase it.
+	if err := cfg.Display.CheckAccountNames(); err != nil {
+		cfg.AccountNamesRefused = err
+	}
 	if err := cfg.Validate(); err != nil {
 		return &cfg, err
 	}
@@ -1111,9 +1118,6 @@ func (c *Config) Validate() error {
 		if err := ValidateServices(&cl); err != nil {
 			errs = append(errs, err)
 		}
-	}
-	if err := c.Display.CheckAccountNames(); err != nil {
-		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }

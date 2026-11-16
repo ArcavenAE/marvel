@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -257,12 +256,12 @@ func loadSessionColumns(flag string) ([]sessionColumn, error) {
 // useAccountNames sets the ACCOUNT display names from a loaded config. A map the
 // loader refused is not shown: accountNames stays empty and one note goes to
 // stderr, without the refused value. The rest of the config is unaffected.
-func useAccountNames(cfg *config.Config, err error) {
+func useAccountNames(cfg *config.Config) {
 	accountNames = nil
 	if cfg == nil {
 		return
 	}
-	if errors.Is(err, config.ErrInvalidAccountNames) {
+	if cfg.AccountNamesRefused != nil {
 		fmt.Fprintln(os.Stderr, "warning: display.account_names was refused and is ignored; ACCOUNT prints labels and keys")
 		return
 	}
@@ -273,12 +272,12 @@ func useAccountNames(cfg *config.Config, err error) {
 // operator named the columns, by the flag or the preference. The width fit
 // cuts only a default it chose itself.
 func loadSessionColumnsSel(flag string) ([]sessionColumn, bool, error) {
-	useAccountNames(config.Load())
+	cfg, _ := config.Load()
+	useAccountNames(cfg)
 	if flag != "" {
 		cols, err := selectSessionColumns(flag, nil)
 		return cols, true, err
 	}
-	cfg, _ := config.Load()
 	if cfg == nil {
 		cols, err := selectSessionColumns("", nil)
 		return cols, false, err

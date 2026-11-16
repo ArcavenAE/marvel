@@ -18,14 +18,12 @@ func scheduleHistoryMaxFrom(cl *config.Cluster) int {
 }
 
 // configLoadUsable reports whether config.Load's error still leaves a
-// config worth reading: a bad cluster name, bus or service list, or a refused
-// display name map, comes back
+// config worth reading: a bad cluster name, bus or service list comes back
 // beside the parsed config, and each caller proceeds per cluster. Any other
 // error means no config was read.
 func configLoadUsable(err error) bool {
 	return err == nil || errors.Is(err, config.ErrInvalidClusterName) ||
-		errors.Is(err, config.ErrInvalidBus) || errors.Is(err, config.ErrInvalidService) ||
-		errors.Is(err, config.ErrInvalidAccountNames)
+		errors.Is(err, config.ErrInvalidBus) || errors.Is(err, config.ErrInvalidService)
 }
 
 // loadScheduleHistoryMax sets the daemon's history ceiling from the

@@ -82,9 +82,14 @@ func TestGetSessionsAllClustersWithARefusedNameExitsZero(t *testing.T) {
 	}
 	old := accountNames
 	t.Cleanup(func() { accountNames = old })
-	code, out, stderr := runFanGet(t, "get", "sessions", "--all-clusters", "--columns", "name,account")
+	var code int
+	var out, cmdErr string
+	// The note goes to the process's stderr, as the other config warnings do.
+	stderr := captureStderr(t, func() {
+		code, out, cmdErr = runFanGet(t, "get", "sessions", "--all-clusters", "--columns", "name,account")
+	})
 	if code != 0 {
-		t.Fatalf("exit = %d with a refused display name, want 0; stderr: %s", code, stderr)
+		t.Fatalf("exit = %d with a refused display name, want 0; stderr: %s %s", code, cmdErr, stderr)
 	}
 	if !strings.Contains(out, "a-one") {
 		t.Errorf("the table did not render:\n%s", out)

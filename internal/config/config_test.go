@@ -509,3 +509,19 @@ func TestLoadKeepsTheClusterErrorAndOnlyThatError(t *testing.T) {
 		t.Errorf("Load error = %v, want the cluster-name error and not the account-name sentinel", err)
 	}
 }
+
+// A good map, or none, leaves the refusal unset.
+func TestLoadLeavesTheRefusalUnsetForAGoodMap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &Config{
+		Clusters: []Cluster{{Name: "a", Socket: "/scratch/a.sock"}},
+		Display:  Display{AccountNames: map[string]string{"ab12cd": "work"}},
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil || got.AccountNamesRefused != nil {
+		t.Errorf("Load = %v, refusal %v; want no error and no refusal", err, got.AccountNamesRefused)
+	}
+}
