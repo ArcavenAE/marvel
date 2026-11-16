@@ -148,3 +148,27 @@ func TestSpendTailIsStoredKeptAndReloaded(t *testing.T) {
 		t.Errorf("SpendTail after a reload = %+v, want offset 4096 inode 77", got.SpendTail)
 	}
 }
+
+// The sum and the reader's place are one write: a spend write that carries a
+// sum without a place clears the old place, so a newer sum is never stored
+// beside an older offset (architect, on review 5914397642). The bolt record is
+// the session, so the pair persists as one unit.
+func TestSpendWriteCarriesTheSumAndThePlaceTogether(t *testing.T) {
+	t.Parallel()
+	s := NewStore()
+	key := partialSpendSession(t, s)
+	ten, twenty := 10, 20
+	s.UpdateSessionSpend(key, SessionSpend{Out: &ten, Tail: &SpendTail{Offset: 100, Inode: 5}})
+	got, _ := s.GetSession(key)
+	if got.SpendOut == nil || *got.SpendOut != 10 || got.SpendTail == nil || got.SpendTail.Offset != 100 {
+		t.Fatalf("after the first write: out %v tail %+v, want 10 and offset 100", got.SpendOut, got.SpendTail)
+	}
+	s.UpdateSessionSpend(key, SessionSpend{Out: &twenty})
+	got, _ = s.GetSession(key)
+	if got.SpendOut == nil || *got.SpendOut != 20 {
+		t.Fatalf("SpendOut = %v, want 20", got.SpendOut)
+	}
+	if got.SpendTail != nil {
+		t.Errorf("a sum written without a place left the old place %+v beside it", got.SpendTail)
+	}
+}

@@ -567,3 +567,19 @@ func TestCappedReadIsContinuedOnTheNextPass(t *testing.T) {
 		t.Errorf("SpendOut = %s after 100 passes over an unchanged file, want 100", intOf(got))
 	}
 }
+
+// A session with a stored sum and no stored place (written by an older daemon)
+// is seeded from the whole file, adds nothing for what is there, and is marked
+// +: the sum cannot be tied to an offset (architect, on review 5914397642).
+func TestSessionWithoutAPlaceIsSeededWholeAndMarkedPlus(t *testing.T) {
+	r := newUsageRig(t)
+	r.append(msg("m1", 40) + "\n")
+	forty := 40
+	r.store.UpdateSessionSpend(r.key, api.SessionSpend{Out: &forty})
+	u2 := r.restart()
+	u2.Once()
+	r.want(40, true)
+	r.lines(msg("m1", 50))
+	u2.Once()
+	r.want(50, true)
+}
