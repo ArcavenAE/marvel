@@ -118,7 +118,7 @@ func TestPostCheckPassesOnAClusterWithNoBusAndSaysThereWasNothingToCheck(t *test
 	if err != nil {
 		t.Fatalf("a cluster with no bus failed the check: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "no hub is configured, so there is no leaf to check") {
+	if !strings.Contains(out, "no bus is configured, so there is no leaf to check") {
 		t.Errorf("output does not say there was nothing to check:\n%s", out)
 	}
 	if strings.Contains(out, "marvel credential put") {

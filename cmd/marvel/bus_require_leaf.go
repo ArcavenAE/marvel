@@ -17,12 +17,13 @@ const repushCommand = "marvel credential put bus/leaf --value-file <seed-file>"
 
 // leafRequirement answers `marvel bus status --require-leaf`: ok only when a
 // hub is configured, the leaf is attached, and the leaf is up on a reading that
-// is still valid at now. Otherwise it returns the reason, in the words a
-// script's log should carry. A reading past its LeafValidUntil is unknown, not
+// is still valid at now. An unmanaged bus counts when its cluster declares a
+// hub, which the daemon then reads from the broker's loopback monitor.
+// Otherwise it returns the reason, in the words a script's log should carry. A reading past its LeafValidUntil is unknown, not
 // up (the supervisor polls every 30s and trusts a reading for two polls).
 func leafRequirement(st bus.Status, now time.Time) (bool, string) {
 	switch {
-	case !st.Managed || st.Leaf == "n/a":
+	case (!st.Managed && !st.HubDeclared) || st.Leaf == "n/a":
 		return false, "no hub"
 	case st.LeafSource == "dropped-on-adopt":
 		return false, "dropped on adopt"

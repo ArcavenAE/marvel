@@ -3615,6 +3615,9 @@ func (d *Daemon) busStatus() (bus.Status, bool) {
 		st = bus.Status{Managed: false, URL: d.sessMgr.Bus.URL(), Leaf: "n/a"}
 		if a, ok := d.sessMgr.Bus.(bus.Adopted); ok {
 			rb := a.Bus()
+			read := bus.ReadAdoptedStatus(rb, time.Now())
+			st.Leaf, st.HubDeclared = read.Leaf, read.HubDeclared
+			st.LeafSince, st.LeafObservedAt, st.LeafValidUntil = read.LeafSince, read.LeafObservedAt, read.LeafValidUntil
 			st.Class, st.Provider, st.Mode, st.CallerIdentity = rb.Class, rb.Provider, string(rb.Mode), rb.CallerIdentity
 		}
 	default:
