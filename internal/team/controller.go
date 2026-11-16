@@ -1327,6 +1327,13 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 	}
 
 	switch {
+	case actual < desired && role.Held != "":
+		// A stored scheduled role that apply would refuse now never launches,
+		// a due firing included. Live seats are not touched (aae-orc-iyun3 c).
+		plan.Action = RoleHold
+		plan.Hold = HoldScheduleRefused
+		plan.HoldDetail = role.Held
+		return plan
 	case actual < desired && role.Schedule != nil && c.holdForFiring(sched, &plan):
 		return plan
 	case actual < desired:

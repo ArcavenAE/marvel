@@ -96,6 +96,7 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 		}
 	}
 	out.Conditions = append(out.Conditions, d.exposureConditions(t)...)
+	out.Conditions = append(out.Conditions, scheduleRefusedConditions(t)...)
 	now := time.Now()
 	for _, role := range slices.Sorted(maps.Keys(t.ShiftRequests)) {
 		req := t.ShiftRequests[role]

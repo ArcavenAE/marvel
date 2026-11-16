@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -264,6 +265,15 @@ func (s *Store) rehydrate() error {
 			if err := rehydrateNameError("teams", t.Key(), nameField{"workspace", t.Workspace}, nameField{"team", t.Name}); err != nil {
 				s.skipRehydrated(err)
 				return nil
+			}
+			// A scheduled role stored before apply refused it loads held: it
+			// never launches, and its siblings load as before. A re-apply of a
+			// valid manifest replaces the role and clears the mark.
+			for i := range t.Roles {
+				if why := StoredScheduleRefusal(t.Roles[i]); why != "" {
+					t.Roles[i].Held = why
+					log.Printf("rehydrate: team %s role %s is a stored scheduled role refused now and is held: %s", t.Key(), t.Roles[i].Name, why)
+				}
 			}
 			s.teams[t.Key()] = &t
 			return nil
