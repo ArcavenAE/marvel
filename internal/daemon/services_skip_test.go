@@ -83,3 +83,31 @@ func TestAttachServicesDuplicateNameStillRefusesWholeList(t *testing.T) {
 		t.Error("a list with a duplicate name attached a bus")
 	}
 }
+
+// A list where every entry is unregistered attaches nothing, and the log
+// still carries one line per skipped entry, so each can be told apart.
+func TestAttachServicesAllUnregisteredLogsEachEntryByName(t *testing.T) {
+	sock := writeServicesConfig(t, "      - name: llm\n        class: inference-gateway\n        provider: litellm\n        mode: adopted\n        url: http://127.0.0.1:4000\n      - name: graph\n        class: code-graph\n        provider: kuzu\n        mode: adopted\n        url: http://127.0.0.1:4100\n")
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	d := newHandlerDaemon(t)
+	if err := d.attachServices(sock); err != nil {
+		t.Fatalf("a list of unregistered entries failed start: %v", err)
+	}
+	if d.sessMgr.Bus != nil || d.bus != nil {
+		t.Error("a list with no registered entry attached a bus")
+	}
+	var skipped []string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, "entry skipped") {
+			skipped = append(skipped, line)
+		}
+	}
+	if len(skipped) != 2 {
+		t.Fatalf("got %d per-entry skip lines, want 2:\n%s", len(skipped), buf.String())
+	}
+	if !strings.Contains(skipped[0], `"llm"`) || !strings.Contains(skipped[1], `"graph"`) {
+		t.Errorf("skip lines do not name each entry in order:\n%s", strings.Join(skipped, "\n"))
+	}
+}

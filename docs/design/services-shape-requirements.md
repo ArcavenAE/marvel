@@ -456,8 +456,8 @@ DESIGN `team-load-rollup.md:56-67`.
 - The cluster still starts (section 6 V7). A cluster with no entry is not a
   skip.
 - A class is registered before any doc tells an operator to declare it.
-  An entry whose class or provider is not registered is skipped alone, and
-  the daemon logs it by name; the entries beside it, the bus included, still
+  An entry whose class, provider, pairing or mode is not registered is
+  skipped alone, and the daemon logs it by name; the entries beside it, the bus included, still
   attach (marvel#916). Any other refusal still refuses the whole list.
 
 Consumer: the operator.

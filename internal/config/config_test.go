@@ -379,6 +379,9 @@ func TestAccountNamesTokenShapeIsDecidedOnPurpose(t *testing.T) {
 		{"ultra-2", false},
 		{"work account 2", false},
 		{"a1b2c3d4e5f6a7b8 c9d0e1f2a3b4c5d6e7f8", false},
+		// Director's ruling (option 2): a run counts only when it holds no - or _.
+		{"platform-team-production-account-02", false},
+		{"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a1b2", true},
 	}
 	for _, c := range cases {
 		cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": c.value}}}
@@ -442,5 +445,29 @@ func TestAccountNameValuesAreCleanText(t *testing.T) {
 	cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": "0f9e8d", "0f9e8d": "other"}}}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("a name equal to another account's key was refused: %v", err)
+	}
+}
+
+// The refusals carry the sentinel, so a caller that can do without a display
+// map matches it with errors.Is.
+func TestAccountNameRefusalsAreTheSentinel(t *testing.T) {
+	t.Parallel()
+	for name, names := range map[string]map[string]string{
+		"malformed key":    {"nope": "work"},
+		"padded value":     {"ab12cd": " work"},
+		"credential shape": {"ab12cd": "ghp_1234567890abcdefghijklmnopqrstuvwxyz"},
+	} {
+		cfg := &Config{Display: Display{AccountNames: names}}
+		if err := cfg.Validate(); !errors.Is(err, ErrInvalidAccountNames) {
+			t.Errorf("%s: Validate error %v does not wrap ErrInvalidAccountNames", name, err)
+		}
+	}
+	cfg := &Config{
+		Clusters: []Cluster{{Name: "bad name"}},
+		Display:  Display{AccountNames: map[string]string{"ab12cd": " work"}},
+	}
+	err := cfg.Validate()
+	if !errors.Is(err, ErrInvalidAccountNames) || !errors.Is(err, ErrInvalidClusterName) {
+		t.Errorf("a config with both mistakes: %v, want both sentinels", err)
 	}
 }

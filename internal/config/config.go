@@ -1247,6 +1247,11 @@ func isSSH(addr string) bool {
 	return len(addr) >= 6 && addr[:6] == "ssh://"
 }
 
+// ErrInvalidAccountNames marks a display.account_names map the loader refused.
+// The map is display text only, so a caller that can do without it matches this
+// with errors.Is and carries on with the rest of the config.
+var ErrInvalidAccountNames = errors.New("display.account_names")
+
 // accountNameKey is an account id: six lowercase hex characters, optionally
 // qualified with the cluster name and a slash.
 var accountNameKey = regexp.MustCompile(`^([A-Za-z0-9._-]+/)?[0-9a-f]{6}$`)
@@ -1254,12 +1259,15 @@ var accountNameKey = regexp.MustCompile(`^([A-Za-z0-9._-]+/)?[0-9a-f]{6}$`)
 // tokenPrefixed is a value that starts the way a known credential does.
 var tokenPrefixed = regexp.MustCompile(`^(sk-|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|xox[abprs]-|eyJ|AKIA)[A-Za-z0-9_-]{10,}`)
 
-// tokenRun is an unbroken run of 32 or more token characters.
-var tokenRun = regexp.MustCompile(`[A-Za-z0-9_-]{32,}`)
+// tokenRun is an unbroken run of 32 or more letters and digits. A - or _ ends a
+// run, so a hyphenated name such as platform-team-production-account-02 is not
+// one (director's ruling on #1443, option 2).
+var tokenRun = regexp.MustCompile(`[A-Za-z0-9]{32,}`)
 
 // looksLikeCredential reports whether v is shaped like a credential: a known
-// prefix, or one unbroken run of 32 or more characters holding a letter and a
-// digit. A long plain word has no digit and is display text.
+// prefix, or one unbroken run of 32 or more letters and digits holding both a
+// letter and a digit. A long plain word has no digit and is display text, and a
+// run broken by - or _ is a name.
 func looksLikeCredential(v string) bool {
 	if tokenPrefixed.MatchString(v) {
 		return true
@@ -1270,7 +1278,7 @@ func looksLikeCredential(v string) bool {
 			switch {
 			case r >= '0' && r <= '9':
 				digit = true
-			case r != '-' && r != '_':
+			default:
 				letter = true
 			}
 		}
@@ -1283,18 +1291,19 @@ func looksLikeCredential(v string) bool {
 
 // validateAccountNames checks the display.account_names map. The map is display
 // text only: a malformed key, an empty or padded value, a control character, or
-// a credential-shaped value is refused. No error carries the value or the key,
-// since either could be the secret.
+// a credential-shaped value is refused. No error carries the value, which could
+// be the secret; an error for a value names the key, which has passed the id
+// pattern by then. Each error wraps ErrInvalidAccountNames.
 func (d Display) validateAccountNames() error {
 	var errs []error
 	for k, v := range d.AccountNames {
 		switch {
 		case !accountNameKey.MatchString(k):
-			errs = append(errs, errors.New("display.account_names: a key is not an account id (six lowercase hex characters, optionally cluster/id)"))
+			errs = append(errs, fmt.Errorf("%w: a key is not an account id (six lowercase hex characters, optionally cluster/id)", ErrInvalidAccountNames))
 		case v == "" || strings.TrimSpace(v) != v || strings.ContainsFunc(v, unicode.IsControl):
-			errs = append(errs, fmt.Errorf("display.account_names[%s]: the name is empty, padded with spaces, or holds a control character", k))
+			errs = append(errs, fmt.Errorf("%w: the name for %s is empty, padded with spaces, or holds a control character", ErrInvalidAccountNames, k))
 		case looksLikeCredential(v):
-			errs = append(errs, fmt.Errorf("display.account_names[%s]: the name looks like a credential; names are display text only", k))
+			errs = append(errs, fmt.Errorf("%w: the name for %s looks like a credential; names are display text only", ErrInvalidAccountNames, k))
 		}
 	}
 	return errors.Join(errs...)
