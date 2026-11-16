@@ -173,3 +173,13 @@ func LimitReadingText(reading AccountReading, state ReadingState) string {
 		return "none"
 	}
 }
+
+// LimitWindowView is one window of an account reading as a get or describe
+// reply carries it. UsedPercent is a pointer because a window can arrive
+// without one, and that must not read as zero percent; ResetsAt is a pointer
+// for the same reason.
+type LimitWindowView struct {
+	Name        string     `json:"name"`
+	UsedPercent *float64   `json:"used_percent,omitempty"`
+	ResetsAt    *time.Time `json:"resets_at,omitempty"`
+}
