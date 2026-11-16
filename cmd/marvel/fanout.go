@@ -457,7 +457,7 @@ func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, no
 		width:    terminalWidth(),
 		explicit: explicit,
 		noTrunc:  noTrunc,
-		lead:     []sessionColumn{fanOutKeyColumn()},
+		lead:     fanOutLead(explicit),
 	}
 	fmt.Print(renderSessionsView(rows, cols, "", fit))
 	return fanOutExitError(cmd, records)

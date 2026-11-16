@@ -259,6 +259,11 @@ type Display struct {
 	// The name `rest` stands for every column not named elsewhere in the
 	// list, and `wide` for the wide set.
 	SessionColumns []string `yaml:"session_columns,omitempty"`
+	// AccountNames gives the ACCOUNT column display names. A key is the
+	// cluster-free account id a plain read prints, optionally qualified as
+	// "cluster/id" to name the account on one cluster; a value is the text to
+	// show. Display text only: loading refuses a value shaped like a credential.
+	AccountNames map[string]string `yaml:"account_names,omitempty"`
 }
 
 // Watchdog is the harness-state watchdog's own settings.

@@ -3485,9 +3485,11 @@ type sessionRow struct {
 	workspace, team, role, generation, name                                                       string
 	state, health, context, cpu, rss                                                              string
 	desk, runtime, llm, workdir, tout, rate, prompt, lastActive, age, active, spec, acct, service string
-	lastTurn                                                                                      string
-	composer                                                                                      string
-	pane                                                                                          string
+	// The split account columns (I-450).
+	account, fiveH, sevenD, fiveReset, sevenReset, read, backend, cred, home, login, cluster string
+	lastTurn                                                                                 string
+	composer                                                                                 string
+	pane                                                                                     string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in

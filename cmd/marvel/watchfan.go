@@ -317,7 +317,7 @@ func renderFanFrame(ws *watchSort, cfg fanWatchConfig, states []*fanState, now t
 		width:    terminalWidth(),
 		explicit: ws.explicit,
 		noTrunc:  ws.noTrunc,
-		lead:     []sessionColumn{fanOutKeyColumn()},
+		lead:     fanOutLead(ws.explicit),
 	}
 	buf.WriteString(ws.sessionsView(ws.lastSessions, "", fit, buf.String()))
 	ws.writeStatus(&buf)
