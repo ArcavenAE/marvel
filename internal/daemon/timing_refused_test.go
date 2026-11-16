@@ -114,3 +114,53 @@ func TestServedMethodsAreTheSwitchCases(t *testing.T) {
 		}
 	}
 }
+
+// Odd names an invented method can take: empty, the bucket's own name, and a
+// name that already looks like a site. None may mint a site, on any refusal path.
+func TestOddInventedNamesAreBucketedOnEveryRefusalPath(t *testing.T) {
+	odd := []string{"", "other", "rpc.get"}
+	paths := map[string]func(*Daemon) caller{
+		"scope":     func(*Daemon) caller { return caller{scope: ScopeCredentialPush, local: true} },
+		"suspended": func(d *Daemon) caller { d.suspendHeld.Store(true); return localCaller() },
+		"adopting":  func(d *Daemon) caller { d.adoptingSince.Store(time.Now().UnixNano()); return localCaller() },
+	}
+	for name, setup := range paths {
+		d := statusDaemon(t)
+		c := setup(d)
+		for _, m := range odd {
+			d.dispatchAs(daemonrpc.Request{Method: m}, c)
+		}
+		sites := rpcSites(t, d)
+		if got := sites[timing.RPCSite("other")].Count; got != uint64(len(odd)) {
+			t.Errorf("%s: rpc.other Count = %d, want %d", name, got, len(odd))
+		}
+		if len(sites) != 1 {
+			t.Errorf("%s: %d sites, want only rpc.other: %v", name, len(sites), sites)
+		}
+	}
+}
+
+// A served method keeps its own site whichever refusal answers it, including the
+// adoption branch that defers heartbeat, bus.beat and account.limits.
+func TestServedMethodsKeepTheirSiteOnEveryRefusalPath(t *testing.T) {
+	d := statusDaemon(t)
+	d.adoptingSince.Store(time.Now().UnixNano())
+	for _, m := range []string{"heartbeat", "bus.beat", "account.limits"} {
+		d.dispatchAs(daemonrpc.Request{Method: m}, localCaller())
+	}
+	d.adoptingSince.Store(0)
+	d.suspendHeld.Store(true)
+	d.dispatchAs(daemonrpc.Request{Method: "get"}, localCaller())
+	d.suspendHeld.Store(false)
+	d.dispatchAs(daemonrpc.Request{Method: "credential.reveal"}, caller{scope: ScopeCredentialPush, local: true})
+
+	sites := rpcSites(t, d)
+	for _, m := range []string{"heartbeat", "bus.beat", "account.limits", "get", "credential.reveal"} {
+		if got := sites[timing.RPCSite(m)].Count; got != 1 {
+			t.Errorf("rpc.%s Count = %d, want 1", m, got)
+		}
+	}
+	if _, ok := sites[timing.RPCSite("other")]; ok {
+		t.Error("a served method was bucketed as other")
+	}
+}
