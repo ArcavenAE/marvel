@@ -350,6 +350,15 @@ edges:
   - target: question-healthchecks
     type: supports
     note: "Failure detection overlaps with healthcheck design"
+notes: |
+  Correction 2026-11-15 (an internal cache-affinity study): the 8.8x
+  write:read ratio in finding-018 was measured on Haiku 4.5 (derived from five
+  claude-haiku-4-5 runs, 8.77x), and the 6.3x cold-successor figure is that
+  run set's whole-run cost ratio. At list prices read on 2026-11-15 from
+  platform.claude.com pricing, a 1-hour cache write over a cache read is 40x on
+  Opus 5.5 ($8 against $0.20 per MTok) and 80x on Fable 5.2 ($16 against $0.20).
+  Shift-trigger costs computed from 8.8x or 6.3x therefore understate a rebuild
+  on the models the fleet now runs. Recompute before citing either figure.
 provenance:
   created_by: human
   session: session-009
