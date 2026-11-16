@@ -90,18 +90,18 @@ type Manager struct {
 	// credential helper. Empty means the cluster has no credential broker.
 	CredentialHelper string
 	// StreamDir holds the per-session FIFOs marvel reads agent output
-	// from. Defaults to a per-layout temp directory (see daemonTempDir).
+	// from. Defaults to <marvel home>/s.
 	// The pipes carry no content at rest, so nothing here needs to survive
 	// a restart; NewFIFO replaces a leftover pipe rather than failing on it.
 	StreamDir string
 	// TokenDir holds the per-session heartbeat token files.
 	TokenDir string
 	// ProjectionDir holds the per-session projected policy settings files
-	// (finding-024's contract half). Defaults to a per-layout temp
-	// directory (see daemonTempDir). The path must survive a restart even
-	// though the content need not: an adopted agent goes on reading the
-	// file it was launched with, and re-projection has to land on that
-	// same path to reach it.
+	// (finding-024's contract half). Defaults to <marvel home>/p. A seat
+	// launched under an older default keeps the path it was started with,
+	// recorded on the session as ProjectionPath, and re-projection writes
+	// that path as well as this directory, so an adopted agent that goes on
+	// reading the file it was launched with still sees a policy edit.
 	ProjectionDir string
 	// HarnessHomeDir holds the per-session private harness state homes
 	// (aae-orc-ca7y). Defaults to <marvel home>/h (marvel#1142), a durable
@@ -143,8 +143,8 @@ type Manager struct {
 	// is unexported and unreachable from config, flags or the API.
 	socketLimitOverride int
 	// BackendOverlayDir holds the per-session backend settings overlays
-	// (design-backend-swaps.md, Layer A). Defaults to a per-layout temp
-	// directory, overridable with MARVEL_BACKEND_OVERLAY_DIR so a shakedown
+	// (design-backend-swaps.md, Layer A). Defaults to <marvel home>/o,
+	// overridable with MARVEL_BACKEND_OVERLAY_DIR so a shakedown
 	// or an operator can point it at the design's on-repo location
 	// (.session/backend-swaps/overlays). Marvel-owned and ephemeral: the
 	// overlay is swept when its session is deleted, and a stale one left by
@@ -328,13 +328,13 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 
 // defaultStreamDir keeps one daemon's pipes away from another's.
 func defaultStreamDir() string {
-	return daemonTempDir("marvel-streams")
+	return seatDir("marvel-streams", paths.Layout.StreamsDir)
 }
 
 // defaultProjectionDir keeps one daemon's projected settings files away
 // from another's.
 func defaultProjectionDir() string {
-	return daemonTempDir("marvel-policies")
+	return seatDir("marvel-policies", paths.Layout.PoliciesDir)
 }
 
 // defaultHarnessHomeDir keeps one daemon's private harness homes away from
@@ -583,7 +583,20 @@ func defaultBackendOverlayDir() string {
 	if dir := os.Getenv("MARVEL_BACKEND_OVERLAY_DIR"); dir != "" {
 		return dir
 	}
-	return daemonTempDir("marvel-backend-overlays")
+	return seatDir("marvel-backend-overlays", paths.Layout.OverlaysDir)
+}
+
+// seatDir is the default for a directory the daemon writes a seat's files into:
+// under the marvel home, which is private to this user and which nothing
+// sweeps, so a running seat's file does not vanish with a temp cleanup. Where
+// the home cannot be resolved it falls back to the per-layout temp directory.
+// A seat launched before this default moved keeps the path it was started with,
+// recorded on the session, and Reproject still writes it (aae-orc-bc107).
+func seatDir(tempPrefix string, under func(paths.Layout) string) string {
+	if layout, err := paths.Default(); err == nil {
+		return under(layout)
+	}
+	return daemonTempDir(tempPrefix)
 }
 
 // daemonTempDir names a daemon-owned scratch directory that is unique per
@@ -1026,6 +1039,13 @@ func (m *Manager) Create(sess *api.Session) error {
 	if err != nil {
 		_ = m.store.DeleteSession(sess.Key())
 		m.teardownViews(sess.Key())
+		// An overlay directory that is not private is a standing refusal like
+		// the projection and stream ones, so describe lists it and the
+		// controller does not log a plain error on every pass.
+		var pde *privateDirError
+		if errors.As(err, &pde) {
+			return m.refuseSeatDir(sess, pde.Error())
+		}
 		return fmt.Errorf("create session %s: %w", sess.Key(), err)
 	}
 	// Classify the backend-selecting environment this session is launched into
@@ -1148,6 +1168,9 @@ func (m *Manager) Create(sess *api.Session) error {
 		live.BackendCredentialSource = sess.BackendCredentialSource
 		live.AmbientBearer = sess.AmbientBearer
 		live.BackendOverlayPath = sess.BackendOverlayPath
+		// The projected file this launch was started with, kept so a policy
+		// edit still reaches it after the projection directory moves.
+		live.ProjectionPath = sess.ProjectionPath
 		// What marvel named this launch, kept so the binding survives a
 		// daemon restart. Empty when the runtime has no id pin.
 		live.HarnessSessionID = sess.HarnessSessionID
@@ -1592,6 +1615,9 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// that gets a private home names one, so a re-plan that does not must not
 	// carry the previous launch's value forward.
 	sess.AccountHome = ""
+	// The projected file this launch passes the harness is recorded below, and a
+	// launch that projects none must not carry the previous launch's path.
+	sess.ProjectionPath = ""
 	// Look up team and role for full adapter context. Store returns
 	// snapshots — taking addresses of these locals is safe because the
 	// adapter is read-only and the LaunchContext doesn't outlive this

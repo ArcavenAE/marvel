@@ -578,6 +578,14 @@ type Session struct {
 	// the directory points now. Empty when the declared backend warranted no
 	// overlay. Status, not spec.
 	BackendOverlayPath string `toml:"-" json:"backend_overlay_path,omitempty"`
+	// ProjectionPath is the projected settings file this session was launched
+	// with, recorded at spawn. Recorded rather than recomputed because the
+	// projection directory can move between a launch and a later policy edit:
+	// a running seat keeps reading the path it was started with, and a recomputed
+	// path would leave that file stale. Reproject writes it as well as the
+	// current path (aae-orc-bc107). Empty when no file was projected. Status,
+	// not spec.
+	ProjectionPath string `toml:"-" json:"projection_path,omitempty"`
 	// BackendCredentialSource names HOW this session's backend authenticates,
 	// which neither of the fields above can show: the IAM twins and their
 	// static counterparts set the same selector, and only one of the two
