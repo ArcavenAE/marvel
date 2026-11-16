@@ -1,0 +1,48 @@
+# Marvel example: a supervisor that supervises other teams (aae-orc-spk60).
+#
+# The ops supervisor names the teams it supervises. On the local bus it
+# may then publish to the role inbox of every role of those teams, and every
+# role of those teams may publish to the supervisor's role inbox:
+#
+#   agent.<workspace>.<team>.role.<role>.inbox
+#
+# Role inboxes only: no agent-id subject and no wildcard, so the grant does
+# not change when a seat shifts. A team the supervisor does not name gets
+# nothing. It works with or without a hub. A name that matches no applied team
+# in the same workspace grants nothing until that team is applied, so the
+# teams can be applied in any order, and marvel reports the unresolved name
+# as bus.supervises-unresolved.
+#
+# Cross-team senders address the role, not the seat:
+#   agent.ws1.alpha.role.architect.inbox
+#
+# Load with: marvel work examples/supervises.yaml
+
+workspace:
+  name: ws1
+
+teams:
+  - name: ops
+    roles:
+      - name: supervisor
+        replicas: 1
+        supervises: [alpha, beta]
+        runtime:
+          image: claude
+          command: claude
+
+  - name: alpha
+    roles:
+      - name: architect
+        replicas: 1
+        runtime:
+          image: claude
+          command: claude
+
+  - name: beta
+    roles:
+      - name: lead
+        replicas: 1
+        runtime:
+          image: claude
+          command: claude

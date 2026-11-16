@@ -482,6 +482,10 @@ const (
 	// (global_roles on the bus entry). The role holds no global tier until it
 	// is admitted again or the declaration is removed. Once per change.
 	KindBusGlobalRoleUnadmitted Kind = "bus.global-role-unadmitted"
+	// KindBusSupervisesUnresolved reports a supervises name that names no
+	// applied team in the supervisor's workspace. The declaration grants
+	// nothing until that team is applied. Once per name, until it resolves.
+	KindBusSupervisesUnresolved Kind = "bus.supervises-unresolved"
 	// KindBusPidfileStale reports a bus pidfile whose process could not be
 	// proven to be the broker marvel started: the pid is gone, or its start
 	// time, executable or arguments differ from what was recorded. The files
@@ -652,6 +656,7 @@ var allKinds = []Kind{
 	KindBusLeafUnenrolled,
 	KindBusLeafDropped,
 	KindBusGlobalRoleUnadmitted,
+	KindBusSupervisesUnresolved,
 	KindBusPidfileStale,
 	KindBusPidfileUnproven,
 	KindBusIdentityUnrecorded,

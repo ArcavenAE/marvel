@@ -264,11 +264,36 @@ func DeclaredPrincipals(s Spec) ([]Principal, error) {
 					rolePub = append(rolePub, p.subject)
 				}
 			}
+			// A supervises relation adds exact role inboxes to this user.
+			for _, in := range ru.Inboxes {
+				if !slices.Contains(rolePub, in) {
+					rolePub = append(rolePub, in)
+				}
+			}
 			out = append(out, Principal{
 				Name: t.Team + "." + ru.Role, Scope: ScopeBinding, Team: t.Team,
 				Publish:   rolePub,
 				Subscribe: append(slices.Clone(baseSub), fmt.Sprintf("global.%s.supervisor.inbox", s.Domain)),
 				Origin:    "global-role-declaration.md section 4 (marvel#518): the role's own user, so its global reach does not ride the team user; publish on the other teams' global role inboxes on this cluster per the operator ruling of 2026-10-28",
+				Password:  ru.Password,
+			})
+		}
+		// A role that carries a supervises relation but not the global tier:
+		// the team user's own grants plus the exact role inboxes of the
+		// relation, with no global grant and no hub required. Publish only;
+		// the subscribe list is the team user's.
+		for _, ru := range t.GrantRoles {
+			if err := validToken("role", ru.Role); err != nil {
+				return nil, err
+			}
+			if ru.Password == "" {
+				return nil, fmt.Errorf("team %s/%s role %s carries a supervises grant but its user has no password", t.Workspace, t.Team, ru.Role)
+			}
+			out = append(out, Principal{
+				Name: t.Team + "." + ru.Role, Scope: ScopeBinding, Team: t.Team,
+				Publish:   append(slices.Clone(basePub), ru.Inboxes...),
+				Subscribe: slices.Clone(baseSub),
+				Origin:    "aae-orc-spk60: the role's own user for a supervises relation, publish on the exact role inboxes of the supervised teams or of the supervisor, role inboxes only and no agent id",
 				Password:  ru.Password,
 			})
 		}

@@ -1,0 +1,219 @@
+package bus
+
+import (
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/events"
+)
+
+// The lifecycle of the supervises users: pruned with the relation, hidden
+// until the broker accepts them after a restart, and no new subscribe.
+
+func supervisesLive() *teams {
+	return &teams{
+		{Name: "ops", Workspace: "ws1", Roles: []api.Role{
+			{Name: "supervisor", Supervises: []string{"alpha"}},
+			{Name: "reviewer"},
+		}},
+		{Name: "alpha", Workspace: "ws1", Roles: []api.Role{{Name: "architect"}}},
+		{Name: "beta", Workspace: "ws1", Roles: []api.Role{{Name: "lead"}}},
+	}
+}
+
+func supervisesManagerOver(t *testing.T, dir string, live *teams) *Manager {
+	t.Helper()
+	rb := config.ResolvedBus{Managed: true, Listen: "127.0.0.1:4222", URL: "nats://127.0.0.1:4222", StoreDir: dir}
+	m, err := NewManager(dir, "c1", rb, live, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// A role that drops its supervises takes the users and their grants with it,
+// and so does a supervisor whose team is removed, in the same render.
+func TestSupervisesUsersAreRemovedWhenTheRelationGoes(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "nats")
+	live := supervisesLive()
+	m := supervisesManagerOver(t, dir, live)
+	if _, err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	users := authGrants(t, dir)
+	for _, name := range []string{"ops.supervisor", "alpha.architect"} {
+		if _, ok := users[name]; !ok {
+			t.Fatalf("control: no %s user before the change: %v", name, users)
+		}
+	}
+
+	(*live)[0].Roles[0].Supervises = nil
+	if _, err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	users = authGrants(t, dir)
+	for _, name := range []string{"ops.supervisor", "alpha.architect"} {
+		if _, ok := users[name]; ok {
+			t.Errorf("%s still has a user after the relation was dropped", name)
+		}
+		if _, ok := m.TeamPassword(name); ok {
+			t.Errorf("%s still has a password after the relation was dropped", name)
+		}
+	}
+
+	// Bring it back, then remove the supervisor's whole team.
+	(*live)[0].Roles[0].Supervises = []string{"alpha"}
+	if _, err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	*live = (*live)[1:]
+	if _, err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	users = authGrants(t, dir)
+	for _, name := range []string{"ops.supervisor", "alpha.architect"} {
+		if _, ok := users[name]; ok {
+			t.Errorf("%s still has a user after the supervisor's team was removed", name)
+		}
+	}
+}
+
+// The relation adds publish and nothing else: a supervised role subscribes to
+// exactly what its team user does, and the supervisor likewise.
+func TestSupervisesGrantsAddNoSubscribe(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "nats")
+	m := supervisesManagerOver(t, dir, supervisesLive())
+	if _, err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	users := authGrants(t, dir)
+	for _, c := range []struct{ user, teamUser string }{
+		{"alpha.architect", "alpha"},
+		{"ops.supervisor", "ops"},
+	} {
+		got, ok := users[c.user]
+		if !ok {
+			t.Fatalf("no %s user in %v", c.user, users)
+		}
+		if want := users[c.teamUser][1]; !slices.Equal(got[1], want) {
+			t.Errorf("%s subscribes %v, want its team user's %v", c.user, got[1], want)
+		}
+	}
+}
+
+// A manager started over a file it rendered before keeps the users'
+// passwords, and hands the per-role user out only once the broker accepts it
+// again.
+func TestARestartedManagerHidesASupervisesUserUntilConfirmed(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "nats")
+	live := supervisesLive()
+	m1 := supervisesManagerOver(t, dir, live)
+	if _, err := m1.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	confirmed(t, m1)
+	first, _ := m1.TeamPassword("alpha.architect")
+	if first == "" {
+		t.Fatal("control: no password was minted for alpha.architect")
+	}
+	m2 := supervisesManagerOver(t, dir, live)
+	if _, err := m2.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := m2.TeamPassword("alpha.architect"); got != first {
+		t.Errorf("the password changed across a restart: %q then %q", first, got)
+	}
+	if u, _, _ := m2.Credential("alpha", "architect"); u != "alpha" {
+		t.Fatalf("a fresh manager handed out %q before the broker was asked, want the team user", u)
+	}
+	confirmed(t, m2)
+	if u, _, _ := m2.Credential("alpha", "architect"); u != "alpha.architect" {
+		t.Fatalf("after confirming, got %q", u)
+	}
+}
+
+// A name in another workspace is not this supervisor's team: it renders no
+// user and no grant, at the manager as at the grant function.
+func TestSupervisesDoesNotReachAcrossWorkspaces(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "nats")
+	live := &teams{
+		{Name: "ops", Workspace: "ws1", Roles: []api.Role{{Name: "supervisor", Supervises: []string{"alpha", "elsewhere"}}}},
+		{Name: "alpha", Workspace: "ws1", Roles: []api.Role{{Name: "architect"}}},
+		{Name: "elsewhere", Workspace: "other", Roles: []api.Role{{Name: "architect"}}},
+	}
+	m := supervisesManagerOver(t, dir, live)
+	if _, err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	users := authGrants(t, dir)
+	// Control: the same-workspace name resolves.
+	sup, ok := users["ops.supervisor"]
+	if !ok {
+		t.Fatalf("control: no ops.supervisor user in %v", users)
+	}
+	if !contains(sup[0], "agent.ws1.alpha.role.architect.inbox") {
+		t.Errorf("control: the same-workspace team is not granted: %v", sup[0])
+	}
+	if contains(sup[0], "agent.other.elsewhere.role.architect.inbox") {
+		t.Errorf("the supervisor publishes a team of another workspace: %v", sup[0])
+	}
+	if _, ok := users["elsewhere.architect"]; ok {
+		t.Error("a team of another workspace got a user from the relation")
+	}
+}
+
+// The unresolved-name event: one per name until it resolves, none on a repeat
+// render, none once its team is applied, and one again if the team goes away.
+func TestSupervisesUnresolvedEventIsOncePerChange(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "nats")
+	live := &teams{
+		{Name: "ops", Workspace: "ws1", Roles: []api.Role{{Name: "supervisor", Supervises: []string{"alpha"}}}},
+	}
+	m := supervisesManagerOver(t, dir, live)
+	ring := events.NewRing(32)
+	m.Events = ring
+	count := func() int {
+		return len(ring.Snapshot(events.Filter{Kind: events.KindBusSupervisesUnresolved}, 0))
+	}
+	render := func() {
+		t.Helper()
+		if _, err := m.Regenerate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	render()
+	if n := count(); n != 1 {
+		t.Fatalf("after the first render with an unapplied name: %d events, want 1", n)
+	}
+	evs := ring.Snapshot(events.Filter{Kind: events.KindBusSupervisesUnresolved}, 0)
+	if !strings.Contains(evs[0].Message, "ws1/ops.supervisor -> alpha") {
+		t.Errorf("event message %q does not name the supervisor and the unresolved team", evs[0].Message)
+	}
+
+	render()
+	if n := count(); n != 1 {
+		t.Errorf("after a second render with the same name unresolved: %d events, want still 1", n)
+	}
+
+	*live = append(*live, api.Team{Name: "alpha", Workspace: "ws1", Roles: []api.Role{{Name: "architect"}}})
+	render()
+	if n := count(); n != 1 {
+		t.Errorf("after the team was applied: %d events, want still 1", n)
+	}
+
+	*live = (*live)[:1]
+	render()
+	if n := count(); n != 2 {
+		t.Errorf("after the team was removed again: %d events, want 2", n)
+	}
+}

@@ -184,6 +184,10 @@ type ManifestRole struct {
 	GlobalRole           string               `toml:"global_role,omitempty"         yaml:"global_role,omitempty"`
 	Policy               string               `toml:"policy,omitempty"              yaml:"policy,omitempty"`
 	HealthCheck          *ManifestHealthCheck `toml:"healthcheck,omitempty"         yaml:"healthcheck,omitempty"`
+	// Supervises names the teams of the same workspace this role supervises,
+	// so it may publish to their role inboxes on the local bus and they to its
+	// own (aae-orc-spk60). Parsed into Role.Supervises.
+	Supervises []string `toml:"supervises,omitempty" yaml:"supervises,omitempty"`
 	// Shift opts this role into automatic shifts. Unset means the role shifts
 	// only on an operator `marvel shift`. Parsed into Role.Shift.
 	Shift *ManifestShift `toml:"shift,omitempty"               yaml:"shift,omitempty"`
@@ -595,6 +599,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			// typo, and a typo would silently hold nothing, so refuse it.
 			if r.GlobalRole != "" && r.GlobalRole != GlobalRoleSupervisor && r.GlobalRole != GlobalRoleNone {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].global_role %q is not a valid global role (valid: %s, %s)", i, j, r.GlobalRole, GlobalRoleNone, GlobalRoleSupervisor)
+			}
+			if err := validateSupervises(t.Name, r.Supervises); err != nil {
+				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].supervises: %w", i, j, err)
 			}
 			if r.Permissions != "" && !canonicalPermissionModes[r.Permissions] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d].permissions %q is not a valid permission mode (valid: %s)", i, j, r.Permissions, permissionModeList())
@@ -1187,6 +1194,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				DangerousPermissions: mr.DangerousPermissions,
 				Persona:              mr.Persona,
 				GlobalRole:           mr.GlobalRole,
+				Supervises:           slices.Clone(mr.Supervises),
 				Duties:               slices.Clone(mr.Duties),
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,

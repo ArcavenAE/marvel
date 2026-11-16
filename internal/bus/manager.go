@@ -92,6 +92,11 @@ type Manager struct {
 	// global role the cluster does not admit, so the event fires once per
 	// change and not at every render.
 	unadmitted map[string]bool
+	// grantUsers is the set of `<team>.<role>` users the last render minted for
+	// a supervises relation, and unresolved the supervises names already
+	// reported as naming no applied team (aae-orc-spk60). Both guarded by mu.
+	grantUsers map[string]bool
+	unresolved map[string]bool
 	// confirming and confirmAgain single-flight the background confirmation.
 	confirming   atomic.Bool
 	confirmAgain atomic.Bool
@@ -274,8 +279,7 @@ func (m *Manager) URL() string { return m.bus.URL }
 // user is absent, not yet written or not yet accepted, gets the team user
 // (section 4).
 func (m *Manager) Credential(team, role string) (string, string, bool) {
-	if m.holdsGlobalRole(team, role) {
-		user := team + "." + role
+	if user := team + "." + role; m.holdsGlobalRole(team, role) || m.hasGrantUser(user) {
 		m.mu.Lock()
 		pw, ok := m.passwords[user]
 		known := m.known[user]
@@ -298,6 +302,14 @@ func (m *Manager) Credential(team, role string) (string, string, bool) {
 // Credential and the seat env all read it, so they cannot disagree.
 func (m *Manager) GlobalRole(role api.Role) string {
 	return config.ResolvedGlobalRole(role, m.bus.GlobalRoles)
+}
+
+// hasGrantUser reports whether the last render minted user for a supervises
+// relation.
+func (m *Manager) hasGrantUser(user string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.grantUsers[user]
 }
 
 // holdsGlobalRole reports whether the stored role team/role resolves to the
@@ -385,7 +397,17 @@ func (m *Manager) Render() (bool, error) {
 		spec.Seat = &SeatUser{Workspace: m.bus.Seat.Workspace, Team: m.bus.Seat.Team, Password: m.seat}
 	}
 	live := map[string]bool{}
-	for _, t := range m.teams.ListTeams() {
+	all := m.teams.ListTeams()
+	grants, err := SupervisedGrants(appliedTeams(all))
+	if err != nil {
+		return false, err
+	}
+	m.noteUnresolved(all)
+	m.grantUsers = make(map[string]bool, len(grants))
+	for u := range grants {
+		m.grantUsers[u] = true
+	}
+	for _, t := range all {
 		pw, ok := m.passwords[t.Name]
 		if !ok {
 			var err error
@@ -400,27 +422,34 @@ func (m *Manager) Render() (bool, error) {
 			Team:      t.Name,
 			Password:  pw,
 		}
-		if m.bus.HubURL != "" {
-			// Each global role's own user, minted only when missing and keyed
-			// by user name like the team's. Roles are taken in name order so
-			// the rendered file is the same from one render to the next.
-			roles := slices.Clone(t.Roles)
-			slices.SortFunc(roles, func(a, b api.Role) int { return strings.Compare(a.Name, b.Name) })
-			for _, r := range roles {
-				if m.GlobalRole(r) == "" {
-					continue
+		// Each role's own user, minted only when missing and keyed by user name
+		// like the team's: a global role's (with a hub), and any role that
+		// carries a supervises grant (with or without one). Roles are taken in
+		// name order so the rendered file is the same from one render to the
+		// next.
+		roles := slices.Clone(t.Roles)
+		slices.SortFunc(roles, func(a, b api.Role) int { return strings.Compare(a.Name, b.Name) })
+		for _, r := range roles {
+			user := t.Name + "." + r.Name
+			global := m.bus.HubURL != "" && m.GlobalRole(r) != ""
+			extra := grants[user]
+			if !global && len(extra) == 0 {
+				continue
+			}
+			rpw, ok := m.passwords[user]
+			if !ok {
+				var err error
+				if rpw, err = NewPassword(); err != nil {
+					return false, err
 				}
-				user := t.Name + "." + r.Name
-				rpw, ok := m.passwords[user]
-				if !ok {
-					var err error
-					if rpw, err = NewPassword(); err != nil {
-						return false, err
-					}
-					m.passwords[user] = rpw
-				}
-				live[user] = true
-				tu.GlobalRoles = append(tu.GlobalRoles, RoleUser{Role: r.Name, Password: rpw})
+				m.passwords[user] = rpw
+			}
+			live[user] = true
+			ru := RoleUser{Role: r.Name, Password: rpw, Inboxes: extra}
+			if global {
+				tu.GlobalRoles = append(tu.GlobalRoles, ru)
+			} else {
+				tu.GrantRoles = append(tu.GrantRoles, ru)
 			}
 		}
 		m.noteUnadmitted(t)

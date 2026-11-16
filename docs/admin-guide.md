@@ -771,6 +771,44 @@ It renders only on a cluster that has a hub, because with no hub no per-role
 user renders. A host picks it up on a daemon build that has it, at the next
 render, and the broker reloads on SIGHUP.
 
+### Letting a supervisor publish to the teams it supervises
+
+A role declares the teams it supervises with `supervises` in its manifest
+(`examples/supervises.toml`):
+
+```toml
+[[team.role]]
+name = "supervisor"
+supervises = ["alpha", "beta"]
+```
+
+On the cluster's own bus the role may then publish to the role inbox of every
+role of each named team, at `agent.<workspace>.<team>.role.<role>.inbox`, and
+every role of a named team may publish to the supervisor role's inbox. A
+cross-team sender addresses the role, not a seat: a seat's agent id changes at
+every shift, so no grant names one.
+
+The grant is narrow on purpose:
+
+- publish only; nothing is added to any subscribe list;
+- on a per-role user minted for exactly the roles in the relation (the
+  supervisor, and each role of a named team), never the team user;
+- exact role-inbox subjects: no agent-id subject and no wildcard;
+- only the named teams, in the supervisor's own workspace. An unnamed team, a
+  sibling supervised team and a team of another workspace get nothing from it;
+- no hub required, unlike the peer grant above. With a hub, a supervisor that
+  also holds the global tier keeps its global grants and gains these.
+
+A name is checked when the manifest is parsed (one address token, not the
+role's own team, no repeats). Whether the named team exists is resolved at
+every render of the broker's files, not at apply, so the teams of one
+relation can be applied in any order. A name that matches no applied team in
+the supervisor's workspace grants nothing and is reported once as
+`bus.supervises-unresolved`; the render after its team is applied picks it
+up. Removing `supervises`, or the supervisor's team, removes the users and the
+grants in the same render. A host picks the change up at the next render, and
+the broker reloads on SIGHUP.
+
 ### Moving a cluster to another network
 
 If a cluster's hub URL has to change (the hub host moved subnets and the URL

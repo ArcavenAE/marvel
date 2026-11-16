@@ -83,6 +83,10 @@ type TeamUser struct {
 	// the password of its own `<team>.<role>` user. Empty means no per-role
 	// user renders and the team user carries no global grants.
 	GlobalRoles []RoleUser
+	// GrantRoles lists the team's roles that hold a supervises relation but
+	// not the global tier, each with its own `<team>.<role>` user. They render
+	// with or without a hub (aae-orc-spk60).
+	GrantRoles []RoleUser
 }
 
 // RoleUser is one role's own broker user, `<team>.<role>`: the role name and
@@ -90,6 +94,9 @@ type TeamUser struct {
 type RoleUser struct {
 	Role     string
 	Password string
+	// Inboxes are the exact role-inbox subjects this user may also publish to
+	// because of a supervises relation. Empty for a global role with none.
+	Inboxes []string
 }
 
 // MonitorAddr returns the loopback monitoring address for a listen address:
