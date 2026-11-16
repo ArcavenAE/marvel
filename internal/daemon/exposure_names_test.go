@@ -31,10 +31,15 @@ func TestExposureVerbsRefuseNamesOutsideTheAddressClass(t *testing.T) {
 		{"exposure.void", map[string]any{"reason": "a reason"}},
 	}
 
+	// Every slot a call names: the real slot with one field swapped for a bad name.
+	named := map[[3]string]bool{}
 	for _, v := range verbs {
 		for _, f := range fields {
 			for label, bad := range badNames {
 				extra := map[string]any{f: bad}
+				slot := map[string]string{"workspace": "xverb", "team": "crew", "role": "writer"}
+				slot[f] = bad
+				named[[3]string{slot["workspace"], slot["team"], slot["role"]}] = true
 				for k, val := range v.extra {
 					extra[k] = val
 				}
@@ -48,8 +53,19 @@ func TestExposureVerbsRefuseNamesOutsideTheAddressClass(t *testing.T) {
 		}
 	}
 
-	if recs, _ := d.store.ExposuresForSlot("xverb", "crew", "writer"); len(recs) != 0 {
-		t.Errorf("records for the real slot = %+v, want none: every call above named a bad name", recs)
+	// The real slot is never the one a call named, so only the named slots can
+	// show a record written before the refusal.
+	for slot := range named {
+		recs, err := d.store.ExposuresForSlot(slot[0], slot[1], slot[2])
+		if err != nil {
+			t.Fatalf("ExposuresForSlot(%q): %v", slot, err)
+		}
+		if len(recs) != 0 {
+			t.Errorf("records for slot %q = %+v, want none: the call was refused", slot, recs)
+		}
+	}
+	if len(named) != len(fields)*len(badNames) {
+		t.Errorf("checked %d slots, want %d: every field and bad name", len(named), len(fields)*len(badNames))
 	}
 }
 
