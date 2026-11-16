@@ -653,6 +653,7 @@ var allKinds = []Kind{
 	KindBusStoreWriteFailed,
 	KindBusStoreLow,
 	KindBusReloaded,
+	KindBusReloadRefused,
 	KindBusLeafUp,
 	KindBusLeafDown,
 	KindBusLeafUnenrolled,

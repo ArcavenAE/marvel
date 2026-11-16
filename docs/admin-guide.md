@@ -620,6 +620,10 @@ does not restart the broker and does not hold spawns. JetStream refuses writes
 once a store is full, so free space or raise the cap. A read error leaves the
 last reading in place, and the daemon logs when the warning clears.
 
+### A reload the broker refuses
+
+When marvel rewrites the broker's conf for a change a running broker can take on a reload (a team added, the leaf toggled), it sends the broker SIGHUP and then reads the broker's own answer from its log. A broker that declines the whole reload, as nats-server does when a setting that cannot be reloaded changed, keeps its old configuration and applies none of the rest. marvel records `bus.reload-refused` at error severity with the broker's reason, and the render reports the refusal as an error on the ring (`bus.rendered`). A reload the broker accepts records `bus.reloaded` as before. Read it with `marvel events --kind bus.reload-refused`. The files on disk are in force again after the broker restarts. If the broker does not answer within three seconds, the reload reads as accepted, as it did before this check existed.
+
 ### The write probe
 
 Every structural check above only reads, so a store that refuses writes passes
