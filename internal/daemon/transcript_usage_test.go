@@ -421,20 +421,149 @@ func TestUsageReaderRefusesASessionIdThatIsAPath(t *testing.T) {
 	}
 }
 
-// After a daemon restart the reader's memory is gone. The stored sum is the
-// base, the file is read from its end, and the sum is partial: it never drops
-// below what was stored.
-func TestRestartKeepsTheStoredSumAndMarksItPartial(t *testing.T) {
+// intOf prints a *int for a failure message.
+func intOf(p *int) string {
+	if p == nil {
+		return "nil"
+	}
+	return fmt.Sprint(*p)
+}
+
+// restart is a new reader over the same store, as after a daemon restart.
+func (r *usageRig) restart() *txUsage {
+	r.t.Helper()
+	u := newTxUsage(r.store, func(string) (bool, error) { return false, nil })
+	inner := u.tailRead
+	u.tailRead = func(path string, from int64) ([]byte, error) {
+		r.reads++
+		return inner(path, from)
+	}
+	return u
+}
+
+// A restart over the same file keeps the sum exact: the per-id figures are
+// rebuilt from the file up to the stored offset, nothing is added for them, and
+// growth after it is added (architect's ruling on review 5914397642, Low 1).
+func TestRestartOverTheSameFileKeepsTheSumExact(t *testing.T) {
 	r := newUsageRig(t)
 	r.u.Once()
 	r.lines(msg("m1", 40))
 	r.u.Once()
 	r.want(40, false)
-	// A new reader over the same store, as after a restart.
-	u2 := newTxUsage(r.store, func(string) (bool, error) { return false, nil })
+	u2 := r.restart()
 	u2.Once()
-	r.want(40, true)
+	r.want(40, false)
 	r.lines(msg("m2", 5))
 	u2.Once()
+	r.want(45, false)
+}
+
+// A record seen before the restart is not counted again when the file is
+// replaced with the same record after it.
+func TestRestartThenReplaceWithTheSameRecordAddsNothing(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(msg("m1", 40))
+	r.u.Once()
+	u2 := r.restart()
+	u2.Once()
+	r.replace(msg("m1", 40))
+	u2.Once()
+	if got := r.session().SpendOut; got == nil || *got != 40 {
+		t.Errorf("SpendOut = %s, want 40", intOf(got))
+	}
+}
+
+// An id seen at 10 before the restart and at 40 after it reads 40.
+func TestIdAtTenBeforeARestartAndFortyAfterReadsForty(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(msg("m1", 10))
+	r.u.Once()
+	r.want(10, false)
+	u2 := r.restart()
+	u2.Once()
+	r.lines(msg("m1", 40))
+	u2.Once()
+	r.want(40, false)
+}
+
+// A file replaced while the daemon was down is seeded whole, adds nothing, and
+// the sum keeps its old total with a + (a lower bound: records only in the new
+// file are not counted).
+func TestFileReplacedWhileDownKeepsTheTotalAndMarksPlus(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(msg("m1", 40))
+	r.u.Once()
+	r.replace(msg("m1", 40), msg("m2", 25))
+	u2 := r.restart()
+	u2.Once()
+	r.want(40, true)
+	r.lines(msg("m3", 5))
+	u2.Once()
 	r.want(45, true)
+}
+
+// The reader stores where it stopped: the file's size and inode.
+func TestTailIsStoredWithTheSum(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(msg("m1", 40))
+	r.u.Once()
+	fi, err := os.Stat(r.path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tail := r.session().SpendTail
+	if tail == nil {
+		t.Fatal("SpendTail is nil after a read")
+	}
+	if tail.Offset != fi.Size() || tail.Inode == 0 {
+		t.Errorf("SpendTail = %+v, want offset %d and an inode", tail, fi.Size())
+	}
+}
+
+// The accountant check is made again at the write: a write the accountant made
+// between the pass's snapshot and the reader's write is not replaced.
+func TestPublishLeavesAnAccountantWriteAlone(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(msg("m1", 40))
+	r.u.Once()
+	out, prompt := 500, 900
+	r.store.UpdateSessionSpend(r.key, api.SessionSpend{Out: &out, PromptTokens: &prompt})
+	t0 := r.u.seats[r.key]
+	t0.total = 41
+	r.u.publish(r.key, t0)
+	got := r.session()
+	if got.SpendOut == nil || *got.SpendOut != 500 {
+		t.Errorf("SpendOut = %s after the accountant wrote 500, want 500", intOf(got.SpendOut))
+	}
+}
+
+// A read that stops at the cap is continued on the next pass even when the file
+// did not change.
+func TestCappedReadIsContinuedOnTheNextPass(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	var lines []string
+	for i := 0; i < 100; i++ {
+		lines = append(lines, msg(fmt.Sprintf("id%03d", i), 1))
+	}
+	r.lines(lines...)
+	inner := r.u.tailRead
+	r.u.tailRead = func(path string, from int64) ([]byte, error) {
+		b, err := inner(path, from)
+		if len(b) > 2000 {
+			b = b[:2000]
+		}
+		return b, err
+	}
+	for i := 0; i < 100; i++ {
+		r.u.Once()
+	}
+	if got := r.session().SpendOut; got == nil || *got != 100 {
+		t.Errorf("SpendOut = %s after 100 passes over an unchanged file, want 100", intOf(got))
+	}
 }

@@ -104,3 +104,47 @@ func TestSpendPartialIsAlwaysOnTheWire(t *testing.T) {
 		t.Errorf("a partial sum does not carry spend_partial:true: %s", raw)
 	}
 }
+
+// The reader's place in the file is stored with the sum, kept through a
+// heartbeat, and survives a daemon restart, so a restarted reader can seed its
+// per-id figures up to that offset.
+func TestSpendTailIsStoredKeptAndReloaded(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "marvel.bolt")
+	s1 := NewStore()
+	if err := s1.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #1: %v", err)
+	}
+	key := partialSpendSession(t, s1)
+	out := 200
+	s1.UpdateSessionSpend(key, SessionSpend{Out: &out, Tail: &SpendTail{Offset: 4096, Inode: 77}})
+	got, _ := s1.GetSession(key)
+	if got.SpendTail == nil || got.SpendTail.Offset != 4096 || got.SpendTail.Inode != 77 {
+		t.Fatalf("SpendTail after a spend write = %+v, want offset 4096 inode 77", got.SpendTail)
+	}
+	if _, err := s1.UpdateSessionHeartbeat(HeartbeatRequest{SessionKey: key, ContextPercent: 40}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s1.GetSession(key)
+	if got.SpendTail == nil || got.SpendTail.Offset != 4096 {
+		t.Errorf("a heartbeat changed SpendTail to %+v", got.SpendTail)
+	}
+	if err := s1.UpdateSession(key, func(*Session) error { return nil }); err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+	if err := s1.CloseBolt(); err != nil {
+		t.Fatalf("CloseBolt: %v", err)
+	}
+	s2 := NewStore()
+	if err := s2.OpenBolt(path); err != nil {
+		t.Fatalf("OpenBolt #2: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.CloseBolt() })
+	got, err := s2.GetSession(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SpendTail == nil || got.SpendTail.Offset != 4096 || got.SpendTail.Inode != 77 {
+		t.Errorf("SpendTail after a reload = %+v, want offset 4096 inode 77", got.SpendTail)
+	}
+}

@@ -143,6 +143,7 @@ func keysOf(m map[string]any) []string {
 func TestDescribeSessionNamesTheTokenSource(t *testing.T) {
 	n := 12000
 	s := costSession("seat", usd(4.12), 15*time.Second)
+	s.Runtime.Name = "claude"
 	s.SpendOut, s.SpendPartial = &n, true
 	raw, err := json.Marshal(s)
 	if err != nil {
@@ -169,5 +170,35 @@ func TestDescribeSessionNamesTheTokenSource(t *testing.T) {
 	_ = json.Unmarshal(out, &got)
 	if _, has := got["token_source"]; has {
 		t.Errorf("a seat with no token sum carries token_source %v", got["token_source"])
+	}
+}
+
+// The note is attached only where the transcript reader is the source: not to a
+// seat the usage accountant meters, and not to a codex seat whose hook wrote the
+// sum (review 5914397642, blocking).
+func TestTokenSourceNoteIsNotOnSeatsTheReaderDoesNotServe(t *testing.T) {
+	n, prompt := 12000, 40000
+	metered := costSession("metered", usd(1), 15*time.Second)
+	metered.Runtime.Name = "claude"
+	metered.SpendOut, metered.SpendPromptTokens = &n, &prompt
+	codex := costSession("codex", usd(1), 15*time.Second)
+	codex.Runtime.Name = "codex"
+	codex.SpendOut = &n
+	for _, s := range []api.Session{metered, codex} {
+		raw, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := withTokenSource(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		if note, has := got["token_source"]; has {
+			t.Errorf("%s seat carries token_source %q", s.Name, note)
+		}
 	}
 }
