@@ -143,8 +143,6 @@ func stampLimitWindows(s *api.Session, reading api.AccountReading, state api.Rea
 	}
 	at := reading.At
 	s.LimitReadAt = &at
-	if now.Sub(reading.At) >= api.ReadingMaxAge {
-		stale := true
-		s.LimitStale = &stale
-	}
+	stale := now.Sub(reading.At) >= api.ReadingMaxAge
+	s.LimitStale = &stale
 }
