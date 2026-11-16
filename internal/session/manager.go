@@ -1011,6 +1011,12 @@ func (m *Manager) Create(sess *api.Session) error {
 		return m.refuseHarnessHome(sess, plan.homeRefusal)
 	}
 	m.clearHarnessHomeRefusal(sess)
+	if plan.dirRefusal != "" {
+		_ = m.store.DeleteSession(sess.Key())
+		m.teardownViews(sess.Key())
+		return m.refuseSeatDir(sess, plan.dirRefusal)
+	}
+	m.clearSeatDirRefusal(sess)
 
 	// Layer A: write the per-session backend overlay for a role that declared a
 	// non-default backend, and stamp its path so cast-launch.sh passes it as
@@ -1271,6 +1277,51 @@ func (m *Manager) clearHarnessHomeRefusal(sess *api.Session) {
 	delete(m.refused, sess.Workspace+"/"+sess.Team+"/"+sess.Role+harnessHomeRefusalSuffix)
 }
 
+// privateDirRefusalSuffix keys the refusal for a directory the seat's files are
+// written into apart from the others, so each clears on its own.
+const privateDirRefusalSuffix = "#private-dir"
+
+// privateDirError reports that a directory marvel is about to write a seat's
+// files into is not a plain 0700 directory of this user. The launch is refused
+// and nothing is written (aae-orc-bc107).
+type privateDirError struct{ dir, why string }
+
+func (e *privateDirError) Error() string {
+	return fmt.Sprintf("%s is not a private directory of this user: %s", e.dir, e.why)
+}
+
+// requirePrivateDir makes dir with one Mkdir at 0700 when it is absent (its
+// parent with MkdirAll, as the writers did before), then requires it to be a
+// plain directory, mode exactly 0700, owned by this user. It returns why not,
+// or "" when it is fit to write in.
+func (m *Manager) requirePrivateDir(dir string) string {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		return fmt.Sprintf("cannot create its parent: %v", err)
+	}
+	why, _ := privateDirRefusal(dir, m.mine)
+	return why
+}
+
+// refuseSeatDir records and returns the refusal of a spawn whose projection,
+// overlay or stream directory is not private to this user. The seat is not
+// started, and is not started with the file left out. The reconcile loop retries
+// every tick, so the refusal stands until the directory is fixed.
+func (m *Manager) refuseSeatDir(sess *api.Session, why string) error {
+	key := sess.Workspace + "/" + sess.Team + "/" + sess.Role + privateDirRefusalSuffix
+	msg := fmt.Sprintf("not started: %s/%s: %s; the seat is not started and nothing is written there (remove or fix the directory, then it starts on the next pass)", sess.Team, sess.Role, why)
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	m.noteRefusal(sess, key, RefusalPrivateDir, events.KindSessionPlacementRefused, "", msg)
+	return fmt.Errorf("refuse to start session %s: %s: %w", sess.Key(), why, ErrPlacementRefused)
+}
+
+// clearSeatDirRefusal drops the standing refusal once a spawn gets past the check.
+func (m *Manager) clearSeatDirRefusal(sess *api.Session) {
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	delete(m.refused, sess.Workspace+"/"+sess.Team+"/"+sess.Role+privateDirRefusalSuffix)
+}
+
 // noteRefusal keeps the standing record of a refused role and reports it. The
 // reconcile loop retries every tick, so the refusal is reported when it starts
 // and then at a low cadence for as long as it lasts: the log at most every
@@ -1327,6 +1378,10 @@ type launchPlan struct {
 	// homeRefusal is set when no harness home base passed the spawn-time check
 	// and at least one failed validation; the spawn is not made.
 	homeRefusal string
+	// dirRefusal is set when a directory the launch writes into (the projection,
+	// backend overlay or stream directory) is not a private directory of this
+	// user; the spawn is not made and nothing is written in it.
+	dirRefusal string
 	// firstPrompt is which first message the launch carried, for the
 	// session.first-prompt event.
 	firstPrompt runtime.FirstPrompt
@@ -1646,6 +1701,10 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// lctx.PolicyProjectionPath when the adapter supports projection and a
 	// policy resolves; a no-op otherwise.
 	if err := m.projectForLaunch(lctx, adapter); err != nil {
+		var pde *privateDirError
+		if errors.As(err, &pde) {
+			return launchPlan{dirRefusal: pde.Error()}
+		}
 		var sfe *settingsFileError
 		errors.As(err, &sfe)
 		return launchPlan{hold: sfe}
@@ -1667,6 +1726,11 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 
 	// Ask before building: an adapter that never streams (or one asked
 	// for an interactive launch) should cost no filesystem work.
+	if m.streams(adapter, lctx) {
+		if why := m.requirePrivateDir(m.StreamDir); why != "" {
+			return launchPlan{dirRefusal: (&privateDirError{dir: m.StreamDir, why: why}).Error()}
+		}
+	}
 	fifo := m.openSink(sess, adapter, lctx)
 	if fifo != nil {
 		lctx.StreamPath = fifo.Path()
@@ -1784,12 +1848,24 @@ func (m *Manager) CanOfferHandoffToolRole(r api.ManifestRole) bool {
 	return ok && o.OffersHandoffTool()
 }
 
+// streams reports whether the launch wants a stream pipe: the adapter can
+// stream, the launch is of a streaming shape, and a stream directory is set.
+func (m *Manager) streams(adapter runtime.Adapter, lctx *runtime.LaunchContext) bool {
+	streamer, ok := adapter.(runtime.StreamCapable)
+	return ok && m.StreamDir != "" && streamer.SupportsStream(lctx)
+}
+
 // openSink creates the FIFO for a stream-capable adapter, or returns nil.
 // A sink that cannot be created is logged and skipped: an unobservable
 // session is still a working session.
 func (m *Manager) openSink(sess *api.Session, adapter runtime.Adapter, lctx *runtime.LaunchContext) *runtime.FIFO {
-	streamer, ok := adapter.(runtime.StreamCapable)
-	if !ok || m.StreamDir == "" || !streamer.SupportsStream(lctx) {
+	if !m.streams(adapter, lctx) {
+		return nil
+	}
+	// planLaunch refuses the launch when the directory is not private; this
+	// keeps a direct caller from making a pipe in one.
+	if why := m.requirePrivateDir(m.StreamDir); why != "" {
+		log.Printf("session %s: no stream sink: %s", sess.Key(), (&privateDirError{dir: m.StreamDir, why: why}).Error())
 		return nil
 	}
 	fifo, err := runtime.NewFIFO(m.StreamDir, sess.Key())
@@ -2649,6 +2725,7 @@ const (
 	RefusalContainerImage   = "container image"
 	RefusalContainerRuntime = "container runtime"
 	RefusalHarnessHome      = "harness home"
+	RefusalPrivateDir       = "private directory"
 	// The reasons a profiled spawn is refused; all key under #sandbox.
 	RefusalSandboxHost      = "sandbox host"
 	RefusalSandboxProfile   = "sandbox profile"
@@ -2701,6 +2778,7 @@ func (m *Manager) ClearPlacementRefusal(workspace, team, role string) {
 	delete(m.refused, key+containerRefusalSuffix)
 	delete(m.refused, key+sandboxRefusalSuffix)
 	delete(m.refused, key+harnessHomeRefusalSuffix)
+	delete(m.refused, key+privateDirRefusalSuffix)
 }
 
 func (m *Manager) now() time.Time {
