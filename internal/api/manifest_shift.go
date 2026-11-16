@@ -151,7 +151,7 @@ func (r *ManifestRole) shiftPolicy(where string) (*ShiftPolicy, error) {
 		return nil, fmt.Errorf("%s sets on and any together; use one form", prefix)
 	case hasAny && len(s.Any) == 0:
 		return nil, fmt.Errorf("%s.any is empty; omit the shift table for no automatic shift", prefix)
-	case !single && !hasAny:
+	case !single && !hasAny && s.Handoff == "" && s.HandoffMarker == "":
 		return nil, fmt.Errorf("%s needs on or any", prefix)
 	}
 

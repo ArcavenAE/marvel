@@ -82,7 +82,10 @@ Rules at apply (errors, never silent no-ops):
   #399 sketches on the shift table itself), `all`, and nested `any` fail
   loudly instead of vanishing; `action = "kill"` is the case that matters.
 - A shift table with neither `on` nor `any` is an error, stated as such (it
-  fails today only by accident, as `shift.on "" is not valid`).
+  fails today only by accident, as `shift.on "" is not valid`), unless it
+  declares `handoff` or `handoff_marker`. A table that declares only the
+  handoff pair says where a seat's handoff lives and takes no automatic shift
+  (marvel#1446); half a pair still fails, as "must be set together".
 - `on` and `any` together is an error. `any = []` is an error (unset means
   omit the table).
 - Each entry is validated as today's single trigger is: a known `on`, and the
