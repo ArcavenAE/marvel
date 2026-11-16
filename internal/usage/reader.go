@@ -46,7 +46,12 @@ type Spend struct {
 	// Includes subagent and non-primary-model samples, which are real spend
 	// against other context windows even though they never enter occupancy.
 	PromptTokens int
-	CostUSD      float64
+	// FreshIn is the part of PromptTokens that is neither a cache read nor a
+	// cache write, summed per request: In under an additive layout, In less
+	// CacheReadIn under a subsumptive one (codex counts cached input inside
+	// input). FreshIn + CacheReadIn + CacheCreationIn = PromptTokens.
+	FreshIn int
+	CostUSD float64
 	// CostReported is false when the harness reports no cost at all
 	// (codex publishes none in its exec stream), which is distinct from
 	// reporting zero.
