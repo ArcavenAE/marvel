@@ -15,13 +15,14 @@ import (
 // token cells: this form applies only where those have nothing to show, so one
 // seat never flips between units.
 
-// costTout is the TOUT cell for a statusline seat: the latest total, and
-// whether this seat shows dollars at all.
-func costTout(s api.Session) (string, bool) {
-	if s.SpendOut != nil || s.CostTotalUSD == nil {
-		return "", false
+// costCell is the COST cell: the harness's running dollar total, with a ~
+// because it is a list-price estimate and not a bill. "-" when the seat's feed
+// never carried one.
+func costCell(s api.Session) string {
+	if s.CostTotalUSD == nil {
+		return asof.DashNone
 	}
-	return fmt.Sprintf("~$%.2f", *s.CostTotalUSD), true
+	return fmt.Sprintf("~$%.2f", *s.CostTotalUSD)
 }
 
 // costRate is the RATE cell for a statusline seat: the change in the total per
@@ -31,7 +32,7 @@ func costTout(s api.Session) (string, bool) {
 // "?" once the feed has been silent past the window or while a silence is
 // inside it (the spend of a gap is not a rate), and never goes below 0.
 func costRate(s api.Session, now time.Time) (string, bool) {
-	if s.SpendOut != nil || s.CostTotalUSD == nil || s.OutRate.State(now) != asof.None {
+	if s.CostTotalUSD == nil {
 		return "", false
 	}
 	window := s.ActiveTicks.Window

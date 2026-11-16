@@ -271,7 +271,9 @@ func TestTranscriptInPlaceTruncationResetsTheOffset(t *testing.T) {
 	r.lines(msg("m1", 100), msg("m2", 60), msg("pad", 1), msg("pad2", 1))
 	r.u.Once()
 	r.want(162, false)
-	if err := os.Truncate(r.path(), 10); err != nil {
+	// Cut back to the end of the first record, a line boundary, so the next
+	// record starts on its own line.
+	if err := os.Truncate(r.path(), int64(len(msg("m1", 100))+1)); err != nil {
 		t.Fatal(err)
 	}
 	r.lines(msg("m9", 40))

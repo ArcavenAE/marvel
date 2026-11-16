@@ -34,18 +34,23 @@ func TestSpendUpdateStoresThePartialFlag(t *testing.T) {
 	}
 }
 
-// A context write replaces the occupancy and must leave the spend slice, the
-// flag included, as the accountant or reader wrote it (marvel#779).
-func TestContextWriteKeepsThePartialFlag(t *testing.T) {
+// A heartbeat replaces the occupancy and must leave the spend slice, the flag
+// included, as the accountant or reader wrote it (marvel#779).
+func TestHeartbeatKeepsThePartialFlag(t *testing.T) {
 	t.Parallel()
 	s := NewStore()
 	key := partialSpendSession(t, s)
 	out := 200
 	s.UpdateSessionSpend(key, SessionSpend{Out: &out, Partial: true})
-	s.UpdateSessionContext(key, SessionContext{ContextSource: ContextSourceHeartbeat, ContextPercent: 40})
+	if _, err := s.UpdateSessionHeartbeat(HeartbeatRequest{SessionKey: key, ContextPercent: 40}); err != nil {
+		t.Fatal(err)
+	}
 	got, _ := s.GetSession(key)
+	if got.SpendOut == nil || *got.SpendOut != 200 {
+		t.Errorf("a heartbeat changed SpendOut to %v", got.SpendOut)
+	}
 	if !got.SpendPartial {
-		t.Error("a context write cleared SpendPartial")
+		t.Error("a heartbeat cleared SpendPartial")
 	}
 }
 

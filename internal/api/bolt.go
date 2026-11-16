@@ -307,9 +307,9 @@ func (s *Store) rehydrate() error {
 				// that has gone stale. It crosses the clear; the rate cell
 				// carries its own validity and reads "?" once that passes
 				// (aae-orc-88bm0).
-				out, prompt, rate := sess.SpendOut, sess.SpendPromptTokens, sess.OutRate
+				out, prompt, rate, partial := sess.SpendOut, sess.SpendPromptTokens, sess.OutRate, sess.SpendPartial
 				sess.SessionContext = SessionContext{}
-				sess.SpendOut, sess.SpendPromptTokens, sess.OutRate = out, prompt, rate
+				sess.SpendOut, sess.SpendPromptTokens, sess.OutRate, sess.SpendPartial = out, prompt, rate, partial
 			}
 			s.sessions[sess.Key()] = &sess
 			return nil
