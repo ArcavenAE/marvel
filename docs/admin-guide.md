@@ -774,6 +774,13 @@ it is not stored with the record. The 30 minutes is one fleet value, set by the
 operator's ruling of 2026-10-06 on the repeat bound (design/wake-service.md
 Q1), and changes as one constant.
 
+Leaf events carry `since`, the time the current state was entered: a repeat of
+`bus.leaf.down` names the original drop, and `bus.leaf.up` carries the recovery
+time, which pairs with the down's `since` to give the outage length.
+`bus.leaf.up` is a warning when the down it ends was reported, so it shows at
+warning level; an up at the first poll, or after a down that was never reported,
+stays info.
+
 ### Publishing to peer supervisors on one cluster
 
 A role a team declares global has its own broker user (the per-role user). Since
