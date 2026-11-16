@@ -251,6 +251,10 @@ type Config struct {
 	// Display holds client display preferences. Nothing here changes what
 	// a daemon does.
 	Display Display `yaml:"display,omitempty"`
+	// AccountNamesRefused is why Load dropped the display.account_names map, or nil.
+	// It is not part of the file; a display mistake never reaches the caller as a
+	// load error, so no caller can mistake it for an unreadable config.
+	AccountNamesRefused error `yaml:"-"`
 }
 
 // Display is the client's display preferences.
@@ -1108,7 +1112,7 @@ func (c *Config) Validate() error {
 			errs = append(errs, err)
 		}
 	}
-	if err := c.Display.validateAccountNames(); err != nil {
+	if err := c.Display.CheckAccountNames(); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
@@ -1289,12 +1293,12 @@ func looksLikeCredential(v string) bool {
 	return false
 }
 
-// validateAccountNames checks the display.account_names map. The map is display
+// CheckAccountNames checks the display.account_names map. The map is display
 // text only: a malformed key, an empty or padded value, a control character, or
 // a credential-shaped value is refused. No error carries the value, which could
 // be the secret; an error for a value names the key, which has passed the id
 // pattern by then. Each error wraps ErrInvalidAccountNames.
-func (d Display) validateAccountNames() error {
+func (d Display) CheckAccountNames() error {
 	var errs []error
 	for k, v := range d.AccountNames {
 		switch {
