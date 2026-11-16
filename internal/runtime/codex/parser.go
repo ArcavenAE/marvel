@@ -164,8 +164,13 @@ func (p *Parser) handleThreadStarted(raw json.RawMessage, emit func(events.Event
 // them as occupancy. internal/usage carries the measurement and the
 // consequence (profiles.go, codex.Harness).
 type codexUsage struct {
-	InputTokens           int `json:"input_tokens"`
-	CachedInputTokens     int `json:"cached_input_tokens"`
+	InputTokens       int `json:"input_tokens"`
+	CachedInputTokens int `json:"cached_input_tokens"`
+	// CacheWriteInputTokens is read and carried as CacheCreationIn, but the
+	// usage accountant does not show it: codex's CW column stays "-" because
+	// every capture so far carries 0 and whether codex counts a cache write
+	// inside input_tokens is unmeasured. It is revisited when a real codex
+	// transcript shows a nonzero value (profiles.go, noCacheWrite).
 	CacheWriteInputTokens int `json:"cache_write_input_tokens"`
 	OutputTokens          int `json:"output_tokens"`
 	ReasoningOutputTokens int `json:"reasoning_output_tokens"`

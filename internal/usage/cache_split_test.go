@@ -127,3 +127,34 @@ func TestCodexTinIsInputMinusCached(t *testing.T) {
 }
 
 func ptr(n int) *int { return &n }
+
+// A codex sample whose cached input exceeds its input cannot come from a
+// well-formed feed (cached input is part of input). It must not break
+// TIN + CR + CW = PROMPT without a sign: CR is capped at the input, so the
+// classes still add up to the prompt (review of #1445, low 2). The sample is
+// still counted, so its output tokens are not lost.
+func TestCodexCachedAboveInputKeepsTheIdentity(t *testing.T) {
+	t.Parallel()
+	a, sink, _ := newTestAccountant(t, Table{"gpt-5.6-sol": 258_400})
+	a.Bind(testCoords, Bind{Harness: codex.Harness, Args: []string{"-m", "gpt-5.6-sol"}})
+	a.Observe(testCoords, turnEvent(codex.Harness, rtevents.RequestUsage{
+		Layout: rtevents.LayoutSubsumptive, In: 100, CacheReadIn: 150, Out: 7,
+	}))
+	fresh, read, write, prompt := splitOf(t, sink)
+	want(t, "PROMPT", prompt, 100)
+	want(t, "TIN", fresh, 0)
+	want(t, "CR", read, 100)
+	if fresh != nil && read != nil && prompt != nil {
+		w := 0
+		if write != nil {
+			w = *write
+		}
+		if sum := *fresh + *read + w; sum != *prompt {
+			t.Errorf("TIN + CR + CW = %d, PROMPT = %d, want them equal", sum, *prompt)
+		}
+	}
+	sp, _ := a.SessionSpend(testCoords.AgentID)
+	if sp.CacheReadIn != 100 || sp.Out != 7 {
+		t.Errorf("SessionSpend CacheReadIn = %d, Out = %d, want 100 and 7: the sample still counts", sp.CacheReadIn, sp.Out)
+	}
+}

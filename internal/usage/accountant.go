@@ -630,7 +630,7 @@ func (a *Accountant) addSpendLocked(st *sessionState, s Sample) {
 	st.noteOutLocked(s.Out, now)
 	st.spend.In += s.In
 	st.spend.Out += s.Out
-	st.spend.CacheReadIn += s.CacheReadIn
+	st.spend.CacheReadIn += s.CacheRead()
 	st.spend.CacheCreationIn += s.CacheCreationIn
 	st.spend.FreshIn += s.Fresh()
 	st.spend.ReasoningOut += s.ReasoningOut
@@ -668,7 +668,7 @@ func (a *Accountant) setSpendLocked(st *sessionState, s Sample) {
 	st.noteOutLocked(delta, now)
 	st.spend.In = s.In
 	st.spend.Out = s.Out
-	st.spend.CacheReadIn = s.CacheReadIn
+	st.spend.CacheReadIn = s.CacheRead()
 	st.spend.CacheCreationIn = s.CacheCreationIn
 	st.spend.FreshIn = s.Fresh()
 	st.spend.ReasoningOut = s.ReasoningOut
