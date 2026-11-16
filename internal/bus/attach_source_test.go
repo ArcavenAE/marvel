@@ -14,12 +14,14 @@ import (
 // table behind it. A call is matched when its result is assigned to a
 // variable (or field) that an attach call takes as its second argument, and
 // each attach covers one build: two builds into one name need two attaches. A
-// test that never starts a broker may be listed in allowed.
-func unattached(f *ast.File, allowed map[string]bool) []string {
+// build whose supervisor goes to the blank identifier can never be started, so
+// it needs no table; that is read from the shape of the call, never from the
+// name of the test around it.
+func unattached(f *ast.File) []string {
 	var out []string
 	for _, d := range f.Decls {
 		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Body == nil || allowed[fn.Name.Name] {
+		if !ok || fn.Body == nil {
 			continue
 		}
 		isNew := func(e ast.Expr) bool {
@@ -31,6 +33,7 @@ func unattached(f *ast.File, allowed map[string]bool) []string {
 			return ok && id.Name == "NewSupervisor"
 		}
 		builds := map[string]int{} // target expression -> builds into it
+		discarded := 0             // builds whose supervisor goes to the blank identifier
 		attaches := map[string]int{}
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			switch n := n.(type) {
@@ -38,6 +41,8 @@ func unattached(f *ast.File, allowed map[string]bool) []string {
 				if len(n.Rhs) == 1 && isNew(n.Rhs[0]) {
 					if name := types.ExprString(n.Lhs[0]); name != "_" {
 						builds[name]++
+					} else {
+						discarded++
 					}
 				}
 			case *ast.CallExpr:
@@ -58,7 +63,7 @@ func unattached(f *ast.File, allowed map[string]bool) []string {
 		for _, c := range builds {
 			named += c
 		}
-		bare := total - named // results with no name to attach
+		bare := total - named - discarded // results with no name to attach
 		for name, c := range builds {
 			for i := attaches[name]; i < c; i++ {
 				out = append(out, fn.Name.Name)
@@ -77,11 +82,11 @@ func asExpr(n ast.Node) ast.Expr {
 }
 
 // newTestSupervisor is the single registration point (design section 7), so a
-// test that builds a supervisor another way must attach the same table. One
-// that never starts a broker, because it asks for the binary that is not there,
-// is the only exception.
+// test that builds a supervisor another way must attach the same table. A
+// build whose supervisor goes to the blank identifier (`_, err := NewSupervisor`)
+// cannot be started, so it needs no table; that is judged by the shape of the
+// call and not by the name of the test around it.
 func TestEverySupervisorATestBuildsIsAttachedToAProcessTable(t *testing.T) {
-	allowed := map[string]bool{"TestNewSupervisorNamesMissingBinary": true}
 	paths, err := filepath.Glob("*_test.go")
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +100,7 @@ func TestEverySupervisorATestBuildsIsAttachedToAProcessTable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, name := range unattached(f, allowed) {
+		for _, name := range unattached(f) {
 			t.Errorf("%s: %s builds a Supervisor with NewSupervisor and never attaches a process table", path, name)
 		}
 	}
@@ -106,25 +111,29 @@ func TestUnattachedSeesEachWayToBuildOne(t *testing.T) {
 		src  string
 		want int
 	}{
-		"built and attached":       {"package p\nfunc TestA() { s, _ := NewSupervisor(); attach(t, s, nil) }\n", 0},
-		"built, never attached":    {"package p\nfunc TestA() { s, _ := NewSupervisor(); _ = s }\n", 1},
-		"attached in a closure":    {"package p\nfunc TestA() { s, _ := NewSupervisor(); func() { attach(t, s, nil) }() }\n", 0},
-		"not built":                {"package p\nfunc TestA() { _ = Other() }\n", 0},
-		"the allowed exception":    {"package p\nfunc TestNewSupervisorNamesMissingBinary() { _, _ = NewSupervisor() }\n", 0},
-		"two builds, one attach":   {"package p\nfunc TestA() { s1, _ := NewSupervisor(); s2, _ := NewSupervisor(); attach(t, s1, nil); _ = s2 }\n", 1},
-		"two builds, two attaches": {"package p\nfunc TestA() { s1, _ := NewSupervisor(); s2, _ := NewSupervisor(); attach(t, s1, nil); attach(t, s2, nil) }\n", 0},
-		"attached to another one":  {"package p\nfunc TestA() { s1, _ := NewSupervisor(); other := 1; attach(t, other, nil); _ = s1 }\n", 1},
-		"one variable built twice": {"package p\nfunc TestA() { s, _ := NewSupervisor(); s, _ = NewSupervisor(); attach(t, s, nil) }\n", 1},
-		"built into a field":       {"package p\nfunc TestA() { x.s, _ = NewSupervisor(); attach(t, x.s, nil) }\n", 0},
-		"built, passed on":         {"package p\nfunc TestA() { use(NewSupervisor()) }\n", 1},
-		"two functions, one bad":   {"package p\nfunc TestA() { _, _ = NewSupervisor() }\nfunc TestB() { s, _ := NewSupervisor(); attach(t, s, nil) }\n", 1},
+		"built and attached":            {"package p\nfunc TestA() { s, _ := NewSupervisor(); attach(t, s, nil) }\n", 0},
+		"built, never attached":         {"package p\nfunc TestA() { s, _ := NewSupervisor(); _ = s }\n", 1},
+		"attached in a closure":         {"package p\nfunc TestA() { s, _ := NewSupervisor(); func() { attach(t, s, nil) }() }\n", 0},
+		"not built":                     {"package p\nfunc TestA() { _ = Other() }\n", 0},
+		"a discarded build":             {"package p\nfunc TestA() { _, err := NewSupervisor(); _ = err }\n", 0},
+		"a discarded build, reassigned": {"package p\nfunc TestA() { _, err = NewSupervisor(); _ = err }\n", 0},
+		"discarded beside a live one":   {"package p\nfunc TestRefusesSomething() { _, err := NewSupervisor(); _ = err; s, _ := NewSupervisor(); _ = s }\n", 1},
+		"discarded beside a bare one":   {"package p\nfunc TestA() { _, err := NewSupervisor(); _ = err; use(NewSupervisor()) }\n", 1},
+		"discarded beside an attached":  {"package p\nfunc TestA() { _, err := NewSupervisor(); _ = err; s, _ := NewSupervisor(); attach(t, s, nil) }\n", 0},
+		"two builds, one attach":        {"package p\nfunc TestA() { s1, _ := NewSupervisor(); s2, _ := NewSupervisor(); attach(t, s1, nil); _ = s2 }\n", 1},
+		"two builds, two attaches":      {"package p\nfunc TestA() { s1, _ := NewSupervisor(); s2, _ := NewSupervisor(); attach(t, s1, nil); attach(t, s2, nil) }\n", 0},
+		"attached to another one":       {"package p\nfunc TestA() { s1, _ := NewSupervisor(); other := 1; attach(t, other, nil); _ = s1 }\n", 1},
+		"one variable built twice":      {"package p\nfunc TestA() { s, _ := NewSupervisor(); s, _ = NewSupervisor(); attach(t, s, nil) }\n", 1},
+		"built into a field":            {"package p\nfunc TestA() { x.s, _ = NewSupervisor(); attach(t, x.s, nil) }\n", 0},
+		"built, passed on":              {"package p\nfunc TestA() { use(NewSupervisor()) }\n", 1},
+		"two functions, one bad":        {"package p\nfunc TestA() { use(NewSupervisor()) }\nfunc TestB() { s, _ := NewSupervisor(); attach(t, s, nil) }\n", 1},
 	} {
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, "x_test.go", tc.src, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if got := unattached(f, map[string]bool{"TestNewSupervisorNamesMissingBinary": true}); len(got) != tc.want {
+		if got := unattached(f); len(got) != tc.want {
 			t.Errorf("%s: %v, want %d", name, got, tc.want)
 		}
 	}

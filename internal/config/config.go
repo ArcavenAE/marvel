@@ -625,6 +625,13 @@ type Bus struct {
 	// broker's own default, so a cluster that sets neither is unchanged.
 	MaxFileStore   string `yaml:"max_file_store,omitempty"`
 	MaxMemoryStore string `yaml:"max_memory_store,omitempty"`
+	// Binary is the absolute path of the nats-server the supervisor execs
+	// (aae-orc-n5a4y). Empty keeps today's lookup of nats-server on PATH. It
+	// is never relative, never ~-relative and never a version-manager shim
+	// directory: that binary receives the leaf seed in its environment, and a
+	// shim's answer depends on the caller's working directory. Only a managed
+	// bus runs a binary marvel chooses.
+	Binary string `yaml:"binary,omitempty"`
 	// Seat is the human director seat's home subtree. The seat is not a
 	// marvel session, so marvel cannot know it; declaring it renders a
 	// broker user named director confined to that subtree (the R-95 seat
@@ -855,6 +862,16 @@ func ValidateBus(cluster string, b *Bus) error {
 			errs = append(errs, fmt.Errorf("%w: cluster %q: url: %v", ErrInvalidBus, cluster, err))
 		}
 	}
+	if b.Binary != "" {
+		switch {
+		case !managed:
+			errs = append(errs, fmt.Errorf("%w: cluster %q: binary %q names the nats-server marvel execs, which only a managed bus runs; this bus is %s", ErrInvalidBus, cluster, b.Binary, mode))
+		default:
+			if err := CheckBusBinary(b.Binary); err != nil {
+				errs = append(errs, fmt.Errorf("%w: cluster %q: binary %q %v", ErrInvalidBus, cluster, b.Binary, err))
+			}
+		}
+	}
 	for key, val := range map[string]string{"max_file_store": b.MaxFileStore, "max_memory_store": b.MaxMemoryStore} {
 		if val == "" {
 			continue
@@ -942,6 +959,8 @@ type ResolvedBus struct {
 	Listen   string
 	URL      string
 	StoreDir string
+	// Binary is the configured nats-server path, or empty for the PATH lookup.
+	Binary string
 	// MaxFileStore and MaxMemoryStore are the parsed caps in bytes; zero is
 	// no cap rendered.
 	MaxFileStore   int64
@@ -975,6 +994,7 @@ func (b *Bus) Resolve(stateDir string) ResolvedBus {
 	}
 	// Resolve does not validate: a value ValidateBus refuses resolves to no
 	// cap rather than to a guess.
+	r.Binary = b.Binary
 	r.MaxFileStore, _ = ParseStoreSize(b.MaxFileStore)
 	r.MaxMemoryStore, _ = ParseStoreSize(b.MaxMemoryStore)
 	if r.Class == "" {
@@ -1315,4 +1335,23 @@ func (d Display) CheckAccountNames() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// CheckBusBinary reports why path is not an acceptable bus.binary: it must be
+// an absolute path, not ~-relative, and no directory in it may be a shim
+// directory ("shims"), because a shim's answer depends on the working
+// directory of the caller (aae-orc-n5a4y).
+func CheckBusBinary(path string) error {
+	if path == "" {
+		return errors.New("is empty")
+	}
+	if !filepath.IsAbs(path) {
+		return errors.New("must be an absolute path, not a bare name, a relative path or a ~-relative one")
+	}
+	for _, part := range strings.Split(filepath.Clean(path), string(filepath.Separator)) {
+		if part == "shims" {
+			return errors.New("is inside a shim directory, whose answer depends on the caller's working directory; name the real binary")
+		}
+	}
+	return nil
 }

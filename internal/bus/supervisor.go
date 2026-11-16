@@ -22,6 +22,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/backoff"
 	"github.com/arcavenae/marvel/internal/childproof"
+	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/pidfile"
 	"github.com/arcavenae/marvel/internal/service"
@@ -274,9 +275,9 @@ func computeBackoff(n int) time.Duration { return backoff.Restart.Wait(n) }
 // for the manager's broker. An absent binary is an error the daemon should
 // refuse to start over, naming the runtime dependency, the tmux posture.
 func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Supervisor, error) {
-	bin, err := exec.LookPath("nats-server")
+	bin, err := resolveBroker(mgr)
 	if err != nil {
-		return nil, fmt.Errorf("nats-server not found on PATH; cluster %s declares a managed bus, install it (mise or brew) or set bus.managed: false: %w", mgr.Domain(), err)
+		return nil, err
 	}
 	class, err := service.Class(service.ClassMessageBus)
 	if err != nil {
@@ -300,6 +301,31 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 		grace:              stopGrace,
 		pidState:           pidStateNone,
 	}, nil
+}
+
+// resolveBroker returns the nats-server to exec. A configured bus.binary is
+// used as written and never falls back to PATH: that binary receives the leaf
+// seed, so a silent substitute would be a different choice of custody. Unset,
+// it is the first nats-server on PATH, as before (aae-orc-n5a4y).
+func resolveBroker(mgr *Manager) (string, error) {
+	if configured := mgr.bus.Binary; configured != "" {
+		if err := config.CheckBusBinary(configured); err != nil {
+			return "", fmt.Errorf("bus.binary %q %v", configured, err)
+		}
+		fi, err := os.Stat(configured)
+		if err != nil {
+			return "", fmt.Errorf("bus.binary %q: %w; fix the path, or unset bus.binary to look nats-server up on PATH", configured, err)
+		}
+		if !fi.Mode().IsRegular() || fi.Mode().Perm()&0o111 == 0 {
+			return "", fmt.Errorf("bus.binary %q is not an executable file", configured)
+		}
+		return configured, nil
+	}
+	bin, err := exec.LookPath("nats-server")
+	if err != nil {
+		return "", fmt.Errorf("nats-server not found on PATH; cluster %s declares a managed bus, install it (mise or brew) or set bus.managed: false: %w", mgr.Domain(), err)
+	}
+	return bin, nil
 }
 
 // The values of the pidfile line in `bus status`.
