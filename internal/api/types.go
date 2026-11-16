@@ -655,6 +655,10 @@ type SessionContext struct {
 	// section 3).
 	SpendOut          *int
 	SpendPromptTokens *int
+	// SpendPartial marks SpendOut as a lower bound: the transcript reader began
+	// at the file's end, or the file shrank or changed inode, so the sum may
+	// miss earlier output. Always emitted, false included (I-477 slice 1).
+	SpendPartial bool `json:"spend_partial"`
 	// OutRate is the session's decaying output-token rate in tokens per
 	// second, as of ObservedAt. It is a level that ages, so it carries its
 	// own as-of stamp: the value shown later is the value decayed from
@@ -1514,7 +1518,9 @@ const HarnessStateParked = "parked"
 type SessionSpend struct {
 	Out          *int
 	PromptTokens *int
-	OutRate      asof.Cell[float64]
+	// Partial is SessionContext.SpendPartial.
+	Partial bool
+	OutRate asof.Cell[float64]
 }
 
 // The two coverage states say the watchdog could not have matched this seat

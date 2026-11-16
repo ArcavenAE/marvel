@@ -63,11 +63,12 @@ var sessionColumnRegistry = []sessionColumn{
 	{name: "login", header: "LOGIN", pick: func(r sessionRow) string { return r.login }},
 	{name: "cluster", header: "CLUSTER", pick: func(r sessionRow) string { return r.cluster }},
 	{name: "key", header: "KEY", pick: func(r sessionRow) string { return r.key }},
+	{name: "cost", header: "COST", pick: func(r sessionRow) string { return r.cost }},
 }
 
 // optInColumns are registered and selectable but not in the default table.
 // The width fit's wide tier is where they show by default.
-var optInColumns = map[string]bool{"composer": true, "pane": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-turn": true, "spec": true, "account": true, "5h": true, "7d": true, "5h-reset": true, "7d-reset": true, "read": true, "backend": true, "cred": true, "home": true, "login": true, "cluster": true, "key": true, "cpu": true, "rss": true, "desk": true, "runtime": true}
+var optInColumns = map[string]bool{"composer": true, "pane": true, "workdir": true, "tout": true, "rate": true, "prompt": true, "last-turn": true, "spec": true, "account": true, "5h": true, "7d": true, "5h-reset": true, "7d-reset": true, "read": true, "backend": true, "cred": true, "home": true, "login": true, "cluster": true, "key": true, "cost": true, "cpu": true, "rss": true, "desk": true, "runtime": true}
 
 // wantsComposer reports whether the COMPOSER or PANE column is selected. Only
 // then does the listing ask the daemon to read each seat's pane; both are

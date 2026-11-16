@@ -3492,6 +3492,7 @@ type sessionRow struct {
 	// The split account columns (I-450).
 	account, fiveH, sevenD, fiveReset, sevenReset, read, backend, cred, home, login, cluster string
 	lastTurn                                                                                 string
+	cost                                                                                     string
 	composer                                                                                 string
 	pane                                                                                     string
 }
