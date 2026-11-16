@@ -28,8 +28,9 @@ func TestBaseEnvCarriesTheRunEnvOfASessionIntoARole(t *testing.T) {
 }
 
 // A value passed with marvel run --env wins over the role's value for the same
-// key: the run is the operator's later, narrower word. A role value is skipped
-// only when the session carries the very same value, so it is not applied twice.
+// key: the run is the operator's later, narrower word. The equal-value check
+// below only pins that the value still reaches the process; it does not pin that
+// an equal value is applied once.
 func TestBaseEnvLetsARunEnvOverrideTheRolesValueForTheSameKey(t *testing.T) {
 	t.Parallel()
 
