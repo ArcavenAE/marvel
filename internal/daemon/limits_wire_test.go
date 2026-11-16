@@ -70,17 +70,22 @@ func TestStampLimitReadingFreshnessEdgeIsFifteenMinutes(t *testing.T) {
 	}
 }
 
-// A window the harness reported without a percent must not read as 0%.
-func TestStampLimitReadingKeepsAWindowWithNoPercentAsNil(t *testing.T) {
-	d, key := limitDaemon(t, api.AccountWindow{Name: "seven_day", ResetsAt: acctT0.Add(time.Hour)})
+// A window the harness reported without a percent is dropped when the reading
+// is recorded (AccountReadings.Record), so it never reaches the view as a 0%; the
+// windows that did report a percent are carried, and a reading with none is no
+// reading at all.
+func TestStampLimitReadingCarriesOnlyWindowsThatReportedAPercent(t *testing.T) {
+	d, key := limitDaemon(t,
+		api.AccountWindow{Name: "five_hour", ResetsAt: acctT0.Add(time.Hour)},
+		api.AccountWindow{Name: "seven_day", UsedPercent: acctPct(12), ResetsAt: acctT0.Add(50 * time.Hour)})
 
 	got := stamped(t, d, key, acctT0.Add(time.Minute))
 
-	if len(got.LimitWindows) != 1 {
-		t.Fatalf("LimitWindows has %d entries, want 1", len(got.LimitWindows))
+	if len(got.LimitWindows) != 1 || got.LimitWindows[0].Name != "seven_day" {
+		t.Fatalf("windows = %+v, want only seven_day, the one that reported a percent", got.LimitWindows)
 	}
-	if got.LimitWindows[0].UsedPercent != nil {
-		t.Errorf("UsedPercent = %v, want nil, not zero", *got.LimitWindows[0].UsedPercent)
+	if got.LimitWindows[0].UsedPercent == nil || *got.LimitWindows[0].UsedPercent != 12 {
+		t.Errorf("seven_day percent = %v, want 12", got.LimitWindows[0].UsedPercent)
 	}
 }
 
