@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"fmt"
 	"log"
 	"path/filepath"
 	"regexp"
@@ -239,6 +240,18 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		}
 	}
 
+	// A scheduled run has no human at a prompt, so the launch is held to what
+	// apply holds the role to, on the argv built here, which carries what this
+	// function appended (the permission mode among it). A Prepare error would be
+	// answered by the manager with the raw command, so the refusal is a stub that
+	// exits 78 (aae-orc-iyun3 part a).
+	if ctx.Role != nil && ctx.Role.Schedule != nil {
+		if reason := api.ScheduledLaunchRefusal(binary, args); reason != "" {
+			log.Printf("session %s: scheduled launch refused: %s", ctx.Session.Key(), reason)
+			return &LaunchResult{Command: scheduledRefusalStub(reason), Env: baseEnv(ctx)}, nil
+		}
+	}
+
 	result := &LaunchResult{
 		Command:                buildCommand(binary, args),
 		Env:                    baseEnv(ctx),
@@ -262,6 +275,13 @@ func (c *Claude) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		}
 	}
 	return result, nil
+}
+
+// scheduledRefusalStub is the launch of a refused scheduled run: it prints the
+// reason and exits 78, a configuration error that is not relaunched (ADR-010).
+func scheduledRefusalStub(reason string) string {
+	script := fmt.Sprintf("printf 'marvel: scheduled launch refused: %%s\\n' %s >&2; exit 78", shellQuote(reason))
+	return "/bin/sh -c " + shellQuote(script)
 }
 
 // firstPromptEnv carries an interactive seat's first prompt to a wrapper that
