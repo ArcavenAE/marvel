@@ -366,3 +366,18 @@ func TestReaderReadsOnlyRunningClaudeSeats(t *testing.T) {
 		}
 	}
 }
+
+// The architect's ruling for a repeated id: the largest figure seen, only the
+// growth is added, and the per-id maxima outlive an offset reset.
+func TestTranscriptOneIdWrittenThreeTimesAddsItsLargest(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(msg("m1", 10), msg("m1", 40), msg("m1", 30))
+	r.u.Once()
+	r.want(40, false)
+	// The file is replaced by the same records: nothing new, and the sum is
+	// partial because the reader lost its place.
+	r.replace(msg("m1", 10), msg("m1", 40), msg("m1", 30))
+	r.u.Once()
+	r.want(40, true)
+}
