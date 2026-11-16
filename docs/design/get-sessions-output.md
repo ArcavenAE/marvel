@@ -119,9 +119,53 @@ pinned the ones they care about:
   come only by name;
 - on a narrow terminal only its columns are cut, the ones outside
   `fitPriority` first and then the others from the tail of `fitPriority`; named
-  columns are never cut, nor are the lead columns a view adds (the fan-out KEY
-  column), and the hidden-columns line counts the cut ones. A list of `rest`
-  alone is cut to one column at the narrowest.
+  columns are never cut, nor is the KEY column a set read adds when no list is
+  given (below), and the hidden-columns line counts the cut ones. A list of
+  `rest` alone is cut to one column at the narrowest.
+
+**Account and service columns, split (I-450).** No composite ACCT or SERVICE
+cell remains. Twelve columns are named, each one fact, and each selectable,
+movable and droppable like any other column:
+
+| Name | Header | Content |
+|---|---|---|
+| `account` | ACCOUNT | the account id only (six hex), or its mapped name |
+| `5h` | 5H% | the five-hour window's used percent |
+| `7d` | 7D% | the seven-day window's used percent |
+| `5h-reset` | 5H-RESET | the five-hour reset, as an offset from now |
+| `7d-reset` | 7D-RESET | the seven-day reset, as an offset from now |
+| `read` | READ | the age of the reading |
+| `backend` | BACKEND | the resolved backend; `!intent` on a mismatch stays here |
+| `cred` | CRED | the credential source, bearer variable names only |
+| `home` | HOME | the account home, short form |
+| `login` | LOGIN | the declared `account_label` |
+| `cluster` | CLUSTER | the cluster the row came from |
+| `key` | KEY | `<cluster>:<workspace>/<name>` |
+
+There is no HARNESS column, because RUNTIME already prints the harness. There
+is no "fullest window" column and no window-start column: the harness reports
+only the used percent and the reset time per window, so a start would be a
+guess.
+
+`acct` and `service` stay as named sets that expand in place, as `wide` does,
+so a saved `display.session_columns` keeps working: `acct` expands to
+`account,5h,7d,5h-reset,7d-reset,read`, and `service` to
+`runtime,backend,cred,home,login`. Every new column is opt-in, so the default
+table is unchanged. `wide` gains `account`, `7d`, `7d-reset` and `read`, so a
+stale figure's age is in view wherever the figure is. `rest` picks up every new
+column under the rules above.
+
+**KEY.** `key` is a registered column, and the list alone decides:
+
+- with no `--columns` and no preference, a multi-cluster read still adds KEY
+  first, so the default set view stays unambiguous;
+- once a list is given, naming `key` places it and leaving it out drops it.
+
+This partly reverses the marvel#816 vote that the fit never drops KEY, on the
+operator's ruling in section 9. Before it, `--columns key` was refused as
+unknown and a set read forced KEY in as a lead the user could not move or drop.
+The cost the operator accepted: a list without KEY can show two rows that look
+the same.
 
 ### 4.2 Width
 
@@ -171,13 +215,33 @@ TEAM stays reachable through `--columns` and `describe`.
   layout counts cached input inside input, while Claude's adds it
   separately. PROMPT (`PromptTokens`, normalized for layout) goes in
   `wide` and `describe` instead.
-- **Account budget, reset and credit stay in `get budgets`.** At most there
-  is an opt-in ACCT key column. It shows the account's `LimitReading` as a
-  key and a reading. It is never summed, averaged or thresholded across
-  rows.
-  The key is a six character fingerprint of the account key; the reading is
-  the fullest window while fresh, the word `stale` once old, and `-` when none
-  was read. Each row prints its own account's cell.
+- **Account budget, reset and credit stay in `get budgets`.** The opt-in
+  account columns of section 4.1 (`account`, `5h`, `7d`, `5h-reset`,
+  `7d-reset`, `read`) show each row's own account reading. They are never
+  summed, averaged or thresholded across rows, and each row prints its own
+  account's cells.
+  - ACCOUNT is the six character fingerprint of the account key, or the mapped
+    name. A default-home seat on each cluster hashes to its own id, because the
+    cluster is part of the hash and marvel never reads a credential (ADR-009).
+  - A figure keeps its number when its reading is stale and takes a trailing
+    `?`, as in `44%?`; READ gives the age. A reading is fresh until 15 minutes
+    old and stale from 15 minutes. `-` means no reading, and it never appears
+    in place of a stale figure.
+  - A reset prints as an offset from now in its two largest units of d, h and
+    m, with no seconds: `+2d3h`, `+47m`. One already past prints `now`.
+  - `-o json` carries the numeric percent, a separate stale boolean and the
+    reading time. The `?` never appears in JSON, and the change is additive
+    only.
+  - A client config map gives display names. Its key is the cluster-free id
+    of a plain read, optionally qualified as `cluster/id`; with no entry the
+    declared `account_label` is used, then the hex. The map holds display text
+    only, never credential material, and loading refuses a token-shaped value.
+  - The per-window figures need a daemon change, which is additive: view-only
+    fields `LimitWindows` and `LimitReadAt` on `api.Session`, stamped in
+    `stampLimitReading` (`internal/daemon/limits.go`). Against an old daemon the
+    new columns print `-`, and a new client never parses `limit_reading_text`.
+  - No start column exists: the figures shown are the percent used and the
+    reset offset, which is all the harness reports.
 
 ### 4.4 Activity
 
@@ -402,7 +466,7 @@ first. Three notes from the review are applied:
 | P11 | LAST-ACTIVE, with the source mark | `TestLastActiveFromContextAt`, `TestLastActiveDashWhenUnmeasured`, `TestLastActiveMarksStatuslineSource`, `TestFitCountsSourceMark` | P1, P4a, P5, P6 |
 | P12a | Per-session tick ring | `TestTickRingHoldsFifteenMinutes` | P10 |
 | P12b | ACTIVE% | `TestActivePctFromTickRing`, `TestActivePctDashBeforeWindowFills`, `TestActivePctDashAfterDaemonRestart`, `TestActivePctDashWithoutActivityChannel`, `TestActivePctUsesRoleTimeoutWhenSet`, `TestActivePctUsesDefaultWindowWhenUnset`, `TestActivePctStatuslineAndStreamRenderDifferently` (same 80%, two sources, two cells), `TestSourceLegendOnTTYWhenAMarkIsShown`, `TestSourceLegendAbsentWhenNoMarkOrPiped`, `TestDescribeNamesActivitySource`, `TestHelpDocumentsSourceMark`, `TestJSONKeepsSourceSeparateFromMark` | P1, P4a, P5, P6, P12a |
-| P13 | ACCT key column, opt-in | `TestAcctColumnRepeatsNeverAggregates`, `TestAcctStaleReadingPrintsWordNotNumber` | P5 |
+| P13 | Account and service columns, split (I-450), opt-in | `TestAcctColumnRepeatsNeverAggregates`, `TestStaleFigureKeepsNumberWithMark`, `TestAcctSetExpandsToSplitColumns`, `TestKeyColumnSelectableAndMovable`, `TestAcctKeyDiffersAcrossClusterForEmptyHome` | P5 |
 
 Seven tickets have no dependencies: P1, P2a, P2b, P3a, P5, P7 and P8. The WORKDIR
 column (aae-orc-vdcwm) becomes selectable through P5.
@@ -437,6 +501,24 @@ These rulings apply only when neither `--socket` nor `MARVEL_SOCKET` is set. Eit
   With `--cluster`, an unreadable config is refused, because the name
   cannot be looked up.
 
+### Later rulings on the account split (I-450)
+
+The operator ruled on 2026-11-14, via director, on four Desk cards. Three
+followed the panel's recommendation (i450c1113-1, -2 and -4). The `wide` ruling
+(i450c1113-3) took option 2, against the recommendation of option 1. The four
+rulings, in the operator's words:
+
+- KEY (i450c1113-1): "The list alone decides. KEY becomes a normal column. With no list, a
+  multi-cluster read still adds KEY first. With a list, naming key places it
+  and leaving it out drops it." This partly reverses the marvel#816 vote that
+  the fit never drops KEY.
+- Window start (i450c1113-2): "No start column. Show only the figures the harness reports:
+  percent used and the reset offset."
+- `wide` (i450c1113-3, option 2): "As voted, plus READ in wide. wide gains account,7d,7d-reset,read, so a
+  stale figure's age is in view wherever the figure is."
+- Order of work (i450c1113-4): "Doc first, in its own small docs pull request, then the TDD
+  build against it."
+
 ## 10. Notes from the build
 
 Calls made while P5 to P12 were built, recorded here so the design matches
@@ -453,8 +535,9 @@ header in lower case with `%` dropped. That gives
 `rate`, `last-active`, `active` and `prompt` (`cmd/marvel/columns.go`). The
 asymmetry is deliberate: `context` and `generation` keep the sort keys the
 watch view already uses, and do not become `ctx` and `gen`. Names for
-columns not built yet follow the same rule: `age`, and `acct` for P13's
-opt-in ACCT column.
+columns not built yet follow the same rule: `age`, and the twelve account and
+service names of section 4.1 for P13, with `acct` and `service` kept as named
+sets.
 
 ### 10.2 The default table, explicitly
 
