@@ -261,3 +261,108 @@ func TestTranscriptInodeChangeKeepsTheTotal(t *testing.T) {
 	r.u.Once()
 	r.want(100, true)
 }
+
+// A file truncated in place keeps its inode and shrinks: the offset resets, the
+// total and the seen ids stay, and the sum is partial.
+func TestTranscriptInPlaceTruncationResetsTheOffset(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(msg("m1", 100), msg("m2", 60), msg("pad", 1), msg("pad2", 1))
+	r.u.Once()
+	r.want(162, false)
+	if err := os.Truncate(r.path(), 10); err != nil {
+		t.Fatal(err)
+	}
+	r.lines(msg("m9", 40))
+	r.u.Once()
+	s := r.session()
+	if s.SpendOut == nil || *s.SpendOut < 162 {
+		t.Fatalf("SpendOut = %v after an in-place truncation, want at least 162", s.SpendOut)
+	}
+	r.want(202, true)
+}
+
+// Lines the reader cannot count are skipped, not fatal and not counted: text
+// that is not JSON, user records, an assistant record with no message id or no
+// usage, and an output count that is not a number.
+func TestTranscriptIgnoresRecordsItCannotCount(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(
+		"not json at all",
+		`{"type":"user","uuid":"u","message":{"role":"user","content":"hello"}}`,
+		`{"type":"assistant","message":{"role":"assistant","usage":{"output_tokens":500}}}`,
+		`{"type":"assistant","message":{"id":"noUsage","role":"assistant","content":[]}}`,
+		`{"type":"assistant","message":{"id":"badNum","role":"assistant","usage":{"output_tokens":"many"}}}`,
+		`{"type":"assistant","message":{"id":"neg","role":"assistant","usage":{"output_tokens":-7}}}`,
+		msg("ok", 12),
+	)
+	r.u.Once()
+	r.want(12, false)
+}
+
+// Records of one message id can carry a growing output count as the reply is
+// streamed. The id counts once, at the largest figure seen, and a smaller later
+// figure never lowers it.
+func TestTranscriptLaterLargerUsageForOneIdCountsTheDifference(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(msg("m1", 10))
+	r.u.Once()
+	r.want(10, false)
+	r.lines(msg("m1", 25))
+	r.u.Once()
+	r.want(25, false)
+	r.lines(msg("m1", 5), msg("m1", 25))
+	r.u.Once()
+	r.want(25, false)
+}
+
+// Within one daemon life a partial sum stays partial, however much exact
+// output follows: the earlier output was never counted.
+func TestPartialFlagDoesNotClearWithinADaemonLife(t *testing.T) {
+	r := newUsageRig(t)
+	r.lines(msg("old", 900))
+	r.u.Once()
+	r.want(0, true)
+	for i := range 5 {
+		r.lines(msg(fmt.Sprintf("n%d", i), 10))
+		r.u.Once()
+	}
+	r.want(50, true)
+}
+
+// The reader owns output tokens only. It leaves the prompt sum alone.
+func TestReaderLeavesPromptTokensAlone(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(msg("m1", 20))
+	r.u.Once()
+	r.want(20, false)
+	if got := r.session().SpendPromptTokens; got != nil {
+		t.Errorf("SpendPromptTokens = %d, want nil: the reader does not write prompt tokens", *got)
+	}
+}
+
+// Only a running claude seat is read.
+func TestReaderReadsOnlyRunningClaudeSeats(t *testing.T) {
+	for name, mutate := range map[string]func(*api.Session){
+		"codex runtime": func(s *api.Session) { s.Runtime.Name = "codex" },
+		"succeeded":     func(s *api.Session) { s.State = api.SessionSucceeded },
+		"failed":        func(s *api.Session) { s.State = api.SessionFailed },
+	} {
+		r := newUsageRig(t)
+		if err := r.store.UpdateSession(r.key, func(s *api.Session) error { mutate(s); return nil }); err != nil {
+			t.Fatal(err)
+		}
+		r.u.Once()
+		r.lines(msg("m1", 20))
+		r.u.Once()
+		if r.reads != 0 {
+			t.Errorf("%s: the transcript was opened %d times", name, r.reads)
+		}
+		if got := r.session().SpendOut; got != nil {
+			t.Errorf("%s: SpendOut = %d, want nil", name, *got)
+		}
+	}
+}
