@@ -568,7 +568,7 @@ marvel get <sessions|teams|workspaces|endpoints|policies>   # list resources (-w
 marvel describe session <id>                         # detailed session info
 marvel delete <session|team|workspace> <name>        # delete a resource (endpoints and policies are not deletable)
 marvel scale <workspace/team> --role <r> --replicas N  # scale a role within a team
-marvel shift <workspace/team> [--role <r>]             # rolling shift (replace sessions with fresh ones)
+marvel shift <workspace/team> [--role <r>] [--no-handoff]   # rolling shift (replace sessions with fresh ones); a role that declares a handoff is asked for it first
 marvel run <command> [args...] --role <r>             # run a one-off agent session
 marvel kill <session-key>                            # kill a session
 marvel reap                                          # list marvel tmux state the daemon does not own

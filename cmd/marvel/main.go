@@ -2083,14 +2083,25 @@ func killCmd() *cobra.Command {
 
 func shiftCmd() *cobra.Command {
 	var role string
+	var noHandoff bool
 	cmd := &cobra.Command{
 		Use:   "shift <workspace/team>",
 		Short: "Initiate a rolling shift for a team",
-		Args:  cobra.ExactArgs(1),
+		Long: `Initiate a rolling shift for a team.
+
+A role that declares a handoff (shift.handoff and shift.handoff_marker) is asked
+for it first: the seat is sent a notice, marvel waits up to handoff_window for
+the marker, and the shift starts when it arrives. If the window ends without it,
+the seat keeps running and marvel emits team.shift-handoff-missing; run the shift
+again with --no-handoff to proceed without one. A shift of the whole team that
+covers such a role is refused until you name the role with --role or pass
+--no-handoff. A role that declares no handoff shifts at once.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params, _ := json.Marshal(map[string]any{
-				"team_key": args[0],
-				"role":     role,
+				"team_key":   args[0],
+				"role":       role,
+				"no_handoff": noHandoff,
 			})
 			resp, err := send(daemonrpc.Request{
 				Method: "shift",
@@ -2102,6 +2113,15 @@ func shiftCmd() *cobra.Command {
 			if resp.Error != "" {
 				return fmt.Errorf("%s", resp.Error)
 			}
+			var out struct {
+				Status string `json:"status"`
+			}
+			_ = json.Unmarshal(resp.Result, &out)
+			if out.Status == "handoff_requested" {
+				fmt.Printf("handoff requested from team/%s role/%s; the shift starts when the seat writes it (marvel shift %s --role %s --no-handoff shifts without one)%s\n",
+					args[0], role, args[0], role, actedOn())
+				return nil
+			}
 			if role != "" {
 				fmt.Printf("shift initiated for team/%s role/%s%s\n", args[0], role, actedOn())
 			} else {
@@ -2111,6 +2131,7 @@ func shiftCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "", "shift only this role (default: all roles)")
+	cmd.Flags().BoolVar(&noHandoff, "no-handoff", false, "shift without asking a role that declares a handoff for it")
 	return cmd
 }
 
