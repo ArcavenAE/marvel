@@ -501,10 +501,7 @@ func TestPlanLaunchHoldsWhenThePolicyCannotBeProjected(t *testing.T) {
 	if err := m.Apply(mgr.store); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(mgr.ProjectionDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(mgr.ProjectionDir, 0o700) })
+	blockProjectionTarget(t, mgr, holdSession().Key())
 
 	plan := mgr.planLaunch(holdSession())
 	if plan.hold == nil {
@@ -534,10 +531,7 @@ func TestPlanLaunchLaunchesWhenOnlyTheContextFeedCannotBeProjected(t *testing.T)
 	if err := m.Apply(mgr.store); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(mgr.ProjectionDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(mgr.ProjectionDir, 0o700) })
+	blockProjectionTarget(t, mgr, holdSession().Key())
 
 	sess := holdSession()
 	sess.Role = "nopolicy"
@@ -585,10 +579,7 @@ name = "squad"
 	if err := m.Apply(mgr.store); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(mgr.ProjectionDir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(mgr.ProjectionDir, 0o700) })
+	blockProjectionTarget(t, mgr, holdSession().Key())
 
 	sess := holdSession()
 	sess.Runtime.ContextFeed = api.ContextFeedStatusline
@@ -599,5 +590,17 @@ name = "squad"
 	}
 	if err := mgr.projectForLaunch(lctx, mgr.adapters.Resolve("claude")); err != nil {
 		t.Errorf("an empty policy held the spawn: %v", err)
+	}
+}
+
+// blockProjectionTarget makes the projection file for a session impossible to
+// write by putting a non-empty directory at its path, so the write fails and the
+// projection directory itself stays a private directory of this user (a 0500
+// directory is refused by the private-directory check before any write).
+func blockProjectionTarget(t *testing.T, mgr *Manager, key string) {
+	t.Helper()
+	target := filepath.Join(mgr.ProjectionDir, strings.ReplaceAll(key, "/", "-")+".settings.json")
+	if err := os.MkdirAll(filepath.Join(target, "blocker"), 0o700); err != nil {
+		t.Fatal(err)
 	}
 }

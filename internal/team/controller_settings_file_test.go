@@ -30,6 +30,11 @@ func settingsFileRig(t *testing.T, ws, path string, runtime api.Runtime) (*api.S
 	sessMgr.Events = ring
 	ctrl.Events = ring
 	projDir := t.TempDir()
+	// The projection directory must be a private directory of this user before
+	// anything is written in it (aae-orc-bc107); t.TempDir is 0777 less the umask.
+	if err := os.Chmod(projDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	sessMgr.ProjectionDir = projDir
 
 	createTeamFixture(t, store, ws, "squad", []api.Role{

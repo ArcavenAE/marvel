@@ -29,7 +29,10 @@ const (
 	NoticeContextPressure = "context-pressure"
 	// NoticeRetire is a retiring seat's handoff ask (docs/design/work-prune.md
 	// section 6.1).
-	NoticeRetire     = "retire"
+	NoticeRetire = "retire"
+	// NoticeManual is the handoff ask of a manual shift of a role that declares
+	// a handoff (marvel#1447).
+	NoticeManual     = "manual-shift"
 	NoticeViewNotice = "view-notice"
 )
 
