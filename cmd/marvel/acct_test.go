@@ -222,11 +222,8 @@ func TestAcctKeyPrefersARecordedHomeOverTheConfigDir(t *testing.T) {
 	}
 }
 
-// acctKeyOf is the key token of a session's ACCT cell.
-func acctKeyOf(s api.Session) string {
-	key, _, _ := strings.Cut(acctCell(s), " ")
-	return key
-}
+// acctKeyOf is the key an unmapped, unlabelled session's ACCOUNT cell prints.
+func acctKeyOf(s api.Session) string { return accountCell(s) }
 
 // A row with no cluster hashes as it did before the cluster was folded in. The
 // hex was captured on main at 76cd6950 for this session (svccol-4).
@@ -281,7 +278,7 @@ func TestAcctAllClustersWithOneClusterFolds(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
-	if strings.Contains(out, "613756") || !strings.Contains(out, "87% (seven_day)") {
+	if strings.Contains(out, "613756") {
 		t.Errorf("a one-cluster set read kept the cluster-free key:\n%s", out)
 	}
 }

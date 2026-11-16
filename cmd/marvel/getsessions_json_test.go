@@ -385,13 +385,13 @@ func TestGetSessionsOutputJSONOmitsEmptyServiceFields(t *testing.T) {
 // `get sessions` has no row filter, so the path that could change a cell is the
 // width fit, which trims and re-renders. A collision is counted over the whole
 // reply, so the fitted table prints the cells the plain one does (X4).
-func TestGetSessionsFitDoesNotChangeServiceCell(t *testing.T) {
+func TestGetSessionsFitDoesNotChangeTheHomeCell(t *testing.T) {
 	a := svcSession("a", "", api.BackendDefaultName, api.BackendCredentialAmbient, "/a/x", "")
 	b := svcSession("b", "", api.BackendDefaultName, api.BackendCredentialAmbient, "/b/x", "")
-	cols := columnsOrFatal(t, "name,service", nil)
+	cols := columnsOrFatal(t, "name,home", nil)
 	plain := renderSessionTableCols([]api.Session{a, b}, cols)
 	fitted := fitSessionTable([]api.Session{a, b}, cols, fitOptions{width: 200, explicit: true}).table
-	for _, want := range []string{"claude default ambient /a/x", "claude default ambient /b/x"} {
+	for _, want := range []string{"/a/x", "/b/x"} {
 		if !strings.Contains(plain, want) || !strings.Contains(fitted, want) {
 			t.Errorf("%q missing from the plain or the fitted table:\nplain:\n%s\nfitted:\n%s", want, plain, fitted)
 		}

@@ -441,16 +441,19 @@ func TestKeyColumnSurvivesNarrowWidth(t *testing.T) {
 	}
 }
 
-// Explicit --columns keep KEY in front.
+// A column list alone decides whether KEY prints (ruling i450c1113-1): a list
+// without key drops it, and naming key places it where the list puts it.
 func TestKeyColumnWithExplicitColumns(t *testing.T) {
 	a := startFake(t, fakeAnswers, []api.Session{row("w", "s1")})
 	b := startFake(t, fakeAnswers, []api.Session{row("w", "s2")})
 	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "b", Socket: b.sock})
 	_, stdout, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b", "--columns", "state")
-	lines := strings.Split(stdout, "\n")
-	f := strings.Fields(lines[0])
-	if len(f) < 2 || f[0] != "KEY" || f[1] != "STATE" {
-		t.Errorf("header = %q, want KEY then STATE", lines[0])
+	if f := strings.Fields(strings.Split(stdout, "\n")[0]); len(f) != 1 || f[0] != "STATE" {
+		t.Errorf("header = %q, want STATE alone: a list without key drops KEY", strings.Split(stdout, "\n")[0])
+	}
+	_, stdout, _ = runFanGet(t, "get", "sessions", "--cluster", "a,b", "--columns", "state,key")
+	if f := strings.Fields(strings.Split(stdout, "\n")[0]); len(f) != 2 || f[0] != "STATE" || f[1] != "KEY" {
+		t.Errorf("header = %q, want STATE then KEY as listed", strings.Split(stdout, "\n")[0])
 	}
 }
 
