@@ -332,3 +332,35 @@ func TestLoadCarriesBusSectionAndReportsBadBus(t *testing.T) {
 		t.Errorf("bus section not parsed intact: %+v", b)
 	}
 }
+
+// The account name map holds display text only; a value shaped like a
+// credential is refused at load, and the error never echoes it.
+func TestAccountNamesRefuseATokenShapedValue(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []string{
+		"sk-ant-api03-AbCdEf0123456789xyzAbCdEf",
+		"ghp_1234567890abcdefghijklmnopqrstuvwxyz",
+		"eyJhbGciOiJIUzI1NiJ9abcdef0123456789",
+		"AKIAABCDEFGHIJKLMNOP1234",
+	} {
+		cfg := &Config{Display: Display{AccountNames: map[string]string{"ab12cd": bad}}}
+		err := cfg.Validate()
+		if err == nil {
+			t.Errorf("a token-shaped value %q passed Validate", bad[:8])
+			continue
+		}
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("the error echoes the value: %v", err)
+		}
+	}
+}
+
+func TestAccountNamesAcceptPlainDisplayText(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{Display: Display{AccountNames: map[string]string{
+		"ab12cd": "work", "k2/ab12cd": "alt ultra", "0f9e8d": "Ultra-2",
+	}}}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("plain display names were refused: %v", err)
+	}
+}

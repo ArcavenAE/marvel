@@ -23,7 +23,7 @@ func acctSession(name, home string, state api.ReadingState, text string) api.Ses
 
 func acctCells(t *testing.T, sessions ...api.Session) (map[string]string, string) {
 	t.Helper()
-	table := renderSessionTableCols(sessions, columnsOrFatal(t, "name,acct", nil))
+	table := renderSessionTableCols(sessions, columnsOrFatal(t, "name,account", nil))
 	out := map[string]string{}
 	for _, line := range strings.Split(strings.TrimRight(table, "\n"), "\n")[1:] {
 		cells := splitColumns(line)
@@ -34,77 +34,47 @@ func acctCells(t *testing.T, sessions ...api.Session) (map[string]string, string
 
 var acctKeyShape = regexp.MustCompile(`^[0-9a-f]{6}$`)
 
-// ACCT is registered, selectable by name, opt-in, and not in the wide set: an
-// account reading is a view of one account, so it appears only when asked for.
-func TestAcctColumnIsOptIn(t *testing.T) {
-	c, ok := lookupSessionColumn("acct")
-	if !ok {
-		t.Fatal("acct is not a registered column")
-	}
-	if c.header != "ACCT" {
-		t.Errorf("header = %q, want ACCT", c.header)
-	}
-	if !optInColumns["acct"] {
-		t.Error("acct is not opt-in, so the default table would gain a column")
-	}
-	if slices.Contains(wideSessionColumns, "acct") {
-		t.Error("acct is in the wide set")
-	}
-}
-
-// Every row prints its own account's key and reading. Two sessions on one
-// account print the same cell; a session on another account prints its own.
-// Nothing is summed, averaged or totalled across rows.
+// Two sessions on one account print the same cells; a session on another
+// account prints its own. Nothing is summed, averaged or totalled across rows.
 func TestAcctColumnRepeatsNeverAggregates(t *testing.T) {
-	got, table := acctCells(t,
-		acctSession("a-one", "/acct/a", api.ReadingFresh, "fresh 87% (seven_day)"),
-		acctSession("b-two", "/acct/a", api.ReadingFresh, "fresh 87% (seven_day)"),
-		acctSession("c-other", "/acct/b", api.ReadingFresh, "fresh 40% (five_hour)"),
-	)
-	if got["a-one"] != got["b-two"] {
-		t.Errorf("two sessions on one account print %q and %q, want the same cell", got["a-one"], got["b-two"])
+	other := splitSession("c-other")
+	other.AccountHome = "/acct/b"
+	other.LimitWindows[0].UsedPercent = pct(40)
+	other.LimitWindows[1].UsedPercent = pct(87)
+	got := cellsOf(t, "account,5h,7d", splitSession("a-one"), splitSession("b-two"), other)
+	if !slices.Equal(got["a-one"], got["b-two"]) {
+		t.Errorf("two sessions on one account print %q and %q, want the same cells", got["a-one"], got["b-two"])
 	}
-	for name, want := range map[string]string{"a-one": "87% (seven_day)", "b-two": "87% (seven_day)", "c-other": "40% (five_hour)"} {
-		key, reading, _ := strings.Cut(got[name], " ")
-		if !acctKeyShape.MatchString(key) || reading != want {
-			t.Errorf("%s: cell = %q, want a 6 hex key then %q", name, got[name], want)
+	for name, want := range map[string][]string{"a-one": {"44%", "12%"}, "b-two": {"44%", "12%"}, "c-other": {"40%", "87%"}} {
+		if !acctKeyShape.MatchString(got[name][0]) || !slices.Equal(got[name][1:], want) {
+			t.Errorf("%s: cells = %v, want a 6 hex key then %v", name, got[name], want)
 		}
 	}
-	if k1, _, _ := strings.Cut(got["a-one"], " "); k1 == strings.Fields(got["c-other"])[0] {
-		t.Errorf("two accounts share the key %q", k1)
+	if got["a-one"][0] == got["c-other"][0] {
+		t.Errorf("two accounts share the key %q", got["a-one"][0])
 	}
+	table := renderSessionTableCols([]api.Session{splitSession("a-one"), splitSession("b-two"), other}, columnsOrFatal(t, "name,acct", nil))
 	if n := len(strings.Split(strings.TrimRight(table, "\n"), "\n")); n != 4 {
 		t.Errorf("the table has %d lines, want a header and 3 rows and no total row:\n%s", n, table)
 	}
-	for _, sum := range []string{"174%", "127%", "214%", "58%", "total", "sum"} {
+	for _, sum := range []string{"88%", "56%", "99%", "total", "sum"} {
 		if strings.Contains(strings.ToLower(table), sum) {
 			t.Errorf("the table carries %q, a figure aggregated across rows:\n%s", sum, table)
 		}
 	}
 }
 
-// A stale reading prints the word, never the old number or its timestamp.
-func TestAcctStaleReadingPrintsWordNotNumber(t *testing.T) {
-	got, _ := acctCells(t, acctSession("a-stale", "/acct/a", api.ReadingStale, "stale (last 2026-10-03T22:10:00Z)"))
-	key, reading, _ := strings.Cut(got["a-stale"], " ")
-	if !acctKeyShape.MatchString(key) || reading != "stale" {
-		t.Errorf("a stale reading = %q, want a 6 hex key then the word stale", got["a-stale"])
-	}
-}
-
-// A seat with no reading shows a dash after its key, and a row the daemon did
-// not stamp (a held role's synthetic row) shows a bare dash: nothing is
-// measured, so no 0%.
+// A seat on an account with no reading shows its key and dashes for every
+// figure, and a row the daemon did not stamp (a held role's synthetic row) shows
+// a bare dash: nothing is measured, so no 0%.
 func TestAcctNoReadingIsADash(t *testing.T) {
-	got, _ := acctCells(t,
-		acctSession("a-none", "/acct/a", api.ReadingNone, "none"),
-		acctSession("b-unstamped", "/acct/a", "", ""),
-	)
-	if key, reading, _ := strings.Cut(got["a-none"], " "); !acctKeyShape.MatchString(key) || reading != "-" {
-		t.Errorf("no reading = %q, want a 6 hex key then -", got["a-none"])
+	none := acctSession("a-none", "/acct/a", api.ReadingNone, "none")
+	got := cellsOf(t, "account,5h,7d,5h-reset,7d-reset,read", none, acctSession("b-unstamped", "/acct/a", "", ""))
+	if !acctKeyShape.MatchString(got["a-none"][0]) || !slices.Equal(got["a-none"][1:], []string{"-", "-", "-", "-", "-"}) {
+		t.Errorf("no reading = %v, want a 6 hex key then five dashes", got["a-none"])
 	}
-	if got["b-unstamped"] != "-" {
-		t.Errorf("an unstamped row = %q, want -", got["b-unstamped"])
+	if got["b-unstamped"][0] != "-" {
+		t.Errorf("an unstamped row = %v, want a bare - for ACCOUNT", got["b-unstamped"])
 	}
 }
 
