@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -32,17 +33,17 @@ func withGap(s api.Session, ago time.Duration) api.Session {
 
 func usd(v float64) *float64 { return &v }
 
-func costCells(t *testing.T, sessions ...api.Session) map[string][2]string {
+func costCells(t *testing.T, sessions ...api.Session) map[string][3]string {
 	t.Helper()
 	old := rateClock
 	rateClock = func() time.Time { return costNow }
 	t.Cleanup(func() { rateClock = old })
-	table := renderSessionTableCols(sessions, columnsOrFatal(t, "name,tout,rate", nil))
-	out := map[string][2]string{}
+	table := renderSessionTableCols(sessions, columnsOrFatal(t, "name,tout,rate,cost", nil))
+	out := map[string][3]string{}
 	for _, line := range strings.Split(strings.TrimSpace(table), "\n")[1:] {
 		f := strings.Fields(line)
-		if len(f) == 3 {
-			out[f[0]] = [2]string{f[1], f[2]}
+		if len(f) == 4 {
+			out[f[0]] = [3]string{f[1], f[2], f[3]}
 		}
 	}
 	return out
@@ -104,8 +105,32 @@ func TestCostCellsForAStatuslineSeat(t *testing.T) {
 			t.Errorf("%s: no row rendered", c.name)
 			continue
 		}
-		if cells[0] != c.tout || cells[1] != c.rate {
-			t.Errorf("%s: TOUT, RATE = %q, %q, want %q, %q (%s)", c.name, cells[0], cells[1], c.tout, c.rate, c.explanation)
+		// The token columns carry no dollars: a seat with no token source shows
+		// dashes there, and the total sits in COST (card i477c1113-2).
+		if cells[0] != "-" || cells[1] != "-" || cells[2] != c.tout {
+			t.Errorf("%s: TOUT, RATE, COST = %q, %q, %q, want - - %q (%s)", c.name, cells[0], cells[1], cells[2], c.tout, c.explanation)
+		}
+		// The dollar rate is in describe session until the rate slice.
+		raw, err := json.Marshal(c.session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := withCostRate(raw, costNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d map[string]any
+		if err := json.Unmarshal(out, &d); err != nil {
+			t.Fatal(err)
+		}
+		if c.session.CostTotalUSD == nil {
+			if _, has := d["cost_rate"]; has {
+				t.Errorf("%s: cost_rate present for a seat with no total: %v", c.name, d["cost_rate"])
+			}
+			continue
+		}
+		if d["cost_rate"] != c.rate {
+			t.Errorf("%s: cost_rate = %v, want %q (%s)", c.name, d["cost_rate"], c.rate, c.explanation)
 		}
 	}
 }
