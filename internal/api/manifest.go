@@ -184,6 +184,10 @@ type ManifestRole struct {
 	GlobalRole           string               `toml:"global_role,omitempty"         yaml:"global_role,omitempty"`
 	Policy               string               `toml:"policy,omitempty"              yaml:"policy,omitempty"`
 	HealthCheck          *ManifestHealthCheck `toml:"healthcheck,omitempty"         yaml:"healthcheck,omitempty"`
+	// Supervises names the teams of the same workspace this role supervises,
+	// so it may publish to their role inboxes on the local bus and they to its
+	// own (aae-orc-spk60). Parsed into Role.Supervises.
+	Supervises []string `toml:"supervises,omitempty" yaml:"supervises,omitempty"`
 	// Shift opts this role into automatic shifts. Unset means the role shifts
 	// only on an operator `marvel shift`. Parsed into Role.Shift.
 	Shift *ManifestShift `toml:"shift,omitempty"               yaml:"shift,omitempty"`
