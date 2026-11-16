@@ -35,7 +35,7 @@ Per seat, beside the existing `ContextLimit` / `ContextTokens`:
 | field | source | notes |
 |---|---|---|
 | `model` | spawn assignment (the backend registry idea, #354) | an assignment, not an observation (the router node's open-loop ruling) |
-| `context_limit`, `limit_source` | the existing ladder (`internal/usage/limits.go`: stream, learned, manifest, feed, table, table-alias, unresolved) | what the fit check does per source is in section 2a; the prompt size is a separate measurement, not a rung |
+| `context_limit`, `limit_source` | the existing ladder (`internal/usage/limits.go`: stream, manifest, learned, feed, table, table-alias, unresolved) | what the fit check does per source is in section 2a; the prompt size is a separate measurement, not a rung |
 | `composition_fp` | hash of harness and version, model, role, MCP server set, tool set, and the slice and seat-file hashes | the key for the measured size |
 | `spawn_prompt_tokens` | the harness's first-turn usage (input plus cache fields, as the accountant already reads them) | measured once per `composition_fp`, then reused |
 | `spawn_prompt_parts` | a design-time ablation, not runtime | system prompt, tool schemas per MCP server, injected content |
@@ -84,7 +84,7 @@ by the harness after the session starts, and every codex window arrives as
 | `manifest` | yes | refuses when the prompt does not fit | unchanged |
 | `learned` | yes, when a prior session of this model declared its window on this daemon | refuses when the prompt does not fit | unchanged |
 | `stream` | no | not applicable | becomes the model's `learned` value for the next spawn; if the first turn already exceeds it, the session is stopped with the same error as a refusal (never left to truncate) |
-| `feed` | no | not applicable | stays `feed`; it is NOT promoted to `learned`. `learned` ranks above `manifest` in `limitLadder`, so a promoted feed window would let the statusline side channel overrule an operator's `runtime.context_window`, inverting the 2026-08-08 stream/feed ruling recorded at `internal/usage/limits.go` (`limitLadder`). See amendment F2 |
+| `feed` | no | not applicable | stays `feed`; it is NOT promoted to `learned`. `learned` ranks above `feed` in `limitLadder`, so a promoted feed window would take a rung the 2026-08-08 stream/feed ruling places above the feed's own, as recorded at `internal/usage/limits.go` (`limitLadder`). The manifest now outranks `learned` (card ey9b3), so the operator's `runtime.context_window` is not at risk either way. See amendment F2 |
 | `table` | yes | warns, never refuses (#181: an exact key can be wrong by 3.8x) | superseded by `stream` or `feed` when they arrive |
 | `table-alias` | yes | warns, never refuses (an alias means whatever the harness points it at today) | as `table` |
 | `unresolved` | yes | emits `session.unmoderated` and spawns | as `table` |
@@ -96,7 +96,7 @@ To make a codex seat (or a small local model) checkable, the operator sets
 
 **Open amendment F2, for the operator (not part of this design until ruled).**
 A remembered feed window could get its own rank, `feed-learned`, placed
-BELOW `manifest` (stream, learned, manifest, feed-learned, feed, table,
+BELOW `manifest` (stream, manifest, learned, feed-learned, feed, table,
 table-alias). A codex seat would then be checked from its second spawn on,
 and an operator's manifest value would still win. Default: not adopted; the
 manifest route above covers the case with no ladder change.
