@@ -126,6 +126,25 @@ func ScheduledLaunchRefusal(command string, args []string) string {
 	return ""
 }
 
+// StoredScheduleRefusal is the reason a stored scheduled role is refused now, or
+// "" when it is not: the role would not pass apply today. It reads the role's own
+// fields with the rule the launch uses (ScheduledLaunchRefusal), so a role stored
+// before apply refused it does not run (aae-orc-iyun3 part c). Policy file
+// contents are not visible here and stay checked at apply.
+func StoredScheduleRefusal(r Role) string {
+	if r.Schedule == nil {
+		return ""
+	}
+	if r.DangerousPermissions || r.Permissions == "bypassPermissions" {
+		return "a scheduled run has no human at a prompt, and this role skips permission checks"
+	}
+	command := r.Runtime.Command
+	if command == "" {
+		command = r.Runtime.Name
+	}
+	return ScheduledLaunchRefusal(command, r.Runtime.Args)
+}
+
 // validateSchedulePolicy refuses a schedule on a role whose inline policy
 // sets permissions.defaultMode = "bypassPermissions": projectPolicy writes
 // the policy to the harness's --settings file. The contents of a

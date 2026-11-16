@@ -1179,6 +1179,9 @@ const (
 	// HoldExposure means the role writes a function its slot has read, or the
 	// record of what the slot has read could not be consulted (marvel#945).
 	HoldExposure HoldReason = "exposure"
+	// HoldScheduleRefused means the role is a stored scheduled role that is
+	// refused now, so it never launches (aae-orc-iyun3 part c).
+	HoldScheduleRefused HoldReason = "schedule_refused"
 	// HoldSchedule means the role is on a schedule and its firing record
 	// allows no spawn now: no firing is due yet, the firing settled, a
 	// retry is backing off, or on_failure froze the schedule. Without it a
@@ -1324,6 +1327,13 @@ func (c *Controller) planRole(t *api.Team, role *api.Role, generation int64) Rol
 	}
 
 	switch {
+	case actual < desired && role.Held != "":
+		// A stored scheduled role that apply would refuse now never launches,
+		// a due firing included. Live seats are not touched (aae-orc-iyun3 c).
+		plan.Action = RoleHold
+		plan.Hold = HoldScheduleRefused
+		plan.HoldDetail = role.Held
+		return plan
 	case actual < desired && role.Schedule != nil && c.holdForFiring(sched, &plan):
 		return plan
 	case actual < desired:

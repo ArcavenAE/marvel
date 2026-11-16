@@ -41,6 +41,7 @@ func TestClaudeScheduledLaunchRefusesWhatApplyRefuses(t *testing.T) {
 		{"a bypass flag in the args", scheduledClaudeCtx("claude", []string{"--dangerously-skip-permissions"}, "")},
 		{"the bypass permission mode on the role", scheduledClaudeCtx("claude", nil, "bypassPermissions")},
 		{"a command in shell form", scheduledClaudeCtx("claude --model 'x'", nil, "")},
+		{"a bypass flag as a word of a readable command", scheduledClaudeCtx("claude --dangerously-skip-permissions", nil, "")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
