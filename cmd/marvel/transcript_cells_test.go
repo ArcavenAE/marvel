@@ -137,3 +137,37 @@ func keysOf(m map[string]any) []string {
 	slices.Sort(out)
 	return out
 }
+
+// describe session says where a token sum came from and what it leaves out, so
+// a "-" in RATE and a "+" on TOUT can be read.
+func TestDescribeSessionNamesTheTokenSource(t *testing.T) {
+	n := 12000
+	s := costSession("seat", usd(4.12), 15*time.Second)
+	s.SpendOut, s.SpendPartial = &n, true
+	raw, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := withTokenSource(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	text, _ := got["token_source"].(string)
+	for _, want := range []string{"transcript", "main file only", "subagents are excluded", "resets with the daemon", "RATE"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("token_source = %q, want it to say %q", text, want)
+		}
+	}
+	// A seat with no token sum carries no source note.
+	raw, _ = json.Marshal(costSession("none", usd(1), 15*time.Second))
+	out, _ = withTokenSource(raw)
+	got = map[string]any{}
+	_ = json.Unmarshal(out, &got)
+	if _, has := got["token_source"]; has {
+		t.Errorf("a seat with no token sum carries token_source %v", got["token_source"])
+	}
+}
