@@ -54,7 +54,7 @@ name = "researcher"
     context_feed = "statusline"
 
     [team.role.shift]
-    handoff = "/tmp/marvel-handoffs/{session}.md"
+    handoff = "~/.marvel-handoffs/{session}.md"
     handoff_marker = "END HANDOFF"
     handoff_window = "5m"
     any = [

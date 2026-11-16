@@ -948,7 +948,7 @@ asks for a file, not the tool.
 
 ```toml
 [team.role.shift]
-handoff = "/tmp/marvel-handoffs/{session}.md"
+handoff = "~/.marvel-handoffs/{session}.md"
 handoff_marker = "END HANDOFF"
 handoff_window = "5m"
 any = [
@@ -1059,7 +1059,7 @@ other or with `--socket` or `--identity`, and are refused inside a marvel seat.
 
 ```bash
 marvel get sessions --socket mrvl://<host>
-marvel get sessions --socket /tmp/marvel-dev.sock
+marvel get sessions --socket ~/.marvel/run/dev.sock
 ```
 
 `--socket` takes either an `mrvl://` address or a Unix socket path. With

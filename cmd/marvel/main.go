@@ -2598,7 +2598,7 @@ MARVEL_TMUX_SOCKET overrides the derived name and is reported as-is.`,
 Examples:
   marvel config add-cluster kinu mrvl://kinu
   marvel config add-cluster staging mrvl://deploy@staging.example.com:7000 --identity ~/.marvel/keys/staging_ed25519
-  marvel config add-cluster dev /tmp/marvel-dev.sock
+  marvel config add-cluster dev ~/.marvel/run/dev.sock
 
 For remote (mrvl:// or ssh://) clusters without an --identity flag,
 marvel defaults to ~/.marvel/keys/client_ed25519 when that key exists.
