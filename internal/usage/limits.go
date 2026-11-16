@@ -139,7 +139,7 @@ type KeyConfidence string
 
 const (
 	// KeyExact means the key fully determined the window: a value declared
-	// directly (stream, manifest, learned, feed — no keyed lookup), or a
+	// directly (stream, manifest, learned, feed: no keyed lookup), or a
 	// table hit whose id leaves no entitlement ambiguity. The only grade
 	// that is NOT soft.
 	KeyExact KeyConfidence = "exact"
