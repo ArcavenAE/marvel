@@ -3551,10 +3551,6 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		}
 		return []string{bus.LeafSeedEnv + "=" + string(seed)}
 	}
-	// The supervisor answers what the running broker is called, so this first
-	// render, which may precede an adopted broker that has no name, leaves
-	// server_name out rather than ask it to reload what it refuses.
-	mgr.Broker = sup
 	d.regenerateBus("start")
 	lc := bus.NewLifecycle(sup)
 	mgr.Reloader = lc

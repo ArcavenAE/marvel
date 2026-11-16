@@ -287,7 +287,7 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 	if err != nil {
 		return nil, fmt.Errorf("bus: %w", err)
 	}
-	return &Supervisor{
+	s := &Supervisor{
 		mgr:                mgr,
 		binary:             bin,
 		envAllow:           class.ChildEnvAllow,
@@ -304,7 +304,12 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 		prober:             childproof.New(),
 		grace:              stopGrace,
 		pidState:           pidStateNone,
-	}, nil
+	}
+	// The supervisor answers what the running broker is called, so every render
+	// of this manager leaves server_name out of a conf the broker would refuse
+	// to reload (aae-orc-a7h5h). Set here, so no caller has a step to forget.
+	mgr.Broker = s
+	return s, nil
 }
 
 // resolveBroker returns the nats-server to exec. A configured bus.binary is
