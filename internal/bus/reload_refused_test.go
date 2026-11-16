@@ -59,22 +59,24 @@ func TestSupervisorReloadSurfacesAReloadTheBrokerRefuses(t *testing.T) {
 	}
 	rewriteWithServerName(t, m, "probe-name")
 
+	// Every check below reports on its own, so each shows red separately.
 	err := s.Reload()
 	if err == nil {
-		t.Fatal("Reload returned nil for a conf the broker refuses to reload")
-	}
-	if !strings.Contains(err.Error(), "ServerName") {
+		t.Error("Reload returned nil for a conf the broker refuses to reload")
+	} else if !strings.Contains(err.Error(), "ServerName") {
 		t.Errorf("error %q does not carry the broker's reason", err)
 	}
 	reloaded, refused := reloadOutcomes(ring)
 	if len(refused) != 1 {
-		t.Fatalf("%d bus.reload-refused events, want 1; kinds %v", len(refused), kindsOf(ring))
+		t.Errorf("%d bus.reload-refused events, want 1; kinds %v", len(refused), kindsOf(ring))
 	}
-	if !strings.Contains(refused[0].Message, "ServerName") {
-		t.Errorf("event message %q does not carry the broker's reason", refused[0].Message)
-	}
-	if refused[0].Severity != events.SeverityError {
-		t.Errorf("severity = %v, want error", refused[0].Severity)
+	for _, ev := range refused {
+		if !strings.Contains(ev.Message, "ServerName") {
+			t.Errorf("event message %q does not carry the broker's reason", ev.Message)
+		}
+		if ev.Severity != events.SeverityError {
+			t.Errorf("severity = %v, want error", ev.Severity)
+		}
 	}
 	if len(reloaded) != 0 {
 		t.Errorf("bus.reloaded emitted for a reload the broker refused: %v", reloaded)
