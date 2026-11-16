@@ -3,8 +3,10 @@ package bus
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/config"
 )
@@ -31,7 +33,8 @@ func fakeNATS(t *testing.T, dir, version string) string {
 // config, the way the daemon builds it from the cluster's bus: block.
 func binaryManager(t *testing.T, binary string) *Manager {
 	t.Helper()
-	rb := config.ResolvedBus{Managed: true, Listen: "127.0.0.1:1", StoreDir: t.TempDir(), Binary: binary}
+	listen := "127.0.0.1:" + strconv.Itoa(freePort(t)) // marked started, so the dial guard allows the supervisor's own dial
+	rb := config.ResolvedBus{Managed: true, Listen: listen, URL: "nats://" + listen, StoreDir: t.TempDir(), Binary: binary}
 	m, err := NewManager(t.TempDir(), "c1", rb, &teams{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -145,5 +148,51 @@ func TestSupervisorRefusesARelativeOrShimConfiguredBinary(t *testing.T) {
 		if !strings.Contains(err.Error(), "bus.binary") {
 			t.Errorf("%s: error %q does not name the key", name, err)
 		}
+	}
+}
+
+// Start launches the configured file, not just reports its version. The fake
+// broker records that it ran and exits; Start then fails to find a listener,
+// which is expected: the marker is the evidence of what was exec'd, and a
+// PATH nats-server that is also present must not have run.
+func TestSupervisorStartLaunchesTheConfiguredBinary(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "ran")
+	script := func(dir, tag string) string {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(dir, "nats-server")
+		body := "#!/bin/sh\n" +
+			"if [ \"$1\" = \"--version\" ]; then echo \"nats-server: v1.2.3\"; exit 0; fi\n" +
+			"echo " + tag + " >> " + marker + "\nexit 1\n"
+		if err := os.WriteFile(p, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	onPath := script(filepath.Join(root, "pathdir"), "path")
+	configured := script(filepath.Join(root, "pinned", "bin"), "configured")
+	t.Setenv("PATH", filepath.Dir(onPath)+string(os.PathListSeparator)+"/usr/bin:/bin")
+
+	m := binaryManager(t, configured)
+	if _, err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewSupervisor(m, filepath.Join(root, "run"), filepath.Join(root, "log"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attach(t, s, newProcTable(t))
+	s.dialTimeout = 2 * time.Second
+	_ = s.Start(t.Context()) // the fake never listens, so Start fails; what ran is the question
+	t.Cleanup(func() { s.Stop(false) })
+
+	got, _ := os.ReadFile(marker)
+	if !strings.Contains(string(got), "configured") {
+		t.Errorf("Start did not run the configured binary; marker = %q", got)
+	}
+	if strings.Contains(string(got), "path") {
+		t.Errorf("Start ran the PATH nats-server; marker = %q", got)
 	}
 }
