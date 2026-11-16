@@ -618,3 +618,35 @@ func TestFileThatAppearsAfterARestartIsSeededNotAdded(t *testing.T) {
 	u2.Once()
 	r.want(40, true)
 }
+
+// The sum and the reader's place go to the store in one write. A reader that
+// published them in two could be stopped between them, leaving a sum ahead of
+// its place; a restart would then seed to the older place and count the gap
+// twice (architect's condition on review 5914397642). This names that write:
+// every spend write the reader makes carries the sum and the place together.
+func TestReaderPublishesTheSumAndThePlaceInOneWrite(t *testing.T) {
+	r := newUsageRig(t)
+	var writes []api.SessionSpend
+	store := r.store
+	r.u.write = func(key string, sp api.SessionSpend) {
+		writes = append(writes, sp)
+		store.UpdateSessionSpend(key, sp)
+	}
+	r.u.Once()
+	r.lines(msg("m1", 40))
+	r.u.Once()
+	r.lines(msg("m2", 5))
+	r.u.Once()
+	if len(writes) == 0 {
+		t.Fatal("the reader made no spend write")
+	}
+	for i, w := range writes {
+		if w.Out == nil || w.Tail == nil {
+			t.Errorf("write %d carries sum %s and place %v, want both", i, intOf(w.Out), w.Tail)
+		}
+	}
+	last := writes[len(writes)-1]
+	if last.Out == nil || *last.Out != 45 {
+		t.Errorf("the last write carries sum %s, want 45", intOf(last.Out))
+	}
+}

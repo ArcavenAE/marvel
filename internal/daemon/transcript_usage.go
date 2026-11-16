@@ -38,6 +38,9 @@ type txUsage struct {
 	// usageReadCap of them.
 	tailRead func(path string, from int64) ([]byte, error)
 	now      func() time.Time
+	// write stores a seat's spend slice. It is the store's UpdateSessionSpend;
+	// a test replaces it to count the writes.
+	write func(key string, sp api.SessionSpend)
 
 	seats map[string]*usageTail
 }
@@ -74,7 +77,9 @@ type usageTail struct {
 }
 
 func newTxUsage(store *api.Store, client func(string) (bool, error)) *txUsage {
-	return &txUsage{store: store, client: client, tailRead: readUsageTail, now: time.Now, seats: map[string]*usageTail{}}
+	u := &txUsage{store: store, client: client, tailRead: readUsageTail, now: time.Now, seats: map[string]*usageTail{}}
+	u.write = store.UpdateSessionSpend
+	return u
 }
 
 // readUsageTail returns the bytes of path from an offset, at most usageReadCap.
@@ -278,7 +283,7 @@ func (u *txUsage) publish(key string, t *usageTail) {
 		return
 	}
 	out := t.total
-	u.store.UpdateSessionSpend(key, api.SessionSpend{Out: &out, PromptTokens: cur.SpendPromptTokens, OutRate: cur.OutRate, Partial: t.partial, Tail: tail})
+	u.write(key, api.SessionSpend{Out: &out, PromptTokens: cur.SpendPromptTokens, OutRate: cur.OutRate, Partial: t.partial, Tail: tail})
 }
 
 // startTxUsage runs the transcript usage reader beside the watchdog. It reads
