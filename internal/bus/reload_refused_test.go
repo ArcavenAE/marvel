@@ -2,12 +2,17 @@ package bus
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -106,4 +111,97 @@ func TestSupervisorReloadStillSucceedsForACleanReload(t *testing.T) {
 	if len(refused) != 0 {
 		t.Errorf("bus.reload-refused emitted for a clean reload: %v", refused)
 	}
+}
+
+// A refusal does not poison the next reload: the broker refuses one, then
+// accepts the next, and the second is read from its own answer and not from the
+// first one's line, and returns at once (the broker's answer is in its log
+// within milliseconds, so the wait runs out only when the answer is missed).
+func TestSupervisorReloadAfterARefusalReadsOnlyItsOwnAnswer(t *testing.T) {
+	s, m, ring := newTestSupervisor(t, "")
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Stop(false) })
+
+	*m.teams.(*teams) = append(*m.teams.(*teams), api.Team{Name: "fleet", Workspace: "example"})
+	if _, err := m.Render(); err != nil {
+		t.Fatal(err)
+	}
+	rewriteWithServerName(t, m, "probe-name")
+	if err := s.Reload(); err == nil {
+		t.Fatal("setup: the first reload was not refused")
+	}
+
+	*m.teams.(*teams) = append(*m.teams.(*teams), api.Team{Name: "crew", Workspace: "example"})
+	if _, err := m.Render(); err != nil { // the conf without the name: the broker can take it
+		t.Fatal(err)
+	}
+	start := time.Now()
+	err := s.Reload()
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Errorf("the second reload = %v, want nil: the broker accepted it", err)
+	}
+	if elapsed > reloadVerdictWait/3 {
+		t.Errorf("the second reload took %v, want well under the %v wait: it did not see its own answer", elapsed, reloadVerdictWait)
+	}
+	reloaded, refused := reloadOutcomes(ring)
+	if len(reloaded) != 1 {
+		t.Errorf("%d bus.reloaded events, want 1 for the second reload; kinds %v", len(reloaded), kindsOf(ring))
+	}
+	if len(refused) != 1 {
+		t.Errorf("%d bus.reload-refused events, want 1 (the first reload only); kinds %v", len(refused), kindsOf(ring))
+	}
+}
+
+// A refusal reaches a caller as ErrReloadRefused, so no caller matches its text.
+func TestSupervisorReloadRefusalIsTheSentinel(t *testing.T) {
+	s, m, _ := newTestSupervisor(t, "")
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Stop(false) })
+
+	*m.teams.(*teams) = append(*m.teams.(*teams), api.Team{Name: "fleet", Workspace: "example"})
+	if _, err := m.Render(); err != nil {
+		t.Fatal(err)
+	}
+	rewriteWithServerName(t, m, "probe-name")
+	if err := s.Reload(); !errors.Is(err, ErrReloadRefused) {
+		t.Errorf("Reload error %v does not match ErrReloadRefused", err)
+	}
+}
+
+type sentinelReloader struct{}
+
+func (sentinelReloader) Reload() error {
+	return fmt.Errorf("bus: nats-server pid 1: %w", ErrReloadRefused)
+}
+
+// Regenerate wraps what Reload returns with %w, so the sentinel survives it.
+func TestRegenerateKeepsTheReloadRefusalMatchable(t *testing.T) {
+	t.Parallel()
+	m := scratchBusManager(t)
+	m.Reloader = sentinelReloader{}
+	*m.teams.(*teams) = append(*m.teams.(*teams), api.Team{Name: "fleet", Workspace: "example"})
+	changed, err := m.Regenerate()
+	if !changed {
+		t.Fatalf("setup: the render did not change (err %v)", err)
+	}
+	if !errors.Is(err, ErrReloadRefused) {
+		t.Errorf("Regenerate error %v does not match ErrReloadRefused", err)
+	}
+}
+
+// scratchBusManager is a managed-bus manager on a started-marked scratch port.
+func scratchBusManager(t *testing.T) *Manager {
+	t.Helper()
+	listen := "127.0.0.1:" + strconv.Itoa(freePort(t))
+	rb := config.ResolvedBus{Managed: true, Listen: listen, URL: "nats://" + listen, StoreDir: filepath.Join(t.TempDir(), "js")}
+	m, err := NewManager(filepath.Join(t.TempDir(), "nats"), "c1", rb, &teams{{Name: "ops", Workspace: "ws1"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }

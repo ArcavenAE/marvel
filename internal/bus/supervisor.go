@@ -603,6 +603,10 @@ func (s *Supervisor) Reload() error {
 	return nil
 }
 
+// ErrReloadRefused marks a reload the broker declined. Callers match it with
+// errors.Is, through the Manager's wrapping, and never by its text.
+var ErrReloadRefused = errors.New("the broker refused the reload")
+
 // reloadVerdictWait bounds how long Reload waits for the broker to say what it
 // did with a SIGHUP. The answer normally lands within milliseconds.
 const reloadVerdictWait = 3 * time.Second
