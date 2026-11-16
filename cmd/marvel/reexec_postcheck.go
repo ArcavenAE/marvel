@@ -198,7 +198,7 @@ func (o reexecObserver) readOnce(before time.Time) (answered bool, why string, a
 	ok, reason := leafRequirement(st, o.now())
 	switch {
 	case ok:
-		return true, "", !st.Managed
+		return true, "", false
 	case reason == "no hub" && !st.Managed:
 		return true, whyAdoptedNoHub, true
 	case reason == "no hub":
