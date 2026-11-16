@@ -61,6 +61,9 @@ func TestStampLimitReadingFreshnessEdgeIsFifteenMinutes(t *testing.T) {
 	if fresh.LimitIsStale() {
 		t.Error("LimitStale is true at 14m59s, want fresh")
 	}
+	if fresh.LimitStale == nil || *fresh.LimitStale {
+		t.Errorf("LimitStale = %v at 14m59s, want a set false so the json says limit_stale:false", fresh.LimitStale)
+	}
 	stale := stamped(t, d, key, acctT0.Add(15*time.Minute))
 	if !stale.LimitIsStale() {
 		t.Error("LimitStale is false at 15m, want stale")
