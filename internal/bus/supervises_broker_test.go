@@ -57,12 +57,12 @@ func supervisesBroker(t *testing.T, live *teams) *Manager {
 
 func supervisesBrokerTeams() *teams {
 	return &teams{
-		{Name: "product", Workspace: "dtu", Roles: []api.Role{
-			{Name: "supervisor", Supervises: []string{"midway"}},
+		{Name: "ops", Workspace: "ws1", Roles: []api.Role{
+			{Name: "supervisor", Supervises: []string{"alpha"}},
 			{Name: "reviewer"},
 		}},
-		{Name: "midway", Workspace: "dtu", Roles: []api.Role{{Name: "architect"}, {Name: "worker"}}},
-		{Name: "vantage", Workspace: "dtu", Roles: []api.Role{{Name: "lead"}}},
+		{Name: "alpha", Workspace: "ws1", Roles: []api.Role{{Name: "architect"}, {Name: "worker"}}},
+		{Name: "beta", Workspace: "ws1", Roles: []api.Role{{Name: "lead"}}},
 	}
 }
 
@@ -94,11 +94,11 @@ func connectUser(t *testing.T, m *Manager, team, role, want string) (*nats.Conn,
 // user) are refused with the broker's own violation.
 func TestSupervisesPublishAgainstARealBrokerWithNoHub(t *testing.T) {
 	m := supervisesBroker(t, supervisesBrokerTeams())
-	sup, supViol := connectUser(t, m, "product", "supervisor", "product.supervisor")
-	arch, archViol := connectUser(t, m, "midway", "architect", "midway.architect")
-	rev, revViol := connectUser(t, m, "product", "reviewer", "product")
+	sup, supViol := connectUser(t, m, "ops", "supervisor", "ops.supervisor")
+	arch, archViol := connectUser(t, m, "alpha", "architect", "alpha.architect")
+	rev, revViol := connectUser(t, m, "ops", "reviewer", "ops")
 
-	const down = "agent.dtu.midway.role.architect.inbox"
+	const down = "agent.ws1.alpha.role.architect.inbox"
 	got, err := arch.SubscribeSync(down)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestSupervisesPublishAgainstARealBrokerWithNoHub(t *testing.T) {
 		t.Fatalf("the architect read %v, %v; want the supervisor's message", msg, err)
 	}
 
-	const up = "agent.dtu.product.role.supervisor.inbox"
+	const up = "agent.ws1.ops.role.supervisor.inbox"
 	supGot, err := sup.SubscribeSync(up)
 	if err != nil {
 		t.Fatal(err)
@@ -150,12 +150,12 @@ func TestSupervisesPublishAgainstARealBrokerWithNoHub(t *testing.T) {
 		}
 	}
 	before := inboxMsgs(t, sup)
-	refused(sup, supViol, "the supervisor", "agent.dtu.midway.someid.inbox")
-	refused(sup, supViol, "the supervisor", "agent.dtu.vantage.role.lead.inbox")
-	refused(arch, archViol, "the architect", "agent.dtu.product.someid.inbox")
-	refused(arch, archViol, "the architect", "agent.dtu.product.role.reviewer.inbox")
-	refused(arch, archViol, "the architect", "agent.dtu.vantage.role.lead.inbox")
-	refused(rev, revViol, "the product reviewer", down)
+	refused(sup, supViol, "the supervisor", "agent.ws1.alpha.someid.inbox")
+	refused(sup, supViol, "the supervisor", "agent.ws1.beta.role.lead.inbox")
+	refused(arch, archViol, "the architect", "agent.ws1.ops.someid.inbox")
+	refused(arch, archViol, "the architect", "agent.ws1.ops.role.reviewer.inbox")
+	refused(arch, archViol, "the architect", "agent.ws1.beta.role.lead.inbox")
+	refused(rev, revViol, "the ops reviewer", down)
 	if after := inboxMsgs(t, sup); after != before {
 		t.Errorf("the inbox stream grew from %d to %d on refused publishes", before, after)
 	}
@@ -167,18 +167,18 @@ func TestSupervisesPublishAgainstARealBrokerWithNoHub(t *testing.T) {
 func TestSupervisesGrantReachesAnAlreadyConnectedClientOnReload(t *testing.T) {
 	live := supervisesBrokerTeams()
 	m := supervisesBroker(t, live)
-	sup, viol := connectUser(t, m, "product", "supervisor", "product.supervisor")
+	sup, viol := connectUser(t, m, "ops", "supervisor", "ops.supervisor")
 
-	const subject = "agent.dtu.vantage.role.lead.inbox"
+	const subject = "agent.ws1.beta.role.lead.inbox"
 	if err := sup.Publish(subject, []byte("before")); err != nil {
 		t.Fatal(err)
 	}
 	_ = sup.Flush()
 	if !receivesViolation(viol, subject, 5*time.Second) {
-		t.Fatal("control: the publish was not refused before vantage was named")
+		t.Fatal("control: the publish was not refused before beta was named")
 	}
 
-	(*live)[0].Roles[0].Supervises = []string{"midway", "vantage"}
+	(*live)[0].Roles[0].Supervises = []string{"alpha", "beta"}
 	if changed, err := m.Regenerate(); err != nil || !changed {
 		t.Fatalf("Regenerate = changed %v, err %v; want a rewrite and a reload", changed, err)
 	}

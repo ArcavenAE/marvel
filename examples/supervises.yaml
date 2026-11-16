@@ -1,6 +1,6 @@
 # Marvel example: a supervisor that supervises other teams (aae-orc-spk60).
 #
-# The product supervisor names the teams it supervises. On the local bus it
+# The ops supervisor names the teams it supervises. On the local bus it
 # may then publish to the role inbox of every role of those teams, and every
 # role of those teams may publish to the supervisor's role inbox:
 #
@@ -14,24 +14,24 @@
 # as bus.supervises-unresolved.
 #
 # Cross-team senders address the role, not the seat:
-#   agent.dtu.midway.role.architect.inbox
+#   agent.ws1.alpha.role.architect.inbox
 #
 # Load with: marvel work examples/supervises.yaml
 
 workspace:
-  name: dtu
+  name: ws1
 
 teams:
-  - name: product
+  - name: ops
     roles:
       - name: supervisor
         replicas: 1
-        supervises: [midway, vantage]
+        supervises: [alpha, beta]
         runtime:
           image: claude
           command: claude
 
-  - name: midway
+  - name: alpha
     roles:
       - name: architect
         replicas: 1
@@ -39,7 +39,7 @@ teams:
           image: claude
           command: claude
 
-  - name: vantage
+  - name: beta
     roles:
       - name: lead
         replicas: 1

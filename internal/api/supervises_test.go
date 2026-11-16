@@ -15,9 +15,9 @@ import (
 // supervises.
 func superviseManifest(supervises ...string) *Manifest {
 	return &Manifest{
-		Workspace: ManifestWorkspace{Name: "dtu"},
+		Workspace: ManifestWorkspace{Name: "ws1"},
 		Teams: []ManifestTeam{{
-			Name: "product",
+			Name: "ops",
 			Roles: []ManifestRole{{
 				Name:       "supervisor",
 				Replicas:   1,
@@ -34,7 +34,7 @@ func superviseManifest(supervises ...string) *Manifest {
 // nothing.
 func TestValidateManifestSuperviseValues(t *testing.T) {
 	t.Parallel()
-	for _, ok := range [][]string{nil, {"midway"}, {"midway", "vantage", "product-mythos"}} {
+	for _, ok := range [][]string{nil, {"alpha"}, {"alpha", "beta", "gamma"}} {
 		if _, err := validateManifest(superviseManifest(ok...)); err != nil {
 			t.Errorf("supervises %v refused: %v", ok, err)
 		}
@@ -46,8 +46,8 @@ func TestValidateManifestSuperviseValues(t *testing.T) {
 		"*":           {"*"},
 		">":           {">"},
 		"empty":       {""},
-		"own team":    {"product"},
-		"a repeat":    {"midway", "midway"},
+		"own team":    {"ops"},
+		"a repeat":    {"alpha", "alpha"},
 		"a long name": {strings.Repeat("a", 33)},
 	}
 	for name, list := range bad {
@@ -66,26 +66,26 @@ func TestValidateManifestSuperviseValues(t *testing.T) {
 func TestSupervisesParsesFromYAMLAndTOML(t *testing.T) {
 	t.Parallel()
 	yamlDoc := `workspace:
-  name: dtu
+  name: ws1
 teams:
-  - name: product
+  - name: ops
     roles:
       - name: supervisor
         replicas: 1
-        supervises: [midway, vantage]
+        supervises: [alpha, beta]
         runtime:
           command: bash
 `
 	tomlDoc := `[workspace]
-name = "dtu"
+name = "ws1"
 
 [[team]]
-name = "product"
+name = "ops"
 
 [[team.role]]
 name = "supervisor"
 replicas = 1
-supervises = ["midway", "vantage"]
+supervises = ["alpha", "beta"]
 
 [team.role.runtime]
 command = "bash"
@@ -98,20 +98,20 @@ command = "bash"
 		if len(m.Teams) != 1 || len(m.Teams[0].Roles) != 1 {
 			t.Fatalf("%s: parsed %+v, want one team with one role", name, m.Teams)
 		}
-		if got := m.Teams[0].Roles[0].Supervises; len(got) != 2 || got[0] != "midway" || got[1] != "vantage" {
-			t.Errorf("%s: parsed supervises = %v, want [midway vantage]", name, got)
+		if got := m.Teams[0].Roles[0].Supervises; len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+			t.Errorf("%s: parsed supervises = %v, want [alpha beta]", name, got)
 		}
 		// The parsed key must reach the stored role, not stop at the manifest.
 		s := NewStore()
 		if err := m.Apply(s); err != nil {
 			t.Fatalf("%s: apply: %v", name, err)
 		}
-		team, err := s.GetTeam("dtu/product")
+		team, err := s.GetTeam("ws1/ops")
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if got := team.Roles[0].Supervises; len(got) != 2 || got[0] != "midway" || got[1] != "vantage" {
-			t.Errorf("%s: stored supervises = %v, want [midway vantage]", name, got)
+		if got := team.Roles[0].Supervises; len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+			t.Errorf("%s: stored supervises = %v, want [alpha beta]", name, got)
 		}
 	}
 }
@@ -121,16 +121,16 @@ command = "bash"
 func TestApplyStoresSupervises(t *testing.T) {
 	t.Parallel()
 	s := NewStore()
-	if err := superviseManifest("midway", "vantage").Apply(s); err != nil {
+	if err := superviseManifest("alpha", "beta").Apply(s); err != nil {
 		t.Fatal(err)
 	}
-	team, err := s.GetTeam("dtu/product")
+	team, err := s.GetTeam("ws1/ops")
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := team.Roles[0].Supervises
-	if len(got) != 2 || got[0] != "midway" || got[1] != "vantage" {
-		t.Errorf("stored supervises = %v, want [midway vantage]", got)
+	if len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+		t.Errorf("stored supervises = %v, want [alpha beta]", got)
 	}
 }
 
@@ -142,7 +142,7 @@ func TestBoltStoreSupervisesSurvivesRehydrate(t *testing.T) {
 	if err := s1.OpenBolt(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := superviseManifest("midway").Apply(s1); err != nil {
+	if err := superviseManifest("alpha").Apply(s1); err != nil {
 		t.Fatal(err)
 	}
 	if err := s1.Checkpoint(); err != nil {
@@ -157,11 +157,11 @@ func TestBoltStoreSupervisesSurvivesRehydrate(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s2.CloseBolt() })
-	team, err := s2.GetTeam("dtu/product")
+	team, err := s2.GetTeam("ws1/ops")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := team.Roles[0].Supervises; len(got) != 1 || got[0] != "midway" {
-		t.Errorf("supervises after rehydrate = %v, want [midway]", got)
+	if got := team.Roles[0].Supervises; len(got) != 1 || got[0] != "alpha" {
+		t.Errorf("supervises after rehydrate = %v, want [alpha]", got)
 	}
 }

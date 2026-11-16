@@ -779,7 +779,7 @@ A role declares the teams it supervises with `supervises` in its manifest
 ```toml
 [[team.role]]
 name = "supervisor"
-supervises = ["midway", "vantage"]
+supervises = ["alpha", "beta"]
 ```
 
 On the cluster's own bus the role may then publish to the role inbox of every

@@ -153,7 +153,7 @@ supervises".
 ```yaml
 roles:
   - name: supervisor
-    supervises: [midway, vantage]
+    supervises: [alpha, beta]
 ```
 
 ### With health checks

@@ -14,19 +14,19 @@ import (
 
 func supervisesLive() *teams {
 	return &teams{
-		{Name: "product", Workspace: "dtu", Roles: []api.Role{
-			{Name: "supervisor", Supervises: []string{"midway"}},
+		{Name: "ops", Workspace: "ws1", Roles: []api.Role{
+			{Name: "supervisor", Supervises: []string{"alpha"}},
 			{Name: "reviewer"},
 		}},
-		{Name: "midway", Workspace: "dtu", Roles: []api.Role{{Name: "architect"}}},
-		{Name: "vantage", Workspace: "dtu", Roles: []api.Role{{Name: "lead"}}},
+		{Name: "alpha", Workspace: "ws1", Roles: []api.Role{{Name: "architect"}}},
+		{Name: "beta", Workspace: "ws1", Roles: []api.Role{{Name: "lead"}}},
 	}
 }
 
 func supervisesManagerOver(t *testing.T, dir string, live *teams) *Manager {
 	t.Helper()
 	rb := config.ResolvedBus{Managed: true, Listen: "127.0.0.1:4222", URL: "nats://127.0.0.1:4222", StoreDir: dir}
-	m, err := NewManager(dir, "corporate", rb, live, nil)
+	m, err := NewManager(dir, "c1", rb, live, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestSupervisesUsersAreRemovedWhenTheRelationGoes(t *testing.T) {
 		t.Fatal(err)
 	}
 	users := authGrants(t, dir)
-	for _, name := range []string{"product.supervisor", "midway.architect"} {
+	for _, name := range []string{"ops.supervisor", "alpha.architect"} {
 		if _, ok := users[name]; !ok {
 			t.Fatalf("control: no %s user before the change: %v", name, users)
 		}
@@ -55,7 +55,7 @@ func TestSupervisesUsersAreRemovedWhenTheRelationGoes(t *testing.T) {
 		t.Fatal(err)
 	}
 	users = authGrants(t, dir)
-	for _, name := range []string{"product.supervisor", "midway.architect"} {
+	for _, name := range []string{"ops.supervisor", "alpha.architect"} {
 		if _, ok := users[name]; ok {
 			t.Errorf("%s still has a user after the relation was dropped", name)
 		}
@@ -65,7 +65,7 @@ func TestSupervisesUsersAreRemovedWhenTheRelationGoes(t *testing.T) {
 	}
 
 	// Bring it back, then remove the supervisor's whole team.
-	(*live)[0].Roles[0].Supervises = []string{"midway"}
+	(*live)[0].Roles[0].Supervises = []string{"alpha"}
 	if _, err := m.Regenerate(); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestSupervisesUsersAreRemovedWhenTheRelationGoes(t *testing.T) {
 		t.Fatal(err)
 	}
 	users = authGrants(t, dir)
-	for _, name := range []string{"product.supervisor", "midway.architect"} {
+	for _, name := range []string{"ops.supervisor", "alpha.architect"} {
 		if _, ok := users[name]; ok {
 			t.Errorf("%s still has a user after the supervisor's team was removed", name)
 		}
@@ -92,8 +92,8 @@ func TestSupervisesGrantsAddNoSubscribe(t *testing.T) {
 	}
 	users := authGrants(t, dir)
 	for _, c := range []struct{ user, teamUser string }{
-		{"midway.architect", "midway"},
-		{"product.supervisor", "product"},
+		{"alpha.architect", "alpha"},
+		{"ops.supervisor", "ops"},
 	} {
 		got, ok := users[c.user]
 		if !ok {
@@ -117,22 +117,22 @@ func TestARestartedManagerHidesASupervisesUserUntilConfirmed(t *testing.T) {
 		t.Fatal(err)
 	}
 	confirmed(t, m1)
-	first, _ := m1.TeamPassword("midway.architect")
+	first, _ := m1.TeamPassword("alpha.architect")
 	if first == "" {
-		t.Fatal("control: no password was minted for midway.architect")
+		t.Fatal("control: no password was minted for alpha.architect")
 	}
 	m2 := supervisesManagerOver(t, dir, live)
 	if _, err := m2.Regenerate(); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := m2.TeamPassword("midway.architect"); got != first {
+	if got, _ := m2.TeamPassword("alpha.architect"); got != first {
 		t.Errorf("the password changed across a restart: %q then %q", first, got)
 	}
-	if u, _, _ := m2.Credential("midway", "architect"); u != "midway" {
+	if u, _, _ := m2.Credential("alpha", "architect"); u != "alpha" {
 		t.Fatalf("a fresh manager handed out %q before the broker was asked, want the team user", u)
 	}
 	confirmed(t, m2)
-	if u, _, _ := m2.Credential("midway", "architect"); u != "midway.architect" {
+	if u, _, _ := m2.Credential("alpha", "architect"); u != "alpha.architect" {
 		t.Fatalf("after confirming, got %q", u)
 	}
 }
@@ -143,8 +143,8 @@ func TestSupervisesDoesNotReachAcrossWorkspaces(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "nats")
 	live := &teams{
-		{Name: "product", Workspace: "dtu", Roles: []api.Role{{Name: "supervisor", Supervises: []string{"midway", "elsewhere"}}}},
-		{Name: "midway", Workspace: "dtu", Roles: []api.Role{{Name: "architect"}}},
+		{Name: "ops", Workspace: "ws1", Roles: []api.Role{{Name: "supervisor", Supervises: []string{"alpha", "elsewhere"}}}},
+		{Name: "alpha", Workspace: "ws1", Roles: []api.Role{{Name: "architect"}}},
 		{Name: "elsewhere", Workspace: "other", Roles: []api.Role{{Name: "architect"}}},
 	}
 	m := supervisesManagerOver(t, dir, live)
@@ -153,11 +153,11 @@ func TestSupervisesDoesNotReachAcrossWorkspaces(t *testing.T) {
 	}
 	users := authGrants(t, dir)
 	// Control: the same-workspace name resolves.
-	sup, ok := users["product.supervisor"]
+	sup, ok := users["ops.supervisor"]
 	if !ok {
-		t.Fatalf("control: no product.supervisor user in %v", users)
+		t.Fatalf("control: no ops.supervisor user in %v", users)
 	}
-	if !contains(sup[0], "agent.dtu.midway.role.architect.inbox") {
+	if !contains(sup[0], "agent.ws1.alpha.role.architect.inbox") {
 		t.Errorf("control: the same-workspace team is not granted: %v", sup[0])
 	}
 	if contains(sup[0], "agent.other.elsewhere.role.architect.inbox") {
