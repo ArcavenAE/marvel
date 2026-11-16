@@ -182,3 +182,51 @@ func TestManualShiftOfARoleWithoutHandoffKeysIsUnchanged(t *testing.T) {
 		t.Fatalf("phase = %q, notices = %q, want launching and no notice", got.Shift.Phase, f.notices)
 	}
 }
+
+// Director's ruling for an unscoped team shift (marvel#1447): it is refused
+// when it covers a role that declares a handoff, the error names each such
+// role and both ways forward, and --no-handoff lets the unscoped shift proceed.
+func TestManualUnscopedShiftNamesEachHandoffRoleThenNoHandoffProceeds(t *testing.T) {
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	dir := t.TempDir()
+
+	a := manualHandoffRole(dir)
+	a.Name = "alpha"
+	b := manualHandoffRole(dir)
+	b.Name = "beta"
+	plain := manualHandoffRole(dir)
+	plain.Name = "plain"
+	plain.Shift = nil
+	createTeamFixture(t, store, "test-manual-multi", "squad", []api.Role{a, b, plain})
+	for _, r := range []string{"alpha", "beta", "plain"} {
+		seedSession(t, store, api.Session{
+			Name: "squad-" + r + "-g1-0", Workspace: "test-manual-multi", Team: "squad",
+			Role: r, Generation: 1, State: api.SessionRunning,
+			CreatedAt: time.Now().UTC().Add(-time.Hour),
+		})
+	}
+
+	err := ctrl.InitiateShiftOpts("test-manual-multi/squad", "", ShiftOpts{})
+	if err == nil {
+		t.Fatal("unscoped shift succeeded, want a refusal")
+	}
+	for _, want := range []string{"alpha", "beta", "--role", "--no-handoff"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "plain") {
+		t.Errorf("error = %q, want it to name only the roles that declare a handoff", err)
+	}
+	if got, _ := store.GetTeam("test-manual-multi/squad"); got.Shift.Phase != api.ShiftNone {
+		t.Fatalf("phase = %q, want none after the refusal", got.Shift.Phase)
+	}
+
+	if err := ctrl.InitiateShiftOpts("test-manual-multi/squad", "", ShiftOpts{NoHandoff: true}); err != nil {
+		t.Fatalf("unscoped shift with NoHandoff: %v", err)
+	}
+	if got, _ := store.GetTeam("test-manual-multi/squad"); got.Shift.Phase != api.ShiftLaunching {
+		t.Fatalf("phase = %q, want launching: NoHandoff lets the unscoped shift proceed", got.Shift.Phase)
+	}
+}
