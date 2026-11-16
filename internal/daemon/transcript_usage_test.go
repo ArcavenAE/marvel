@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -380,4 +381,58 @@ func TestTranscriptOneIdWrittenThreeTimesAddsItsLargest(t *testing.T) {
 	r.replace(msg("m1", 10), msg("m1", 40), msg("m1", 30))
 	r.u.Once()
 	r.want(40, true)
+}
+
+// A single record longer than any scanner buffer is still counted, and an
+// output figure too large for an int is skipped without wrapping the sum.
+func TestTranscriptLongLineAndHugeFigure(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	long := fmt.Sprintf(`{"type":"assistant","message":{"id":"long","role":"assistant","usage":{"output_tokens":77},"content":[{"type":"text","text":%q}]}}`, strings.Repeat("x", 1<<20))
+	r.lines(long, `{"type":"assistant","message":{"id":"huge","role":"assistant","usage":{"output_tokens":99999999999999999999}}}`, msg("after", 3))
+	r.u.Once()
+	r.want(80, false)
+}
+
+// The usage reader refuses a session id that is a path, as the transcript
+// state reader does.
+func TestUsageReaderRefusesASessionIdThatIsAPath(t *testing.T) {
+	r := newUsageRig(t)
+	if err := os.MkdirAll(filepath.Join(r.cfg, "projects", "proj"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(r.cfg, "outside.jsonl")
+	if err := os.WriteFile(outside, []byte(msg("m1", 9)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"../../outside", "a/b", `a\b`, "a\x00b"} {
+		if err := r.store.UpdateSession(r.key, func(s *api.Session) error { s.HarnessSessionID = id; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		r.u.Once()
+		if r.reads != 0 {
+			t.Errorf("id %q: the transcript was opened", id)
+		}
+		if got := r.session().SpendOut; got != nil {
+			t.Errorf("id %q: SpendOut = %d, want nil", id, *got)
+		}
+	}
+}
+
+// After a daemon restart the reader's memory is gone. The stored sum is the
+// base, the file is read from its end, and the sum is partial: it never drops
+// below what was stored.
+func TestRestartKeepsTheStoredSumAndMarksItPartial(t *testing.T) {
+	r := newUsageRig(t)
+	r.u.Once()
+	r.lines(msg("m1", 40))
+	r.u.Once()
+	r.want(40, false)
+	// A new reader over the same store, as after a restart.
+	u2 := newTxUsage(r.store, func(string) (bool, error) { return false, nil })
+	u2.Once()
+	r.want(40, true)
+	r.lines(msg("m2", 5))
+	u2.Once()
+	r.want(45, true)
 }
