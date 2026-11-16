@@ -30,6 +30,13 @@ type TeamLister interface {
 // Reloader tells a running broker to re-read authorization. Supervision
 // (aae-orc-xy1dh) wires SIGHUP here; until then the field is nil and a
 // regenerate only rewrites the files.
+// BrokerNamer reports the server name the running broker holds. running is
+// false when no broker of ours is running; an error means the answer could not
+// be read, which a render treats as not knowing.
+type BrokerNamer interface {
+	ServerName() (name string, running bool, err error)
+}
+
 type Reloader interface {
 	Reload() error
 }
@@ -75,6 +82,10 @@ type Manager struct {
 
 	// Reloader is set by supervision once a broker process exists.
 	Reloader Reloader
+	// Broker answers what the running broker is called, so a render never
+	// puts a server_name into a conf the running broker would refuse to
+	// reload (aae-orc-a7h5h). Nil reads as no broker running.
+	Broker BrokerNamer
 
 	// Events receives bus.global-role-unadmitted. Nil is safe: the daemon wires
 	// its ring, and a test may leave it unset.

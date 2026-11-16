@@ -607,6 +607,9 @@ func (s *Supervisor) Reload() error {
 // errors.Is, through the Manager's wrapping, and never by its text.
 var ErrReloadRefused = errors.New("the broker refused the reload")
 
+// ServerName is the compile-only stub of BrokerNamer: it reports no broker.
+func (s *Supervisor) ServerName() (string, bool, error) { return "", false, nil }
+
 // reloadVerdictWait bounds how long Reload waits for the broker to say what it
 // did with a SIGHUP. The answer normally lands within milliseconds.
 const reloadVerdictWait = 3 * time.Second
