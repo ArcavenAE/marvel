@@ -79,39 +79,79 @@ func adoptedBus(listen, hub string) config.ResolvedBus {
 
 func TestPostcheckAdoptedReadsLeafzWithoutCredential(t *testing.T) {
 	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
-	listen, headers := leafzServer(t, `{"leafnodes":1}`)
+	hub := "nats-leaf://hub.example.test:7442"
+	client := func() *http.Client { return &http.Client{Timeout: 3 * time.Second} }
 
-	st := AdoptedStatus(adoptedBus(listen, "nats-leaf://hub.example.test:7442"), &http.Client{Timeout: 3 * time.Second}, now)
-	if st.Leaf != "up" || !st.HubDeclared || st.Managed {
-		t.Fatalf("status = {Managed:%v HubDeclared:%v Leaf:%q}, want an unmanaged bus with a declared hub and its leaf up", st.Managed, st.HubDeclared, st.Leaf)
-	}
-	if st.LeafObservedAt != now.Format(time.RFC3339) || st.LeafValidUntil == "" {
-		t.Errorf("reading is not dated: observed %q valid until %q", st.LeafObservedAt, st.LeafValidUntil)
-	}
-	got := headers()
-	if len(got) != 1 {
-		t.Fatalf("monitor requests = %d, want exactly one read of /leafz", len(got))
-	}
-	for _, h := range []string{"Authorization", "Cookie", "X-Api-Key"} {
-		if got[0].Get(h) != "" {
-			t.Errorf("the read carried a %s header, so it used a credential", h)
+	t.Run("leaf up is read with no credential", func(t *testing.T) {
+		listen, headers := leafzServer(t, `{"leafnodes":1}`)
+		st := AdoptedStatus(adoptedBus(listen, hub), client(), now)
+		if st.Leaf != "up" || !st.HubDeclared || st.Managed {
+			t.Fatalf("status = {Managed:%v HubDeclared:%v Leaf:%q}, want an unmanaged bus with a declared hub and its leaf up", st.Managed, st.HubDeclared, st.Leaf)
 		}
-	}
+		if st.LeafObservedAt != now.Format(time.RFC3339) || st.LeafValidUntil == "" {
+			t.Errorf("reading is not dated: observed %q valid until %q", st.LeafObservedAt, st.LeafValidUntil)
+		}
+		got := headers()
+		if len(got) != 1 {
+			t.Fatalf("monitor requests = %d, want exactly one read of /leafz", len(got))
+		}
+		for _, h := range []string{"Authorization", "Cookie", "X-Api-Key", "Proxy-Authorization"} {
+			if got[0].Get(h) != "" {
+				t.Errorf("the read carried a %s header, so it used a credential", h)
+			}
+		}
+	})
 
-	down, _ := leafzServer(t, `{"leafnodes":0}`)
-	if st := AdoptedStatus(adoptedBus(down, "nats-leaf://hub.example.test:7442"), &http.Client{Timeout: 3 * time.Second}, now); st.Leaf != "down" {
-		t.Errorf("a monitor that reports no leaf read as %q, want down", st.Leaf)
-	}
+	t.Run("a url with userinfo is not sent as a credential", func(t *testing.T) {
+		listen, headers := leafzServer(t, `{"leafnodes":1}`)
+		rb := adoptedBus(listen, hub)
+		rb.URL = "nats://admin:secret@" + listen
+		if st := AdoptedStatus(rb, client(), now); st.Leaf != "up" {
+			t.Fatalf("leaf = %q, want up", st.Leaf)
+		}
+		for _, h := range headers() {
+			if h.Get("Authorization") != "" {
+				t.Errorf("the broker url's userinfo reached the monitor as an Authorization header")
+			}
+		}
+	})
 
-	if st := AdoptedStatus(adoptedBus(closedMonitorListen(t), "nats-leaf://hub.example.test:7442"), &http.Client{Timeout: 3 * time.Second}, now); st.Leaf != "unknown" || !st.HubDeclared {
-		t.Errorf("an unreadable monitor read as {Leaf:%q HubDeclared:%v}, want unknown with the hub declared", st.Leaf, st.HubDeclared)
-	}
+	t.Run("the monitor read is loopback whatever host the url names", func(t *testing.T) {
+		listen, headers := leafzServer(t, `{"leafnodes":1}`)
+		_, port, err := net.SplitHostPort(listen)
+		if err != nil {
+			t.Fatalf("split: %v", err)
+		}
+		rb := adoptedBus("", hub)
+		rb.URL = "nats://192.0.2.1:" + port
+		if st := AdoptedStatus(rb, client(), now); st.Leaf != "up" {
+			t.Errorf("leaf = %q, want up read from the loopback monitor", st.Leaf)
+		}
+		if n := len(headers()); n != 1 {
+			t.Errorf("loopback monitor requests = %d, want 1", n)
+		}
+	})
 
-	none, noneHeaders := leafzServer(t, `{"leafnodes":1}`)
-	if st := AdoptedStatus(adoptedBus(none, ""), &http.Client{Timeout: 3 * time.Second}, now); st.Leaf != "n/a" || st.HubDeclared {
-		t.Errorf("a bus with no hub read as {Leaf:%q HubDeclared:%v}, want n/a and not declared", st.Leaf, st.HubDeclared)
-	}
-	if n := len(noneHeaders()); n != 0 {
-		t.Errorf("a bus with no hub had its monitor read %d times, want 0", n)
-	}
+	t.Run("a monitor reporting no leaf reads down", func(t *testing.T) {
+		listen, _ := leafzServer(t, `{"leafnodes":0}`)
+		if st := AdoptedStatus(adoptedBus(listen, hub), client(), now); st.Leaf != "down" || !st.HubDeclared {
+			t.Errorf("read {Leaf:%q HubDeclared:%v}, want down with the hub declared", st.Leaf, st.HubDeclared)
+		}
+	})
+
+	t.Run("an unreadable monitor reads unknown, not down", func(t *testing.T) {
+		if st := AdoptedStatus(adoptedBus(closedMonitorListen(t), hub), client(), now); st.Leaf != "unknown" || !st.HubDeclared {
+			t.Errorf("read {Leaf:%q HubDeclared:%v}, want unknown with the hub declared", st.Leaf, st.HubDeclared)
+		}
+	})
+
+	t.Run("a bus with no hub declared is not read", func(t *testing.T) {
+		listen, headers := leafzServer(t, `{"leafnodes":1}`)
+		if st := AdoptedStatus(adoptedBus(listen, ""), client(), now); st.Leaf != "n/a" || st.HubDeclared {
+			t.Errorf("read {Leaf:%q HubDeclared:%v}, want n/a and not declared", st.Leaf, st.HubDeclared)
+		}
+		if n := len(headers()); n != 0 {
+			t.Errorf("the monitor was read %d times, want 0", n)
+		}
+	})
 }
