@@ -28,7 +28,7 @@ func TestUnreportedClassRendersDashNotZero(t *testing.T) {
 	}{
 		{"all reported", cacheSession(num(500), num(300), num(100), num(900), false), []string{"seat", "500", "300", "100", "900"}},
 		{"metered zeros", cacheSession(num(100), num(0), num(0), num(100), false), []string{"seat", "100", "0", "0", "100"}},
-		{"codex reports no cache write", cacheSession(num(500), num(300), nil, num(800), false), []string{"seat", "500", "300", "-", "800"}},
+		{"a class nobody reported", cacheSession(num(500), num(300), nil, num(800), false), []string{"seat", "500", "300", "-", "800"}},
 		{"nothing metered", cacheSession(nil, nil, nil, nil, false), []string{"seat", "-", "-", "-", "-"}},
 		{"partial sum is a lower bound", cacheSession(num(500), num(300), num(100), num(900), true), []string{"seat", "500+", "300+", "100+", "900+"}},
 		{"partial dash stays a dash", cacheSession(num(500), num(300), nil, num(800), true), []string{"seat", "500+", "300+", "-", "800+"}},

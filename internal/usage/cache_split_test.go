@@ -48,18 +48,18 @@ func TestTinPlusCacheEqualsPromptAllHarnesses(t *testing.T) {
 		feed    []rtevents.RequestUsage
 		fresh   int
 		read    int
-		write   *int // nil: the harness reports no cache write
+		write   int
 		prompt  int
 	}{
 		{
 			name: "claude", harness: claudecode.Harness,
 			feed:  []rtevents.RequestUsage{additive(1000, 400, 100), additive(2000, 900, 0)},
-			fresh: 3000, read: 1300, write: ptr(100), prompt: 4400,
+			fresh: 3000, read: 1300, write: 100, prompt: 4400,
 		},
 		{
 			name: "opencode", harness: opencode.Harness,
 			feed:  []rtevents.RequestUsage{additive(500, 200, 50), additive(700, 300, 25)},
-			fresh: 1200, read: 500, write: ptr(75), prompt: 1775,
+			fresh: 1200, read: 500, write: 75, prompt: 1775,
 		},
 		{
 			// codex totals replace each other: the second is the session so far.
@@ -68,7 +68,7 @@ func TestTinPlusCacheEqualsPromptAllHarnesses(t *testing.T) {
 				{Layout: rtevents.LayoutSubsumptive, In: 14005, CacheReadIn: 11008, Out: 71},
 				{Layout: rtevents.LayoutSubsumptive, In: 28110, CacheReadIn: 24064, Out: 76},
 			},
-			fresh: 4046, read: 24064, write: nil, prompt: 28110,
+			fresh: 4046, read: 24064, write: 0, prompt: 28110,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,19 +82,9 @@ func TestTinPlusCacheEqualsPromptAllHarnesses(t *testing.T) {
 			want(t, "TIN", fresh, tc.fresh)
 			want(t, "CR", read, tc.read)
 			want(t, "PROMPT", prompt, tc.prompt)
-			if tc.write == nil {
-				if write != nil {
-					t.Errorf("CW = %v, want nil: %s reports no cache write", deref(write), tc.name)
-				}
-			} else {
-				want(t, "CW", write, *tc.write)
-			}
-			if fresh != nil && read != nil && prompt != nil {
-				w := 0
-				if write != nil {
-					w = *write
-				}
-				if sum := *fresh + *read + w; sum != *prompt {
+			want(t, "CW", write, tc.write)
+			if fresh != nil && read != nil && write != nil && prompt != nil {
+				if sum := *fresh + *read + *write; sum != *prompt {
 					t.Errorf("TIN + CR + CW = %d, PROMPT = %d, want them equal", sum, *prompt)
 				}
 			}
@@ -116,9 +106,9 @@ func TestCodexTinIsInputMinusCached(t *testing.T) {
 	want(t, "TIN", fresh, 14005-11008)
 	want(t, "CR", read, 11008)
 	want(t, "PROMPT", prompt, 14005)
-	if write != nil {
-		t.Errorf("CW = %v, want nil: codex reports no cache write", deref(write))
-	}
+	// Codex sends cache_write_input_tokens (0 on every capture), so CW is a
+	// metered zero and prints 0, not the dash of a class nobody reported.
+	want(t, "CW", write, 0)
 	// The spend the accountant reports in process carries the same split.
 	sp, _ := a.SessionSpend(testCoords.AgentID)
 	if sp.FreshIn != 14005-11008 {
@@ -126,4 +116,46 @@ func TestCodexTinIsInputMinusCached(t *testing.T) {
 	}
 }
 
-func ptr(n int) *int { return &n }
+// The codex parser reads cache_write_input_tokens into CacheCreationIn, so a
+// codex seat's CW is that figure, not an unreported class (review of #1445, low
+// 1). Nothing here asserts TIN + CR + CW = PROMPT for a nonzero write: whether
+// codex counts a cache write inside input_tokens is not measured, every capture
+// carries 0.
+func TestCodexCwReportsTheParsersCacheWrite(t *testing.T) {
+	t.Parallel()
+	a, sink, _ := newTestAccountant(t, Table{"gpt-5.6-sol": 258_400})
+	a.Bind(testCoords, Bind{Harness: codex.Harness, Args: []string{"-m", "gpt-5.6-sol"}})
+	a.Observe(testCoords, turnEvent(codex.Harness, rtevents.RequestUsage{
+		Layout: rtevents.LayoutSubsumptive, In: 14005, CacheReadIn: 11008, CacheCreationIn: 500, Out: 71,
+	}))
+	_, _, write, _ := splitOf(t, sink)
+	want(t, "CW", write, 500)
+}
+
+// A codex sample whose cached input exceeds its input cannot come from a
+// well-formed feed (cached input is part of input). It must not break
+// TIN + CR + CW = PROMPT without a sign: CR is capped at the input, so the
+// three classes still add up to the prompt (review of #1445, low 2). The sample
+// is still counted, so its output tokens are not lost.
+func TestCodexCachedAboveInputKeepsTheIdentity(t *testing.T) {
+	t.Parallel()
+	a, sink, _ := newTestAccountant(t, Table{"gpt-5.6-sol": 258_400})
+	a.Bind(testCoords, Bind{Harness: codex.Harness, Args: []string{"-m", "gpt-5.6-sol"}})
+	a.Observe(testCoords, turnEvent(codex.Harness, rtevents.RequestUsage{
+		Layout: rtevents.LayoutSubsumptive, In: 100, CacheReadIn: 150, Out: 7,
+	}))
+	fresh, read, write, prompt := splitOf(t, sink)
+	want(t, "PROMPT", prompt, 100)
+	want(t, "TIN", fresh, 0)
+	want(t, "CR", read, 100)
+	want(t, "CW", write, 0)
+	if fresh != nil && read != nil && write != nil && prompt != nil {
+		if sum := *fresh + *read + *write; sum != *prompt {
+			t.Errorf("TIN + CR + CW = %d, PROMPT = %d, want them equal", sum, *prompt)
+		}
+	}
+	sp, _ := a.SessionSpend(testCoords.AgentID)
+	if sp.CacheReadIn != 100 || sp.Out != 7 {
+		t.Errorf("SessionSpend CacheReadIn = %d, Out = %d, want 100 and 7: the sample still counts", sp.CacheReadIn, sp.Out)
+	}
+}
