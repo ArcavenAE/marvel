@@ -116,7 +116,8 @@ func resolveDaemonRung() (string, daemonrpc.DialOptions, resolveRung, error) {
 		return env, daemonrpc.DialOptions{Identity: identityPath}, rungEnv, nil
 	}
 	cfg, err := config.Load()
-	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) {
+	// A refused display name map is a display mistake and leaves the config usable.
+	if err != nil && !errors.Is(err, config.ErrInvalidClusterName) && !errors.Is(err, config.ErrInvalidAccountNames) {
 		// A name given with --cluster cannot be looked up in a config that
 		// does not parse, and the default socket is not what the operator
 		// asked for (#502). Without --cluster the fallback is unchanged.
@@ -125,7 +126,7 @@ func resolveDaemonRung() (string, daemonrpc.DialOptions, resolveRung, error) {
 		}
 		return config.ResolveSocket(), daemonrpc.DialOptions{Identity: identityPath}, rungDefault, nil
 	}
-	if err != nil {
+	if err != nil && errors.Is(err, config.ErrInvalidClusterName) {
 		// Another cluster's bad name does not stop this one from resolving.
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
