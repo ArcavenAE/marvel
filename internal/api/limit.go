@@ -183,3 +183,8 @@ type LimitWindowView struct {
 	UsedPercent *float64   `json:"used_percent,omitempty"`
 	ResetsAt    *time.Time `json:"resets_at,omitempty"`
 }
+
+// LimitIsStale reports whether the row's reading is stale: true only when the
+// daemon stamped LimitStale and set it. A row with no reading, or from a daemon
+// older than the field, is not stale; it prints a dash instead of a figure.
+func (s Session) LimitIsStale() bool { return s.LimitStale != nil && *s.LimitStale }

@@ -17,6 +17,8 @@ import (
 
 func pct(v float64) *float64 { return &v }
 
+func boolPtr(b bool) *bool { return &b }
+
 // splitSession is a claude seat on /acct/a with both windows read five minutes
 // before lastActiveNow, the fixed clock withLastActiveClock sets.
 func splitSession(name string) api.Session {
@@ -216,7 +218,7 @@ func TestResetOfAWindowWithNoResetTimeIsADash(t *testing.T) {
 func TestStaleFigureKeepsNumberWithMark(t *testing.T) {
 	fresh := splitSession("fresh")
 	stale := splitSession("stale")
-	stale.LimitReading, stale.LimitStale = api.ReadingStale, true
+	stale.LimitReading, stale.LimitStale = api.ReadingStale, boolPtr(true)
 	cells := cellsOf(t, "5h,7d", fresh, stale)
 	if !slices.Equal(cells["fresh"], []string{"44%", "12%"}) {
 		t.Errorf("fresh = %v, want 44%% 12%%", cells["fresh"])
@@ -348,7 +350,7 @@ func TestDefaultTableIgnoresTheNewFields(t *testing.T) {
 	withLastActiveClock(t)
 	plain := splitSession("a")
 	bare := plain
-	bare.LimitWindows, bare.LimitReadAt, bare.LimitStale = nil, nil, false
+	bare.LimitWindows, bare.LimitReadAt, bare.LimitStale = nil, nil, nil
 	cols := defaultSessionColumns()
 	if a, b := renderSessionTableCols([]api.Session{plain}, cols), renderSessionTableCols([]api.Session{bare}, cols); a != b {
 		t.Errorf("the default table changed with the new fields:\n%s\nvs\n%s", a, b)
@@ -364,7 +366,7 @@ func TestDefaultTableIgnoresTheNewFields(t *testing.T) {
 // column work adds nothing to it.
 func TestGetSessionsJSONCarriesTheLimitFiguresUnchanged(t *testing.T) {
 	s := splitSession("a")
-	s.LimitStale = true
+	s.LimitStale = boolPtr(true)
 	cannedDaemon(t, map[string]any{"session": []api.Session{s}})
 	out, err := runGet(t, "sessions", "-o", "json")
 	if err != nil {
