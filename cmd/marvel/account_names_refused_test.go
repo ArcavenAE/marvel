@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 )
 
@@ -63,5 +64,44 @@ func TestResolveDaemonRungSurvivesARefusedAccountName(t *testing.T) {
 	}
 	if rung != rungCluster || addr != "/scratch/cluster.sock" {
 		t.Errorf("rung %q addr %q, want the cluster rung and its socket", rung, addr)
+	}
+}
+
+// Every command that refuses on any config load error must treat the refusal as
+// display-only. get sessions --all-clusters reads the config in collectFanOut.
+func TestGetSessionsAllClustersWithARefusedNameExitsZero(t *testing.T) {
+	a := startFake(t, fakeAnswers, []api.Session{splitSession("a-one")})
+	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock})
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Display.AccountNames = map[string]string{"ab12cd": " padded"}
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	old := accountNames
+	t.Cleanup(func() { accountNames = old })
+	code, out, stderr := runFanGet(t, "get", "sessions", "--all-clusters", "--columns", "name,account")
+	if code != 0 {
+		t.Fatalf("exit = %d with a refused display name, want 0; stderr: %s", code, stderr)
+	}
+	if !strings.Contains(out, "a-one") {
+		t.Errorf("the table did not render:\n%s", out)
+	}
+	if n := strings.Count(stderr, "account_names"); n != 1 {
+		t.Errorf("stderr names display.account_names %d times, want one note:\n%s", n, stderr)
+	}
+}
+
+// config list reads the config and refuses on any other error; a refused name
+// map must not stop it.
+func TestConfigListWithARefusedNameStillLists(t *testing.T) {
+	badNamesConfig(t)
+	cmd := configCmd()
+	cmd.SetArgs([]string{"list"})
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	if err := cmd.Execute(); err != nil {
+		t.Errorf("config list with a refused display name: %v", err)
 	}
 }

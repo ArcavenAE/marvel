@@ -463,3 +463,49 @@ func TestAccountNameRefusalsAreTheSentinel(t *testing.T) {
 		}
 	}
 }
+
+// A refused name map is a display mistake, not a load failure: Load returns no
+// error for it, so no caller that refuses on any error can turn it into an
+// unreadable config. The refusal rides on the config, and the file's own entry is
+// kept so a command that loads and saves the config does not erase it.
+func TestLoadKeepsADisplayRefusalOffTheError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &Config{
+		Clusters: []Cluster{{Name: "a", Socket: "/scratch/a.sock"}},
+		Display:  Display{AccountNames: map[string]string{"ab12cd": " padded"}},
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load returned %v for a refused display name, want no error", err)
+	}
+	if !errors.Is(got.AccountNamesRefused, ErrInvalidAccountNames) {
+		t.Errorf("AccountNamesRefused = %v, want it to wrap ErrInvalidAccountNames", got.AccountNamesRefused)
+	}
+	if err := Save(got); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := Load()
+	if again == nil || again.Display.AccountNames["ab12cd"] != " padded" {
+		t.Errorf("a load and save dropped the operator's entry: %+v", again)
+	}
+}
+
+// A good map loads with no refusal, and a bad cluster name still comes back as
+// its own error, with no account-name sentinel in it.
+func TestLoadKeepsTheClusterErrorAndOnlyThatError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &Config{
+		Clusters: []Cluster{{Name: "bad name", Socket: "/scratch/a.sock"}},
+		Display:  Display{AccountNames: map[string]string{"ab12cd": " padded"}},
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load()
+	if !errors.Is(err, ErrInvalidClusterName) || errors.Is(err, ErrInvalidAccountNames) {
+		t.Errorf("Load error = %v, want the cluster-name error and not the account-name sentinel", err)
+	}
+}
