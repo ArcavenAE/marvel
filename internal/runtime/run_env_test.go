@@ -26,3 +26,22 @@ func TestBaseEnvCarriesTheRunEnvOfASessionIntoARole(t *testing.T) {
 		t.Errorf("NATS_URL = %q, want the session's value refused as a role's is", v)
 	}
 }
+
+// A value passed with marvel run --env wins over the role's value for the same
+// key: the run is the operator's later, narrower word. A role value is skipped
+// only when the session carries the very same value, so it is not applied twice.
+func TestBaseEnvLetsARunEnvOverrideTheRolesValueForTheSameKey(t *testing.T) {
+	t.Parallel()
+
+	ctx := testContext()
+	ctx.Role.Runtime.Env = map[string]string{"TWIN_MODE": "from-role", "SAME": "shared"}
+	ctx.Session.Runtime.Env = map[string]string{"TWIN_MODE": "from-run", "SAME": "shared"}
+	env := baseEnv(ctx)
+
+	if got := env["TWIN_MODE"]; got != "from-run" {
+		t.Errorf("TWIN_MODE = %q, want %q: --env overrides the role's value for the same key", got, "from-run")
+	}
+	if got := env["SAME"]; got != "shared" {
+		t.Errorf("SAME = %q, want %q: an equal value still reaches the process", got, "shared")
+	}
+}
