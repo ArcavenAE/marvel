@@ -102,15 +102,16 @@ func TestReprojectWritesTheRecordedLaunchPathOfAnAdoptedSeat(t *testing.T) {
 	}
 }
 
-// A seat with no recorded path (launched before the field existed), and one
-// whose recorded path is the current one, write the current path only.
+// A seat with no recorded path and no file at the previous default (so it was
+// not launched with one), and one whose recorded path is the current one, write
+// the current path only.
 func TestReprojectWritesTheCurrentPathOnceWhenNothingElseIsRecorded(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		record func(*Manager, *api.Session) string
 	}{
-		{"no recorded path", func(*Manager, *api.Session) string { return "" }},
+		{"no recorded path and nothing at the previous default", func(*Manager, *api.Session) string { return "" }},
 		{"the recorded path is the current one", func(mgr *Manager, s *api.Session) string {
 			lctx, adapter, _ := mgr.reprojectContext(*s)
 			return adapter.ProjectionFor(lctx, mgr.ProjectionDir).Path
@@ -191,5 +192,78 @@ func TestCreateStoresTheProjectionPathOfTheSeat(t *testing.T) {
 	}
 	if stored.ProjectionPath == "" || !withinDir(r.mgr.ProjectionDir, stored.ProjectionPath) {
 		t.Errorf("stored ProjectionPath = %q, want a path inside %q", stored.ProjectionPath, r.mgr.ProjectionDir)
+	}
+}
+
+// legacyProjectionFile makes the directory the previous default named for this
+// manager's seat (under the temp directory) and returns the file a seat
+// launched before the change was told to read, written with placeholder
+// content, in a directory of the given mode.
+func legacyProjectionFile(t *testing.T, mgr *Manager, mode os.FileMode) string {
+	t.Helper()
+	t.Setenv("TMPDIR", t.TempDir())
+	dir := daemonTempDir("marvel-policies")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, mode); err != nil {
+		t.Fatal(err)
+	}
+	live := mgr.store.ListSessions()
+	if len(live) != 1 {
+		t.Fatalf("%d sessions, want 1", len(live))
+	}
+	lctx, adapter, ok := mgr.reprojectContext(live[0])
+	if !ok {
+		t.Fatal("no launch context for the session")
+	}
+	path := adapter.ProjectionFor(lctx, dir).Path
+	if err := os.WriteFile(path, []byte(`{"placeholder": true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A seat running when the change is installed has no recorded path. Its file is
+// at the path the previous default gave, so a policy edit reaches that file when
+// it exists (director ruling, review of the first version of this change).
+func TestReprojectWritesThePreviousDefaultOfASeatWithNoRecordedPath(t *testing.T) {
+	mgr := projectionReady(t)
+	old := legacyProjectionFile(t, mgr, 0o700)
+
+	mgr.Reproject()
+	got, err := os.ReadFile(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `"Read"`) || strings.Contains(string(got), "placeholder") {
+		t.Errorf("the previous default holds %q, want the projected policy", got)
+	}
+
+	policyEdited(t, mgr)
+	mgr.Reproject()
+	got, err = os.ReadFile(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `"Edit"`) {
+		t.Errorf("after a policy edit the previous default holds %q, want the new rule", got)
+	}
+}
+
+// The private-directory rule holds for the previous default too: a directory
+// made at a wider mode by an older marvel is not written, and the seat keeps the
+// file it has.
+func TestReprojectDoesNotWriteAPreviousDefaultInADirThatIsNotPrivate(t *testing.T) {
+	mgr := projectionReady(t)
+	old := legacyProjectionFile(t, mgr, 0o777)
+
+	mgr.Reproject()
+	got, err := os.ReadFile(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"placeholder": true}` {
+		t.Errorf("the previous default holds %q, want it untouched: its directory is not private to this user", got)
 	}
 }
