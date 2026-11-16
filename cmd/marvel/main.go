@@ -3499,8 +3499,10 @@ type sessionRow struct {
 	account, fiveH, sevenD, fiveReset, sevenReset, read, backend, cred, home, login, cluster string
 	lastTurn                                                                                 string
 	cost                                                                                     string
-	composer                                                                                 string
-	pane                                                                                     string
+	// The cache split of PROMPT (I-477 slice 2).
+	tin, cr, cw, hit string
+	composer         string
+	pane             string
 }
 
 // newSessionRow derives a session's cells. The absence rules live here, in
@@ -3653,7 +3655,11 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 		tout:       tout,
 		cost:       costCell(s),
 		rate:       rate,
-		prompt:     promptCell(s.SpendPromptTokens),
+		prompt:     toutMarked(s.SpendPromptTokens, s.SpendPartial),
+		tin:        tinCell(s),
+		cr:         crCell(s),
+		cw:         cwCell(s),
+		hit:        hitPctCell(s),
 		lastActive: lastActiveCell(s, lastActiveClock()),
 		lastTurn:   lastTurnCell(s, lastActiveClock()),
 		age:        ageCell(s, lastActiveClock()),

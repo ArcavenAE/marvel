@@ -235,10 +235,17 @@ TEAM stays reachable through `--columns` and `describe`.
   the same way). This moves the dollar figures out of TOUT and RATE so that
   every column has one unit and no figure disappears (card i477c1113-2, read
   by director as option 1; the operator may overrule it at review).
-- **No Tin column.** Raw input is not comparable across harnesses: codex's
-  layout counts cached input inside input, while Claude's adds it
-  separately. PROMPT (`PromptTokens`, normalized for layout) goes in
-  `wide` and `describe` instead.
+- **TIN, CR, CW and HIT% (I-477 slice 2, card i477c1113-1).** TIN is fresh
+  input, beside CR (cache read) and CW (cache write), so that
+  TIN + CR + CW = PROMPT on every harness. This replaces the earlier "no Tin
+  column": raw input still never becomes a column, because codex counts cached
+  input inside input while claude and opencode report it separately, but fresh
+  input is comparable. For codex, TIN is input less cached input, and CW is
+  `-` because codex reports no cache write. HIT% is CR / PROMPT and is `-` when
+  either is unknown or PROMPT is zero. A class nobody reported prints `-`; a
+  metered zero prints `0`. All four are opt-in and in `wide`, with PROMPT. A
+  sum that is a lower bound ends in `+`; HIT% carries no mark, because both
+  sides cover the same records.
 - **Account budget, reset and credit stay in `get budgets`.** The opt-in
   account columns of section 4.1 (`account`, `5h`, `7d`, `5h-reset`,
   `7d-reset`, `read`) show each row's own account reading. They are never

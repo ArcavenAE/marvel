@@ -68,6 +68,18 @@ func (s Sample) Occupancy() int {
 	return s.In + s.CacheReadIn + s.CacheCreationIn
 }
 
+// Fresh is the part of this sample's prompt that is neither a cache read nor a
+// cache write. Under an additive layout that is In as reported; under a
+// subsumptive one (codex) In counts the cached input, so it is In less
+// CacheReadIn. It is never negative, so a sample whose cached figure exceeds its
+// input reads as zero fresh rather than lowering a sum.
+func (s Sample) Fresh() int {
+	if s.Layout == rtevents.LayoutSubsumptive {
+		return max(0, s.In-s.CacheReadIn)
+	}
+	return s.In
+}
+
 // ClassSum adds the three prompt-token classes without applying Layout.
 // It is the reconciliation quantity: comparing accumulated per-request
 // classes against a terminal total has to be layout-independent, because

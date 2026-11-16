@@ -166,7 +166,7 @@ func TestSetReadKeyFollowsTheList(t *testing.T) {
 func TestWideGainsTheAccountFigures(t *testing.T) {
 	today := []string{
 		"workspace", "team", "role", "generation", "name", "state", "health",
-		"context", "cpu", "rss", "desk", "runtime", "llm", "tout", "rate", "prompt", "last-active", "last-turn", "age", "active",
+		"context", "cpu", "rss", "desk", "runtime", "llm", "tout", "rate", "tin", "cr", "cw", "prompt", "hit", "last-active", "last-turn", "age", "active",
 	}
 	want := append(slices.Clone(today), "account", "7d", "7d-reset", "read")
 	if !slices.Equal(wideSessionColumns, want) {
