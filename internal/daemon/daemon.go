@@ -3424,14 +3424,15 @@ func (d *Daemon) attachServices(socketPath string) error {
 	// The first segment of every seat URI, set before any service is attached
 	// so a named cluster with no bus still names its seats.
 	d.sessMgr.SeatCluster = cl.Name
-	if verr := config.ValidateServices(cl); verr != nil {
-		log.Printf("services: cluster %s has an invalid services list, nothing attached: %v", cl.Name, verr)
+	entries, refused := config.PartitionServices(cl)
+	if len(entries) == 0 && len(refused) > 0 {
+		log.Printf("services: cluster %s has an invalid services list, nothing attached: %v", cl.Name, errors.Join(refused...))
 		return nil
 	}
-	entries, aerr := cl.AllServices()
-	if aerr != nil {
-		log.Printf("services: cluster %s: %v", cl.Name, aerr)
-		return nil
+	// An entry the registries do not carry is skipped alone; the entries
+	// beside it, the bus included, still attach (marvel#916).
+	for _, rerr := range refused {
+		log.Printf("services: cluster %s: entry skipped: %v", cl.Name, rerr)
 	}
 	if len(entries) == 0 {
 		return nil

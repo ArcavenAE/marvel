@@ -469,44 +469,100 @@ func (c *Cluster) BusService() (*Service, error) {
 // and each nats-server body valid under ValidateBus. Every refusal is
 // structural (ADR-007 clause 3).
 func ValidateServices(c *Cluster) error {
-	all, err := c.AllServices()
+	_, fails, err := checkServices(c)
 	if err != nil {
 		return err
 	}
-	var errs []error
+	errs := make([]error, 0, len(fails))
+	for _, f := range fails {
+		errs = append(errs, f.err)
+	}
+	return errors.Join(errs...)
+}
+
+// serviceFailure is one entry's refusal and the entry's position in the list.
+type serviceFailure struct {
+	index int
+	err   error
+}
+
+// checkServices runs the per-entry checks of ValidateServices and keeps each
+// refusal beside its entry. The error is the list's own (both spellings, or a
+// malformed record), which no entry carries.
+func checkServices(c *Cluster) ([]Service, []serviceFailure, error) {
+	all, err := c.AllServices()
+	if err != nil {
+		return nil, nil, err
+	}
+	var fails []serviceFailure
+	fail := func(i int, e error) { fails = append(fails, serviceFailure{index: i, err: e}) }
 	seen := map[string]bool{}
 	for i := range all {
 		s := &all[i]
 		if s.Name == "" {
-			errs = append(errs, fmt.Errorf("%w: cluster %q: services[%d] has no name", ErrInvalidService, c.Name, i))
+			fail(i, fmt.Errorf("%w: cluster %q: services[%d] has no name", ErrInvalidService, c.Name, i))
 			continue
 		}
 		if seen[s.Name] {
-			errs = append(errs, fmt.Errorf("%w: cluster %q: service %q is declared twice", ErrInvalidService, c.Name, s.Name))
+			fail(i, fmt.Errorf("%w: cluster %q: service %q is declared twice", ErrInvalidService, c.Name, s.Name))
 			continue
 		}
 		seen[s.Name] = true
 		mode, merr := service.ParseMode(s.Mode)
 		if merr != nil {
-			errs = append(errs, fmt.Errorf("%w: cluster %q: service %q: %w", ErrInvalidService, c.Name, s.Name, merr))
+			fail(i, fmt.Errorf("%w: cluster %q: service %q: %w", ErrInvalidService, c.Name, s.Name, merr))
 			continue
 		}
 		if _, _, cerr := service.Check(s.Class, s.Provider, mode); cerr != nil {
-			errs = append(errs, fmt.Errorf("%w: cluster %q: service %q: %w", ErrInvalidService, c.Name, s.Name, cerr))
+			fail(i, fmt.Errorf("%w: cluster %q: service %q: %w", ErrInvalidService, c.Name, s.Name, cerr))
 			continue
 		}
 		if s.Provider == service.ProviderNATSServer {
 			b, berr := s.BusSpec()
 			if berr != nil {
-				errs = append(errs, fmt.Errorf("%w: cluster %q: service %q: %w", ErrInvalidService, c.Name, s.Name, berr))
+				fail(i, fmt.Errorf("%w: cluster %q: service %q: %w", ErrInvalidService, c.Name, s.Name, berr))
 				continue
 			}
 			if verr := ValidateBus(c.Name, b); verr != nil {
-				errs = append(errs, verr)
+				fail(i, verr)
 			}
 		}
 	}
-	return errors.Join(errs...)
+	return all, fails, nil
+}
+
+// PartitionServices splits a cluster's Services list into the entries the
+// daemon can attach and the refusals of the entries it skips. An entry whose
+// class, provider, pairing or mode the registries do not carry
+// (service.ErrUnregistered) is skipped on its own, so a class declared before
+// its driver lands does not take the message bus down with it (marvel#916).
+// Any other refusal, or a list that cannot be read, refuses the whole list as
+// before: nothing is attachable and every refusal is returned.
+func PartitionServices(c *Cluster) ([]Service, []error) {
+	all, fails, err := checkServices(c)
+	if err != nil {
+		return nil, []error{err}
+	}
+	errs := make([]error, 0, len(fails))
+	skip := make(map[int]bool, len(fails))
+	whole := false
+	for _, f := range fails {
+		errs = append(errs, f.err)
+		skip[f.index] = true
+		if !errors.Is(f.err, service.ErrUnregistered) {
+			whole = true
+		}
+	}
+	if whole {
+		return nil, errs
+	}
+	ok := make([]Service, 0, len(all))
+	for i := range all {
+		if !skip[i] {
+			ok = append(ok, all[i])
+		}
+	}
+	return ok, errs
 }
 
 // Bus describes a cluster's local broker. There is no credential path (the
