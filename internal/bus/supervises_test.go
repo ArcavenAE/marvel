@@ -345,3 +345,37 @@ func TestSupervisesGrantAddsToTheGlobalSupervisorUserWithAHub(t *testing.T) {
 		t.Errorf("midway.architect does not publish the supervisor inbox: %v", mid[0])
 	}
 }
+
+// A name that did not resolve becomes valid, with no change to the
+// supervisor's declaration, once its team is applied: the declaration is read
+// at every render, so apply order does not matter.
+func TestSupervisesNameResolvesOnceItsTeamIsApplied(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "nats")
+	rb := config.ResolvedBus{Managed: true, Listen: "127.0.0.1:4222", URL: "nats://127.0.0.1:4222", StoreDir: dir}
+	live := &teams{
+		{Name: "product", Workspace: "dtu", Roles: []api.Role{{Name: "supervisor", Supervises: []string{"midway"}}}},
+	}
+	m, err := NewManager(dir, "corporate", rb, live, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	before := authGrants(t, dir)
+	if _, has := before["product.supervisor"]; has {
+		t.Errorf("the supervisor has a grant user before its team is applied: %v", before["product.supervisor"])
+	}
+	*live = append(*live, api.Team{Name: "midway", Workspace: "dtu", Roles: []api.Role{{Name: "architect"}}})
+	if _, err := m.Regenerate(); err != nil {
+		t.Fatal(err)
+	}
+	after := authGrants(t, dir)
+	if got := after["product.supervisor"][0]; !contains(got, "agent.dtu.midway.role.architect.inbox") {
+		t.Errorf("after midway is applied the supervisor does not publish its inbox: %v", got)
+	}
+	if got := after["midway.architect"][0]; !contains(got, "agent.dtu.product.role.supervisor.inbox") {
+		t.Errorf("after midway is applied its architect does not publish the supervisor inbox: %v", got)
+	}
+}
