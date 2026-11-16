@@ -2,6 +2,8 @@ package session
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
@@ -33,6 +36,12 @@ import (
 func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.Adapter) error {
 	target, wrote, _, shadowed, err := m.projectPolicy(lctx, adapter)
 	if err != nil {
+		// A directory that is not private is refused, never downgraded to a
+		// launch without the file.
+		var pde *privateDirError
+		if errors.As(err, &pde) {
+			return err
+		}
 		var sfe *settingsFileError
 		if errors.As(err, &sfe) {
 			return sfe
@@ -235,6 +244,9 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 		shadowed = injectStatuslineFeed(settings, adapter, lctx.Session.Key(), lctx.Role.Policy)
 	}
 
+	if why := m.requirePrivateDir(m.ProjectionDir); why != "" {
+		return target, false, false, nil, &privateDirError{dir: m.ProjectionDir, why: why}
+	}
 	changed, err := writeProjectionFile(target.Path, settings)
 	if err != nil {
 		if policyEmpty {
@@ -355,20 +367,49 @@ func writeProjectionFile(path string, settings map[string]any) (bool, error) {
 	}
 	data = append(data, '\n')
 
-	existing, err := os.ReadFile(path)
-	switch {
-	case err == nil:
-		if bytes.Equal(existing, data) {
-			return false, nil
+	// Only a plain file is compared: a link or anything else at the path is
+	// replaced below, never read through.
+	if fi, lerr := os.Lstat(path); lerr == nil && fi.Mode().IsRegular() {
+		existing, err := os.ReadFile(path)
+		switch {
+		case err == nil:
+			if bytes.Equal(existing, data) {
+				return false, nil
+			}
+		case !errors.Is(err, os.ErrNotExist):
+			return false, fmt.Errorf("read existing projection %s: %w", path, err)
 		}
-	case !errors.Is(err, os.ErrNotExist):
-		return false, fmt.Errorf("read existing projection %s: %w", path, err)
+	} else if lerr != nil && !errors.Is(lerr, os.ErrNotExist) {
+		return false, fmt.Errorf("stat existing projection %s: %w", path, lerr)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return false, fmt.Errorf("create projection dir for %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// Write to a new name made exclusively and without following a link, then
+	// rename it over the path: a link left at the path is replaced, and what it
+	// pointed at is never written.
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return false, fmt.Errorf("name a temporary file for %s: %w", path, err)
+	}
+	tmp := filepath.Join(dir, "."+filepath.Base(path)+"."+hex.EncodeToString(suffix[:])+".tmp")
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return false, fmt.Errorf("write projection %s: %w", path, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return false, fmt.Errorf("write projection %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return false, fmt.Errorf("write projection %s: %w", path, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
 		return false, fmt.Errorf("write projection %s: %w", path, err)
 	}
 	return true, nil

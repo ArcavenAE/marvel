@@ -92,6 +92,11 @@ func (m *Manager) applyBackendOverlay(sess *api.Session, plan *launchPlan) (map[
 		return nil, err
 	}
 	path := m.backendOverlayPath(sess.Key())
+	if m.BackendOverlayDir != "" {
+		if why := m.requirePrivateDir(m.BackendOverlayDir); why != "" {
+			return nil, &privateDirError{dir: m.BackendOverlayDir, why: why}
+		}
+	}
 	if _, err := writeProjectionFile(path, settings); err != nil {
 		return nil, fmt.Errorf("write backend overlay %s: %w", path, err)
 	}
