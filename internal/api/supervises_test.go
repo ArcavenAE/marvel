@@ -40,9 +40,9 @@ func TestValidateManifestSuperviseValues(t *testing.T) {
 		}
 	}
 	bad := map[string][]string{
-		"Midway":      {"Midway"},
-		"mid.way":     {"mid.way"},
-		"mid way":     {"mid way"},
+		"Alpha":       {"Alpha"},
+		"al.pha":      {"al.pha"},
+		"al pha":      {"al pha"},
 		"*":           {"*"},
 		">":           {">"},
 		"empty":       {""},
