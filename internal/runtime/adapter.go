@@ -715,24 +715,46 @@ func mergeRoleEnv(ctx *LaunchContext, env map[string]string) map[string]string {
 	// that choice. It is logged so that a wrong identity on the bus is
 	// traceable to the manifest that caused it rather than being invisible.
 	// Only the KEY is ever logged; a refused value is never echoed.
-	for k, v := range ctx.Role.Runtime.Env {
+	MergeDeclaredEnv(env, ctx.Session.Name, "role env", ctx.Role.Runtime.Env)
+
+	// The session's own env is what marvel run --env records, and a run into a
+	// team that has the named role reaches here with a role that declares none
+	// of it (marvel#1450). It passes the same refusals. A seat the controller
+	// spawned carries its role's env on the session too, so a value the role
+	// already supplied is not applied, or warned about, twice.
+	declared := make(map[string]string, len(ctx.Session.Runtime.Env))
+	for k, v := range ctx.Session.Runtime.Env {
+		if rv, ok := ctx.Role.Runtime.Env[k]; ok && rv == v {
+			continue
+		}
+		declared[k] = v
+	}
+	MergeDeclaredEnv(env, ctx.Session.Name, "run env", declared)
+	return env
+}
+
+// MergeDeclaredEnv merges operator-declared variables over the constructed ones,
+// refusing the keys marvel owns (see mergeRoleEnv for the three classes). what
+// names the source in the warnings, "role env" or "run env". Only the key is
+// ever logged; a refused value is never echoed.
+func MergeDeclaredEnv(env map[string]string, session, what string, declared map[string]string) {
+	for k, v := range declared {
 		switch {
 		case roleEnvRefused(k):
-			log.Printf("warning: session %s: role env %q refused, marvel owns the credentials that prove a session's identity", ctx.Session.Name, k)
+			log.Printf("warning: session %s: %s %q refused, marvel owns the credentials that prove a session's identity", session, what, k)
 			continue
 		case roleEnvTopologyRefused(k):
-			log.Printf("warning: session %s: role env %q refused, marvel owns where a session reaches the bus and the daemon", ctx.Session.Name, k)
+			log.Printf("warning: session %s: %s %q refused, marvel owns where a session reaches the bus and the daemon", session, what, k)
 			continue
 		case api.BackendBearerEnv(k):
-			log.Printf("warning: session %s: role env %q refused, it carries a literal credential; declare a helper pointer instead (ADR-009)", ctx.Session.Name, k)
+			log.Printf("warning: session %s: %s %q refused, it carries a literal credential; declare a helper pointer instead (ADR-009)", session, what, k)
 			continue
 		}
 		if _, constructed := env[k]; constructed {
-			log.Printf("warning: session %s: role env %q overrides a marvel-constructed value", ctx.Session.Name, k)
+			log.Printf("warning: session %s: %s %q overrides a marvel-constructed value", session, what, k)
 		}
 		env[k] = v
 	}
-	return env
 }
 
 // roleEnvRefused reports whether a role-declared env key is one of the six

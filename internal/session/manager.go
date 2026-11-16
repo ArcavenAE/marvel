@@ -2109,6 +2109,9 @@ func (m *Manager) directCommand(sess *api.Session) (string, map[string]string) {
 			envs[api.HeartbeatTokenEnv] = sess.HeartbeatToken
 		}
 	}
+	// What marvel run --env recorded on the session, through the refusals the
+	// role env gets (marvel#1450).
+	runtime.MergeDeclaredEnv(envs, sess.Name, "run env", sess.Runtime.Env)
 	return cmd, envs
 }
 
