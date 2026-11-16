@@ -29,7 +29,7 @@ const adoptedReadTimeout = 3 * time.Second
 // declared hub reads "up" or "down" from /leafz, or "unknown" when the monitor
 // cannot be read: an unread leaf is never reported as down.
 func AdoptedStatus(rb config.ResolvedBus, client *http.Client, now time.Time) Status {
-	st := Status{Managed: false, Adopted: true, URL: rb.URL, Listen: rb.Listen, Leaf: "n/a"}
+	st := Status{Managed: false, URL: rb.URL, Listen: rb.Listen, Leaf: "n/a"}
 	if rb.HubURL == "" {
 		return st
 	}
@@ -39,7 +39,11 @@ func AdoptedStatus(rb config.ResolvedBus, client *http.Client, now time.Time) St
 	if err != nil {
 		return st
 	}
-	resp, err := client.Get("http://" + mon + "/leafz")
+	// A monitor that redirects is not read through: the answer would come from
+	// somewhere the cluster did not name, so it reads as non-200, not as a leaf.
+	noRedirect := *client
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := noRedirect.Get("http://" + mon + "/leafz")
 	if err != nil {
 		return st
 	}

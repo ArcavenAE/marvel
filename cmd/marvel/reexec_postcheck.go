@@ -178,7 +178,9 @@ func seconds(d time.Duration) string {
 // readOnce reads the successor once. answered is false until the daemon answers
 // as a new process; why is "" for a leaf that is up on a current reading, one
 // of the hubless states above, or the cause of a leaf that is not up. adopted
-// is true when the reading is of an adopted bus.
+// is true when the reading is of a bus the daemon does not manage. It is not
+// bus.Status.Adopted, which marks a managed broker found running after a
+// re-exec.
 func (o reexecObserver) readOnce(before time.Time) (answered bool, why string, adopted bool) {
 	started, err := o.startedAt()
 	if err != nil || (!before.IsZero() && started.Equal(before)) {
@@ -196,11 +198,11 @@ func (o reexecObserver) readOnce(before time.Time) (answered bool, why string, a
 	ok, reason := leafRequirement(st, o.now())
 	switch {
 	case ok:
-		return true, "", st.Adopted
-	case reason == "no hub" && st.Adopted:
+		return true, "", !st.Managed
+	case reason == "no hub" && !st.Managed:
 		return true, whyAdoptedNoHub, true
 	case reason == "no hub":
 		return true, whyManagedNoHub, false
 	}
-	return true, reason, st.Adopted
+	return true, reason, !st.Managed
 }
