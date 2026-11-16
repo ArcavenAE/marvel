@@ -67,9 +67,9 @@ one redirects something:
 Unsetting the whole prefix covers these and any added later.
 
 To run a throwaway daemon, name its root instead of overriding `HOME`:
-`MARVEL_HOME=/tmp/mh-x marvel daemon` (or `marvel --marvel-home /tmp/mh-x
-daemon`) gives it its own socket, state, log, pid file, tmux server and bus
-store, with `HOME` and the toolchain caches left alone. The root must be an
+`MARVEL_HOME=$HOME/.mh-x marvel daemon` (or `marvel --marvel-home
+$HOME/.mh-x daemon`) gives it its own socket, state, log, pid file, tmux
+server and bus store, with `HOME` and the toolchain caches left alone. The root must be an
 absolute path short enough for its `run/marvel.sock` to fit in a unix socket
 path. See `docs/design/marvel-home.md`.
 

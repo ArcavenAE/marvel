@@ -51,7 +51,7 @@ teams:
           context_window: 1000000
           context_feed: statusline
         shift:
-          handoff: /tmp/marvel-handoffs/{session}.md
+          handoff: ~/.marvel-handoffs/{session}.md
           handoff_marker: END HANDOFF
           handoff_window: 5m
           any:

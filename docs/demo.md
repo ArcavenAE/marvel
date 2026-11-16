@@ -38,7 +38,7 @@ Run the demo on its own layout, not on the one your real fleet uses. Every
 piece of marvel's state has a flag, and the tmux namespace has an env var:
 
 ```sh
-D=/tmp/marvel-demo-layout; mkdir -p "$D"
+D="$HOME/.marvel-demo-layout"; mkdir -p "$D" && chmod 700 "$D"
 MARVEL_TMUX_SOCKET=marvel-demo-layout ./bin/marvel daemon \
   --socket     "$D/m.sock" \
   --state-bolt "$D/marvel.bolt" \
@@ -73,7 +73,7 @@ Between acts, start clean so one act's sessions do not bleed into the next:
 
 ```sh
 ./bin/marvel stop --teardown   # end the daemon and every agent
-rm -rf "$D" && mkdir -p "$D"   # forget persisted resources
+rm -rf "$D" && mkdir -m 700 "$D"   # forget persisted resources
 # then the daemon command above again
 ```
 
@@ -424,7 +424,7 @@ the scratch layout in Prerequisites makes safe to arrange. Give each daemon
 its own state and socket, and point both at the same `MARVEL_TMUX_SOCKET`:
 
 ```sh
-A=/tmp/mv-a; B=/tmp/mv-b; mkdir -p "$A" "$B"
+A="$HOME/.marvel-demo-a"; B="$HOME/.marvel-demo-b"; mkdir -p "$A" "$B" && chmod 700 "$A" "$B"
 
 MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel daemon \
   --socket "$A/m.sock" --state-bolt "$A/marvel.bolt" \
@@ -449,7 +449,7 @@ sleep 4
 MARVEL_SOCKET="$B/m.sock" MARVEL_TMUX_SOCKET=mv-shared ./bin/marvel events
 ```
 
-A verified run, 2026-08-09:
+A verified run, 2026-08-09 (it used scratch directories under the shared temp directory, `/tmp/mv-a` and `/tmp/mv-b`, so its socket path differs from yours; the commands above keep the state under a private directory):
 
 ```
 warning  reconcile.left  recover  left tmux session marvel-recover running:
@@ -916,7 +916,7 @@ directory that held all of its state:
 
 ```sh
 ./bin/marvel stop --teardown
-rm -rf /tmp/marvel-demo-layout
+rm -rf "$HOME/.marvel-demo-layout"
 unset MARVEL_SOCKET MARVEL_TMUX_SOCKET
 ```
 
