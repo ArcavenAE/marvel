@@ -43,9 +43,13 @@ const (
 // Spec is everything the renderer needs. Every name in it is a subject token
 // already, or Render refuses.
 type Spec struct {
-	Domain   string // the cluster name; becomes the JetStream domain
-	Listen   string // explicit host:port
-	StoreDir string // JetStream store root; the store itself is StoreDir/store
+	Domain string // the cluster name; becomes the JetStream domain
+	// OmitServerName leaves server_name out of the conf. nats-server refuses a
+	// whole reload when the name changes, so a conf the running broker would
+	// reload does not carry one it lacks (aae-orc-a7h5h).
+	OmitServerName bool
+	Listen         string // explicit host:port
+	StoreDir       string // JetStream store root; the store itself is StoreDir/store
 	// MaxFileStore and MaxMemoryStore cap the JetStream stores in bytes; zero
 	// renders no cap.
 	MaxFileStore, MaxMemoryStore int64
@@ -162,6 +166,12 @@ func RenderConf(s Spec) (string, error) {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# Rendered by marvel for cluster %s. Edit the bus section of\n", s.Domain)
 	fmt.Fprintf(&b, "# ~/.marvel/config.yaml instead; this file is regenerated.\n\n")
+	// The broker's name is the cluster's, so a hub lists its leaves by name.
+	// Left out, the name is the server id, new on every start. Domain is a
+	// validated subject token, so it needs no quoting.
+	if !s.OmitServerName {
+		fmt.Fprintf(&b, "server_name: %s\n", s.Domain)
+	}
 	fmt.Fprintf(&b, "listen: %s\n", s.Listen)
 	fmt.Fprintf(&b, "http: %s\n\n", monitor)
 	fmt.Fprintf(&b, "jetstream {\n  store_dir: %q\n  domain: %s\n", filepath.Join(s.StoreDir, "store"), s.Domain)

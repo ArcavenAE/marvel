@@ -55,6 +55,23 @@ func (s *Supervisor) newProcess() *workload.Process {
 		// The conf is read at every spawn, so a restart sees what the manager
 		// last rendered.
 		Check: func(env []string) error {
+			// A broker about to start reads the conf, so the conf is rendered for
+			// that process first: with none running it carries the cluster's
+			// name, which a broker that was running without one could not take
+			// on a reload (aae-orc-a7h5h). A failed render leaves the conf as it
+			// was.
+			// Start has already settled any pidfile it found, so one still on
+			// disk here is the previous child's, which Process stopped.
+			// A conf that is gone is not recreated here: its absence is the
+			// failure the read below reports.
+			if _, serr := os.Stat(conf); serr == nil {
+				s.spawning.Store(true)
+				_, rerr := s.mgr.Render()
+				s.spawning.Store(false)
+				if rerr != nil {
+					log.Printf("bus: render before start: %v", rerr)
+				}
+			}
 			body, err := os.ReadFile(conf)
 			if err != nil {
 				return fmt.Errorf("bus: read %s: %w", conf, err)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -37,11 +38,14 @@ import (
 // under the crash-loop backoff schedule internal/team uses for roles, and
 // reports the hub leaf link as an observable that never restarts anything.
 type Supervisor struct {
-	mgr     *Manager
-	binary  string
-	pidFile string
-	logPath string
-	ring    *events.Ring
+	// spawning is set while the spawn-time render runs, so ServerName reads a
+	// pidfile left by the child Process just stopped as gone, not as unseen.
+	spawning atomic.Bool
+	mgr      *Manager
+	binary   string
+	pidFile  string
+	logPath  string
+	ring     *events.Ring
 
 	// Env supplies the secrets the daemon minted for the child, read fresh at
 	// every spawn. The child's environment is these plus the message-bus
@@ -607,8 +611,49 @@ func (s *Supervisor) Reload() error {
 // errors.Is, through the Manager's wrapping, and never by its text.
 var ErrReloadRefused = errors.New("the broker refused the reload")
 
-// ServerName is the compile-only stub of BrokerNamer: it reports no broker.
-func (s *Supervisor) ServerName() (string, bool, error) { return "", false, nil }
+// serverNameWait bounds the read of the running broker's name, so a render
+// never waits long on a broker that does not answer.
+const serverNameWait = time.Second
+
+// ServerName reports what the running broker calls itself, from its loopback
+// monitor, for the Manager's render (aae-orc-a7h5h). It takes no Supervisor
+// lock: the Manager calls it with its own lock held. No child and no pidfile
+// is no broker. A pidfile with no child of ours is a broker this daemon cannot
+// prove is gone, so it answers running with an error, which a render reads as
+// not knowing.
+func (s *Supervisor) ServerName() (string, bool, error) {
+	if s.snapshot().Pid == 0 {
+		if _, err := os.Stat(s.pidFile); err == nil && !s.spawning.Load() {
+			return "", true, errors.New("a pidfile is left and no broker of ours is running; a broker may be running unseen")
+		}
+		return "", false, nil
+	}
+	mon, err := MonitorAddr(s.mgr.bus.Listen)
+	if err != nil {
+		return "", true, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), serverNameWait)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+mon+"/varz", nil)
+	if err != nil {
+		return "", true, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", true, fmt.Errorf("read the broker's name: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", true, fmt.Errorf("read the broker's name: monitor answered %s", resp.Status)
+	}
+	var v struct {
+		ServerName string `json:"server_name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&v); err != nil {
+		return "", true, fmt.Errorf("read the broker's name: %w", err)
+	}
+	return v.ServerName, true, nil
+}
 
 // reloadVerdictWait bounds how long Reload waits for the broker to say what it
 // did with a SIGHUP. The answer normally lands within milliseconds.
