@@ -44,7 +44,7 @@
 // everything. There is deliberately no fleet-wide default-window knob.
 //
 // The ladder, most authoritative first, is limitLadder in limits.go:
-// stream, learned, manifest, feed, table, table-alias, then unresolved.
+// stream, manifest, learned, feed, table, table-alias, then unresolved.
 // LimitSource.Rank is the comparison; do not re-derive precedence by
 // comparing the string values.
 //

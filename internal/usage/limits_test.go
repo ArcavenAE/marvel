@@ -115,12 +115,14 @@ func TestResolveLadderPrecedence(t *testing.T) {
 			wantSource: LimitFromStream,
 		},
 		{
-			name:       "learned beats manifest",
+			// Card ey9b3 option 1 (director ruling): a window learned
+			// in another session describes this session, it does not govern it.
+			name:       "manifest beats learned",
 			req:        Request{StreamModel: "claude-haiku-4-5", ManifestLimit: 111_111},
 			learn:      "claude-haiku-4-5",
 			learnValue: 222_222,
-			wantLimit:  222_222,
-			wantSource: LimitLearned,
+			wantLimit:  111_111,
+			wantSource: LimitFromManifest,
 		},
 		{
 			// The asymmetry, stated as a case so it cannot be quietly
@@ -212,12 +214,12 @@ func TestResolveReadsModelFromArgsWhenStreamNamesNone(t *testing.T) {
 	}
 }
 
-// A learned window outranks the operator's manifest (rung 2 over rung 3),
-// the same asymmetry the stream rung has at rung 1. The ordering is not in
-// dispute here; the SILENCE is. Both neighbouring rungs log when they
-// contradict the manifest (stream over manifest, and manifest over feed),
-// so the one rung that can silently beat the operator must say so too.
-// Regression for aae-orc-yfn2 / marvel#181.
+// The operator's manifest outranks a learned window (card ey9b3, option 1),
+// and the resolver says so when the two disagree, as it does where the stream
+// overrides the manifest and where the manifest overrides the feed. A learned
+// value that merely equals the manifest, or no manifest at all, stays silent.
+// Origin: aae-orc-yfn2 / marvel#181, which asked for the warning when learned
+// still outranked the manifest.
 //
 // Not parallel: it redirects the standard logger's output, which is global.
 // Non-parallel tests run to completion before the parallel ones resume, so
@@ -227,11 +229,13 @@ func TestResolveWarnsWhenLearnedContradictsManifest(t *testing.T) {
 		name          string
 		manifestLimit int
 		learnValue    int
+		wantLimit     int
+		wantSource    LimitSource
 		wantWarn      bool
 	}{
-		{"learned overrides manifest → warns", 111_111, 222_222, true},
-		{"learned equals manifest → silent", 222_222, 222_222, false},
-		{"no manifest → silent", 0, 222_222, false},
+		{"manifest overrides learned → warns", 111_111, 222_222, 111_111, LimitFromManifest, true},
+		{"learned equals manifest → silent", 222_222, 222_222, 222_222, LimitFromManifest, false},
+		{"no manifest → learned, silent", 0, 222_222, 222_222, LimitLearned, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -249,21 +253,18 @@ func TestResolveWarnsWhenLearnedContradictsManifest(t *testing.T) {
 				Redirection:   api.BackendDefault,
 			})
 
-			// The learned rung still wins — this ticket disputes the
-			// silence, not the ordering.
-			if limit != c.learnValue || src != LimitLearned {
-				t.Fatalf("resolution changed: limit = %d source = %q, want %d/learned", limit, src, c.learnValue)
+			if limit != c.wantLimit || src != c.wantSource {
+				t.Fatalf("resolution: limit = %d source = %q, want %d/%s", limit, src, c.wantLimit, c.wantSource)
 			}
 
 			got := buf.String()
 			if c.wantWarn {
 				if got == "" {
-					t.Fatal("learned window overrode the manifest silently; expected a warning naming which won")
+					t.Fatal("manifest overrode a learned window silently; expected a warning naming which won")
 				}
-				// Names the winner (learned) and the manifest as the value
-				// being overridden — the role, not just the presence, so an
-				// argument swap cannot pass — plus the model.
-				for _, want := range []string{"222222", "overriding the manifest's 111111", "claude-haiku-4-5"} {
+				// Names the learned value, the manifest as the winner and its
+				// value, so an argument swap cannot pass, plus the model.
+				for _, want := range []string{"declared 222222", "the manifest's 111111 wins", "claude-haiku-4-5"} {
 					if !strings.Contains(got, want) {
 						t.Errorf("warning %q does not contain %q", got, want)
 					}

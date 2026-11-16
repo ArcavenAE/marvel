@@ -71,10 +71,17 @@ const (
 //
 // Put shortly: rung 1 is for the channel that governs the session, and
 // the manifest outranks every channel that merely describes it.
+//
+// A learned window is one of those channels. It was measured in an earlier
+// session of the same workspace, so for the session being sized it
+// describes rather than governs, and it sits below the manifest (card
+// ey9b3, option 1, ruled by the director; the 2026-08-08 text names stream
+// and feed and is silent on learned, so the operator may overrule this).
+// A session's own stream still outranks both.
 var limitLadder = []LimitSource{
 	LimitFromStream,
-	LimitLearned,
 	LimitFromManifest,
+	LimitLearned,
 	LimitFromFeed,
 	LimitFromTable,
 	LimitFromTableAlias,
@@ -132,7 +139,7 @@ type KeyConfidence string
 
 const (
 	// KeyExact means the key fully determined the window: a value declared
-	// directly (stream, learned, manifest, feed — no keyed lookup), or a
+	// directly (stream, manifest, learned, feed: no keyed lookup), or a
 	// table hit whose id leaves no entitlement ambiguity. The only grade
 	// that is NOT soft.
 	KeyExact KeyConfidence = "exact"
@@ -589,15 +596,28 @@ func (r *Resolver) ResolveGraded(req Request) (int, LimitSource, KeyConfidence, 
 		return req.SampleLimit, LimitFromStream, KeyExact, model
 	}
 
+	if req.ManifestLimit > 0 {
+		if req.FeedLimit > 0 && req.FeedLimit != req.ManifestLimit {
+			r.warnOnce("feed-override:"+model, "context window: %s feed declared %d for %q; the manifest's %d wins, because a side channel does not outrank an operator override",
+				req.Harness, req.FeedLimit, model, req.ManifestLimit)
+		}
+		if model != "" {
+			r.mu.RLock()
+			w, ok := r.learned[learnedKey{req.Workspace, NormalizeModel(model), req.Redirection}]
+			r.mu.RUnlock()
+			if ok && w != req.ManifestLimit {
+				r.warnOnce("learned-manifest:"+model, "context window: %s declared %d for %q in a prior session; the manifest's %d wins, because a window learned elsewhere describes this session and the operator's value governs it",
+					req.Harness, w, model, req.ManifestLimit)
+			}
+		}
+		return req.ManifestLimit, LimitFromManifest, KeyExact, model
+	}
+
 	if model != "" {
 		r.mu.RLock()
 		w, ok := r.learned[learnedKey{req.Workspace, NormalizeModel(model), req.Redirection}]
 		r.mu.RUnlock()
 		if ok {
-			if req.ManifestLimit > 0 && req.ManifestLimit != w {
-				r.warnOnce("learned-override:"+model, "context window: %s declared %d for %q in a prior session, overriding the manifest's %d",
-					req.Harness, w, model, req.ManifestLimit)
-			}
 			// KeyExact, not graded by the verdict: the learnedKey already
 			// carries it, so a hit was measured under this session's backend
 			// (aae-orc-bv7m / finding-031 §5 D-key). A cold-start redirected
@@ -606,14 +626,6 @@ func (r *Resolver) ResolveGraded(req Request) (int, LimitSource, KeyConfidence, 
 			// backend, at which point this rung answers.
 			return w, LimitLearned, KeyExact, model
 		}
-	}
-
-	if req.ManifestLimit > 0 {
-		if req.FeedLimit > 0 && req.FeedLimit != req.ManifestLimit {
-			r.warnOnce("feed-override:"+model, "context window: %s feed declared %d for %q; the manifest's %d wins, because a side channel does not outrank an operator override",
-				req.Harness, req.FeedLimit, model, req.ManifestLimit)
-		}
-		return req.ManifestLimit, LimitFromManifest, KeyExact, model
 	}
 
 	if req.FeedLimit > 0 {
