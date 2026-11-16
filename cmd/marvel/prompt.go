@@ -21,13 +21,3 @@ func formatTokenCount(n int) string {
 		return fmt.Sprintf("%dM", (n+500_000)/1_000_000)
 	}
 }
-
-// promptCell is the PROMPT cell: the session's layout-normalized prompt
-// tokens, quantized, or "-" for a seat the accountant never metered. A
-// metered zero prints "0", which is not the same thing.
-func promptCell(tokens *int) string {
-	if tokens == nil {
-		return "-"
-	}
-	return formatTokenCount(*tokens)
-}

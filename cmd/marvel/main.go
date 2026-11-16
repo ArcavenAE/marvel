@@ -3655,7 +3655,7 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 		tout:       tout,
 		cost:       costCell(s),
 		rate:       rate,
-		prompt:     promptCell(s.SpendPromptTokens),
+		prompt:     toutMarked(s.SpendPromptTokens, s.SpendPartial),
 		tin:        tinCell(s),
 		cr:         crCell(s),
 		cw:         cwCell(s),
