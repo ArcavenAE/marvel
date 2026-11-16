@@ -32,6 +32,13 @@ func decodeExposureParams(params json.RawMessage) (exposureVerbParams, error) {
 	if p.Workspace == "" || p.Team == "" || p.Role == "" {
 		return p, fmt.Errorf("name the workspace, team and role of the slot")
 	}
+	// The slot's names are held to the address class every other verb that
+	// accepts a name applies, before the store is asked (aae-orc-bqve7).
+	for _, n := range [...]struct{ kind, v string }{{"workspace", p.Workspace}, {"team", p.Team}, {"role", p.Role}} {
+		if err := api.ValidateName(n.kind, n.v); err != nil {
+			return p, err
+		}
+	}
 	return p, nil
 }
 
