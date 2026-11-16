@@ -43,7 +43,13 @@ func rewriteWithServerName(t *testing.T, m *Manager, name string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := WriteFiles(dir, "server_name: "+name+"\n"+string(conf), string(auth)); err != nil {
+	var keep []string
+	for _, l := range strings.Split(string(conf), "\n") {
+		if !strings.HasPrefix(l, "server_name") {
+			keep = append(keep, l)
+		}
+	}
+	if _, err := WriteFiles(dir, "server_name: "+name+"\n"+strings.Join(keep, "\n"), string(auth)); err != nil {
 		t.Fatal(err)
 	}
 }

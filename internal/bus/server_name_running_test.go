@@ -157,7 +157,7 @@ func varzName(t *testing.T, listen string) string {
 	if err != nil {
 		t.Fatalf("varz: %v", err)
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	var v struct {
 		ServerName string `json:"server_name"`
 	}
@@ -300,6 +300,6 @@ func varzNameQuiet(listen string) string {
 	if err != nil {
 		return "ERR"
 	}
-	r.Body.Close()
+	_ = r.Body.Close()
 	return "up"
 }
