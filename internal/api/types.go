@@ -578,6 +578,14 @@ type Session struct {
 	// the directory points now. Empty when the declared backend warranted no
 	// overlay. Status, not spec.
 	BackendOverlayPath string `toml:"-" json:"backend_overlay_path,omitempty"`
+	// ProjectionPath is the projected settings file this session was launched
+	// with, recorded at spawn. Recorded rather than recomputed because the
+	// projection directory can move between a launch and a later policy edit:
+	// a running seat keeps reading the path it was started with, and a recomputed
+	// path would leave that file stale. Reproject writes it as well as the
+	// current path (aae-orc-bc107). Empty when no file was projected. Status,
+	// not spec.
+	ProjectionPath string `toml:"-" json:"projection_path,omitempty"`
 	// BackendCredentialSource names HOW this session's backend authenticates,
 	// which neither of the fields above can show: the IAM twins and their
 	// static counterparts set the same selector, and only one of the two
@@ -873,6 +881,13 @@ type Role struct {
 	// Schedule puts this headless role on a clock (ADR-010 Amendment 1).
 	// Nil means the role runs as an ordinary Job. See SchedulePolicy.
 	Schedule *SchedulePolicy `toml:"-"`
+	// Held is why a stored scheduled role is not started, or "" when it is not
+	// held. It is set when a team is read back at daemon start and the role
+	// would be refused at apply now; a re-apply of a valid manifest replaces
+	// the role and so clears it (aae-orc-iyun3 part c). It is derived at each
+	// start and never written: json:"-" keeps it out of the stored row and the
+	// team's JSON.
+	Held string `toml:"-" json:"-"`
 	// MaxRestarts caps the number of restarts for any single replica
 	// slot in this role before the reconciler gives up and leaves the
 	// session in SessionFailed. Zero means unlimited; negative values

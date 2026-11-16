@@ -132,6 +132,18 @@ func (l Layout) RegisterDir() string { return filepath.Join(l.StateDir(), "regis
 // session.defaultHarnessHomeDir.
 func (l Layout) HarnessHomesDir() string { return filepath.Join(l.Home, "h") }
 
+// PoliciesDir is the base for the projected settings files the daemon writes on
+// a seat's behalf. It, StreamsDir and OverlaysDir sit under the marvel home,
+// which is private to this user, so a launch does not depend on the shared temp
+// directory (aae-orc-bc107).
+func (l Layout) PoliciesDir() string { return filepath.Join(l.Home, "p") }
+
+// StreamsDir is the base for the stream pipes.
+func (l Layout) StreamsDir() string { return filepath.Join(l.Home, "s") }
+
+// OverlaysDir is the base for the backend overlays.
+func (l Layout) OverlaysDir() string { return filepath.Join(l.Home, "o") }
+
 // VersionsDir holds the version store: the prior build the direct install
 // channel keeps when it replaces one, and the record naming the active and
 // prior builds (docs/design/zero-downtime-upgrade.md section 5).

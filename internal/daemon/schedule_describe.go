@@ -96,6 +96,7 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 		}
 	}
 	out.Conditions = append(out.Conditions, d.exposureConditions(t)...)
+	out.Conditions = append(out.Conditions, scheduleRefusedConditions(t)...)
 	now := time.Now()
 	for _, role := range slices.Sorted(maps.Keys(t.ShiftRequests)) {
 		req := t.ShiftRequests[role]
@@ -159,4 +160,19 @@ func (d *Daemon) describeTeam(key string) (teamDescription, error) {
 		out.Schedules = append(out.Schedules, s)
 	}
 	return out, nil
+}
+
+// scheduleRefusedConditions names each stored scheduled role that is held
+// because apply would refuse it now (aae-orc-iyun3 part c).
+func scheduleRefusedConditions(t api.Team) []roleCondition {
+	var out []roleCondition
+	for i := range t.Roles {
+		if why := t.Roles[i].Held; why != "" {
+			out = append(out, roleCondition{
+				Role: t.Roles[i].Name, Type: "ScheduleRefused", Status: "True",
+				Message: why + "; it does not launch until a valid manifest is applied",
+			})
+		}
+	}
+	return out
 }

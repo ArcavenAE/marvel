@@ -110,6 +110,41 @@ func bypassText(text string) string {
 	return ""
 }
 
+// ScheduledLaunchRefusal is the reason a scheduled run's launch is refused, or ""
+// when it is not. It reads the same two things apply reads, on the argv the
+// launch actually builds: a command that skips permission checks, and a command
+// whose words cannot be read. The reason names neither spelling. Policy file
+// contents are not visible here, so that check stays at apply
+// (aae-orc-iyun3 part a).
+func ScheduledLaunchRefusal(command string, args []string) string {
+	if bypassArg(args) != "" || bypassArg(strings.Fields(command)) != "" || bypassText(command) != "" {
+		return "a scheduled run has no human at a prompt, and this launch skips permission checks"
+	}
+	if command != "" && !CommandWordsReadable(command) {
+		return "a scheduled run has no human at a prompt, and this command is shell text whose words cannot be read; name the program alone and put its flags in runtime.args"
+	}
+	return ""
+}
+
+// StoredScheduleRefusal is the reason a stored scheduled role is refused now, or
+// "" when it is not: the role would not pass apply today. It reads the role's own
+// fields with the rule the launch uses (ScheduledLaunchRefusal), so a role stored
+// before apply refused it does not run (aae-orc-iyun3 part c). Policy file
+// contents are not visible here and stay checked at apply.
+func StoredScheduleRefusal(r Role) string {
+	if r.Schedule == nil {
+		return ""
+	}
+	if r.DangerousPermissions || r.Permissions == "bypassPermissions" {
+		return "a scheduled run has no human at a prompt, and this role skips permission checks"
+	}
+	command := r.Runtime.Command
+	if command == "" {
+		command = r.Runtime.Name
+	}
+	return ScheduledLaunchRefusal(command, r.Runtime.Args)
+}
+
 // validateSchedulePolicy refuses a schedule on a role whose inline policy
 // sets permissions.defaultMode = "bypassPermissions": projectPolicy writes
 // the policy to the harness's --settings file. The contents of a

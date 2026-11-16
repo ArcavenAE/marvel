@@ -90,18 +90,18 @@ type Manager struct {
 	// credential helper. Empty means the cluster has no credential broker.
 	CredentialHelper string
 	// StreamDir holds the per-session FIFOs marvel reads agent output
-	// from. Defaults to a per-layout temp directory (see daemonTempDir).
+	// from. Defaults to <marvel home>/s.
 	// The pipes carry no content at rest, so nothing here needs to survive
 	// a restart; NewFIFO replaces a leftover pipe rather than failing on it.
 	StreamDir string
 	// TokenDir holds the per-session heartbeat token files.
 	TokenDir string
 	// ProjectionDir holds the per-session projected policy settings files
-	// (finding-024's contract half). Defaults to a per-layout temp
-	// directory (see daemonTempDir). The path must survive a restart even
-	// though the content need not: an adopted agent goes on reading the
-	// file it was launched with, and re-projection has to land on that
-	// same path to reach it.
+	// (finding-024's contract half). Defaults to <marvel home>/p. A seat
+	// launched under an older default keeps the path it was started with,
+	// recorded on the session as ProjectionPath, and re-projection writes
+	// that path as well as this directory, so an adopted agent that goes on
+	// reading the file it was launched with still sees a policy edit.
 	ProjectionDir string
 	// HarnessHomeDir holds the per-session private harness state homes
 	// (aae-orc-ca7y). Defaults to <marvel home>/h (marvel#1142), a durable
@@ -143,8 +143,8 @@ type Manager struct {
 	// is unexported and unreachable from config, flags or the API.
 	socketLimitOverride int
 	// BackendOverlayDir holds the per-session backend settings overlays
-	// (design-backend-swaps.md, Layer A). Defaults to a per-layout temp
-	// directory, overridable with MARVEL_BACKEND_OVERLAY_DIR so a shakedown
+	// (design-backend-swaps.md, Layer A). Defaults to <marvel home>/o,
+	// overridable with MARVEL_BACKEND_OVERLAY_DIR so a shakedown
 	// or an operator can point it at the design's on-repo location
 	// (.session/backend-swaps/overlays). Marvel-owned and ephemeral: the
 	// overlay is swept when its session is deleted, and a stale one left by
@@ -328,13 +328,13 @@ func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
 
 // defaultStreamDir keeps one daemon's pipes away from another's.
 func defaultStreamDir() string {
-	return daemonTempDir("marvel-streams")
+	return seatDir("marvel-streams", paths.Layout.StreamsDir)
 }
 
 // defaultProjectionDir keeps one daemon's projected settings files away
 // from another's.
 func defaultProjectionDir() string {
-	return daemonTempDir("marvel-policies")
+	return seatDir("marvel-policies", paths.Layout.PoliciesDir)
 }
 
 // defaultHarnessHomeDir keeps one daemon's private harness homes away from
@@ -583,7 +583,20 @@ func defaultBackendOverlayDir() string {
 	if dir := os.Getenv("MARVEL_BACKEND_OVERLAY_DIR"); dir != "" {
 		return dir
 	}
-	return daemonTempDir("marvel-backend-overlays")
+	return seatDir("marvel-backend-overlays", paths.Layout.OverlaysDir)
+}
+
+// seatDir is the default for a directory the daemon writes a seat's files into:
+// under the marvel home, which is private to this user and which nothing
+// sweeps, so a running seat's file does not vanish with a temp cleanup. Where
+// the home cannot be resolved it falls back to the per-layout temp directory.
+// A seat launched before this default moved keeps the path it was started with,
+// recorded on the session, and Reproject still writes it (aae-orc-bc107).
+func seatDir(tempPrefix string, under func(paths.Layout) string) string {
+	if layout, err := paths.Default(); err == nil {
+		return under(layout)
+	}
+	return daemonTempDir(tempPrefix)
 }
 
 // daemonTempDir names a daemon-owned scratch directory that is unique per
@@ -1011,6 +1024,12 @@ func (m *Manager) Create(sess *api.Session) error {
 		return m.refuseHarnessHome(sess, plan.homeRefusal)
 	}
 	m.clearHarnessHomeRefusal(sess)
+	if plan.dirRefusal != "" {
+		_ = m.store.DeleteSession(sess.Key())
+		m.teardownViews(sess.Key())
+		return m.refuseSeatDir(sess, plan.dirRefusal)
+	}
+	m.clearSeatDirRefusal(sess)
 
 	// Layer A: write the per-session backend overlay for a role that declared a
 	// non-default backend, and stamp its path so cast-launch.sh passes it as
@@ -1020,6 +1039,13 @@ func (m *Manager) Create(sess *api.Session) error {
 	if err != nil {
 		_ = m.store.DeleteSession(sess.Key())
 		m.teardownViews(sess.Key())
+		// An overlay directory that is not private is a standing refusal like
+		// the projection and stream ones, so describe lists it and the
+		// controller does not log a plain error on every pass.
+		var pde *privateDirError
+		if errors.As(err, &pde) {
+			return m.refuseSeatDir(sess, pde.Error())
+		}
 		return fmt.Errorf("create session %s: %w", sess.Key(), err)
 	}
 	// Classify the backend-selecting environment this session is launched into
@@ -1142,6 +1168,9 @@ func (m *Manager) Create(sess *api.Session) error {
 		live.BackendCredentialSource = sess.BackendCredentialSource
 		live.AmbientBearer = sess.AmbientBearer
 		live.BackendOverlayPath = sess.BackendOverlayPath
+		// The projected file this launch was started with, kept so a policy
+		// edit still reaches it after the projection directory moves.
+		live.ProjectionPath = sess.ProjectionPath
 		// What marvel named this launch, kept so the binding survives a
 		// daemon restart. Empty when the runtime has no id pin.
 		live.HarnessSessionID = sess.HarnessSessionID
@@ -1271,6 +1300,51 @@ func (m *Manager) clearHarnessHomeRefusal(sess *api.Session) {
 	delete(m.refused, sess.Workspace+"/"+sess.Team+"/"+sess.Role+harnessHomeRefusalSuffix)
 }
 
+// privateDirRefusalSuffix keys the refusal for a directory the seat's files are
+// written into apart from the others, so each clears on its own.
+const privateDirRefusalSuffix = "#private-dir"
+
+// privateDirError reports that a directory marvel is about to write a seat's
+// files into is not a plain 0700 directory of this user. The launch is refused
+// and nothing is written (aae-orc-bc107).
+type privateDirError struct{ dir, why string }
+
+func (e *privateDirError) Error() string {
+	return fmt.Sprintf("%s is not a private directory of this user: %s", e.dir, e.why)
+}
+
+// requirePrivateDir makes dir with one Mkdir at 0700 when it is absent (its
+// parent with MkdirAll, as the writers did before), then requires it to be a
+// plain directory, mode exactly 0700, owned by this user. It returns why not,
+// or "" when it is fit to write in.
+func (m *Manager) requirePrivateDir(dir string) string {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+		return fmt.Sprintf("cannot create its parent: %v", err)
+	}
+	why, _ := privateDirRefusal(dir, m.mine)
+	return why
+}
+
+// refuseSeatDir records and returns the refusal of a spawn whose projection,
+// overlay or stream directory is not private to this user. The seat is not
+// started, and is not started with the file left out. The reconcile loop retries
+// every tick, so the refusal stands until the directory is fixed.
+func (m *Manager) refuseSeatDir(sess *api.Session, why string) error {
+	key := sess.Workspace + "/" + sess.Team + "/" + sess.Role + privateDirRefusalSuffix
+	msg := fmt.Sprintf("not started: %s/%s: %s; the seat is not started and nothing is written there (remove or fix the directory, then it starts on the next pass)", sess.Team, sess.Role, why)
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	m.noteRefusal(sess, key, RefusalPrivateDir, events.KindSessionPlacementRefused, "", msg)
+	return fmt.Errorf("refuse to start session %s: %s: %w", sess.Key(), why, ErrPlacementRefused)
+}
+
+// clearSeatDirRefusal drops the standing refusal once a spawn gets past the check.
+func (m *Manager) clearSeatDirRefusal(sess *api.Session) {
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	delete(m.refused, sess.Workspace+"/"+sess.Team+"/"+sess.Role+privateDirRefusalSuffix)
+}
+
 // noteRefusal keeps the standing record of a refused role and reports it. The
 // reconcile loop retries every tick, so the refusal is reported when it starts
 // and then at a low cadence for as long as it lasts: the log at most every
@@ -1327,6 +1401,10 @@ type launchPlan struct {
 	// homeRefusal is set when no harness home base passed the spawn-time check
 	// and at least one failed validation; the spawn is not made.
 	homeRefusal string
+	// dirRefusal is set when a directory the launch writes into (the projection,
+	// backend overlay or stream directory) is not a private directory of this
+	// user; the spawn is not made and nothing is written in it.
+	dirRefusal string
 	// firstPrompt is which first message the launch carried, for the
 	// session.first-prompt event.
 	firstPrompt runtime.FirstPrompt
@@ -1537,6 +1615,9 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// that gets a private home names one, so a re-plan that does not must not
 	// carry the previous launch's value forward.
 	sess.AccountHome = ""
+	// The projected file this launch passes the harness is recorded below, and a
+	// launch that projects none must not carry the previous launch's path.
+	sess.ProjectionPath = ""
 	// Look up team and role for full adapter context. Store returns
 	// snapshots — taking addresses of these locals is safe because the
 	// adapter is read-only and the LaunchContext doesn't outlive this
@@ -1646,6 +1727,10 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// lctx.PolicyProjectionPath when the adapter supports projection and a
 	// policy resolves; a no-op otherwise.
 	if err := m.projectForLaunch(lctx, adapter); err != nil {
+		var pde *privateDirError
+		if errors.As(err, &pde) {
+			return launchPlan{dirRefusal: pde.Error()}
+		}
 		var sfe *settingsFileError
 		errors.As(err, &sfe)
 		return launchPlan{hold: sfe}
@@ -1667,6 +1752,11 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 
 	// Ask before building: an adapter that never streams (or one asked
 	// for an interactive launch) should cost no filesystem work.
+	if m.streams(adapter, lctx) {
+		if why := m.requirePrivateDir(m.StreamDir); why != "" {
+			return launchPlan{dirRefusal: (&privateDirError{dir: m.StreamDir, why: why}).Error()}
+		}
+	}
 	fifo := m.openSink(sess, adapter, lctx)
 	if fifo != nil {
 		lctx.StreamPath = fifo.Path()
@@ -1784,12 +1874,24 @@ func (m *Manager) CanOfferHandoffToolRole(r api.ManifestRole) bool {
 	return ok && o.OffersHandoffTool()
 }
 
+// streams reports whether the launch wants a stream pipe: the adapter can
+// stream, the launch is of a streaming shape, and a stream directory is set.
+func (m *Manager) streams(adapter runtime.Adapter, lctx *runtime.LaunchContext) bool {
+	streamer, ok := adapter.(runtime.StreamCapable)
+	return ok && m.StreamDir != "" && streamer.SupportsStream(lctx)
+}
+
 // openSink creates the FIFO for a stream-capable adapter, or returns nil.
 // A sink that cannot be created is logged and skipped: an unobservable
 // session is still a working session.
 func (m *Manager) openSink(sess *api.Session, adapter runtime.Adapter, lctx *runtime.LaunchContext) *runtime.FIFO {
-	streamer, ok := adapter.(runtime.StreamCapable)
-	if !ok || m.StreamDir == "" || !streamer.SupportsStream(lctx) {
+	if !m.streams(adapter, lctx) {
+		return nil
+	}
+	// planLaunch refuses the launch when the directory is not private; this
+	// keeps a direct caller from making a pipe in one.
+	if why := m.requirePrivateDir(m.StreamDir); why != "" {
+		log.Printf("session %s: no stream sink: %s", sess.Key(), (&privateDirError{dir: m.StreamDir, why: why}).Error())
 		return nil
 	}
 	fifo, err := runtime.NewFIFO(m.StreamDir, sess.Key())
@@ -2649,6 +2751,7 @@ const (
 	RefusalContainerImage   = "container image"
 	RefusalContainerRuntime = "container runtime"
 	RefusalHarnessHome      = "harness home"
+	RefusalPrivateDir       = "private directory"
 	// The reasons a profiled spawn is refused; all key under #sandbox.
 	RefusalSandboxHost      = "sandbox host"
 	RefusalSandboxProfile   = "sandbox profile"
@@ -2701,6 +2804,7 @@ func (m *Manager) ClearPlacementRefusal(workspace, team, role string) {
 	delete(m.refused, key+containerRefusalSuffix)
 	delete(m.refused, key+sandboxRefusalSuffix)
 	delete(m.refused, key+harnessHomeRefusalSuffix)
+	delete(m.refused, key+privateDirRefusalSuffix)
 }
 
 func (m *Manager) now() time.Time {

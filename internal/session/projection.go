@@ -2,6 +2,8 @@ package session
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
@@ -33,6 +36,12 @@ import (
 func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.Adapter) error {
 	target, wrote, _, shadowed, err := m.projectPolicy(lctx, adapter)
 	if err != nil {
+		// A directory that is not private is refused, never downgraded to a
+		// launch without the file.
+		var pde *privateDirError
+		if errors.As(err, &pde) {
+			return err
+		}
 		var sfe *settingsFileError
 		if errors.As(err, &sfe) {
 			return sfe
@@ -48,6 +57,7 @@ func (m *Manager) projectForLaunch(lctx *runtime.LaunchContext, adapter runtime.
 		return nil
 	}
 	lctx.PolicyProjectionPath = target.Path
+	lctx.Session.ProjectionPath = target.Path
 	m.emitProjected(lctx.Session, lctx.Role.Policy, target.Path, "projected at spawn", shadowed)
 	return nil
 }
@@ -105,6 +115,9 @@ func (m *Manager) reproject(fileBackedOnly bool, detail string) int {
 			continue
 		}
 		m.clearSettingsFileFailure(sess.Key())
+		if wrote {
+			m.writeRecordedPath(lctx, adapter, target.Path)
+		}
 		if wrote && changed {
 			changedCount++
 			msg := detail
@@ -235,6 +248,9 @@ func (m *Manager) projectPolicy(lctx *runtime.LaunchContext, adapter runtime.Ada
 		shadowed = injectStatuslineFeed(settings, adapter, lctx.Session.Key(), lctx.Role.Policy)
 	}
 
+	if why := m.requirePrivateDir(m.ProjectionDir); why != "" {
+		return target, false, false, nil, &privateDirError{dir: m.ProjectionDir, why: why}
+	}
 	changed, err := writeProjectionFile(target.Path, settings)
 	if err != nil {
 		if policyEmpty {
@@ -355,20 +371,49 @@ func writeProjectionFile(path string, settings map[string]any) (bool, error) {
 	}
 	data = append(data, '\n')
 
-	existing, err := os.ReadFile(path)
-	switch {
-	case err == nil:
-		if bytes.Equal(existing, data) {
-			return false, nil
+	// Only a plain file is compared: a link or anything else at the path is
+	// replaced below, never read through.
+	if fi, lerr := os.Lstat(path); lerr == nil && fi.Mode().IsRegular() {
+		existing, err := os.ReadFile(path)
+		switch {
+		case err == nil:
+			if bytes.Equal(existing, data) {
+				return false, nil
+			}
+		case !errors.Is(err, os.ErrNotExist):
+			return false, fmt.Errorf("read existing projection %s: %w", path, err)
 		}
-	case !errors.Is(err, os.ErrNotExist):
-		return false, fmt.Errorf("read existing projection %s: %w", path, err)
+	} else if lerr != nil && !errors.Is(lerr, os.ErrNotExist) {
+		return false, fmt.Errorf("stat existing projection %s: %w", path, lerr)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return false, fmt.Errorf("create projection dir for %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// Write to a new name made exclusively and without following a link, then
+	// rename it over the path: a link left at the path is replaced, and what it
+	// pointed at is never written.
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return false, fmt.Errorf("name a temporary file for %s: %w", path, err)
+	}
+	tmp := filepath.Join(dir, "."+filepath.Base(path)+"."+hex.EncodeToString(suffix[:])+".tmp")
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return false, fmt.Errorf("write projection %s: %w", path, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return false, fmt.Errorf("write projection %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return false, fmt.Errorf("write projection %s: %w", path, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
 		return false, fmt.Errorf("write projection %s: %w", path, err)
 	}
 	return true, nil
@@ -584,11 +629,16 @@ func (m *Manager) pruneSettingsFileFailures(sessions []api.Session) {
 			}
 			continue
 		}
-		if !alive[key] {
+		if !alive[strings.TrimSuffix(key, recordedProjectionKeySuffix)] {
 			delete(m.failures.last, key)
 		}
 	}
 }
+
+// recordedProjectionKeySuffix marks the failure record of the file a seat was
+// launched with, kept apart from the failure of its current file and pruned
+// with the same session.
+const recordedProjectionKeySuffix = "/recorded-projection"
 
 // roleExists reports whether "<workspace>/<team>/<role>" names a role in the store.
 func (m *Manager) roleExists(path string) bool {
@@ -614,4 +664,61 @@ func (m *Manager) clearSettingsFileFailure(key string) {
 	m.failures.mu.Lock()
 	delete(m.failures.last, key)
 	m.failures.mu.Unlock()
+}
+
+// writeRecordedPath copies the projection just written at current to the path
+// this seat was launched with, when that is a different file. A running seat
+// keeps reading the path it was started with, so after the projection directory
+// moves a policy edit would otherwise never reach it. A seat launched before the
+// path was recorded has none, and its file is at the path the previous default
+// gave, so that path stands in for it while the file exists. The path is held to
+// the same rule as the current directory: its directory must be a private
+// directory of this user, and a refusal is reported once per change and leaves
+// the seat on the file it has.
+func (m *Manager) writeRecordedPath(lctx *runtime.LaunchContext, adapter runtime.Adapter, current string) {
+	sess := lctx.Session
+	old := sess.ProjectionPath
+	if old == "" {
+		old = previousDefaultPath(lctx, adapter)
+	}
+	if old == "" || old == current {
+		return
+	}
+	key := sess.Key() + recordedProjectionKeySuffix
+	data, err := os.ReadFile(current)
+	if err != nil {
+		m.emitSettingsFileFailure(key, sess, fmt.Sprintf("the file this seat was launched with is not updated: read %s: %v; the seat keeps what it has", current, err))
+		return
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		m.emitSettingsFileFailure(key, sess, fmt.Sprintf("the file this seat was launched with is not updated: parse %s: %v; the seat keeps what it has", current, err))
+		return
+	}
+	if why := m.requirePrivateDir(filepath.Dir(old)); why != "" {
+		m.emitSettingsFileFailure(key, sess, fmt.Sprintf("the file this seat was launched with is not updated: %s; the seat keeps what it has",
+			(&privateDirError{dir: filepath.Dir(old), why: why}).Error()))
+		return
+	}
+	if _, err := writeProjectionFile(old, settings); err != nil {
+		m.emitSettingsFileFailure(key, sess, fmt.Sprintf("the file this seat was launched with is not updated: %v; the seat keeps what it has", err))
+		return
+	}
+	m.clearSettingsFileFailure(key)
+}
+
+// previousDefaultPath is where a seat launched before the launch path was
+// recorded was told to read its settings file: the adapter's projection under
+// the directory the previous default named. It answers "" when no such regular
+// file exists, so a seat that was launched with no projected file is not given
+// one.
+func previousDefaultPath(lctx *runtime.LaunchContext, adapter runtime.Adapter) string {
+	target := adapter.ProjectionFor(lctx, daemonTempDir("marvel-policies"))
+	if !target.Supported || target.Path == "" {
+		return ""
+	}
+	if fi, err := os.Lstat(target.Path); err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	return target.Path
 }

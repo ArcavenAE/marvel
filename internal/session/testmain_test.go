@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/homeguard"
@@ -17,6 +18,12 @@ import (
 // the system-wide tmux server. Prod-style intra-process concurrency
 // is covered by tmux.TestDriverConcurrentUse.
 func TestMain(m *testing.M) {
+	// The projection, overlay and stream directories must be private to the
+	// user before anything is written in them (aae-orc-bc107), and t.TempDir
+	// makes its directories 0777 less the umask. A 0077 umask makes every
+	// scratch directory these tests make 0700; the tests that need a wider or
+	// foreign directory set that up themselves.
+	syscall.Umask(0o077)
 	if _, err := exec.LookPath("tmux"); err != nil {
 		os.Exit(homeguard.Run(m))
 	}
