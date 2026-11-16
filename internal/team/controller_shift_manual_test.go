@@ -230,3 +230,29 @@ func TestManualUnscopedShiftNamesEachHandoffRoleThenNoHandoffProceeds(t *testing
 		t.Fatalf("phase = %q, want launching: NoHandoff lets the unscoped shift proceed", got.Shift.Phase)
 	}
 }
+
+// A manual request names no automatic condition, so the pass that drops a
+// request whose cause the policy no longer declares must let it through, on a
+// role that declares no trigger at all. The request is seeded straight into the
+// store, so the test pins the trigger loop and not the ask.
+func TestManualRequestOnANoTriggerRoleSurvivesAReconcilePass(t *testing.T) {
+	dir := t.TempDir()
+	f := newListFixture(t, "test-manual-survive", manualHandoffRole(dir))
+	s := f.seed(time.Hour, 10*time.Minute, 0, 0)
+	req := api.ShiftRequest{Session: s.Key(), Cause: api.HandoffCauseManual, RequestedAt: f.clock.Now()}
+	if err := f.store.UpdateTeam(f.teamKey, func(live *api.Team) error {
+		live.ShiftRequests = map[string]api.ShiftRequest{testShiftRole: req}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	f.clock.Advance(time.Minute)
+	got := f.evaluate()
+	if _, ok := got.ShiftRequests[testShiftRole]; !ok {
+		t.Fatal("the manual request was dropped by the reconcile pass, want it kept while the seat is asked")
+	}
+	if n := f.count(events.KindShiftHoldReleased); n != 0 {
+		t.Fatalf("hold-released events = %d, want 0: nothing released the request", n)
+	}
+}
