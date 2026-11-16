@@ -568,8 +568,19 @@ func (s *Supervisor) Reload() error {
 		log.Printf("bus: conf rewritten while no broker is running; the next start reads it")
 		return nil
 	}
+	offset := s.logSize()
 	if err := s.prober.Signal(snap.Child, syscall.SIGHUP, false); err != nil {
 		return fmt.Errorf("bus: SIGHUP pid %d: %w", snap.Pid, err)
+	}
+	// The broker answers in its log, and a refusal applies none of the conf:
+	// nats-server declines a whole reload when one setting that cannot be
+	// reloaded changed (server_name), so a user added in the same rewrite is
+	// not in force either. Read the answer instead of reporting success
+	// (aae-orc-mqvn5). No answer within the wait reads as success, as before.
+	if reason, refused := s.reloadRefusal(offset, reloadVerdictWait); refused {
+		msg := fmt.Sprintf("nats-server pid %d refused the reload and kept its old configuration: %s", snap.Pid, reason)
+		s.emit(events.KindBusReloadRefused, events.SeverityError, msg)
+		return fmt.Errorf("bus: %s: %w", msg, ErrReloadRefused)
 	}
 	s.emit(events.KindBusReloaded, events.SeverityInfo, fmt.Sprintf("nats-server pid %d reloaded authorization", snap.Pid))
 	// A reload is asynchronous in the broker; read the structure once it
@@ -590,6 +601,57 @@ func (s *Supervisor) Reload() error {
 		s.checkStructure(ctx)
 	}()
 	return nil
+}
+
+// ErrReloadRefused marks a reload the broker declined. Callers match it with
+// errors.Is, through the Manager's wrapping, and never by its text.
+var ErrReloadRefused = errors.New("the broker refused the reload")
+
+// reloadVerdictWait bounds how long Reload waits for the broker to say what it
+// did with a SIGHUP. The answer normally lands within milliseconds.
+const reloadVerdictWait = 3 * time.Second
+
+// logSize is the size of the broker's log now, the point a reload's answer is
+// read from. A log that cannot be read reads as zero.
+func (s *Supervisor) logSize() int64 {
+	fi, err := os.Stat(s.logPath)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
+}
+
+// reloadRefusal reads the broker's log from offset until it says it reloaded
+// or refused to, or the wait runs out. It returns the broker's reason when the
+// reload was refused. A log that cannot be opened is no answer and returns at
+// once, so a seat with no log pays no wait.
+func (s *Supervisor) reloadRefusal(offset int64, wait time.Duration) (string, bool) {
+	const refusedMark = "Failed to reload server configuration: "
+	const reloadedMark = "Reloaded server configuration"
+	deadline := time.Now().Add(wait)
+	for {
+		data, err := os.ReadFile(s.logPath)
+		if err != nil {
+			return "", false
+		}
+		if int64(len(data)) > offset {
+			tail := string(data[offset:])
+			if i := strings.Index(tail, refusedMark); i >= 0 {
+				reason := tail[i+len(refusedMark):]
+				if j := strings.IndexByte(reason, '\n'); j >= 0 {
+					reason = reason[:j]
+				}
+				return strings.TrimSpace(reason), true
+			}
+			if strings.Contains(tail, reloadedMark) {
+				return "", false
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return "", false
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 // Stop ends supervision. With keep the broker is left running for the next

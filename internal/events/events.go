@@ -458,15 +458,17 @@ const (
 	// or its authorization is not loaded. Emitted once per change in the
 	// missing set, not per tick. The daemon re-provisions and holds new
 	// spawns; it never restarts the broker for it.
-	KindBusUnprovisioned  Kind = "bus.unprovisioned"
-	KindBusStopped        Kind = "bus.stopped"
-	KindBusCrashed        Kind = "bus.crashed"
-	KindBusUnavailable    Kind = "bus.unavailable"
-	KindExposureRefused   Kind = "exposure.refused" // a role that writes a function was held: its slot has read it (marvel#945)
-	KindExposureRecorded  Kind = "exposure.recorded"
-	KindExposureEnded     Kind = "exposure.ended"
-	KindExposureVoided    Kind = "exposure.voided" // a record was voided over the local socket; the gate stops counting it
-	KindBusReloaded       Kind = "bus.reloaded"
+	KindBusUnprovisioned Kind = "bus.unprovisioned"
+	KindBusStopped       Kind = "bus.stopped"
+	KindBusCrashed       Kind = "bus.crashed"
+	KindBusUnavailable   Kind = "bus.unavailable"
+	KindExposureRefused  Kind = "exposure.refused" // a role that writes a function was held: its slot has read it (marvel#945)
+	KindExposureRecorded Kind = "exposure.recorded"
+	KindExposureEnded    Kind = "exposure.ended"
+	KindExposureVoided   Kind = "exposure.voided" // a record was voided over the local socket; the gate stops counting it
+	KindBusReloaded      Kind = "bus.reloaded"
+	// KindBusReloadRefused is a reload the broker declined (aae-orc-mqvn5).
+	KindBusReloadRefused  Kind = "bus.reload-refused"
 	KindBusLeafUp         Kind = "bus.leaf.up"
 	KindBusLeafDown       Kind = "bus.leaf.down"
 	KindBusLeafUnenrolled Kind = "bus.leaf.unenrolled"
@@ -651,6 +653,7 @@ var allKinds = []Kind{
 	KindBusStoreWriteFailed,
 	KindBusStoreLow,
 	KindBusReloaded,
+	KindBusReloadRefused,
 	KindBusLeafUp,
 	KindBusLeafDown,
 	KindBusLeafUnenrolled,

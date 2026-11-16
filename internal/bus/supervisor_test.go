@@ -350,8 +350,16 @@ func TestRestartCarriesTheSeedIntoTheChildEnvironment(t *testing.T) {
 	}
 
 	have.Store(true)
-	if changed, err := m.Regenerate(); err != nil || !changed {
+	// A broker that booted without the seed cannot resolve the leaf remote's
+	// variable on SIGHUP, so it refuses the reload. Regenerate says so (it
+	// returned nil here before aae-orc-mqvn5, whatever the broker did); the
+	// restart below is what picks the seed up.
+	changed, err := m.Regenerate()
+	if !changed {
 		t.Fatalf("regenerate with seed: changed=%v err=%v", changed, err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "refused the reload") {
+		t.Fatalf("regenerate with seed: err = %v, want the broker's refusal to resolve the seed variable", err)
 	}
 	if err := s.Restart("credential.put bus/leaf"); err != nil {
 		t.Fatalf("restart: %v", err)
