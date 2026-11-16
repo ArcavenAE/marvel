@@ -140,6 +140,22 @@ delegated to a sandbox (the sandbox tool).
 **When to use:** Multi-agent teams where different roles need different
 trust levels. The supervisor can execute freely; workers ask before acting.
 
+### Supervising other teams
+
+A role names the teams of its workspace that it supervises with `supervises`
+(`examples/supervises.toml`). On the local bus that role may publish to the role
+inbox of every role of those teams, and each of those roles may publish to the
+supervisor's role inbox. Address the role, not a seat:
+`agent.<workspace>.<team>.role.<role>.inbox`. A team the role does not name gets
+nothing. See the admin guide, "Letting a supervisor publish to the teams it
+supervises".
+
+```yaml
+roles:
+  - name: supervisor
+    supervises: [midway, vantage]
+```
+
 ### With health checks
 
 ```yaml
