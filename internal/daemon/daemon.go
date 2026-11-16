@@ -3712,6 +3712,12 @@ func (d *Daemon) regenerateBusNoReload(reason string) error {
 // emitBusRender records the outcome of a render on the ring and the log.
 func (d *Daemon) emitBusRender(reason string, changed bool, err error) {
 	switch {
+	case err != nil && changed && errors.Is(err, bus.ErrReloadRefused):
+		// The files are written; the broker declined to reload them and keeps
+		// its old configuration until it restarts (aae-orc-mqvn5).
+		msg := fmt.Sprintf("bus config rendered, but the broker refused the reload (%s): %v", reason, err)
+		events.Emit(d.events, events.Event{Kind: events.KindBusRendered, Severity: events.SeverityWarning, Message: msg})
+		log.Printf("%s: %s", events.KindBusRendered, msg)
 	case err != nil:
 		msg := fmt.Sprintf("bus config not rendered (%s): %v", reason, err)
 		events.Emit(d.events, events.Event{Kind: events.KindBusRendered, Severity: events.SeverityWarning, Message: msg})

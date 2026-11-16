@@ -580,7 +580,7 @@ func (s *Supervisor) Reload() error {
 	if reason, refused := s.reloadRefusal(offset, reloadVerdictWait); refused {
 		msg := fmt.Sprintf("nats-server pid %d refused the reload and kept its old configuration: %s", snap.Pid, reason)
 		s.emit(events.KindBusReloadRefused, events.SeverityError, msg)
-		return fmt.Errorf("bus: %s", msg)
+		return fmt.Errorf("bus: %s: %w", msg, ErrReloadRefused)
 	}
 	s.emit(events.KindBusReloaded, events.SeverityInfo, fmt.Sprintf("nats-server pid %d reloaded authorization", snap.Pid))
 	// A reload is asynchronous in the broker; read the structure once it
