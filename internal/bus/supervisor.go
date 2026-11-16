@@ -908,6 +908,7 @@ func (s *Supervisor) Status() Status {
 		st.Seat = seat.Workspace + "/" + seat.Team
 		st.SeatPassFile = s.mgr.SeatPassPath()
 	}
+	st.HubDeclared = s.mgr.bus.HubURL != ""
 	switch {
 	case s.mgr.bus.HubURL == "":
 		st.Leaf = "n/a"

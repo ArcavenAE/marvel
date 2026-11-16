@@ -2,6 +2,10 @@ package daemon
 
 import (
 	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -34,6 +38,50 @@ func TestBusStatusReportsAnAdoptedURL(t *testing.T) {
 	}
 	if st.Class != "message-bus" || st.Provider != "nats-server" || st.Mode != "adopted" {
 		t.Errorf("adopted status lacks the record fields: %+v", st)
+	}
+}
+
+// An adopted bus whose cluster declares a hub reports the leaf it reads from
+// its loopback monitor, so the post-check can tell it from a hubless one
+// (aae-orc-c6o29).
+func TestBusStatusReadsTheLeafOfAnAdoptedBusWithAHub(t *testing.T) {
+	var hits int
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte(`{"leafnodes":1}`))
+	}))
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Listener = l
+	srv.Start()
+	t.Cleanup(srv.Close)
+	mon := l.Addr().(*net.TCPAddr).Port
+	if mon <= 4000 {
+		t.Skipf("monitor port %d is too low to place a client port below it", mon)
+	}
+	listen := "127.0.0.1:" + strconv.Itoa(mon-4000)
+
+	d := newHandlerDaemon(t)
+	d.sessMgr.Bus = bus.NewAdopted(config.ResolvedBus{
+		Mode: "adopted", Class: "message-bus", Provider: "nats-server",
+		Listen: listen, URL: "nats://" + listen,
+		HubURL: "nats-leaf://hub.example.test:7442", HubURLs: []string{"nats-leaf://hub.example.test:7442"},
+	})
+	resp := d.dispatchAs(daemonrpc.Request{Method: "bus.status"}, localCaller())
+	if resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	var st bus.Status
+	if err := json.Unmarshal(resp.Result, &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.Managed || !st.HubDeclared || st.Leaf != "up" || st.LeafValidUntil == "" {
+		t.Errorf("status = {Managed:%v HubDeclared:%v Leaf:%q ValidUntil:%q}, want an unmanaged bus with a declared hub, its leaf up and a dated reading", st.Managed, st.HubDeclared, st.Leaf, st.LeafValidUntil)
+	}
+	if hits != 1 {
+		t.Errorf("monitor reads = %d, want 1", hits)
 	}
 }
 

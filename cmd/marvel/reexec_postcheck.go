@@ -96,6 +96,24 @@ func notCarried(handoff string) string {
 	return ""
 }
 
+// The three hubless states the successor can report, each passing with its own
+// line (marvel#1463): the daemon has no bus, its managed bus has no hub, or its
+// adopted bus is given none by the cluster's config. An adopted bus whose
+// cluster does declare a hub is not hubless; its leaf is read like a managed
+// one.
+const (
+	whyNoBus        = "no bus"
+	whyManagedNoHub = "managed bus, no hub"
+	whyAdoptedNoHub = "adopted bus, no hub declared"
+	noHubLinePrefix = "marvel daemon re-executed in place; "
+)
+
+var noHubLines = map[string]string{
+	whyNoBus:        "no bus is configured, so there is no leaf to check",
+	whyManagedNoHub: "the managed bus has no hub configured, so there is no leaf to check",
+	whyAdoptedNoHub: "the adopted bus has not been given a hub in this cluster's config, so its leaf is not checked",
+}
+
 // terminalLeafReasons are causes waiting cannot cure.
 var terminalLeafReasons = map[string]bool{
 	"dropped on adopt": true, "detached by operator": true, "not enrolled": true,
@@ -111,17 +129,19 @@ func checkAfterReexec(w io.Writer, before time.Time, handoff string, o reexecObs
 	start := o.now()
 	deadline := start.Add(o.wait)
 	reason := "the daemon did not answer"
+	adopted := false
 	for {
-		if answered, why := o.readOnce(before); answered {
+		if answered, why, isAdopted := o.readOnce(before); answered {
 			if why == "" {
 				_, _ = fmt.Fprintf(w, "marvel daemon re-executed in place; hub leaf up (waited %s)\n", seconds(o.now().Sub(start)))
 				return nil
 			}
-			if why == "no hub" {
-				_, _ = fmt.Fprintln(w, "marvel daemon re-executed in place; no hub is configured, so there is no leaf to check")
+			if line, hubless := noHubLines[why]; hubless {
+				_, _ = fmt.Fprintln(w, noHubLinePrefix+line)
 				return nil
 			}
 			reason = why
+			adopted = isAdopted
 			if terminalLeafReasons[why] {
 				break
 			}
@@ -138,7 +158,11 @@ func checkAfterReexec(w io.Writer, before time.Time, handoff string, o reexecObs
 	case handoff == "":
 		_, _ = fmt.Fprintln(w, "the daemon did not report whether it carried its credentials (an older build)")
 	}
-	_, _ = fmt.Fprintf(w, "push the leaf credential again: %s\n", repushCommand)
+	if adopted {
+		_, _ = fmt.Fprintln(w, "the broker is adopted, so its leaf and credential are the broker owner's to restore")
+	} else {
+		_, _ = fmt.Fprintf(w, "push the leaf credential again: %s\n", repushCommand)
+	}
 	return &reexecCheckError{reason: reason}
 }
 
@@ -152,24 +176,31 @@ func seconds(d time.Duration) string {
 }
 
 // readOnce reads the successor once. answered is false until the daemon answers
-// as a new process; why is "" for a leaf that is up on a current reading.
-func (o reexecObserver) readOnce(before time.Time) (answered bool, why string) {
+// as a new process; why is "" for a leaf that is up on a current reading, one
+// of the hubless states above, or the cause of a leaf that is not up. adopted
+// is true when the reading is of an adopted bus.
+func (o reexecObserver) readOnce(before time.Time) (answered bool, why string, adopted bool) {
 	started, err := o.startedAt()
 	if err != nil || (!before.IsZero() && started.Equal(before)) {
-		return false, ""
+		return false, "", false
 	}
 	st, err := o.leaf()
 	if err != nil {
 		if isNoBusReply(err) {
 			// The successor answered, and its cluster has no bus: there is
 			// no hub and no leaf to wait for (marvel#1102).
-			return true, "no hub"
+			return true, whyNoBus, false
 		}
-		return false, ""
+		return false, "", false
 	}
 	ok, reason := leafRequirement(st, o.now())
-	if ok {
-		return true, ""
+	switch {
+	case ok:
+		return true, "", st.Adopted
+	case reason == "no hub" && st.Adopted:
+		return true, whyAdoptedNoHub, true
+	case reason == "no hub":
+		return true, whyManagedNoHub, false
 	}
-	return true, reason
+	return true, reason, st.Adopted
 }

@@ -55,7 +55,7 @@ func TestReexecPostcheckNamesEachNoHubState(t *testing.T) {
 				w.leaf = func(time.Duration, time.Time) bus.Status { return bus.Status{Adopted: true, Leaf: "n/a"} }
 				return w
 			},
-			want:      "the adopted bus is given no hub by this cluster's config, so its leaf is not checked",
+			want:      "the adopted bus has not been given a hub in this cluster's config, so its leaf is not checked",
 			wantNever: []string{"no hub", "no bus"},
 		},
 	}
