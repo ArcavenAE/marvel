@@ -204,6 +204,10 @@ type Status struct {
 	// it), "unenrolled" (hub with no seed), "n/a" (no hub), or "unknown" (not
 	// polled yet).
 	Leaf string `json:"leaf"`
+	// HubDeclared is true when the cluster's bus entry names a hub, whoever
+	// supervises the broker. An adopted bus carries Leaf "n/a" with it false,
+	// and a reading with it true (aae-orc-c6o29, marvel#1463).
+	HubDeclared bool `json:"hub_declared,omitempty"`
 	// LeafSince is when the up or down reading was entered (RFC3339) and
 	// LeafFor how long ago that was, so "down" reads apart from "down for
 	// two hours". Empty for the other leaf states.
