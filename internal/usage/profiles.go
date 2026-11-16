@@ -25,6 +25,9 @@ type profile struct {
 	// vendorTotal is true when the harness publishes its own token
 	// total, which is what makes Sample.TotalMismatch meaningful.
 	vendorTotal bool
+	// noCacheWrite is true when the harness reports no cache-creation class at
+	// all, so a CW figure for it is unreported and not zero.
+	noCacheWrite bool
 }
 
 // profiles is keyed on the Harness constant each parser package stamps
@@ -83,6 +86,8 @@ var profiles = map[string]profile{
 		// per request. Neither is this feed.
 		limitInStream: false,
 		vendorTotal:   false,
+		// Codex reports input and cached input and nothing for a cache write.
+		noCacheWrite: true,
 	},
 	opencode.Harness: {
 		// Measured against a live two-turn session: input fell from 6018

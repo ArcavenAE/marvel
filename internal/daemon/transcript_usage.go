@@ -27,8 +27,11 @@ import (
 //   - the main transcript only: subagent transcripts are not counted;
 //   - a client workspace is not read, as the watchdog does not read it.
 //
-// It writes only a seat the usage accountant has not metered (SpendPromptTokens
-// nil), and it writes no prompt tokens and no rate.
+// It keeps fresh input, cache reads, cache writes and their sum (the prompt)
+// beside the output sum, each counted like it (I-477 slice 2). It writes only a
+// seat the usage accountant has not metered, and no rate. A seat is the
+// accountant's when it has a prompt sum and no place in a transcript: the reader
+// always writes the two together, so a seat with a place is its own.
 type txUsage struct {
 	store *api.Store
 	// client reports whether a workspace is a client one; such a seat is not
@@ -74,6 +77,23 @@ type usageTail struct {
 	peak    map[string]int
 	total   int
 	partial bool
+
+	// figs is each message id's largest input class figures seen, and classes the
+	// running sum of their growth.
+	figs    map[string]usageClasses
+	classes usageClasses
+}
+
+// usageClasses are the three prompt classes of a record or of a sum: fresh input,
+// cache reads and cache writes.
+type usageClasses struct{ in, read, write int }
+
+func (c usageClasses) prompt() int { return c.in + c.read + c.write }
+
+// accountantOwned reports a seat whose spend the usage accountant writes: it has
+// a prompt sum and no place in a transcript.
+func accountantOwned(s api.Session) bool {
+	return s.SpendPromptTokens != nil && s.SpendTail == nil
 }
 
 func newTxUsage(store *api.Store, client func(string) (bool, error)) *txUsage {
@@ -137,7 +157,7 @@ func (u *txUsage) readable(s api.Session) bool {
 		return false
 	}
 	// The accountant owns the slice once it has metered a request.
-	if s.SpendPromptTokens != nil {
+	if accountantOwned(s) {
 		return false
 	}
 	id := s.HarnessSessionID
@@ -218,7 +238,7 @@ func (u *txUsage) visit(key string, s api.Session) {
 // newTail starts the memory of a seat. A stored sum from before a restart is
 // the base, and a restart marks the sum partial.
 func (u *txUsage) newTail(s api.Session) *usageTail {
-	t := &usageTail{size: -1, peak: map[string]int{}}
+	t := &usageTail{size: -1, peak: map[string]int{}, figs: map[string]usageClasses{}}
 	if s.SpendOut != nil {
 		t.total = *s.SpendOut
 		t.partial = true
@@ -227,6 +247,13 @@ func (u *txUsage) newTail(s api.Session) *usageTail {
 			st := *s.SpendTail
 			t.stored = &st
 			t.partial = s.SpendPartial
+		}
+		if s.SpendFresh != nil && s.SpendCacheRead != nil && s.SpendCacheWrite != nil {
+			t.classes = usageClasses{*s.SpendFresh, *s.SpendCacheRead, *s.SpendCacheWrite}
+		} else {
+			// An output sum an older daemon kept alone: the classes behind it
+			// were not counted, so the prompt sum starts from here as a lower bound.
+			t.partial = true
 		}
 	}
 	return t
@@ -243,7 +270,10 @@ func (t *usageTail) count(line []byte, add bool) {
 		Message struct {
 			ID    string `json:"id"`
 			Usage struct {
-				Output any `json:"output_tokens"`
+				Output     any `json:"output_tokens"`
+				Input      any `json:"input_tokens"`
+				CacheRead  any `json:"cache_read_input_tokens"`
+				CacheWrite any `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		} `json:"message"`
 	}
@@ -255,11 +285,35 @@ func (t *usageTail) count(line []byte, add bool) {
 		return
 	}
 	n := int(f)
+	// A class a record leaves out is a metered zero; one that is not a count
+	// makes the whole record uncountable.
+	var cur usageClasses
+	for _, c := range []struct {
+		v   any
+		dst *int
+	}{{rec.Message.Usage.Input, &cur.in}, {rec.Message.Usage.CacheRead, &cur.read}, {rec.Message.Usage.CacheWrite, &cur.write}} {
+		if c.v == nil {
+			continue
+		}
+		g, ok := c.v.(float64)
+		if !ok || g < 0 || g >= usageMaxTokens || g != float64(int(g)) {
+			return
+		}
+		*c.dst = int(g)
+	}
 	if old := t.peak[rec.Message.ID]; n > old {
 		t.peak[rec.Message.ID] = n
 		if add {
 			t.total += n - old
 		}
+	}
+	old := t.figs[rec.Message.ID]
+	peak := usageClasses{max(old.in, cur.in), max(old.read, cur.read), max(old.write, cur.write)}
+	t.figs[rec.Message.ID] = peak
+	if add {
+		t.classes.in += peak.in - old.in
+		t.classes.read += peak.read - old.read
+		t.classes.write += peak.write - old.write
 	}
 }
 
@@ -271,7 +325,7 @@ func (u *txUsage) publish(key string, t *usageTail) {
 		return
 	}
 	// The accountant may have metered the seat since this pass began.
-	if cur.SpendPromptTokens != nil {
+	if accountantOwned(cur) {
 		return
 	}
 	var tail *api.SpendTail
@@ -279,11 +333,13 @@ func (u *txUsage) publish(key string, t *usageTail) {
 		tail = &api.SpendTail{Offset: t.offset, Inode: t.inode}
 	}
 	sameTail := (tail == nil && cur.SpendTail == nil) || (tail != nil && cur.SpendTail != nil && *tail == *cur.SpendTail)
-	if cur.SpendOut != nil && *cur.SpendOut == t.total && cur.SpendPartial == t.partial && sameTail {
+	sameClasses := cur.SpendFresh != nil && cur.SpendCacheRead != nil && cur.SpendCacheWrite != nil && cur.SpendPromptTokens != nil &&
+		(usageClasses{*cur.SpendFresh, *cur.SpendCacheRead, *cur.SpendCacheWrite}) == t.classes
+	if cur.SpendOut != nil && *cur.SpendOut == t.total && sameClasses && cur.SpendPartial == t.partial && sameTail {
 		return
 	}
-	out := t.total
-	u.write(key, api.SessionSpend{Out: &out, PromptTokens: cur.SpendPromptTokens, OutRate: cur.OutRate, Partial: t.partial, Tail: tail})
+	out, fresh, read, write, prompt := t.total, t.classes.in, t.classes.read, t.classes.write, t.classes.prompt()
+	u.write(key, api.SessionSpend{Out: &out, PromptTokens: &prompt, Fresh: &fresh, CacheRead: &read, CacheWrite: &write, OutRate: cur.OutRate, Partial: t.partial, Tail: tail})
 }
 
 // startTxUsage runs the transcript usage reader beside the watchdog. It reads

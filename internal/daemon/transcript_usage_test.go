@@ -335,15 +335,16 @@ func TestPartialFlagDoesNotClearWithinADaemonLife(t *testing.T) {
 	r.want(50, true)
 }
 
-// The reader owns output tokens only. It leaves the prompt sum alone.
-func TestReaderLeavesPromptTokensAlone(t *testing.T) {
+// The reader writes the prompt sum with the output sum (I-477 slice 2); the
+// split of it is pinned in transcript_cache_split_test.go.
+func TestReaderWritesThePromptSumBesideTheOutputSum(t *testing.T) {
 	r := newUsageRig(t)
 	r.u.Once()
 	r.lines(msg("m1", 20))
 	r.u.Once()
 	r.want(20, false)
-	if got := r.session().SpendPromptTokens; got != nil {
-		t.Errorf("SpendPromptTokens = %d, want nil: the reader does not write prompt tokens", *got)
+	if got := r.session().SpendPromptTokens; got == nil || *got != 3 {
+		t.Errorf("SpendPromptTokens = %v, want 3 (the record's input_tokens)", got)
 	}
 }
 

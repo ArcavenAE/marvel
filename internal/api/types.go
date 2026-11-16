@@ -657,6 +657,15 @@ type SessionContext struct {
 	// section 3).
 	SpendOut          *int
 	SpendPromptTokens *int
+	// SpendFresh, SpendCacheRead and SpendCacheWrite split SpendPromptTokens into
+	// the TIN, CR and CW columns: fresh input, cache reads and cache writes, so
+	// that TIN + CR + CW = PROMPT on every harness (I-477 slice 2, card
+	// i477c1113-1). Each is nil when the producer never reported that class, which
+	// is not the same as zero: codex reports no cache write, so its SpendCacheWrite
+	// stays nil.
+	SpendFresh      *int
+	SpendCacheRead  *int
+	SpendCacheWrite *int
 	// SpendPartial marks SpendOut as a lower bound: the transcript reader began
 	// at the file's end, or the file shrank or changed inode, so the sum may
 	// miss earlier output. Always emitted, false included (I-477 slice 1).
@@ -1528,6 +1537,9 @@ const HarnessStateParked = "parked"
 type SessionSpend struct {
 	Out          *int
 	PromptTokens *int
+	// Fresh, CacheRead and CacheWrite are SessionContext.SpendFresh,
+	// SpendCacheRead and SpendCacheWrite.
+	Fresh, CacheRead, CacheWrite *int
 	// Partial is SessionContext.SpendPartial.
 	Partial bool
 	// Tail is SessionContext.SpendTail.

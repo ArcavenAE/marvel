@@ -179,6 +179,9 @@ func cloneSession(s *Session) Session {
 		out.SpendTail = &t
 	}
 	out.SpendPromptTokens = copyInt(s.SpendPromptTokens)
+	out.SpendFresh = copyInt(s.SpendFresh)
+	out.SpendCacheRead = copyInt(s.SpendCacheRead)
+	out.SpendCacheWrite = copyInt(s.SpendCacheWrite)
 	out.CostSamples = slices.Clone(s.CostSamples)
 	out.APISamples = slices.Clone(s.APISamples)
 	if s.RingClaim != nil {
@@ -1046,6 +1049,7 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	// would flip between its total and "-" on every beat (marvel#779). A
 	// heartbeat-only seat stays nil.
 	spendOut, spendPrompt, outRate, spendPartial, spendTail := sess.SpendOut, sess.SpendPromptTokens, sess.OutRate, sess.SpendPartial, sess.SpendTail
+	spendFresh, spendRead, spendWrite := sess.SpendFresh, sess.SpendCacheRead, sess.SpendCacheWrite
 	// ReadingChangedAt is carried across the replace, and moves only when the
 	// beat's reading differs from the one it replaces (marvel#801).
 	prevTokens, prevPercent, prevChanged := sess.ContextTokens, sess.ContextPercent, sess.ReadingChangedAt
@@ -1053,6 +1057,7 @@ func (s *Store) UpdateSessionHeartbeat(r HeartbeatRequest) (HeartbeatAuth, error
 	sess.SessionContext = reading
 	sess.ReadingChangedAt = prevChanged
 	sess.SpendOut, sess.SpendPromptTokens, sess.OutRate, sess.SpendPartial, sess.SpendTail = spendOut, spendPrompt, outRate, spendPartial, spendTail
+	sess.SpendFresh, sess.SpendCacheRead, sess.SpendCacheWrite = spendFresh, spendRead, spendWrite
 	// A producer that reads the harness's own output total (the codex hook)
 	// supplies it here, and the TOUT cell reads the one field. The accountant
 	// owns the slice once it has metered a request: it writes SpendOut and
@@ -1202,6 +1207,7 @@ func (s *Store) UpdateSessionSpend(key string, sp SessionSpend) {
 		return
 	}
 	sess.SpendOut, sess.SpendPromptTokens = copyInt(sp.Out), copyInt(sp.PromptTokens)
+	sess.SpendFresh, sess.SpendCacheRead, sess.SpendCacheWrite = copyInt(sp.Fresh), copyInt(sp.CacheRead), copyInt(sp.CacheWrite)
 	sess.OutRate = sp.OutRate
 	sess.SpendPartial = sp.Partial
 	sess.SpendTail = nil

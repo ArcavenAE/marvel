@@ -632,6 +632,7 @@ func (a *Accountant) addSpendLocked(st *sessionState, s Sample) {
 	st.spend.Out += s.Out
 	st.spend.CacheReadIn += s.CacheReadIn
 	st.spend.CacheCreationIn += s.CacheCreationIn
+	st.spend.FreshIn += s.Fresh()
 	st.spend.ReasoningOut += s.ReasoningOut
 	// Sample.Occupancy applies the feed's Layout, so this is the one prompt
 	// figure that is layout-independent once accumulated. It is defined only
@@ -669,6 +670,7 @@ func (a *Accountant) setSpendLocked(st *sessionState, s Sample) {
 	st.spend.Out = s.Out
 	st.spend.CacheReadIn = s.CacheReadIn
 	st.spend.CacheCreationIn = s.CacheCreationIn
+	st.spend.FreshIn = s.Fresh()
 	st.spend.ReasoningOut = s.ReasoningOut
 	st.spend.PromptTokens = s.Occupancy()
 	st.spend.Requests++
@@ -742,6 +744,7 @@ func (a *Accountant) forgetLocked(agentID string) {
 	ts.retired.Out += st.spend.Out
 	ts.retired.CacheReadIn += st.spend.CacheReadIn
 	ts.retired.CacheCreationIn += st.spend.CacheCreationIn
+	ts.retired.FreshIn += st.spend.FreshIn
 	ts.retired.ReasoningOut += st.spend.ReasoningOut
 	ts.retired.PromptTokens += st.spend.PromptTokens
 	ts.retired.CostUSD += st.spend.CostUSD
@@ -931,6 +934,7 @@ func (a *Accountant) TeamSpend(workspace, team string) TeamTotals {
 		out.Out += st.spend.Out
 		out.CacheReadIn += st.spend.CacheReadIn
 		out.CacheCreationIn += st.spend.CacheCreationIn
+		out.FreshIn += st.spend.FreshIn
 		out.ReasoningOut += st.spend.ReasoningOut
 		out.PromptTokens += st.spend.PromptTokens
 		out.CostUSD += st.spend.CostUSD
@@ -967,6 +971,7 @@ func (st *sessionState) reading() api.SessionContext {
 	// stays absent rather than reading as zero (api.SessionContext).
 	sp := st.spendReading()
 	out.SpendOut, out.SpendPromptTokens, out.OutRate = sp.Out, sp.PromptTokens, sp.OutRate
+	out.SpendFresh, out.SpendCacheRead, out.SpendCacheWrite = sp.Fresh, sp.CacheRead, sp.CacheWrite
 	return out
 }
 
@@ -978,6 +983,12 @@ func (st *sessionState) spendReading() api.SessionSpend {
 	if st.spend.Requests > 0 {
 		spendOut, spendPrompt := st.spend.Out, st.spend.PromptTokens
 		out.Out, out.PromptTokens = &spendOut, &spendPrompt
+		fresh, read := st.spend.FreshIn, st.spend.CacheReadIn
+		out.Fresh, out.CacheRead = &fresh, &read
+		if !st.profile.noCacheWrite {
+			write := st.spend.CacheCreationIn
+			out.CacheWrite = &write
+		}
 	}
 	if !st.rateAt.IsZero() {
 		out.OutRate = asof.Cell[float64]{

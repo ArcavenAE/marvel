@@ -308,8 +308,10 @@ func (s *Store) rehydrate() error {
 				// carries its own validity and reads "?" once that passes
 				// (aae-orc-88bm0).
 				out, prompt, rate, partial, tail := sess.SpendOut, sess.SpendPromptTokens, sess.OutRate, sess.SpendPartial, sess.SpendTail
+				fresh, read, write := sess.SpendFresh, sess.SpendCacheRead, sess.SpendCacheWrite
 				sess.SessionContext = SessionContext{}
 				sess.SpendOut, sess.SpendPromptTokens, sess.OutRate, sess.SpendPartial, sess.SpendTail = out, prompt, rate, partial, tail
+				sess.SpendFresh, sess.SpendCacheRead, sess.SpendCacheWrite = fresh, read, write
 			}
 			s.sessions[sess.Key()] = &sess
 			return nil

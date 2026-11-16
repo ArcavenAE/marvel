@@ -126,7 +126,7 @@ func wideNames() []string { return slices.Clone(wideSessionColumns) }
 // fitPriority first, in reverse registry order, then the others in reverse
 // fitPriority order.
 var restCutOrder = []string{
-	"COST", "KEY", "CLUSTER", "LOGIN", "HOME", "CRED", "BACKEND", "READ", "7D-RESET", "5H-RESET", "7D%", "5H%", "ACCOUNT", "SPEC", "PROMPT", "LAST-TURN",
+	"COST", "KEY", "CLUSTER", "LOGIN", "HOME", "CRED", "BACKEND", "READ", "7D-RESET", "5H-RESET", "7D%", "5H%", "ACCOUNT", "SPEC", "HIT%", "PROMPT", "CW", "CR", "TIN", "LAST-TURN",
 	"WORKSPACE", "GEN", "DESK", "RSS", "mCPU", "RUNTIME", "ACTIVE%", "AGE", "WORKDIR", "ROLE", "TEAM",
 	"RATE", "TOUT", "LAST-ACTIVE", "CTX%", "HEALTH", "STATE",
 }
