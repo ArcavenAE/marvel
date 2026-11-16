@@ -201,6 +201,17 @@ func TestCreateStoresTheProjectionPathOfTheSeat(t *testing.T) {
 // content, in a directory of the given mode.
 func legacyProjectionFile(t *testing.T, mgr *Manager, mode os.FileMode) string {
 	t.Helper()
+	path := legacyProjectionPath(t, mgr, mode)
+	if err := os.WriteFile(path, []byte(`{"placeholder": true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// legacyProjectionPath is legacyProjectionFile without the file: the directory
+// exists, in the given mode, and the returned path is where the file would be.
+func legacyProjectionPath(t *testing.T, mgr *Manager, mode os.FileMode) string {
+	t.Helper()
 	t.Setenv("TMPDIR", t.TempDir())
 	dir := daemonTempDir("marvel-policies")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -217,11 +228,7 @@ func legacyProjectionFile(t *testing.T, mgr *Manager, mode os.FileMode) string {
 	if !ok {
 		t.Fatal("no launch context for the session")
 	}
-	path := adapter.ProjectionFor(lctx, dir).Path
-	if err := os.WriteFile(path, []byte(`{"placeholder": true}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return adapter.ProjectionFor(lctx, dir).Path
 }
 
 // A seat running when the change is installed has no recorded path. Its file is
@@ -266,4 +273,34 @@ func TestReprojectDoesNotWriteAPreviousDefaultInADirThatIsNotPrivate(t *testing.
 	if string(got) != `{"placeholder": true}` {
 		t.Errorf("the previous default holds %q, want it untouched: its directory is not private to this user", got)
 	}
+}
+
+// A seat that was launched with no projected file is not given one: with
+// nothing at the previous default, Reproject writes the current path only, and
+// where the previous default is not a regular file (a directory here) it is not
+// written through.
+func TestReprojectDoesNotCreateOrWriteThroughThePreviousDefault(t *testing.T) {
+	t.Run("nothing there", func(t *testing.T) {
+		mgr := projectionReady(t)
+		old := legacyProjectionPath(t, mgr, 0o700)
+		mgr.Reproject()
+		if _, err := os.Lstat(old); err == nil {
+			t.Errorf("%s exists after Reproject, want it not created: the seat was not launched with it", old)
+		}
+	})
+	t.Run("a directory there", func(t *testing.T) {
+		mgr := projectionReady(t)
+		old := legacyProjectionPath(t, mgr, 0o700)
+		if err := os.Mkdir(old, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		mgr.Reproject()
+		fi, err := os.Lstat(old)
+		if err != nil || !fi.IsDir() {
+			t.Errorf("%s = %v, %v; want the directory left in place", old, fi, err)
+		}
+		if n := entries(t, old); n != 0 {
+			t.Errorf("the directory at the previous default holds %d entries, want 0", n)
+		}
+	})
 }
