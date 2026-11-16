@@ -2,6 +2,7 @@ package session
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -149,5 +150,36 @@ func TestPrivateDirsStillTakeAFileAndAPipe(t *testing.T) {
 	defer discardSink(fifo)
 	if fifo == nil {
 		t.Error("openSink made no pipe in a private stream directory")
+	}
+}
+
+// A settings file is written to a new name and renamed into place, so a link
+// left at the target path is replaced and never followed: what the link pointed
+// at keeps its bytes, and the path holds a plain file with the new content.
+func TestProjectionWriteReplacesALinkAndNeverFollowsIt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim.json")
+	if err := os.WriteFile(victim, []byte("keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "squad-reviewer-g1-0.settings.json")
+	if err := os.Symlink(victim, path); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := writeProjectionFile(path, map[string]any{"permissions": map[string]any{"allow": []string{"Read"}}}); err != nil {
+		t.Fatalf("writeProjectionFile: %v", err)
+	}
+
+	if got, err := os.ReadFile(victim); err != nil || string(got) != "keep\n" {
+		t.Errorf("the file the link pointed at = %q, %v; want it untouched", got, err)
+	}
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("target path = %v, %v; want a plain file", fi, err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600", fi.Mode().Perm())
 	}
 }
