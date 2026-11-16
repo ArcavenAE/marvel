@@ -3,10 +3,12 @@ package bus
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/events"
 )
 
 // The lifecycle of the supervises users: pruned with the relation, hidden
@@ -165,5 +167,53 @@ func TestSupervisesDoesNotReachAcrossWorkspaces(t *testing.T) {
 	}
 	if _, ok := users["elsewhere.architect"]; ok {
 		t.Error("a team of another workspace got a user from the relation")
+	}
+}
+
+// The unresolved-name event: one per name until it resolves, none on a repeat
+// render, none once its team is applied, and one again if the team goes away.
+func TestSupervisesUnresolvedEventIsOncePerChange(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "nats")
+	live := &teams{
+		{Name: "ops", Workspace: "ws1", Roles: []api.Role{{Name: "supervisor", Supervises: []string{"alpha"}}}},
+	}
+	m := supervisesManagerOver(t, dir, live)
+	ring := events.NewRing(32)
+	m.Events = ring
+	count := func() int {
+		return len(ring.Snapshot(events.Filter{Kind: events.KindBusSupervisesUnresolved}, 0))
+	}
+	render := func() {
+		t.Helper()
+		if _, err := m.Regenerate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	render()
+	if n := count(); n != 1 {
+		t.Fatalf("after the first render with an unapplied name: %d events, want 1", n)
+	}
+	evs := ring.Snapshot(events.Filter{Kind: events.KindBusSupervisesUnresolved}, 0)
+	if !strings.Contains(evs[0].Message, "ws1/ops.supervisor -> alpha") {
+		t.Errorf("event message %q does not name the supervisor and the unresolved team", evs[0].Message)
+	}
+
+	render()
+	if n := count(); n != 1 {
+		t.Errorf("after a second render with the same name unresolved: %d events, want still 1", n)
+	}
+
+	*live = append(*live, api.Team{Name: "alpha", Workspace: "ws1", Roles: []api.Role{{Name: "architect"}}})
+	render()
+	if n := count(); n != 1 {
+		t.Errorf("after the team was applied: %d events, want still 1", n)
+	}
+
+	*live = (*live)[:1]
+	render()
+	if n := count(); n != 2 {
+		t.Errorf("after the team was removed again: %d events, want 2", n)
 	}
 }

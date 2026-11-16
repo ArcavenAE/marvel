@@ -863,7 +863,7 @@ type Role struct {
 	// the cluster admits the role's name.
 	GlobalRole string `toml:"global_role,omitempty"`
 	// Supervises names the teams of the same workspace this role supervises.
-	// A name is a team, never an agent. See internal/bus.SupervisedInboxes.
+	// A name is a team, never an agent. See internal/bus.SupervisedGrants.
 	Supervises []string `toml:"supervises,omitempty"`
 	// Duties names the readiness checks this role must pass, each from the
 	// fixed library (DutyNames). Empty means the role declared none. Read it
