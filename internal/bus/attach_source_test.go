@@ -77,17 +77,12 @@ func asExpr(n ast.Node) ast.Expr {
 }
 
 // newTestSupervisor is the single registration point (design section 7), so a
-// test that builds a supervisor another way must attach the same table. One
-// that never starts a broker, because it asks for the binary that is not there,
-// is the only exception.
+// test that builds a supervisor another way must attach the same table. A
+// build whose supervisor goes to the blank identifier (`_, err := NewSupervisor`)
+// cannot be started, so it needs no table; that is judged by the shape of the
+// call and not by the name of the test around it.
 func TestEverySupervisorATestBuildsIsAttachedToAProcessTable(t *testing.T) {
-	// Tests that build a supervisor only to see it refused never start a broker.
-	allowed := map[string]bool{
-		"TestNewSupervisorNamesMissingBinary":                  true,
-		"TestSupervisorRefusesAMissingConfiguredBinary":        true,
-		"TestSupervisorRefusesAConfiguredBinaryThatCannotRun":  true,
-		"TestSupervisorRefusesARelativeOrShimConfiguredBinary": true,
-	}
+	allowed := map[string]bool{}
 	paths, err := filepath.Glob("*_test.go")
 	if err != nil {
 		t.Fatal(err)
@@ -112,25 +107,28 @@ func TestUnattachedSeesEachWayToBuildOne(t *testing.T) {
 		src  string
 		want int
 	}{
-		"built and attached":       {"package p\nfunc TestA() { s, _ := NewSupervisor(); attach(t, s, nil) }\n", 0},
-		"built, never attached":    {"package p\nfunc TestA() { s, _ := NewSupervisor(); _ = s }\n", 1},
-		"attached in a closure":    {"package p\nfunc TestA() { s, _ := NewSupervisor(); func() { attach(t, s, nil) }() }\n", 0},
-		"not built":                {"package p\nfunc TestA() { _ = Other() }\n", 0},
-		"the allowed exception":    {"package p\nfunc TestNewSupervisorNamesMissingBinary() { _, _ = NewSupervisor() }\n", 0},
-		"two builds, one attach":   {"package p\nfunc TestA() { s1, _ := NewSupervisor(); s2, _ := NewSupervisor(); attach(t, s1, nil); _ = s2 }\n", 1},
-		"two builds, two attaches": {"package p\nfunc TestA() { s1, _ := NewSupervisor(); s2, _ := NewSupervisor(); attach(t, s1, nil); attach(t, s2, nil) }\n", 0},
-		"attached to another one":  {"package p\nfunc TestA() { s1, _ := NewSupervisor(); other := 1; attach(t, other, nil); _ = s1 }\n", 1},
-		"one variable built twice": {"package p\nfunc TestA() { s, _ := NewSupervisor(); s, _ = NewSupervisor(); attach(t, s, nil) }\n", 1},
-		"built into a field":       {"package p\nfunc TestA() { x.s, _ = NewSupervisor(); attach(t, x.s, nil) }\n", 0},
-		"built, passed on":         {"package p\nfunc TestA() { use(NewSupervisor()) }\n", 1},
-		"two functions, one bad":   {"package p\nfunc TestA() { _, _ = NewSupervisor() }\nfunc TestB() { s, _ := NewSupervisor(); attach(t, s, nil) }\n", 1},
+		"built and attached":            {"package p\nfunc TestA() { s, _ := NewSupervisor(); attach(t, s, nil) }\n", 0},
+		"built, never attached":         {"package p\nfunc TestA() { s, _ := NewSupervisor(); _ = s }\n", 1},
+		"attached in a closure":         {"package p\nfunc TestA() { s, _ := NewSupervisor(); func() { attach(t, s, nil) }() }\n", 0},
+		"not built":                     {"package p\nfunc TestA() { _ = Other() }\n", 0},
+		"a discarded build":             {"package p\nfunc TestA() { _, err := NewSupervisor(); _ = err }\n", 0},
+		"a discarded build, reassigned": {"package p\nfunc TestA() { _, err = NewSupervisor(); _ = err }\n", 0},
+		"discarded beside a live one":   {"package p\nfunc TestRefusesSomething() { _, err := NewSupervisor(); _ = err; s, _ := NewSupervisor(); _ = s }\n", 1},
+		"discarded beside an attached":  {"package p\nfunc TestA() { _, err := NewSupervisor(); _ = err; s, _ := NewSupervisor(); attach(t, s, nil) }\n", 0},
+		"two builds, one attach":        {"package p\nfunc TestA() { s1, _ := NewSupervisor(); s2, _ := NewSupervisor(); attach(t, s1, nil); _ = s2 }\n", 1},
+		"two builds, two attaches":      {"package p\nfunc TestA() { s1, _ := NewSupervisor(); s2, _ := NewSupervisor(); attach(t, s1, nil); attach(t, s2, nil) }\n", 0},
+		"attached to another one":       {"package p\nfunc TestA() { s1, _ := NewSupervisor(); other := 1; attach(t, other, nil); _ = s1 }\n", 1},
+		"one variable built twice":      {"package p\nfunc TestA() { s, _ := NewSupervisor(); s, _ = NewSupervisor(); attach(t, s, nil) }\n", 1},
+		"built into a field":            {"package p\nfunc TestA() { x.s, _ = NewSupervisor(); attach(t, x.s, nil) }\n", 0},
+		"built, passed on":              {"package p\nfunc TestA() { use(NewSupervisor()) }\n", 1},
+		"two functions, one bad":        {"package p\nfunc TestA() { use(NewSupervisor()) }\nfunc TestB() { s, _ := NewSupervisor(); attach(t, s, nil) }\n", 1},
 	} {
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, "x_test.go", tc.src, parser.SkipObjectResolution)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if got := unattached(f, map[string]bool{"TestNewSupervisorNamesMissingBinary": true}); len(got) != tc.want {
+		if got := unattached(f, map[string]bool{}); len(got) != tc.want {
 			t.Errorf("%s: %v, want %d", name, got, tc.want)
 		}
 	}
