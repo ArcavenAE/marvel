@@ -17,3 +17,11 @@ type HubReading struct {
 func HubStatusLines(r HubReading, expected []string, own string, now time.Time, validFor time.Duration) []string {
 	return nil
 }
+
+// ParseHubLeafz returns the leaf names a hub's /leafz body lists. Compile-only
+// stub.
+func ParseHubLeafz(body []byte) ([]string, error) { return nil, nil }
+
+// pollHub reads the configured hub monitor and stores the reading. Compile-only
+// stub.
+func (s *Supervisor) pollHub() {}

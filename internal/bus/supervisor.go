@@ -185,6 +185,9 @@ type Status struct {
 	// Pidfile is what the bus pidfile proved at the last start: proven, stale
 	// (removed, nothing signalled), legacy (no identity record) or none.
 	Pidfile string `json:"pidfile,omitempty"`
+	// HubStatus is the hub's leaf list as diagnostic lines, empty when no
+	// hub_monitor is configured (aae-orc-stqn9).
+	HubStatus []string `json:"hub_status,omitempty"`
 	// Seat is "<workspace>/<team>" when a director seat is declared; the
 	// user is always director and its password sits at SeatPassFile.
 	Seat         string `json:"seat,omitempty"`
