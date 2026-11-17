@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
@@ -272,5 +275,55 @@ func TestFanOutTotalsFollowTheDrawnColumns(t *testing.T) {
 		if !strings.Contains(block, c.wantFields) {
 			t.Errorf("width %d: the block should carry %q:\n%s", c.width, c.wantFields, block)
 		}
+	}
+}
+
+// foldSameDaemon returns the names of the members that were starting when it
+// overwrote their outcome, and none for a member that was not.
+func TestFoldSameDaemonReturnsTheStartingMembers(t *testing.T) {
+	stamp := daemonStamp{PID: 4242, StartedAt: time.Unix(1_700_000_000, 0)}
+	fold := func(memberOutcome outcome) map[string]bool {
+		records := []clusterRecord{{Cluster: "a", Outcome: outcomeAnswered}, {Cluster: "b", Outcome: memberOutcome}}
+		rowSets := [][]api.Session{{{Workspace: "w", Name: "s1"}}, {{Workspace: "w", Name: "s1"}}}
+		return foldSameDaemon([]string{"d", "d"}, []daemonStamp{stamp, stamp}, []bool{true, true}, records, rowSets)
+	}
+	if got := fold(outcomeStarting); len(got) != 1 || !got["b"] {
+		t.Errorf("a starting member should be named: %v", got)
+	}
+	if got := fold(outcomeAnswered); len(got) != 0 {
+		t.Errorf("a member that was not starting should not be named: %v", got)
+	}
+}
+
+// A second entry at the same address shares the first dial's fate, so when that
+// dial was starting the entry is folded as a starting member.
+func TestCollectFanOutNamesAStartingRepeatAddress(t *testing.T) {
+	f := startFake(t, fakeStarting, []api.Session{row("w", "s1")})
+	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock}, config.Cluster{Name: "b", Socket: f.sock})
+	records, _, started, err := collectFanOutFolded([]string{"a", "b"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records[1].Outcome != outcomeSameDaemon || !started["b"] {
+		t.Errorf("b = %+v, started = %v, want a same-daemon repeat named as starting", records[1], started)
+	}
+}
+
+// Two entries that reach one daemon by different paths are merged by the live
+// fold, and a member that was starting is named through the whole read.
+func TestCollectFanOutNamesAStartingMergedMember(t *testing.T) {
+	f := startSD(t, sdStart, []api.Session{row("w", "s1")})
+	f.starting = true
+	link := filepath.Join(filepath.Dir(f.sock), "alias.sock")
+	if err := os.Symlink(f.sock, link); err != nil {
+		t.Fatal(err)
+	}
+	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock}, config.Cluster{Name: "b", Socket: link})
+	records, _, started, err := collectFanOutFolded([]string{"a", "b"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records[1].Outcome != outcomeSameDaemon || !started["b"] {
+		t.Errorf("b = %+v, started = %v, want a merged member named as starting", records[1], started)
 	}
 }

@@ -33,6 +33,7 @@ type sdFake struct {
 	started  time.Time
 	getRows  [][]api.Session
 	delay    time.Duration // how long each reply is held back
+	starting bool          // every get answers with Starting set
 	mu       sync.Mutex
 	gets     int
 	versions int
@@ -76,7 +77,7 @@ func startSD(t *testing.T, started time.Time, getRows ...[]api.Session) *sdFake 
 					data, _ = json.Marshal(f.getRows[i])
 				}
 				f.mu.Unlock()
-				_ = json.NewEncoder(c).Encode(daemonrpc.Response{Result: data})
+				_ = json.NewEncoder(c).Encode(daemonrpc.Response{Result: data, Starting: req.Method != "version" && f.starting})
 			}()
 		}
 	}()
