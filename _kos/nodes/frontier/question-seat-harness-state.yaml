@@ -54,6 +54,19 @@ content: |
   whether an expired token makes the check refresh (SB-0 line 15); whether
   Claude Code takes the lock for every write it makes (SB-0 line 16); the
   same questions on a host where the login is a file.
+
+  HARVEST 2026-11-17 (finding-marvel-0qdn, read at main b7c1f891). Two
+  updates. First, the opening line above is behind the code: part of the
+  design is on main (SB-1, marvel#482, which pins each team's directory in a
+  store migration, and SB-2, marvel#467, which passes --setting-sources to a
+  bare claude seat), and ruling 14 is ruled for option (a), 2026-10-10, in
+  docs/design/seat-bootstrap.md. Which of the three rulings called open above
+  remain open is not read here. Second, the open items cover claude only. The
+  opencode probe adds the other harness's launch-time state: a private home
+  needs a provider entry or the seat hangs, and an ambient provider key
+  chooses the model when none is configured. That widens the scope of this
+  question and closes nothing.
+
 edges:
   - target: question-permission-model
     type: derives

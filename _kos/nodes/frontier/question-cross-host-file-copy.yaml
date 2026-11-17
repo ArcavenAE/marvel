@@ -37,6 +37,18 @@ content: |
   STATE: design only. Nothing is built, and nothing is on by default. The
   question stays open until a build exists and the case it was written for (a
   private file between two hosts) is run through it.
+
+  HARVEST 2026-11-17 (finding-marvel-k1vd, read at main b7c1f891). The study of
+  file sharing wider than `marvel cp` sorts the cases into classes A to E:
+  a one-off artifact copy (A) is served by `marvel cp` as ruled, a pull of a
+  snapshot at an interval the reader owns (B) is worth building, a continuous
+  sync (C) is not worth it, D is ruled out and E is not now. That narrows what
+  this question has to cover to class A, and leaves B as a follow-on. The
+  request bound the design's R2 depends on has landed (marvel#1350 refuses a
+  request over 24 MiB before decoding it). The cp verb itself is still not
+  built: there is no cp command in `cmd/marvel` at this commit, so the STATE
+  line above holds.
+
 edges:
   - target: question-pack-integration
     type: supports
