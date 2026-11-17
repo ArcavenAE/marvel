@@ -257,3 +257,75 @@ func TestGetTeamsLoadFailsWithNoDaemon(t *testing.T) {
 		t.Errorf("printed a table with no daemon: %q", out)
 	}
 }
+
+// allTeamsLine is the line of the output that carries the all-teams row.
+func allTeamsLine(out string) string {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "all teams") {
+			return l
+		}
+	}
+	return ""
+}
+
+func twoTeams() (api.TeamLoad, api.TeamLoad) {
+	a := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct, r.Limited = "big", 7, 5, 4, 60, 1
+	})
+	b := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct, r.Limited = "small", 3, 2, 1, 90, 1
+	})
+	return a, b
+}
+
+// The last row sums the table's own columns: seats running of declared, and the
+// limited seats (design section 3, T5).
+func TestTeamLoadAllTeamsRow(t *testing.T) {
+	a, b := twoTeams()
+	out := renderRows(t, loadAt.Add(time.Second), a, b)
+	line := allTeamsLine(out)
+	if line == "" {
+		t.Fatalf("the table should end in an all teams row:\n%s", out)
+	}
+	if !strings.HasSuffix(strings.TrimRight(out, "\n"), line) && !strings.Contains(strings.TrimRight(out, "\n"), line+"\n") {
+		t.Errorf("fixture: the row should be in the output:\n%s", out)
+	}
+	rows := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if rows[len(rows)-1] != line {
+		t.Errorf("all teams should be the last row:\n%s", out)
+	}
+	if !strings.Contains(line, "7/10") {
+		t.Errorf("seats running of declared should read 7/10 (5+2 of 7+3):\n%s", line)
+	}
+	fields := strings.Fields(line)
+	if fields[len(fields)-1] != "2" {
+		t.Errorf("limited seats should sum to 2 (1+1):\n%s", line)
+	}
+}
+
+// ACTIVE% in the row is the seat-weighted mean with its seat count, not a mean
+// of the team means: (60*4 + 90*1) / 5 = 66, not (60+90)/2 = 75. A team with no
+// measured seat adds nothing to it, and with no measured seat anywhere it is -.
+func TestTeamLoadAllTeamsActiveIsSeatWeighted(t *testing.T) {
+	a, b := twoTeams()
+	line := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a, b))
+	if !strings.Contains(line, "66% (5 of 7)") {
+		t.Errorf("want the seat-weighted 66%% over 5 measured of 7 running:\n%s", line)
+	}
+	if strings.Contains(line, "75%") {
+		t.Errorf("a mean of means (75%%) is wrong:\n%s", line)
+	}
+	idle := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct = "idle", 4, 3, 0, 0
+	})
+	line = allTeamsLine(renderRows(t, loadAt.Add(time.Second), a, b, idle))
+	if !strings.Contains(line, "66% (5 of 10)") {
+		t.Errorf("an unmeasured team adds its running seats to the count and nothing to the mean:\n%s", line)
+	}
+	none1 := loadRow(func(r *api.TeamLoad) { r.Team, r.ActiveMeasured, r.ActiveMeanPct = "n1", 0, 0 })
+	none2 := loadRow(func(r *api.TeamLoad) { r.Team, r.ActiveMeasured, r.ActiveMeanPct = "n2", 0, 0 })
+	line = allTeamsLine(renderRows(t, loadAt.Add(time.Second), none1, none2))
+	if line == "" || strings.Contains(line, "%") {
+		t.Errorf("no measured seat should print - and no percentage:\n%q", line)
+	}
+}

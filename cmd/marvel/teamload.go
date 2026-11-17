@@ -63,5 +63,12 @@ func renderTeamLoad(data json.RawMessage, now time.Time) (string, error) {
 	if err := w.Flush(); err != nil {
 		return "", err
 	}
-	return b.String() + tally.line(), nil
+	return b.String() + allTeamsRow(rows, now) + tally.line(), nil
+}
+
+// allTeamsRow is the last row of `get teams --load`, from the table's own
+// columns (docs/design/cluster-rollup-header.md, section 3, T5). The red commit
+// holds this stub; the tests fail on its empty answer.
+func allTeamsRow(rows []api.TeamLoad, now time.Time) string {
+	return ""
 }
