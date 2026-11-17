@@ -1,7 +1,7 @@
 cluster  alpha (rung: env, <socket>)
 mrvl://  off
 bus      none
-totals   3 sessions
+totals   3 sessions   mCPU -   RSS -   TOUT -   RATE -
 
 WORKSPACE  TEAM   ROLE    GEN  AGENT NAME  STATE    HEALTH   CTX%  ACTIVE%  LAST-ACTIVE  AGE  LLM  mCPU  RSS  DESK  RUNTIME  WORKDIR                           TOUT  RATE
 ws         squad  worker  0    agent-a     running  healthy  -     -        -            -    -    -     -    3              -                                 -     -
