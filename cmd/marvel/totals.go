@@ -158,3 +158,9 @@ func wrapTotals(line string, width int) string {
 	b.WriteString(cur + "\n")
 	return b.String()
 }
+
+// renderSessionsOneShot is the sessions screen get sessions prints once: the
+// header, the table and what follows it.
+func renderSessionsOneShot(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) string {
+	return renderSessionsView(sessions, cols, header, fit)
+}

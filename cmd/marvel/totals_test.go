@@ -262,12 +262,12 @@ func TestTotalsNotIntoPipe(t *testing.T) {
 	rows := []api.Session{a, sampled("b", api.SessionRunning, 30.2, 2<<20)}
 	cols := columnsOrFatal(t, "name,cpu", nil)
 
-	withHeader := renderSessionsView(rows, cols, "cluster  alpha\n\n", fitOptions{})
+	withHeader := renderSessionsOneShot(rows, cols, "cluster  alpha\n\n", fitOptions{})
 	if !strings.HasPrefix(withHeader, "cluster  alpha\ntotals   2 sessions") {
 		t.Errorf("with a header the totals line should sit directly under the header line:\n%s", withHeader)
 	}
 	pre, table, post := renderSessionsParts(rows, cols, "", fitOptions{})
-	if got := renderSessionsView(rows, cols, "", fitOptions{}); got != pre+table+post || strings.Contains(got, "totals") {
+	if got := renderSessionsOneShot(rows, cols, "", fitOptions{}); got != pre+table+post || strings.Contains(got, "totals") {
 		t.Errorf("with no header the output must be the plain table:\n%s", got)
 	}
 }
@@ -283,7 +283,7 @@ func TestTotalsBreaksBetweenFields(t *testing.T) {
 	rows := []api.Session{a, b}
 	cols := columnsOrFatal(t, "name,cpu,rss,tout,tin,cr,cw,prompt", nil)
 	const width = 100
-	out := renderSessionsView(rows, cols, "cluster  alpha\n\n", fitOptions{width: width, explicit: true})
+	out := renderSessionsOneShot(rows, cols, "cluster  alpha\n\n", fitOptions{width: width, explicit: true})
 	var lines []string
 	for _, l := range strings.Split(out, "\n") {
 		if strings.HasPrefix(l, "totals") {
@@ -361,5 +361,25 @@ func TestTotalsThroughTheGetCommand(t *testing.T) {
 	}
 	if strings.Contains(headerJSON, "totals   ") {
 		t.Errorf("-o json must not carry the line:\n%s", headerJSON)
+	}
+}
+
+// The totals line belongs to the one-shot get sessions for now. A -w frame
+// shows the table cut to the screen, and totals over every row without the
+// "of M" that says so would mislead, so the watch frame prints none until the
+// -w ticket lands (aae-orc-g5gil), which inverts this assertion.
+func TestTotalsNotInTheWatchFrame(t *testing.T) {
+	parityDaemon(t, newCluster())
+	setWidth(t, 200)
+	cols, explicit, err := loadSessionColumnsSel("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := renderWatch(newWatchScreen(cols, explicit, false))
+	if !strings.Contains(frame, "mrvl://") || !strings.Contains(frame, "workspace") && !strings.Contains(frame, "WORKSPACE") {
+		t.Fatalf("fixture: the frame should carry the header and the table:\n%s", frame)
+	}
+	if strings.Contains(frame, "totals   ") {
+		t.Errorf("the watch frame must not carry the totals line yet:\n%s", frame)
 	}
 }

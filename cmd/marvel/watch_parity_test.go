@@ -125,7 +125,7 @@ func TestWatchFrameMatchesPlainGetSessions(t *testing.T) {
 			}
 			plain := plainSessions(t)
 			frame := renderWatch(newWatchScreen(cols, explicit, false))
-			if got := watchBody(frame); got != plain {
+			if got := watchBody(frame); got != withoutTotalsLine(plain) {
 				t.Errorf("watch body differs from plain output at %d columns:\n--- watch ---\n%s\n--- plain ---\n%s", width, got, plain)
 			}
 		})
@@ -258,4 +258,16 @@ func TestWatchFrameCarriesTheLegendWhenAMarkIsVisible(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withoutTotalsLine drops the totals line of the one-shot output: the watch
+// frame does not carry it yet (aae-orc-g5gil).
+func withoutTotalsLine(out string) string {
+	var keep []string
+	for _, l := range strings.SplitAfter(out, "\n") {
+		if !strings.HasPrefix(l, "totals   ") {
+			keep = append(keep, l)
+		}
+	}
+	return strings.Join(keep, "")
 }
