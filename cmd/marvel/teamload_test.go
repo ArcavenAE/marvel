@@ -113,7 +113,7 @@ func TestRenderTeamLoadLimitedCellIsTheLimitedCount(t *testing.T) {
 		loadRow(nil),
 		loadRow(func(r *api.TeamLoad) { r.Team, r.Declared, r.Running, r.Limited = "other", 9, 8, 3 }))
 	rows := tableRows(out)
-	if len(rows) != 3 {
+	if len(rows) != 4 { // header, the two teams, and the all teams row
 		t.Fatalf("table:\n%s", out)
 	}
 	if rows[1][4] != "1" || rows[2][4] != "3" {
@@ -255,5 +255,174 @@ func TestGetTeamsLoadFailsWithNoDaemon(t *testing.T) {
 	}
 	if strings.Contains(out, "no teams") || strings.Contains(out, "WORKSPACE") {
 		t.Errorf("printed a table with no daemon: %q", out)
+	}
+}
+
+// allTeamsLine is the line of the output that carries the all-teams row.
+func allTeamsLine(out string) string {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "all teams") {
+			return l
+		}
+	}
+	return ""
+}
+
+func twoTeams() (api.TeamLoad, api.TeamLoad) {
+	a := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct, r.Limited = "big", 7, 5, 4, 60, 1
+	})
+	b := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct, r.Limited = "small", 3, 2, 1, 90, 1
+	})
+	return a, b
+}
+
+// The last row sums the table's own columns: seats running of declared, and the
+// limited seats (design section 3, T5).
+func TestTeamLoadAllTeamsRow(t *testing.T) {
+	a, b := twoTeams()
+	out := renderRows(t, loadAt.Add(time.Second), a, b)
+	line := allTeamsLine(out)
+	if line == "" {
+		t.Fatalf("the table should end in an all teams row:\n%s", out)
+	}
+	if !strings.HasSuffix(strings.TrimRight(out, "\n"), line) && !strings.Contains(strings.TrimRight(out, "\n"), line+"\n") {
+		t.Errorf("fixture: the row should be in the output:\n%s", out)
+	}
+	rows := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if rows[len(rows)-1] != line {
+		t.Errorf("all teams should be the last row:\n%s", out)
+	}
+	if !strings.Contains(line, "7/10") {
+		t.Errorf("seats running of declared should read 7/10 (5+2 of 7+3):\n%s", line)
+	}
+	fields := strings.Fields(line)
+	if fields[len(fields)-1] != "2" {
+		t.Errorf("limited seats should sum to 2 (1+1):\n%s", line)
+	}
+}
+
+// ACTIVE% in the row is the seat-weighted mean with its seat count, not a mean
+// of the team means: (60*4 + 90*1) / 5 = 66, not (60+90)/2 = 75. A team with no
+// measured seat adds nothing to it, and with no measured seat anywhere it is -.
+func TestTeamLoadAllTeamsActiveIsSeatWeighted(t *testing.T) {
+	a, b := twoTeams()
+	line := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a, b))
+	if !strings.Contains(line, "66% (5 of 7)") {
+		t.Errorf("want the seat-weighted 66%% over 5 measured of 7 running:\n%s", line)
+	}
+	if strings.Contains(line, "75%") {
+		t.Errorf("a mean of means (75%%) is wrong:\n%s", line)
+	}
+	idle := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct = "idle", 4, 3, 0, 0
+	})
+	line = allTeamsLine(renderRows(t, loadAt.Add(time.Second), a, b, idle))
+	if !strings.Contains(line, "66% (5 of 10)") {
+		t.Errorf("an unmeasured team adds its running seats to the count and nothing to the mean:\n%s", line)
+	}
+	none1 := loadRow(func(r *api.TeamLoad) { r.Team, r.ActiveMeasured, r.ActiveMeanPct = "n1", 0, 0 })
+	none2 := loadRow(func(r *api.TeamLoad) { r.Team, r.ActiveMeasured, r.ActiveMeanPct = "n2", 0, 0 })
+	line = allTeamsLine(renderRows(t, loadAt.Add(time.Second), none1, none2))
+	if line == "" || strings.Contains(line, "%") {
+		t.Errorf("no measured seat should print - and no percentage:\n%q", line)
+	}
+}
+
+// The label sits in the TEAM column, under TEAM, with WORKSPACE left blank
+// (design section 3, T5, architect's answer 1).
+func TestTeamLoadAllTeamsLabelIsInTheTeamColumn(t *testing.T) {
+	a, b := twoTeams()
+	out := renderRows(t, loadAt.Add(time.Second), a, b)
+	line := allTeamsLine(out)
+	head := strings.SplitN(out, "\n", 2)[0]
+	if line == "" {
+		t.Fatalf("the table should end in an all teams row:\n%s", out)
+	}
+	if got, want := strings.Index(line, "all teams"), strings.Index(head, "TEAM"); got != want {
+		t.Errorf("all teams starts at column %d, want it under TEAM at %d:\n%s", got, want, out)
+	}
+	if strings.TrimSpace(line[:strings.Index(line, "all teams")]) != "" {
+		t.Errorf("WORKSPACE should be blank in the all teams row:\n%s", line)
+	}
+}
+
+// A team row that is stale or never observed adds nothing to the sums, and the
+// label then says how many of the shown team rows it summed.
+func TestTeamLoadAllTeamsSumsFreshRowsOnly(t *testing.T) {
+	a, b := twoTeams()
+	stale := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct, r.Limited = "old", 9, 8, 8, 10, 5
+		r.ValidUntil = loadAt
+	})
+	never := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct, r.Limited = "new", 9, 8, 8, 10, 5
+		r.ObservedAt, r.ValidUntil = time.Time{}, time.Time{}
+	})
+	line := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a, stale, b, never))
+	if !strings.Contains(line, "all teams (2 of 4)") {
+		t.Errorf("two of the four shown team rows were fresh:\n%s", line)
+	}
+	if !strings.Contains(line, "7/10") || !strings.Contains(line, "66% (5 of 7)") {
+		t.Errorf("the sums should come from the two fresh rows only (7/10, 66%% of 5 of 7):\n%s", line)
+	}
+	if fields := strings.Fields(line); len(fields) == 0 || fields[len(fields)-1] != "2" {
+		t.Errorf("limited should sum the fresh rows only (2):\n%s", line)
+	}
+	// With every row fresh the label carries no count.
+	a2, b2 := twoTeams()
+	if l := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a2, b2)); l == "" || strings.Contains(l, "all teams (") {
+		t.Errorf("a row should print, and with no row left out its label has no (N of M):\n%q", l)
+	}
+}
+
+// One team row is its own total, so the row appears only for two or more.
+func TestTeamLoadAllTeamsNeedsTwoRows(t *testing.T) {
+	a, b := twoTeams()
+	if l := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a)); l != "" {
+		t.Errorf("one team row should get no all teams row:\n%s", l)
+	}
+	if l := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a, b)); l == "" {
+		t.Errorf("fixture: two team rows should get the row")
+	}
+}
+
+// The rule is per field: a fresh team whose ACTIVE% alone is - (no measured
+// seat) still adds to SEATS and LIMITED, and counts as summed in the label.
+// Only a stale or never-observed row adds to no sum (design section 2.11).
+func TestTeamLoadAllTeamsDashInOneFieldDoesNotDropTheRow(t *testing.T) {
+	a, b := twoTeams()
+	idle := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct, r.Limited = "idle", 4, 3, 0, 0, 2
+	})
+	line := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a, b, idle))
+	if !strings.Contains(line, "10/14") {
+		t.Errorf("the idle team's seats (3 of 4) should be summed: 10/14:\n%s", line)
+	}
+	if fields := strings.Fields(line); len(fields) == 0 || fields[len(fields)-1] != "4" {
+		t.Errorf("the idle team's limited seats (2) should be summed: 4:\n%s", line)
+	}
+	if !strings.Contains(line, "66% (5 of 10)") {
+		t.Errorf("ACTIVE%% should stay the measured seats' mean over all running seats:\n%s", line)
+	}
+	if strings.Contains(line, "all teams (") {
+		t.Errorf("the idle team is fresh, so none was left out and the label has no count:\n%s", line)
+	}
+}
+
+// With no fresh team row the all teams row says so: the label counts 0 of the
+// rows shown and every sum cell is -, never 0/0 or 0 (design sections 2.3 and 2.11).
+func TestTeamLoadAllTeamsWithNoFreshRowIsDashes(t *testing.T) {
+	a, b := twoTeams()
+	a.ValidUntil, b.ValidUntil = loadAt, loadAt
+	line := allTeamsLine(renderRows(t, loadAt.Add(time.Minute), a, b))
+	if line == "" {
+		t.Fatalf("two stale team rows should still get an all teams row")
+	}
+	fields := strings.Fields(line)
+	want := []string{"all", "teams", "(0", "of", "2)", "-", "-", "-"}
+	if !reflect.DeepEqual(fields, want) {
+		t.Errorf("row fields = %q, want %q", fields, want)
 	}
 }
