@@ -104,3 +104,19 @@ func TestPrintBusStatusPidfileLine(t *testing.T) {
 		t.Errorf("a status with no pidfile reading printed one:\n%s", b.String())
 	}
 }
+
+func TestPrintBusStatusShowsTheHubLines(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	printBusStatus(&b, bus.Status{Managed: true, HubStatus: []string{
+		"hub leafs at 2030-01-02T03:04:05Z (not an alert): alpha present; bravo missing",
+	}})
+	if !strings.Contains(b.String(), "bravo missing") || !strings.Contains(b.String(), "not an alert") {
+		t.Errorf("bus status does not print the hub lines:\n%s", b.String())
+	}
+	var none strings.Builder
+	printBusStatus(&none, bus.Status{Managed: true})
+	if strings.Contains(none.String(), "hub leafs") {
+		t.Errorf("bus status printed hub lines with none to show:\n%s", none.String())
+	}
+}
