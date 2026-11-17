@@ -410,3 +410,19 @@ func TestTeamLoadAllTeamsDashInOneFieldDoesNotDropTheRow(t *testing.T) {
 		t.Errorf("the idle team is fresh, so none was left out and the label has no count:\n%s", line)
 	}
 }
+
+// With no fresh team row the all teams row says so: the label counts 0 of the
+// rows shown and every sum cell is -, never 0/0 or 0 (design sections 2.3 and 2.11).
+func TestTeamLoadAllTeamsWithNoFreshRowIsDashes(t *testing.T) {
+	a, b := twoTeams()
+	a.ValidUntil, b.ValidUntil = loadAt, loadAt
+	line := allTeamsLine(renderRows(t, loadAt.Add(time.Minute), a, b))
+	if line == "" {
+		t.Fatalf("two stale team rows should still get an all teams row")
+	}
+	fields := strings.Fields(line)
+	want := []string{"all", "teams", "(0", "of", "2)", "-", "-", "-"}
+	if !reflect.DeepEqual(fields, want) {
+		t.Errorf("row fields = %q, want %q", fields, want)
+	}
+}
