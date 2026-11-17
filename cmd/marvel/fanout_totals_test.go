@@ -244,14 +244,15 @@ func TestFanOutTotalsFollowTheDrawnColumns(t *testing.T) {
 	a := sampled("a1", api.SessionRunning, 10, 1<<20)
 	a.SpendOut = tokens(1000)
 	f := startFake(t, fakeAnswers, []api.Session{a})
-	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock})
+	g := startFake(t, fakeAnswers, []api.Session{a})
+	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock}, config.Cluster{Name: "b", Socket: g.sock})
 	for _, c := range []struct {
 		width      int
 		wantMCPU   bool
 		wantFields string
-	}{{120, false, "TOUT 1k (1)"}, {200, true, "mCPU 100 (1)"}} {
+	}{{120, false, "TOUT 2k (2)"}, {200, true, "mCPU 200 (2)"}} {
 		setWidth(t, c.width)
-		_, out, _ := runFanGet(t, "get", "sessions", "--cluster", "a", "--header")
+		_, out, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b", "--header")
 		var block, table string
 		for _, l := range strings.Split(out, "\n") {
 			switch {
