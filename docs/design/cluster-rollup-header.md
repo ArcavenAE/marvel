@@ -47,7 +47,7 @@ Example, for illustration only (a wide terminal, COST selected):
 
 ```
 cluster  local (rung: default)   mrvl://  off   bus  link up, 12s ago
-totals   37 sessions   mCPU 14600 (35)   RSS 24.1G (35)   TOUT 1.9M+ (31, 2 partial)   RATE 2.1k/s (9 fresh)   COST ~$4,893.10 (16)
+totals   37 sessions   mCPU 14600 (35)   RSS 24G (35)   TOUT 1.9M+ (31, 2 partial)   RATE 2100/s (9 fresh)   COST ~$4893.10 (16)
 ```
 
 ### 2.1 Which fields print (ruled)
@@ -95,6 +95,17 @@ TOUT and COST are separate fields. Neither feeds the other, and no total convert
 ### 2.6 Width
 
 - The line is never truncated mid-field. When it is wider than the terminal, it breaks between fields onto a second `totals` line, so the table keeps its own width budget (`docs/design/get-sessions-output.md` section 4.2). A broken line counts against the `-w` height like any other.
+- The break is the printer's job, not the renderer's: whatever holds `fit.width` (the path through `renderSessionsView`) joins the fields and breaks between them. Width is not part of `renderTotals`' options; the renderer may hand the printer its fields in any form that lets the break fall between fields.
+
+### 2.7 Formats
+
+Answers to the builder's questions on T1 (aae-orc-ycg76), 2026-11-17. The rule behind all of them: **a total prints in its column cell's own format**, so the reader can check it against the cells.
+
+- **RATE at 1000/s or more** prints as the cell does, `%.0f/s`: `2100/s`, not `2.1k/s`.
+- **COST at $1000 or more** prints as the cell does, `~$%.2f` with no thousands separator: `~$4893.10`.
+- **RSS** uses the cell's `formatBytes`, so 24.1 GiB prints `24G`; token fields use `formatTokenCount`, as the cells do.
+- **`-o json` and `-o yaml`** need no test of their own beyond one assertion: with `--header` set, `-o json` output is byte-identical to the output before this change (in `TestTotalsNotIntoPipe`).
+- **The session count agrees in number:** `1 session`, `2 sessions`, `0 sessions`.
 
 ## 3. Which views carry it
 
