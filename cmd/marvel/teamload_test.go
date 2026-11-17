@@ -113,7 +113,7 @@ func TestRenderTeamLoadLimitedCellIsTheLimitedCount(t *testing.T) {
 		loadRow(nil),
 		loadRow(func(r *api.TeamLoad) { r.Team, r.Declared, r.Running, r.Limited = "other", 9, 8, 3 }))
 	rows := tableRows(out)
-	if len(rows) != 3 {
+	if len(rows) != 4 { // header, the two teams, and the all teams row
 		t.Fatalf("table:\n%s", out)
 	}
 	if rows[1][4] != "1" || rows[2][4] != "3" {
@@ -360,7 +360,7 @@ func TestTeamLoadAllTeamsSumsFreshRowsOnly(t *testing.T) {
 		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct, r.Limited = "new", 9, 8, 8, 10, 5
 		r.ObservedAt, r.ValidUntil = time.Time{}, time.Time{}
 	})
-	line := allTeamsLine(renderRows(t, loadAt.Add(time.Minute), a, stale, b, never))
+	line := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a, stale, b, never))
 	if !strings.Contains(line, "all teams (2 of 4)") {
 		t.Errorf("two of the four shown team rows were fresh:\n%s", line)
 	}
