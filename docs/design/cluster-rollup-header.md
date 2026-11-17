@@ -79,7 +79,7 @@ TOUT and COST are separate fields. Neither feeds the other, and no total convert
 
 - **The totals are over every row the daemon returned, not the rows the cut leaves on screen.** A total that moved as the cursor scrolled would describe the viewport, not the cluster.
 - When the table is cut, the line ends `covers all M rows` (2.8), so a reader knows the totals cover rows off screen.
-- The totals line counts against the screen height: in single-cluster `-w` it is part of `pre` (the header); in fan-out it is written into `buf` before `ws.sessionsView`, so it is counted as `used`. Either way the selected row stays on screen.
+- The totals line counts against the screen height: in single-cluster `-w` it is part of `pre` (the header); in fan-out the block is built by `ws.sessionsView` over the drawn columns, inside `pre`, below the status lines (2.10), so it is counted with the header. Either way the selected row stays on screen.
 - **Held rows:** when the table shows rows from an earlier read (single-cluster `ws.late` or `ws.disconnected`; a fan-out cluster whose poll failed), the totals line still prints and carries that read's time: `totals (as of 15:02:11)`. A fresh read drops the stamp. The RATE count follows the table as `now` advances: a held row's fresh rate expires in the total exactly when its cell turns `?`.
 - The line reads the same clock the row cells read (`rateClock`), never one of its own.
 
@@ -126,6 +126,25 @@ Answers to the builder's questions on T3 (aae-orc-onvts), 2026-11-17.
 - **An answered cluster with no sessions** prints `totals a   0 sessions`, its shown fields `-`, so it does not read as a cluster that did not answer. Only a cluster that did not answer and shows no rows prints no line.
 - **No header in fan-out.** A fan-out read prints no daemon header, so on a TTY or with `--header` the totals block is the first thing on stdout, above the merged table; the per-cluster status lines go to stderr as today.
 
+
+### 2.10 Fan-out watch details
+
+Answers to the builder's questions on T4 (aae-orc-onecx), 2026-11-17.
+
+- **The cut.** When `-w` cuts the merged table, each cluster's line ends `   covers all N rows`, N being that cluster's own rows; 2.8's rebuild-and-recount applies to the whole block.
+- **A late cluster** (past the stale interval, holding rows from its last good read) carries `(as of HH:MM:SS)`, as a failed cluster with held rows does; a fresh answer drops it.
+- **Placement.** The block's fields come from the drawn columns, which only `ws.sessionsView` knows, so it takes an optional block builder over them. The block joins `pre`, counts in the height budget, and sits below the status lines: status lines, block, table.
+- **Repeat and same-daemon addresses** use 2.9's grammar: a member gets no line, the leader names it, and the starting mark comes from the fold's marker, kept off `clusterRecord` so `-o json` and `-o yaml` stay unchanged.
+
+### 2.11 The all-teams row
+
+Answers to the builder's questions on T5 (aae-orc-sf197), 2026-11-17.
+
+- **Layout.** `all teams` goes in the TEAM column and WORKSPACE is blank, since the row spans workspaces.
+- **Stale rows, per field.** Each field sums the team rows whose cell in that field shows a value (2.2). A team row that is expired or never observed shows `?` or `-` in every field, so it adds to no sum; a fresh team whose ACTIVE% alone is `-` (no measured seat) still adds to SEATS and LIMITED. When any team row was expired or never observed, the TEAM cell reads `all teams (N of M)`, N the team rows that were fresh and M the team rows shown, and the help sentence says so.
+- **ACTIVE%.** In `(N of M)`, M is the running seats summed over the teams the row summed, as in a team row.
+- **One team.** The row appears only with two or more team rows.
+
 ## 3. Which views carry it
 
 | View | Carries it? | Why |
@@ -148,7 +167,7 @@ No total gates anything. No threshold, colour or mark acts on a total, and nothi
 Flat tickets with dependency edges; no umbrella. The supervisor files them. Each names the red tests it turns green, as table tests on pure functions unless it says otherwise.
 
 **T1. The totals renderer and the single-cluster one-shot line.** Files: `cmd/marvel/totals.go` (new), `main.go` (`printSessions` path and the `get` help paragraph).
-- A pure `renderTotals(rows []api.Session, shown []sessionColumn, now time.Time, opts totalsOpts) string` that calls the existing cell predicates and never re-derives which rows have a value. `opts` carries the label, the `of M` count, the as-of stamp and the starting mark, so T2 to T4 only pass values.
+- A pure `renderTotals(rows []api.Session, shown []sessionColumn, now time.Time, opts totalsOpts) string` that calls the existing cell predicates and never re-derives which rows have a value. `opts` carries the label, the covered-row count for `covers all M rows`, the as-of stamp and the starting mark, so T2 to T4 only pass values.
 - Printed into the header for `get sessions` on a TTY or with `--header`.
 - Red tests:
   - `TestTotalsOnlyForShownColumns`: a column hidden by the fit has no field; `--columns tout` brings it back.
@@ -165,10 +184,10 @@ Flat tickets with dependency edges; no umbrella. The supervisor files them. Each
   - `TestTotalsBreaksBetweenFields`: a line wider than the terminal breaks onto a second `totals` line, never mid-field.
 
 **T2. Single-cluster `-w`.** Files: `main.go` (the watch frame), `watchselect.go`. Depends on T1.
-- The totals line joins `pre`, so the cut counts it; `of M` when cut; held rows carry their as-of.
+- The totals line joins `pre`, so the cut counts it; `covers all M rows` when cut; held rows carry their as-of.
 - Red tests:
   - `TestWatchTotalsFitHeightBudget`: a frame of height h with a totals line fits in h lines and keeps the selected row visible.
-  - `TestWatchTotalsCursorStable`: the totals do not change as the cursor moves, and the line says `of M` when the table is cut.
+  - `TestWatchTotalsCursorStable`: the totals do not change as the cursor moves, and the line says `covers all M rows` when the table is cut.
   - `TestWatchTotalsHeldRowsCarryAsOf`: late and disconnected frames print the stamp; a fresh read drops it.
   - `TestWatchTotalsHeldRateExpires`: with `rateClock` past the window, the fresh count falls with the table's `?` cells.
 
@@ -181,13 +200,13 @@ Flat tickets with dependency edges; no umbrella. The supervisor files them. Each
   - `TestFanOutTotalsNotIntoPipe`.
 
 **T4. Fan-out `-w`.** Files: `watchfan.go`. Depends on T2 and T3.
-- The block goes into `buf` before `ws.sessionsView`; a repeat address gets no line; a failed cluster showing held rows gets a line with its as-of.
+- `ws.sessionsView` takes an optional block builder and builds the block over the drawn columns, inside `pre`, below the status lines (2.10); a repeat address gets no line; a failed cluster showing held rows gets a line with its as-of.
 - Red tests:
   - `TestWatchFanTotalsCountedAsUsed`: the block counts against the height and the last table row still fits.
   - `TestWatchFanTotalsRepeatHasNoLine`.
   - `TestWatchFanTotalsHeldClusterCarriesAsOf`: a failed cluster with held rows prints its line with `as of`; the next good poll drops it.
 
-**T5. `get teams --load` totals row.** Files: `teamload.go`, and the `--load` help sentence in `main.go`. Depends on T1 (the help paragraph's wording).
+**T5. `get teams --load` totals row.** Files: `cmd/marvel/teamload.go`, and the `--load` help sentence in `main.go`. Depends on T1 (the help paragraph's wording).
 - Red tests:
   - `TestTeamLoadAllTeamsRow`: seats running of declared and limited, summed.
   - `TestTeamLoadAllTeamsActiveIsSeatWeighted`: two teams of different sizes give the seat-level mean with its seat count, not a mean of means; no measured seat gives `-`.
@@ -211,7 +230,9 @@ Flat tickets with dependency edges; no umbrella. The supervisor files them. Each
 ## 7. Decisions
 
 Ruled:
-- **COST is summed, with its `~`, whenever the COST column is shown; only shown columns are summed** (director, 2026-11-17, relayed by the supervisor, verbatim: "yes, sum COST as well whenever the COST column is shown. Give it the same \"~\" mark the column carries, so it reads as an estimate and not a bill. The operator asked for the summed values at the top, and spend is one of them. Sum only the columns that are shown.").
+- **COST is summed, with its `~`, whenever the COST column is shown; only shown columns are summed** (director, 2026-11-17, relayed by the supervisor, verbatim):
+
+  > yes, sum COST as well whenever the COST column is shown. Give it the same "~" mark the column carries, so it reads as an estimate and not a bill. The operator asked for the summed values at the top, and spend is one of them. Sum only the columns that are shown.
 
 Recommended, for the operator through director. Each carries the default the author recommends; this recommendation is valid until 2026-11-24, and the architect seat re-checks it then.
 
