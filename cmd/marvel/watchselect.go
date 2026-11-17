@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -179,7 +180,29 @@ func (ws *watchSort) headerTarget(string) (attachTarget, error) {
 // fit, scrolled only as far as keeps the selected row on screen. used is the
 // frame so far, whose lines count against the height.
 func (ws *watchSort) sessionsView(sessions []api.Session, header string, fit fitOptions, used string) string {
-	pre, table, post := renderSessionsParts(sessions, ws.columns, header, fit)
+	return ws.sessionsViewTotals(sessions, header, fit, used, false, time.Time{})
+}
+
+// sessionsViewTotals is sessionsView that can carry the totals line, which
+// counts against the height with the rest of the header. The totals cover every
+// row, so a cut table says so on the line; the line is built first without that
+// suffix, and rebuilt with it when the table is cut, so the line counted in the
+// budget is the line drawn (design section 2.8). asOf stamps rows held from an
+// earlier read.
+func (ws *watchSort) sessionsViewTotals(sessions []api.Session, header string, fit fitOptions, used string, totals bool, asOf time.Time) string {
+	pre, table, post, shown := renderSessionsPartsShown(sessions, ws.columns, header, fit)
+	basePre := pre
+	withLine := func(covered int) string {
+		if !totals {
+			return basePre
+		}
+		line := wrapTotals(renderTotals(sessions, shown, rateClock(), totalsOpts{asOf: asOf, covered: covered}), fit.width)
+		if header != "" {
+			return strings.TrimRight(basePre, "\n") + "\n" + line + "\n"
+		}
+		return line + basePre
+	}
+	pre = withLine(0)
 	lines := strings.Split(strings.TrimSuffix(table, "\n"), "\n")
 	if len(lines) != len(sessions)+1 {
 		return pre + table + post // not one line a row; draw it as it is
@@ -198,27 +221,35 @@ func (ws *watchSort) sessionsView(sessions []api.Session, header string, fit fit
 		h = ws.heightFn()
 	}
 	if h > 0 {
-		fixed := strings.Count(used, "\n") + strings.Count(pre, "\n") + 1 + strings.Count(post, "\n")
-		if ws.status != "" {
-			fixed++
-		}
-		budget := max(h-fixed, 1)
-		if len(rows) > budget {
-			budget = max(h-fixed-1, 1) // one line says which rows are shown
-			cut = true
-		}
-		top := ws.top
-		if sel >= 0 {
-			if sel < top {
-				top = sel
+		top0 := ws.top
+		for pass := 0; pass < 2; pass++ {
+			fixed := strings.Count(used, "\n") + strings.Count(pre, "\n") + 1 + strings.Count(post, "\n")
+			if ws.status != "" {
+				fixed++
 			}
-			if sel >= top+budget {
-				top = sel - budget + 1
+			budget := max(h-fixed, 1)
+			cut = false
+			if len(rows) > budget {
+				budget = max(h-fixed-1, 1) // one line says which rows are shown
+				cut = true
 			}
+			top := top0
+			if sel >= 0 {
+				if sel < top {
+					top = sel
+				}
+				if sel >= top+budget {
+					top = sel - budget + 1
+				}
+			}
+			top = max(min(top, len(rows)-budget), 0)
+			ws.top = top
+			lo, hi = top, min(top+budget, len(rows))
+			if !cut || !totals || pass == 1 {
+				break
+			}
+			pre = withLine(len(sessions)) // the suffix only adds height: count it and decide again
 		}
-		top = max(min(top, len(rows)-budget), 0)
-		ws.top = top
-		lo, hi = top, min(top+budget, len(rows))
 	}
 
 	var b bytes.Buffer

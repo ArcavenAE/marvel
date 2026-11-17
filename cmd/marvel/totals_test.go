@@ -367,11 +367,9 @@ func TestTotalsThroughTheGetCommand(t *testing.T) {
 	}
 }
 
-// The totals line belongs to the one-shot get sessions for now. A -w frame
-// shows the table cut to the screen, and totals over every row without the
-// "of M" that says so would mislead, so the watch frame prints none until the
-// -w ticket lands (aae-orc-g5gil), which inverts this assertion.
-func TestTotalsNotInTheWatchFrame(t *testing.T) {
+// The -w frame carries the totals line directly under the daemon header, as
+// the one-shot output does (design section 2.4, aae-orc-g5gil).
+func TestTotalsInTheWatchFrame(t *testing.T) {
 	parityDaemon(t, newCluster())
 	setWidth(t, 200)
 	cols, explicit, err := loadSessionColumnsSel("")
@@ -382,8 +380,8 @@ func TestTotalsNotInTheWatchFrame(t *testing.T) {
 	if !strings.Contains(frame, "mrvl://") || !strings.Contains(frame, "workspace") && !strings.Contains(frame, "WORKSPACE") {
 		t.Fatalf("fixture: the frame should carry the header and the table:\n%s", frame)
 	}
-	if strings.Contains(frame, "totals   ") {
-		t.Errorf("the watch frame must not carry the totals line yet:\n%s", frame)
+	if !strings.Contains(frame, "\ntotals   3 sessions") {
+		t.Errorf("the watch frame should carry the totals line under the header:\n%s", frame)
 	}
 }
 
