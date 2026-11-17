@@ -3944,7 +3944,7 @@ func printSessions(data json.RawMessage, cols []sessionColumn, header string, fi
 	sort.SliceStable(sessions, func(i, j int) bool {
 		return sessionTieLess(sessions[i], sessions[j])
 	})
-	fmt.Print(renderSessionsView(sessions, cols, header, fit))
+	fmt.Print(renderSessionsOneShot(sessions, cols, header, fit))
 	return nil
 }
 
@@ -3964,16 +3964,18 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 // hidden-columns note, the composer gaps and the undrawable tally). The watch
 // view cuts and marks rows of the table and keeps the rest.
 func renderSessionsParts(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) (pre, table, post string) {
+	pre, table, post, _ = renderSessionsPartsShown(sessions, cols, header, fit)
+	return pre, table, post
+}
+
+// renderSessionsPartsShown is renderSessionsParts that also returns the columns
+// the table drew, which the totals line follows.
+func renderSessionsPartsShown(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) (pre, table, post string, shown []sessionColumn) {
 	allCols := append(append([]sessionColumn(nil), fit.lead...), cols...)
 	fit.lead = drawableColumns(fit.lead)
 	res := fitSessionTable(sessions, drawableColumns(cols), fit)
 	if fit.width > 0 && header != "" && sourceMarkOnScreen(sessions, res.cols) {
 		header = strings.TrimSuffix(header, "\n") + sourceLegend + "\n\n"
-	}
-	if header != "" {
-		// The totals line sits directly under the daemon header, on the same
-		// stream and under the same rule: a header, or none.
-		header = strings.TrimRight(header, "\n") + "\n" + wrapTotals(renderTotals(sessions, shownColumns(allCols, res.cols), rateClock(), totalsOpts{}), fit.width) + "\n"
 	}
 	var tally undrawTally
 	tally.cells(sessions, shownColumns(allCols, res.cols))
@@ -3988,7 +3990,7 @@ func renderSessionsParts(sessions []api.Session, cols []sessionColumn, header st
 		b.WriteString(composerGapLines(sessions, &tally))
 	}
 	b.WriteString(tally.line())
-	return header, res.table, b.String()
+	return header, res.table, b.String(), shownColumns(allCols, res.cols)
 }
 
 // composerGapLines names each seat whose COMPOSER cell is unknown for a reason

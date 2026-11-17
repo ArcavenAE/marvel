@@ -160,7 +160,14 @@ func wrapTotals(line string, width int) string {
 }
 
 // renderSessionsOneShot is the sessions screen get sessions prints once: the
-// header, the table and what follows it.
+// header, then the totals line directly under it, then the table and what
+// follows. The line is header chrome on the header's stream, so it prints when
+// a header does and never otherwise. The watch frame renders through
+// renderSessionsParts and carries none until its own ticket (aae-orc-g5gil).
 func renderSessionsOneShot(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) string {
-	return renderSessionsView(sessions, cols, header, fit)
+	pre, table, post, shown := renderSessionsPartsShown(sessions, cols, header, fit)
+	if header != "" {
+		pre = strings.TrimRight(pre, "\n") + "\n" + wrapTotals(renderTotals(sessions, shown, rateClock(), totalsOpts{}), fit.width) + "\n"
+	}
+	return pre + table + post
 }
