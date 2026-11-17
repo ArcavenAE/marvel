@@ -14,9 +14,11 @@ import (
 // mark of docs/design/cluster-rollup-header.md join it with the tickets that
 // print them.
 type totalsOpts struct {
-	label   string
-	asOf    time.Time // when held rows were read; zero for a fresh read
-	covered int       // rows the totals cover, set when the table is cut
+	label    string
+	members  []string  // clusters folded into this daemon's line, in the order of the status lines
+	starting bool      // a record behind the line was starting, so the sums may be a lower bound
+	asOf     time.Time // when held rows were read; zero for a fresh read
+	covered  int       // rows the totals cover, set when the table is cut
 }
 
 // totalsSum is one field's running sum: how many rows had a value, how many of
@@ -55,6 +57,12 @@ func renderTotals(rows []api.Session, shown []sessionColumn, now time.Time, opts
 	b.WriteString("totals")
 	if opts.label != "" {
 		b.WriteString(" " + opts.label)
+	}
+	if len(opts.members) > 0 {
+		b.WriteString(" (+ " + strings.Join(opts.members, ", ") + ", same daemon)")
+	}
+	if opts.starting {
+		b.WriteString(" (starting)")
 	}
 	if !opts.asOf.IsZero() {
 		b.WriteString(" (as of " + opts.asOf.Format("15:04:05") + ")")

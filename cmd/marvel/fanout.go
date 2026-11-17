@@ -231,21 +231,29 @@ func readCluster(t clusterTarget, params json.RawMessage, timer time.Duration) (
 // reads them all in parallel. A name that resolves to nothing is an error
 // before any dial. Records come back in the order of names.
 func collectFanOut(names []string, composer bool) ([]clusterRecord, []api.Session, error) {
+	records, rows, _, err := collectFanOutFolded(names, composer)
+	return records, rows, err
+}
+
+// collectFanOutFolded is collectFanOut that also returns the names of the
+// clusters that were starting when the same-daemon fold merged them into a
+// leader, which the fold's overwrite of their outcome would otherwise hide.
+func collectFanOutFolded(names []string, composer bool) ([]clusterRecord, []api.Session, map[string]bool, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return nil, nil, fmt.Errorf("the client config is unreadable: %w", err)
+		return nil, nil, nil, fmt.Errorf("the client config is unreadable: %w", err)
 	}
 	targets := make([]clusterTarget, 0, len(names))
 	for _, n := range names {
 		t, err := resolveCluster(cfg, n)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		targets = append(targets, t)
 	}
 	params, err := json.Marshal(getRequest(fanOutResource, composer))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	records := make([]clusterRecord, len(targets))
 	rowSets := make([][]api.Session, len(targets))
@@ -266,18 +274,24 @@ func collectFanOut(names []string, composer bool) ([]clusterRecord, []api.Sessio
 		}()
 	}
 	wg.Wait()
+	startedFolded := map[string]bool{}
 	for i, t := range targets {
 		if firstAt[i] != i {
 			records[i] = recordForRepeatedAddress(t.Name, records[firstAt[i]])
 			began[i] = began[firstAt[i]]
+			if records[i].Outcome == outcomeSameDaemon && records[firstAt[i]].Outcome == outcomeStarting {
+				startedFolded[t.Name] = true
+			}
 		}
 	}
-	mergeSameDaemon(targets, records, rowSets, fingerprints, began, timer)
+	for name := range mergeSameDaemon(targets, records, rowSets, fingerprints, began, timer) {
+		startedFolded[name] = true
+	}
 	var rows []api.Session
 	for _, rs := range rowSets {
 		rows = append(rows, rs...)
 	}
-	return records, rows, nil
+	return records, rows, startedFolded, nil
 }
 
 // fanOutExit is the exit code of a set (plan section 3.2): 0 when every
@@ -446,7 +460,7 @@ func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, no
 	if err != nil {
 		return err
 	}
-	records, rows, err := collectFanOut(names, wantsComposer(cols))
+	records, rows, startedFolded, err := collectFanOutFolded(names, wantsComposer(cols))
 	if err != nil {
 		return err
 	}
@@ -460,7 +474,14 @@ func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, no
 		noTrunc:  noTrunc,
 		lead:     fanOutLead(explicit),
 	}
-	fmt.Print(renderSessionsView(rows, cols, "", fit))
+	pre, table, post, shown := renderSessionsPartsShown(rows, cols, "", fit)
+	// The totals block is header chrome on the header's stream, so it prints
+	// under the same rule as the daemon header: on a terminal or with --header.
+	// A fan-out read has no daemon header, so the block is the first thing out.
+	if force, _ := cmd.Flags().GetBool("header"); wantHeader(force) {
+		fmt.Print(fanOutTotalsBlock(records, rows, shown, rateClock(), fit.width, startedFolded))
+	}
+	fmt.Print(pre + table + post)
 	return fanOutExitError(cmd, records)
 }
 
@@ -551,4 +572,41 @@ var keyArgCommands = map[string]int{
 	"marvel view refresh": 0, "marvel attach": 0,
 	"marvel hibernate": 0, "marvel wake": 0,
 	"marvel describe": -1, "marvel delete": -1,
+}
+
+// fanOutTotalsBlock is the block of totals lines a one-shot fan-out read prints
+// above the merged table, one per cluster that answered, in the order of the
+// records (docs/design/cluster-rollup-header.md sections 2.5 and 2.9). A member
+// folded into a leader gets no line: its rows count on the leader's line, which
+// names it. A line is marked starting when its leader, or any member folded
+// into it, was starting. startedFolded names the clusters that were starting
+// when the fold merged them, because the fold overwrites a member's outcome;
+// the marker stays off clusterRecord (the architect's choice b, section 2.9).
+// Each line breaks between fields at width, as the single-cluster line does.
+func fanOutTotalsBlock(records []clusterRecord, rows []api.Session, shown []sessionColumn, now time.Time, width int, startedFolded map[string]bool) string {
+	var b strings.Builder
+	for _, rec := range records {
+		if rec.Outcome != outcomeAnswered && rec.Outcome != outcomeStarting {
+			continue
+		}
+		opts := totalsOpts{label: rec.Cluster, starting: rec.Outcome == outcomeStarting}
+		mine := map[string]bool{rec.Cluster: true}
+		for _, m := range records {
+			if m.Outcome == outcomeSameDaemon && m.SameDaemonAs == rec.Cluster {
+				opts.members = append(opts.members, m.Cluster)
+				mine[m.Cluster] = true
+				if startedFolded[m.Cluster] {
+					opts.starting = true
+				}
+			}
+		}
+		var own []api.Session
+		for _, r := range rows {
+			if mine[r.Cluster] {
+				own = append(own, r)
+			}
+		}
+		b.WriteString(wrapTotals(renderTotals(own, shown, now, opts), width))
+	}
+	return b.String()
 }
