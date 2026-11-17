@@ -68,7 +68,7 @@ func TestTotalsOnlyForShownColumns(t *testing.T) {
 
 	narrow := totalsLine(t, rows, "name,cpu")
 	if !strings.Contains(narrow, "2 sessions") {
-		t.Fatalf("the line should always carry the session count:\n%q", narrow)
+		t.Errorf("the line should always carry the session count:\n%q", narrow)
 	}
 	for _, hidden := range []string{"RSS", "TOUT", "RATE", "COST"} {
 		if strings.Contains(narrow, hidden) {
@@ -153,7 +153,7 @@ func TestTotalsHitNeverSummed(t *testing.T) {
 	a.SpendOut, a.SpendCacheRead, a.SpendPromptTokens = tokens(10), tokens(50), tokens(100)
 	line := totalsLine(t, []api.Session{a, a}, "name,hit,tout")
 	if !strings.Contains(line, "2 sessions") || totalsField(line, "TOUT") == "" {
-		t.Fatalf("the line should exist and carry TOUT:\n%q", line)
+		t.Errorf("the line should exist and carry TOUT:\n%q", line)
 	}
 	if strings.Contains(line, "HIT") {
 		t.Errorf("HIT%% is a ratio and has no total:\n%q", line)
@@ -294,12 +294,72 @@ func TestTotalsBreaksBetweenFields(t *testing.T) {
 		}
 	}
 	if len(lines) < 2 {
-		t.Fatalf("the line should break onto a second totals line at width %d, got %d:\n%s", width, len(lines), out)
+		t.Errorf("the line should break onto a second totals line at width %d, got %d:\n%s", width, len(lines), out)
 	}
 	joined := strings.Join(lines, "   ")
 	for _, want := range []string{"mCPU 250 (2)", "TOUT 2.0M+ (2, 1 partial)", "PROMPT 2.0M+ (2, 1 partial)"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("field %q should print whole, never cut:\n%s", want, strings.Join(lines, "\n"))
 		}
+	}
+}
+
+// A RATE total at 1000/s or more prints as the cell does, %.0f/s, so 2100/s
+// and not 2.1k/s (design section 2.7).
+func TestTotalsRateAtAThousand(t *testing.T) {
+	rows := []api.Session{rateSession("a", 1500, 0, 0), rateSession("b", 600, 0, 0)}
+	cells := rateCells(t, rows...)
+	if cells["a"] != "1500/s" {
+		t.Fatalf("fixture: the cell = %q, want 1500/s", cells["a"])
+	}
+	needField(t, totalsLine(t, rows, "name,rate"), "RATE", "RATE 2100/s (2 fresh)")
+}
+
+// A COST total at $1000 or more prints as the cell does, with no thousands
+// separator: ~$4893.10 (design section 2.7).
+func TestTotalsCostAtAThousand(t *testing.T) {
+	rows := []api.Session{costSession("a", usd(4000), time.Second), costSession("b", usd(893.10), time.Second)}
+	old := rateClock
+	rateClock = func() time.Time { return costNow }
+	t.Cleanup(func() { rateClock = old })
+	line := strings.TrimRight(renderTotals(rows, columnsOrFatal(t, "name,cost", nil), costNow, totalsOpts{}), "\n")
+	needField(t, line, "COST", "COST ~$4893.10 (2)")
+}
+
+// The session count agrees in number: 0 sessions, 1 session, 2 sessions.
+func TestTotalsSessionCountAgreesInNumber(t *testing.T) {
+	for _, c := range []struct {
+		rows []api.Session
+		want string
+	}{
+		{nil, "0 sessions"},
+		{[]api.Session{plain("a")}, "1 session"},
+		{[]api.Session{plain("a"), plain("b")}, "2 sessions"},
+	} {
+		line := totalsLine(t, c.rows, "name,cpu")
+		if f := totalsFields(line); len(f) == 0 || f[0] != c.want {
+			t.Errorf("%d rows: first field = %v, want %q\nline: %q", len(c.rows), f, c.want, line)
+		}
+	}
+}
+
+// Through the command: --header prints the line even into a pipe, a plain
+// pipe does not, and -o json is byte for byte the same with or without
+// --header, with no totals in it (design section 2.7).
+func TestTotalsThroughTheGetCommand(t *testing.T) {
+	withHeader := getSessionsAtWidth(t, 0, "--header", "--columns", "name,cpu")
+	if !strings.Contains(withHeader, "\ntotals   1 session   mCPU -\n") {
+		t.Errorf("--header should print the totals line under the header:\n%s", withHeader)
+	}
+	if piped := getSessionsAtWidth(t, 0, "--columns", "name,cpu"); strings.Contains(piped, "totals") {
+		t.Errorf("a plain pipe must not carry the line:\n%s", piped)
+	}
+	plainJSON := getSessionsAtWidth(t, 0, "-o", "json")
+	headerJSON := getSessionsAtWidth(t, 0, "--header", "-o", "json")
+	if plainJSON == "" || plainJSON != headerJSON {
+		t.Errorf("-o json must be byte-identical with --header:\nwithout: %q\nwith:    %q", plainJSON, headerJSON)
+	}
+	if strings.Contains(headerJSON, "totals   ") {
+		t.Errorf("-o json must not carry the line:\n%s", headerJSON)
 	}
 }
