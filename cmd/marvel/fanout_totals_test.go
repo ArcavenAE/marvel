@@ -272,8 +272,14 @@ func TestFanOutTotalsFollowTheDrawnColumns(t *testing.T) {
 		if has := strings.Contains(block, "mCPU "); has != c.wantMCPU || strings.Contains(table, "mCPU") != c.wantMCPU {
 			t.Errorf("width %d: mCPU in the table = %v, in the block = %v, want %v\ntable: %q\nblock: %q", c.width, strings.Contains(table, "mCPU"), has, c.wantMCPU, table, block)
 		}
-		if !strings.Contains(block, c.wantFields) {
-			t.Errorf("width %d: the block should carry %q:\n%s", c.width, c.wantFields, block)
+		lines := strings.Split(strings.TrimRight(block, "\n"), "\n")
+		if len(lines) != 2 {
+			t.Errorf("width %d: want one line per cluster, got %d:\n%s", c.width, len(lines), block)
+		}
+		for i, l := range lines {
+			if !strings.Contains(l, c.wantFields) {
+				t.Errorf("width %d: line %d should carry %q:\n%s", c.width, i, c.wantFields, l)
+			}
 		}
 	}
 }
