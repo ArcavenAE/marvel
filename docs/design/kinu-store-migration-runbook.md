@@ -10,7 +10,7 @@ the store migrated then. The 10-22 daemon start wrote no new `.v1.bak`, which
 it would have if it had found a v1 store. The daemon log names no schema or
 migration line (#524), so this is confirmed from the files and the binary, not
 from a schema field; the bolt file was not opened. The next step is
-`kinu-bus-cutover-runbook.md`, which section 7 orders after this one.
+the bus cutover runbook, which does not ship with marvel and which section 7 orders after this one.
 
 Original status: runbook for review, 2026-10-04. Docs only. **Nothing here runs on
 kinu without the operator present.** The rehearsal (section 3) is an
@@ -20,8 +20,8 @@ window after it. Written to assume the upgrade goes badly.
 - Issue: #524 (the migration logs nothing). The migration itself is #482
   (1cc0a84); its backup and rollback rules are `seat-bootstrap.md` lines
   126-146.
-- Sibling: `kinu-bus-cutover-runbook.md` (#534). Run this one first, in its
-  own window (section 7).
+- Sibling: the bus cutover runbook (#534), which is not part of this repository.
+  Run this one first, in its own window (section 7).
 - Checked against marvel `origin/main` c99ce98, the tap's
   `Formula/marvel.rb`, and the live kinu daemon on 2026-10-04 between 03:45Z
   and 03:55Z (read-only).

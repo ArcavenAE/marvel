@@ -521,6 +521,30 @@ session marvel did not start. `hub.ca_file` trusts a TLS hub from the leaf
 remote; it must be an absolute path, or `~`-relative, because the broker
 process resolves it rather than the daemon.
 
+### Switching a running broker to managed
+
+If a broker is already running on the port you declare, and a service manager
+supervises it (launchd, systemd), stopping the process is not enough: the
+manager starts it again, or a `RunAtLoad` job brings it back at the next login,
+and it holds the port that marvel needs. Marvel refuses to adopt a stranger on
+its port, and that refusal is not a check you should rely on. In this order:
+
+1. Move the old job's service file aside to a directory you keep, so a restart
+   or login does not load it again and you can put it back.
+2. Stop the job through the service manager (`launchctl bootout <domain>/<label>`,
+   `systemctl stop <unit>`), not with `kill`. A killed job that is set to
+   restart comes back.
+3. Check the port is free (`lsof -nP -iTCP:<port> -sTCP:LISTEN` prints nothing).
+   Do not start the managed broker while it is occupied.
+4. Add the `mode: managed` entry and restart the daemon, which reads its
+   config only at start.
+5. If the cluster leafs into a hub, push the leaf seed again
+   (`marvel credential put bus/leaf --value-file <seed file>`); a stop and
+   start of the daemon drops it.
+
+To go back, reverse it: stop the managed broker, check the port free again,
+restore the old config, and put the service file back before loading the job.
+
 ### What survives a restart
 
 Passwords are recovered from the `authorization.conf` marvel rendered last
