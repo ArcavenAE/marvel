@@ -552,3 +552,11 @@ var keyArgCommands = map[string]int{
 	"marvel hibernate": 0, "marvel wake": 0,
 	"marvel describe": -1, "marvel delete": -1,
 }
+
+// fanOutTotalsBlock is the block of totals lines a one-shot fan-out read prints
+// above the merged table, one per cluster whose rows the table shows, in the
+// order of the records (docs/design/cluster-rollup-header.md section 2.5). The
+// red commit holds this stub; the tests fail on its empty answer.
+func fanOutTotalsBlock(records []clusterRecord, rows []api.Session, shown []sessionColumn, now time.Time, width int) string {
+	return ""
+}
