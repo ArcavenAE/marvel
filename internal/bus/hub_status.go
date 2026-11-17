@@ -138,7 +138,11 @@ func (s *Supervisor) pollHub() {
 		return
 	}
 	r := HubReading{}
-	names, err := readHubLeafz(mon)
+	read := s.hubRead
+	if read == nil {
+		read = readHubLeafz
+	}
+	names, err := read(mon)
 	if err != nil {
 		r.Err = err.Error()
 	} else {

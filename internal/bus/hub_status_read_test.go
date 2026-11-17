@@ -175,3 +175,26 @@ func TestStatusJSONCarriesTheHubLines(t *testing.T) {
 		t.Errorf("an empty status carries hub_status: %s", b)
 	}
 }
+
+// With no hub_monitor the supervisor makes no read at all, to any address.
+func TestPollHubWithNoMonitorMakesNoRequest(t *testing.T) {
+	s, _, _ := newTestSupervisor(t, "")
+	calls := 0
+	s.hubRead = func(string) ([]string, error) { calls++; return nil, nil }
+	s.pollHub()
+	if calls != 0 {
+		t.Errorf("pollHub read the hub %d time(s) with no hub_monitor configured", calls)
+	}
+}
+
+// With one, it reads exactly the configured address.
+func TestPollHubReadsTheConfiguredAddressOnly(t *testing.T) {
+	s, m, _ := newTestSupervisor(t, "")
+	m.bus.HubMonitor = "127.0.0.1:9"
+	var got []string
+	s.hubRead = func(mon string) ([]string, error) { got = append(got, mon); return nil, nil }
+	s.pollHub()
+	if !reflect.DeepEqual(got, []string{"127.0.0.1:9"}) {
+		t.Errorf("pollHub read %v, want only the configured 127.0.0.1:9", got)
+	}
+}

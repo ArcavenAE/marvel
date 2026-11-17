@@ -140,6 +140,8 @@ type Supervisor struct {
 	leafObservedAt time.Time
 	// hubReading is the last read of the hub monitor, under mu (aae-orc-stqn9).
 	hubReading HubReading
+	// hubRead replaces the monitor read in a test; nil reads the monitor.
+	hubRead func(mon string) ([]string, error)
 	// leafSeedInEnv records whether the running broker was spawned with the
 	// leaf seed in its environment. nats-server reads its environment once at
 	// start, so this is what decides whether a newly enrolled leaf can come up
