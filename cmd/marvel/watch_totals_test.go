@@ -282,3 +282,49 @@ func TestTotalsNotInTheFanOutFrameYet(t *testing.T) {
 		t.Errorf("the fan-out frame must not carry a totals line yet:\n%s", f)
 	}
 }
+
+// On the default view (no --columns) the fit draws columns the operator never
+// listed, such as mCPU, RSS, TOUT and RATE on a wide terminal. The watch frame's
+// line follows what the table drew, and none the width dropped (design
+// section 2.1).
+func TestWatchTotalsCarryEveryDrawnColumnOnTheDefaultView(t *testing.T) {
+	for _, c := range []struct {
+		width int
+		drawn []string
+		not   []string
+	}{
+		{120, []string{"TOUT", "RATE"}, []string{"mCPU", "RSS"}},
+		{200, []string{"mCPU", "RSS", "TOUT", "RATE"}, nil},
+	} {
+		rows := meteredRows(3)
+		for i := range rows {
+			rows[i].SpendOut = tokens(1000)
+		}
+		withRateClock(t)
+		ws := selRig(t, rows)
+		ws.showHeader = true
+		ws.header = headerInfo{Address: "alpha"}
+		setWidth(t, c.width)
+		frame := frameOf(ws)
+		lines := totalsLines(frame)
+		table := frameLineHolding(frame, "AGENT NAME")
+		if len(lines) == 0 || table == "" {
+			t.Errorf("width %d: the line and the table should both print:\n%s", c.width, frame)
+			continue
+		}
+		line := strings.Join(lines, " ")
+		for _, h := range c.drawn {
+			if !strings.Contains(table, h) {
+				t.Errorf("width %d: fixture: the table should draw %s:\n%s", c.width, h, table)
+			}
+			if !strings.Contains(line, h+" ") {
+				t.Errorf("width %d: the table draws %s but the line has no field for it:\n%s", c.width, h, line)
+			}
+		}
+		for _, h := range c.not {
+			if strings.Contains(table, h) || strings.Contains(line, h+" ") {
+				t.Errorf("width %d: %s is not drawn, so the line must not carry it:\ntable: %s\nline: %s", c.width, h, table, line)
+			}
+		}
+	}
+}
