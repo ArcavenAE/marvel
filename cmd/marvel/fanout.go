@@ -584,12 +584,22 @@ var keyArgCommands = map[string]int{
 // the marker stays off clusterRecord (the architect's choice b, section 2.9).
 // Each line breaks between fields at width, as the single-cluster line does.
 func fanOutTotalsBlock(records []clusterRecord, rows []api.Session, shown []sessionColumn, now time.Time, width int, startedFolded map[string]bool) string {
+	return fanTotalsBlock(records, rows, shown, now, width, startedFolded, nil, false)
+}
+
+// fanTotalsBlock is the block of the watch frame too, where a cluster can hold
+// rows from an earlier read: held maps such a cluster to the time of that read,
+// and its line is drawn whatever its record says, carrying the time (design
+// sections 2.5 and 2.8). cut says the table is cut, so each line ends with the
+// count of its own cluster's rows.
+func fanTotalsBlock(records []clusterRecord, rows []api.Session, shown []sessionColumn, now time.Time, width int, startedFolded map[string]bool, held map[string]time.Time, cut bool) string {
 	var b strings.Builder
 	for _, rec := range records {
-		if rec.Outcome != outcomeAnswered && rec.Outcome != outcomeStarting {
+		asOf, isHeld := held[rec.Cluster]
+		if rec.Outcome != outcomeAnswered && rec.Outcome != outcomeStarting && !isHeld {
 			continue
 		}
-		opts := totalsOpts{label: rec.Cluster, starting: rec.Outcome == outcomeStarting}
+		opts := totalsOpts{label: rec.Cluster, starting: rec.Outcome == outcomeStarting, asOf: asOf}
 		mine := map[string]bool{rec.Cluster: true}
 		for _, m := range records {
 			if m.Outcome == outcomeSameDaemon && m.SameDaemonAs == rec.Cluster {
@@ -605,6 +615,9 @@ func fanOutTotalsBlock(records []clusterRecord, rows []api.Session, shown []sess
 			if mine[r.Cluster] {
 				own = append(own, r)
 			}
+		}
+		if cut {
+			opts.covered = len(own)
 		}
 		b.WriteString(wrapTotals(renderTotals(own, shown, now, opts), width))
 	}
