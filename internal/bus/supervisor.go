@@ -138,6 +138,8 @@ type Supervisor struct {
 	// read is no information and leaves it where it was, so the reading
 	// ages instead of being refreshed by an error.
 	leafObservedAt time.Time
+	// hubReading is the last read of the hub monitor, under mu (aae-orc-stqn9).
+	hubReading HubReading
 	// leafSeedInEnv records whether the running broker was spawned with the
 	// leaf seed in its environment. nats-server reads its environment once at
 	// start, so this is what decides whether a newly enrolled leaf can come up
@@ -1079,6 +1081,7 @@ func (s *Supervisor) Status() Status {
 	if !snap.Ready && snap.BackoffUntil.After(time.Now()) {
 		st.BackoffUntil = snap.BackoffUntil.Format(time.RFC3339)
 	}
+	st.HubStatus = s.hubLinesLocked()
 	return st
 }
 

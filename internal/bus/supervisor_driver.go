@@ -239,6 +239,7 @@ func (d busDriver) Started(ctx context.Context, si workload.StartInfo) {
 // the loop past its next tick.
 func (d busDriver) Tick(ctx context.Context) {
 	d.s.pollLeaf()
+	d.s.pollHub()
 	d.s.checkStructure(ctx)
 }
 

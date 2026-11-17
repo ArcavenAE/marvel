@@ -1,11 +1,14 @@
 package bus
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseHubLeafzNamesTheLeafs(t *testing.T) {
@@ -95,5 +98,80 @@ func TestPollHubRaisesNoEvent(t *testing.T) {
 	s.pollHub()
 	if after := len(kindsOf(ring)); after != before {
 		t.Errorf("pollHub emitted %d event(s): %v", after-before, kindsOf(ring))
+	}
+}
+
+// A monitor that redirects is not read through: the answer would come from
+// somewhere the cluster did not name.
+func TestPollHubDoesNotFollowARedirect(t *testing.T) {
+	s, m, _ := newTestSupervisor(t, "")
+	target := hubMonitor(t, `{"leafnodes":1,"leafs":[{"name":"alpha"}]}`)
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://"+target+"/leafz", http.StatusFound)
+	}))
+	t.Cleanup(redir.Close)
+	m.bus.HubMonitor = strings.TrimPrefix(redir.URL, "http://")
+	m.bus.HubExpectedLeafs = []string{"alpha"}
+	s.pollHub()
+	all := strings.ToLower(strings.Join(s.Status().HubStatus, "\n"))
+	if !strings.Contains(all, "not observed") || strings.Contains(all, "present") {
+		t.Errorf("a redirected monitor was read through:\n%s", all)
+	}
+}
+
+func TestPollHubNon200IsNotObserved(t *testing.T) {
+	s, m, _ := newTestSupervisor(t, "")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"leafs":[{"name":"alpha"}]}`, http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	m.bus.HubMonitor = strings.TrimPrefix(srv.URL, "http://")
+	m.bus.HubExpectedLeafs = []string{"alpha"}
+	s.pollHub()
+	all := strings.ToLower(strings.Join(s.Status().HubStatus, "\n"))
+	if !strings.Contains(all, "not observed") || strings.Contains(all, "present") {
+		t.Errorf("a 500 with a leaf-shaped body was read:\n%s", all)
+	}
+}
+
+// After a good reading, a failed one keeps the time of the good one in the
+// line and reads as not observed.
+func TestPollHubFailureAfterAGoodReadingKeepsItsTime(t *testing.T) {
+	s, m, _ := newTestSupervisor(t, "")
+	fixed := time.Date(2030, 5, 6, 7, 8, 9, 0, time.UTC)
+	s.now = func() time.Time { return fixed }
+	good := hubMonitor(t, `{"leafs":[{"name":"alpha"}]}`)
+	m.bus.HubMonitor = good
+	m.bus.HubExpectedLeafs = []string{"alpha"}
+	s.pollHub()
+	m.bus.HubMonitor = "127.0.0.1:1"
+	s.pollHub()
+	all := strings.Join(s.Status().HubStatus, "\n")
+	if !strings.Contains(all, "not observed") || !strings.Contains(all, fixed.Format(time.RFC3339)) {
+		t.Errorf("a failed read after a good one lost the last good time:\n%s", all)
+	}
+}
+
+// The tick is what runs the poll.
+func TestTickPollsTheHub(t *testing.T) {
+	s, m, _ := newTestSupervisor(t, "")
+	m.bus.HubMonitor = hubMonitor(t, `{"leafs":[{"name":"alpha"}]}`)
+	m.bus.HubExpectedLeafs = []string{"alpha"}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	busDriver{s}.Tick(ctx)
+	if all := strings.Join(s.Status().HubStatus, "\n"); !strings.Contains(all, "present alpha") {
+		t.Errorf("the tick did not poll the hub:\n%s", all)
+	}
+}
+
+func TestStatusJSONCarriesTheHubLines(t *testing.T) {
+	t.Parallel()
+	b, err := json.Marshal(Status{HubStatus: []string{"x"}})
+	if err != nil || !strings.Contains(string(b), `"hub_status":["x"]`) {
+		t.Errorf("status JSON = %s, %v", b, err)
+	}
+	if b, _ := json.Marshal(Status{}); strings.Contains(string(b), "hub_status") {
+		t.Errorf("an empty status carries hub_status: %s", b)
 	}
 }
