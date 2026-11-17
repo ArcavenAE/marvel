@@ -53,6 +53,16 @@ content: |
   OPEN: the watchdog captures client-workspace panes while COMPOSER and PANE
   never do; is that asymmetry intended? Whether a pane string alone is
   trustworthy (a transcript can quote the notice) is unmeasured.
+
+  HARVEST 2026-11-17 (read at main b7c1f891). Item 3 above, that an uncovered
+  seat reads bare `alive`, is behind the code. The watchdog's two coverage
+  states, `uncovered` and `control-failed` (`internal/api/types.go`), are set
+  by the daemon, and `get sessions` appends `(unwatched)` to the HEALTH of a
+  running seat in either state (`cmd/marvel/main.go`). That is the effect of
+  the recommended GAP line for the coverage states, in the HEALTH cell. The
+  RECOMMENDED lines on mid-session expiry and on a bottom-aligned picker were
+  not re-read, and "none ruled" is not re-checked.
+
 edges:
   - target: question-session-state-observation
     type: supports

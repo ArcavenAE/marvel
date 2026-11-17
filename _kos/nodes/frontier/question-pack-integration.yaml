@@ -28,6 +28,14 @@ content: |
   resolution should be read through that vocabulary, with the design as the
   open proposal. This stays frontier until the operator rules the design.
 
+  HARVEST 2026-11-17 (read at main b7c1f891). The companies design is no longer
+  nothing built: the strict decoders for `company.toml` and recipe files
+  (marvel#1351) and the pin resolver and launch checks (marvel#1359) are merged
+  (`internal/company`). The design's own status line still reads "design, for
+  a ruling, nothing here is built", which is behind the code, though it records
+  the vocabulary as ruled. Wiring a company into launch was not found on main
+  and was not read further.
+
 edges:
   - target: aae-orc::question-pack-format
     type: derives

@@ -40,6 +40,16 @@ content: |
   timeout against a 120 s bus wait (by source, not measured); and the keyring
   under a private root, where v1 keeps the operator's keyring and a broker-minted
   credential is the future option (operator ruling 2026-10-10).
+
+  HARVEST 2026-11-17 (read at main b7c1f891). The STATE line above is behind
+  the code. The launch refusal is gone: marvel#1253 (merged 2026-11-03) bounds
+  a headless goose run with a watchdog wrapper, `marvel goose-watch`, and lifts
+  the refusal, and the slug `stream-not-built` no longer appears under `cmd` or
+  `internal`. A headless launch now writes stream-json under that wrapper
+  (`internal/runtime/goose.go`). What the build leaves open is not read here:
+  whether the stderr run-record field named above landed, and what remains of
+  the stream-fixture question.
+
 edges:
   - target: elem-runtime-adapter-framework
     type: derives

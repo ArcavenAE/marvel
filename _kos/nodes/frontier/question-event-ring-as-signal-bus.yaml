@@ -132,6 +132,13 @@ content: |
   Provenance note: this node's evidence comes from an agent-operated
   recon campaign (orc issues #239, #242) rather than a marvel session.
   Scope was measurement only; no fix or schema was proposed.
+
+  HARVEST 2026-11-17 (read at main b7c1f891). "Nothing reads the ring at all"
+  was written on 2026-08-25 and is behind the code: the ring has a watch
+  reader, `Ring.Watch` in `internal/events/events.go`. A reader existing does
+  not settle the options (a) to (c) above, which turn on a typed payload; that
+  was not re-read, and the node's options stand.
+
 edges:
   - target: question-session-state-observation
     type: supports

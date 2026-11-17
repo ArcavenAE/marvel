@@ -77,6 +77,17 @@ content: |
      the team-load rows (question-team-load-rollup).
   4. Default or opt-in: every token and account column is opt-in today.
   5. Whether the figure survives a bolt load the way #772 keeps tokens.
+
+  HARVEST 2026-11-17 (read at main b7c1f891). The state above, "WHAT EXISTS,
+  read at main 4f65cc3", predates the build. An opt-in COST column is on main
+  (marvel#1444, b291485a; `cost` is in `optInColumns` in
+  `cmd/marvel/columns.go`), and `docs/design/get-sessions-output.md` describes it
+  as the harness's running cost total for a statusline seat, marked `~` as an
+  estimate, `-` when the feed never carried one, and not part of `wide`. The
+  five OPEN items above are answered by that design and build. Whether the node
+  keeps its frontier confidence is a separate question for the operator, listed
+  in the pull request and not changed here.
+
 edges:
   - target: question-marvel-otel-architecture
     type: derives

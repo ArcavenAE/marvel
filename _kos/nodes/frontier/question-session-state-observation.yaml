@@ -242,6 +242,12 @@ content: |
   finding of its own. See also question-harness-state-watchdog for the
   classified-state read of the pane.
 
+  HARVEST 2026-11-17 (read at main b7c1f891). The judgment above is built in
+  part: a `limited` session condition exists (`ConditionLimited` in
+  `internal/api/limit.go`) with a source marking a condition set from an
+  account reading. "None built" is dated. How far the build covers the
+  harness-refusal source and the reset-time resume was not re-read.
+
 edges:
   - target: elem-agentic-resource-matrix
     type: supports
