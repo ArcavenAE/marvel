@@ -36,8 +36,10 @@ content: |
   with no cap, floor or gate.
 
   OPEN, the operator's three decisions in the design's section 8, none ruled
-  here: whether a spawn floor on low memory exists (the design recommends none
-  now, a reading in spawn events, and a decision after a week of readings; a floor
+  here (a later audit records two of the three as ruled; no document in this
+  repository carries those rulings, so they are not written here, see HARVEST
+  2026-11-17 below): whether a spawn floor on low memory exists (the design
+  recommends none now, a reading in spawn events, and a decision after a week of readings; a floor
   would follow the admission rules, operator-declared and never refusing repair);
   age recycling for every long-running interactive role, with the bound the
   operator sets; and recovering the busiest host's file-event daemon, which is

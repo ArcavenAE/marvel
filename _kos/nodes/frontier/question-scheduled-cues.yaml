@@ -81,7 +81,7 @@ edges:
     type: derives
     note: "a cue into a seat is a message; the bus, not a keystroke, is its channel"
   - target: finding-marvel-36f7-scheduled-work-two-customers
-    type: partially_resolves
+    type: supports
     note: "records the built schedule block and declared cadence, and what is not built"
 notes: |
   Source: harvest distribution manifest 2026-09-27, row 16.
