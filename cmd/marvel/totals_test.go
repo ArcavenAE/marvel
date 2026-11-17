@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // The totals line of docs/design/cluster-rollup-header.md, section 2. These
@@ -421,5 +424,69 @@ func TestTotalsFollowTheDrawnColumnsThroughTheFit(t *testing.T) {
 	}
 	if dropped == 0 {
 		t.Fatalf("fixture: at width 120 the fit should drop mCPU and RSS from the wide set:\n%s", out)
+	}
+}
+
+// On the default view (no --columns) the fit draws columns the operator never
+// listed, such as mCPU, RSS, TOUT and RATE on a wide terminal. The line follows
+// what the table drew, so it carries a field for each of those, and none for a
+// column the width dropped (design section 2.1).
+func TestTotalsCarryEveryDrawnColumnOnTheDefaultView(t *testing.T) {
+	a := sampled("a1", api.SessionRunning, 10, 1<<20)
+	a.SpendOut = tokens(1000)
+	for _, c := range []struct {
+		width int
+		drawn []string
+		not   []string
+	}{
+		{120, []string{"TOUT", "RATE"}, []string{"mCPU", "RSS"}},
+		{200, []string{"mCPU", "RSS", "TOUT", "RATE"}, nil},
+	} {
+		socket := fakeSocket(t, func(req daemonrpc.Request) daemonrpc.Response {
+			if req.Method == "get" {
+				data, _ := json.Marshal([]api.Session{a, a})
+				return daemonrpc.Response{Result: data}
+			}
+			return daemonrpc.Response{Error: "unexpected " + req.Method}
+		})
+		resolveFixture(t, false)
+		t.Setenv(config.SocketEnv, socket)
+		old := terminalWidth
+		terminalWidth = func() int { return c.width }
+		out := captureFitStdout(t, func() {
+			cmd := getCmd()
+			cmd.SetArgs([]string{"sessions", "--header"})
+			cmd.SilenceUsage, cmd.SilenceErrors = true, true
+			if err := cmd.Execute(); err != nil {
+				t.Errorf("width %d: get sessions: %v", c.width, err)
+			}
+		})
+		terminalWidth = old
+		var line, table string
+		for _, l := range strings.Split(out, "\n") {
+			switch {
+			case strings.HasPrefix(l, "totals"):
+				line = l
+			case strings.Contains(l, "AGENT NAME"):
+				table = l
+			}
+		}
+		if line == "" || table == "" {
+			t.Errorf("width %d: the line and the table should both print:\n%s", c.width, out)
+			continue
+		}
+		for _, h := range c.drawn {
+			if !strings.Contains(table, h) {
+				t.Errorf("width %d: fixture: the table should draw %s:\n%s", c.width, h, table)
+			}
+			if !strings.Contains(line, h+" ") {
+				t.Errorf("width %d: the table draws %s but the line has no field for it:\n%s", c.width, h, line)
+			}
+		}
+		for _, h := range c.not {
+			if strings.Contains(table, h) || strings.Contains(line, h+" ") {
+				t.Errorf("width %d: %s is not drawn, so the line must not carry it:\ntable: %s\nline: %s", c.width, h, table, line)
+			}
+		}
 	}
 }
