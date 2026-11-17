@@ -48,7 +48,7 @@ var totalsTokenColumns = map[string]func(api.Session) *int{
 // pointers with SpendPartial, sessionRate, CostTotalUSD) so a total and its
 // column never disagree about which rows count. A column that is not shown has
 // no field, and a field with no value in any row is a dash.
-func renderTotals(rows []api.Session, shown []sessionColumn, now time.Time, opts totalsOpts) string {
+func renderTotals(rows []api.Session, shown []sessionColumn, now time.Time, opts totalsOpts) string { //nolint:unparam // T3 passes a cluster label; T1 has one caller form
 	var b strings.Builder
 	b.WriteString("totals")
 	if opts.label != "" {

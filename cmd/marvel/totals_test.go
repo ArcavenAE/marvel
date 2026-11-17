@@ -383,3 +383,43 @@ func TestTotalsNotInTheWatchFrame(t *testing.T) {
 		t.Errorf("the watch frame must not carry the totals line yet:\n%s", frame)
 	}
 }
+
+// The one-shot line follows the columns the fit drew, not the columns asked
+// for: at 120 columns the wide set loses mCPU and RSS, so the table has no such
+// column and the line has no such field (design section 2.1).
+func TestTotalsFollowTheDrawnColumnsThroughTheFit(t *testing.T) {
+	withRateClock(t)
+	a := sampled("a", api.SessionRunning, 12.5, 1<<20)
+	a.SpendOut = tokens(1000)
+	cols := columnsOrFatal(t, "wide", nil)
+	out := renderSessionsOneShot([]api.Session{a}, cols, "cluster  alpha\n\n", fitOptions{width: 120})
+
+	var table, totals string
+	for _, l := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(l, "totals"):
+			totals += l + "\n"
+		case strings.Contains(l, "AGENT NAME"):
+			table = l
+		}
+	}
+	if table == "" {
+		t.Fatalf("fixture: the table header is missing:\n%s", out)
+	}
+	dropped := 0
+	for _, c := range cols {
+		if c.name != "cpu" && c.name != "rss" && c.name != "tout" && c.name != "rate" {
+			continue
+		}
+		drawn := strings.Contains(table, c.header)
+		if !drawn {
+			dropped++
+		}
+		if has := strings.Contains(totals, c.header+" "); has != drawn {
+			t.Errorf("column %s: drawn in the table = %v, field in the totals = %v\ntable: %q\ntotals:\n%s", c.header, drawn, has, table, totals)
+		}
+	}
+	if dropped == 0 {
+		t.Fatalf("fixture: at width 120 the fit should drop mCPU and RSS from the wide set:\n%s", out)
+	}
+}
