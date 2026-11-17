@@ -51,7 +51,7 @@ func TestTotalsInTheFanOutFrame(t *testing.T) {
 		t.Errorf("cluster b's line = %q, want one starting %q:\n%s", b, "totals b   1 session", f)
 	}
 	status, line, table := strings.Index(f, "cluster b: answered"), strings.Index(f, "totals a"), strings.Index(f, "AGENT NAME")
-	if status < 0 || table < 0 || !(status < line && line < table) {
+	if status < 0 || table < 0 || status >= line || line >= table {
 		t.Errorf("the block should sit under the status lines and above the table (at %d, %d, %d):\n%s", status, line, table, f)
 	}
 }
@@ -186,15 +186,15 @@ func sameDaemon(cfg *fanWatchConfig) {
 	cfg.keyOf = func(string, string) string { return "one-daemon" }
 }
 
-// answerOf releases a fetch with the rows named, the outcome given and the one
+// answerOf releases a cluster's first fetch with the rows named, the outcome given and the one
 // daemon stamp the same-daemon fold needs.
-func (r *fanRig) answerOf(c string, seq uint64, outcome outcome, names ...string) {
+func (r *fanRig) answerOf(c string, outcome outcome, names ...string) {
 	var rows []api.Session
 	for _, n := range names {
 		rows = append(rows, api.Session{Name: n, Workspace: "ws", Team: "squad", Role: "worker", State: api.SessionRunning})
 	}
 	cnt := len(rows)
-	r.gate(fanKey{c, seq}) <- fanFetch{
+	r.gate(fanKey{c, 1}) <- fanFetch{
 		rec:         clusterRecord{Cluster: c, Outcome: outcome, Sessions: &cnt},
 		rows:        rows,
 		fingerprint: "fp",
@@ -210,8 +210,8 @@ func TestWatchFanTotalsFoldSameDaemon(t *testing.T) {
 	r := newFanRigWith(t, 200, 0, time.Hour, time.Hour, []fanWatchCluster{{name: "a"}, {name: "b"}}, sameDaemon)
 	r.waitStarted("a", 1)
 	r.waitStarted("b", 1)
-	r.answerOf("a", 1, outcomeAnswered, "a-one", "shared")
-	r.answerOf("b", 1, outcomeAnswered, "shared", "b-only")
+	r.answerOf("a", outcomeAnswered, "a-one", "shared")
+	r.answerOf("b", outcomeAnswered, "shared", "b-only")
 	f := r.frame("both clusters answered and folded", func(f string) bool {
 		return strings.Contains(f, "cluster b: same_daemon") && strings.Contains(f, "b-only")
 	})
@@ -240,9 +240,9 @@ func TestWatchFanTotalsStartingMarked(t *testing.T) {
 	r.waitStarted("a", 1)
 	r.waitStarted("b", 1)
 	r.waitStarted("c", 1)
-	r.answerOf("a", 1, outcomeAnswered, "a-one")
-	r.answerOf("b", 1, outcomeStarting, "b-only")
-	r.answerOf("c", 1, outcomeStarting, "c-one")
+	r.answerOf("a", outcomeAnswered, "a-one")
+	r.answerOf("b", outcomeStarting, "b-only")
+	r.answerOf("c", outcomeStarting, "c-one")
 	f := r.frame("all three read", func(f string) bool {
 		return strings.Contains(f, "cluster b: same_daemon") && strings.Contains(f, "c-one")
 	})
