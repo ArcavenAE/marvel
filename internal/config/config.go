@@ -641,6 +641,11 @@ type Bus struct {
 	Seat *Seat `yaml:"seat,omitempty"`
 	// Hub, when set, makes the broker a leaf of the global tier.
 	Hub *Hub `yaml:"hub,omitempty"`
+	// HubMonitor is the loopback address of a hub's monitor, read by this
+	// cluster when it shares the hub's host (aae-orc-stqn9). HubExpectedLeafs
+	// names the clusters it expects the hub to list. Compile-only stub.
+	HubMonitor       string   `yaml:"hub_monitor,omitempty"`
+	HubExpectedLeafs []string `yaml:"hub_expected_leafs,omitempty"`
 	// GlobalRoles are the role names this cluster admits to the global tier,
 	// beside `supervisor`, which is admitted without being listed. A manifest
 	// can declare a role global only if the operator's config names it here.
@@ -966,6 +971,9 @@ type ResolvedBus struct {
 	MaxFileStore   int64
 	MaxMemoryStore int64
 	HubURL         string
+	// HubMonitor and HubExpectedLeafs are the Bus fields of the same names.
+	HubMonitor       string
+	HubExpectedLeafs []string
 	// HubURLs is every hub address, in order; HubURL is its first entry.
 	HubURLs []string
 	// HubCAFile is ~-expanded, since the broker process reads it.
