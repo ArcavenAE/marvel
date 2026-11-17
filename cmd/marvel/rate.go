@@ -44,6 +44,11 @@ func rateCell(s api.Session, now time.Time) string {
 	case asof.Stale:
 		return asof.MarkStale
 	}
+	return formatRate(v)
+}
+
+// formatRate renders a tokens-a-second figure as the RATE cell prints it.
+func formatRate(v float64) string {
 	switch {
 	case v == 0:
 		return "0/s"

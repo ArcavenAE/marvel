@@ -1309,6 +1309,22 @@ which includes the first window after the total drops (a restart, /clear or a ne
 session starts a fresh baseline), a ? once the feed has been silent past the window
 or while a silence of over three minutes is inside it, and never a negative figure.
 
+The totals line sits under the daemon header, on a terminal or with --header, and
+never in a pipe or in -o json or yaml. It sums the columns shown, so --columns brings a
+field back. Each field counts only the rows whose cell shows a value, and prints how
+many in parentheses; a row with no value is left out and never counted as zero, and a
+field no row has a value for is a -. mCPU is the sum of the seats' millicpu. RSS is the
+sum of resident set sizes, which counts shared pages once per process, so it overstates
+memory. TOUT, TIN, CR, CW and PROMPT are sums of the cumulative counts since each seat
+started, and a trailing + means a lower bound: the count names how many rows were
+partial. RATE is the sum of fresh rates only, a ? or - adding nothing, since each
+seat's rate is judged under its own window; it is not a cluster rate. COST is the sum
+of the seats' running estimates at list price, with the ~ the column carries; it is not
+a bill and covers statusline seats only. HIT% is never summed. TOUT and COST are
+separate fields and nothing converts tokens to dollars. A wide line breaks between
+fields onto a second totals line. Every total is diagnostic only: nothing gates or acts
+on it.
+
 A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat reported
 it, which is weaker than token flow: * reported by statusline or heartbeat,
 not token flow. A value from the token stream carries no mark. On a terminal
@@ -3597,8 +3613,7 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 	// A crashed, failed or succeeded row has no process left to read, and its
 	// last in-memory reading is frozen (the sampler skips it), so it shows
 	// absence too (aae-orc-wtavi).
-	gone := s.State == api.SessionCrashed || s.State == api.SessionFailed || s.State == api.SessionSucceeded
-	if !s.MetricsAt.IsZero() && !gone {
+	if metricsShown(s) {
 		// mCPU is millicpu, as Kubernetes reads it: 1000 is one core. It is derived from
 		// CPUPercent so a row from a daemon that predates the Millicpu field still reads.
 		cpu = fmt.Sprintf("%d", api.MillicpuFromPercent(s.CPUPercent))
@@ -3714,6 +3729,13 @@ func newSessionRow(s api.Session, homes serviceHomes) sessionRow {
 		name: s.Name, state: state, health: health, context: ctx,
 		cpu: cpu, rss: rss, desk: desk, runtime: runtimeName, llm: llm,
 	}
+}
+
+// metricsShown reports whether the mCPU and RSS cells print a reading: the row
+// was sampled and has a process left to read. The totals line sums the same rows.
+func metricsShown(s api.Session) bool {
+	gone := s.State == api.SessionCrashed || s.State == api.SessionFailed || s.State == api.SessionSucceeded
+	return !s.MetricsAt.IsZero() && !gone
 }
 
 // specCell is the SPEC column: whether the session's runtime still equals its
@@ -3922,7 +3944,7 @@ func printSessions(data json.RawMessage, cols []sessionColumn, header string, fi
 	sort.SliceStable(sessions, func(i, j int) bool {
 		return sessionTieLess(sessions[i], sessions[j])
 	})
-	fmt.Print(renderSessionsView(sessions, cols, header, fit))
+	fmt.Print(renderSessionsOneShot(sessions, cols, header, fit))
 	return nil
 }
 
@@ -3942,6 +3964,13 @@ func renderSessionsView(sessions []api.Session, cols []sessionColumn, header str
 // hidden-columns note, the composer gaps and the undrawable tally). The watch
 // view cuts and marks rows of the table and keeps the rest.
 func renderSessionsParts(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) (pre, table, post string) {
+	pre, table, post, _ = renderSessionsPartsShown(sessions, cols, header, fit)
+	return pre, table, post
+}
+
+// renderSessionsPartsShown is renderSessionsParts that also returns the columns
+// the table drew, which the totals line follows.
+func renderSessionsPartsShown(sessions []api.Session, cols []sessionColumn, header string, fit fitOptions) (pre, table, post string, shown []sessionColumn) {
 	allCols := append(append([]sessionColumn(nil), fit.lead...), cols...)
 	fit.lead = drawableColumns(fit.lead)
 	res := fitSessionTable(sessions, drawableColumns(cols), fit)
@@ -3961,7 +3990,9 @@ func renderSessionsParts(sessions []api.Session, cols []sessionColumn, header st
 		b.WriteString(composerGapLines(sessions, &tally))
 	}
 	b.WriteString(tally.line())
-	return header, res.table, b.String()
+	// The totals follow the columns the fit drew, which on the default view
+	// include opt-in columns the operator never listed (design section 2.1).
+	return header, res.table, b.String(), res.cols
 }
 
 // composerGapLines names each seat whose COMPOSER cell is unknown for a reason
