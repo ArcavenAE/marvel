@@ -56,6 +56,9 @@ func renderTotals(rows []api.Session, shown []sessionColumn, now time.Time, opts
 	if opts.label != "" {
 		b.WriteString(" " + opts.label)
 	}
+	if !opts.asOf.IsZero() {
+		b.WriteString(" (as of " + opts.asOf.Format("15:04:05") + ")")
+	}
 	noun := "sessions"
 	if len(rows) == 1 {
 		noun = "session"
@@ -65,6 +68,9 @@ func renderTotals(rows []api.Session, shown []sessionColumn, now time.Time, opts
 		if f, ok := totalsFieldFor(rows, c, now); ok {
 			b.WriteString("   " + f)
 		}
+	}
+	if opts.covered > 0 {
+		fmt.Fprintf(&b, "   covers all %d rows", opts.covered)
 	}
 	b.WriteString("\n")
 	return b.String()
