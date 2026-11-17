@@ -197,5 +197,5 @@ func (s *Supervisor) hubLinesLocked() []string {
 		return nil
 	}
 	r := s.hubReading
-	return HubStatusLines(r, s.mgr.bus.HubExpectedLeafs, s.mgr.Domain(), s.now(), hubValidPolls*defaultLeafPoll)
+	return HubStatusLines(r, s.mgr.bus.HubExpectedLeafs, s.mgr.Domain(), s.now(), hubValidPolls*s.leafPoll)
 }
