@@ -110,7 +110,10 @@ type Supervisor struct {
 	mu       sync.Mutex
 	parent   context.Context
 	pidState string // proven, stale, legacy or none, for bus status
-	version  string // what `nats-server --version` on the resolved binary reports
+	version  string // what `nats-server --version` on the resolved binary reports, re-read when the file changes
+	// diskKey identifies the file version was read from (realpath, size and
+	// mtime), so Status runs --version again only when the file changed.
+	diskKey string
 	// lastPid is the pid of the broker the driver last saw, kept for the
 	// crash message: Process has cleared its own copy by the time Exited runs.
 	lastPid  int
@@ -302,6 +305,7 @@ func NewSupervisor(mgr *Manager, runDir, logDir string, ring *events.Ring) (*Sup
 		binary:             bin,
 		envAllow:           class.ChildEnvAllow,
 		version:            binaryVersion(bin),
+		diskKey:            binaryKey(bin),
 		pidFile:            filepath.Join(runDir, "nats-server.pid"),
 		logPath:            filepath.Join(logDir, "nats-server.log"),
 		ring:               ring,
@@ -492,13 +496,25 @@ func (s *Supervisor) classifyPidfile() pidVerdict {
 // and this is how a disagreeing PATH shows up in marvel bus status. The
 // probe child gets the message-bus class allowlist and no minted keys, not
 // the daemon's own environment (aae-orc-433bj).
-func binaryVersion(bin string) string {
+func binaryVersion(bin string) string { return binaryVersionWithin(bin, 0) }
+
+// binaryVersionWithin is binaryVersion with a bound: after d the probe is
+// killed and the answer is "unknown". Zero means no bound.
+func binaryVersionWithin(bin string, d time.Duration) string {
 	class, err := service.Class(service.ClassMessageBus)
 	if err != nil {
 		return "unknown"
 	}
-	cmd := exec.Command(bin, "--version")
+	ctx := context.Background()
+	if d > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(ctx, bin, "--version")
 	cmd.Env = workload.AllowedEnv(class.ChildEnvAllow)
+	// a script's child can hold the pipe open after the kill; do not wait on it
+	cmd.WaitDelay = 200 * time.Millisecond
 	out, err := cmd.Output()
 	if err != nil {
 		return "unknown"
@@ -508,6 +524,45 @@ func binaryVersion(bin string) string {
 		return "unknown"
 	}
 	return fields[len(fields)-1]
+}
+
+// diskVersionTimeout bounds the --version read a status makes when the binary
+// changed, so a status never hangs on the file it reports.
+const diskVersionTimeout = time.Second
+
+// binaryKey names the file at bin by its realpath, size and mtime, or "" when
+// there is no file. Two keys are equal only for the same unchanged file.
+func binaryKey(bin string) string {
+	real, err := filepath.EvalSymlinks(bin)
+	if err != nil {
+		return ""
+	}
+	fi, err := os.Stat(real)
+	if err != nil || fi.IsDir() {
+		return ""
+	}
+	return fmt.Sprintf("%s|%d|%d", real, fi.Size(), fi.ModTime().UnixNano())
+}
+
+// refreshDiskVersion re-reads the version of the file on disk when the file
+// changed since the last read, so a binary swapped in place under a running
+// broker shows (aae-orc-ktts0). The read is bounded and never runs under
+// s.mu; a file that is gone or does not answer reads "unknown".
+func (s *Supervisor) refreshDiskVersion() {
+	key := binaryKey(s.binary)
+	s.mu.Lock()
+	same := key == s.diskKey
+	s.mu.Unlock()
+	if same {
+		return
+	}
+	v := "unknown"
+	if key != "" {
+		v = binaryVersionWithin(s.binary, diskVersionTimeout)
+	}
+	s.mu.Lock()
+	s.version, s.diskKey = v, key
+	s.mu.Unlock()
 }
 
 func hasEnv(env []string, key string) bool {
@@ -986,6 +1041,7 @@ func (s *Supervisor) reportLeafOnAdopt(pid int) {
 
 // Status snapshots the broker for `marvel bus status`.
 func (s *Supervisor) Status() Status {
+	s.refreshDiskVersion()
 	snap := s.snapshot()
 	s.mu.Lock()
 	defer s.mu.Unlock()

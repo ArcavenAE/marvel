@@ -4276,9 +4276,17 @@ func printBusBinary(w io.Writer, st bus.Status) {
 	if st.ServingVersion == "" {
 		return
 	}
-	if st.Version != "" && st.ServingVersion != st.Version {
+	if knownVersion(st.Version) && knownVersion(st.ServingVersion) && versionForm(st.ServingVersion) != versionForm(st.Version) {
 		_, _ = fmt.Fprintf(w, "serving:  %s (differs from the binary on disk, %s; diagnostic only)\n", st.ServingVersion, st.Version)
 		return
 	}
 	_, _ = fmt.Fprintf(w, "serving:  %s\n", st.ServingVersion)
 }
+
+// knownVersion is true for a version reading that names a version: neither
+// empty nor the "unknown" a failed read gives.
+func knownVersion(v string) bool { return v != "" && v != "unknown" }
+
+// versionForm puts a version in the "v" form nats-server --version prints, so
+// "2.14.6" and "v2.14.6" compare equal.
+func versionForm(v string) string { return "v" + strings.TrimPrefix(v, "v") }
