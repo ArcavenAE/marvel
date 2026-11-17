@@ -165,3 +165,88 @@ func TestFanOutTotalsNotIntoPipe(t *testing.T) {
 		t.Errorf("fixture: the merged table is missing:\n%s", out)
 	}
 }
+
+// -o json on a fan-out read stays one document with no totals in it, with or
+// without --header. (The document carries read times, so two runs differ; the
+// check is that it still decodes as the one object and holds no totals line.)
+func TestFanOutTotalsNotInTheJSONDocument(t *testing.T) {
+	a := startFake(t, fakeAnswers, []api.Session{sampled("a1", api.SessionRunning, 10, 1<<20)})
+	b := startFake(t, fakeAnswers, []api.Session{sampled("b1", api.SessionRunning, 40, 1<<20)})
+	clusterConfig(t, config.Cluster{Name: "a", Socket: a.sock}, config.Cluster{Name: "b", Socket: b.sock})
+	_, out, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b", "--header", "-o", "json")
+	if !strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Errorf("the document should open with the one object:\n%s", out)
+	}
+	if doc := decodeSet(t, out); len(doc.Clusters) != 2 || len(doc.Sessions) != 2 {
+		t.Errorf("%d cluster records and %d rows, want 2 and 2", len(doc.Clusters), len(doc.Sessions))
+	}
+	if strings.Contains(out, "totals   ") {
+		t.Errorf("-o json must not carry a totals line:\n%s", out)
+	}
+	// The premise: the same read with --header and no -o does print the block.
+	_, table, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b", "--columns", "name,cpu", "--header")
+	if !strings.HasPrefix(table, "totals a   ") {
+		t.Errorf("fixture: --header on the table should print the block first:\n%s", table)
+	}
+}
+
+// A block wider than the terminal breaks between fields, each continuation
+// starting with the same lead, and no line passes the width.
+func TestFanOutTotalsBlockBreaksAtTheWidth(t *testing.T) {
+	withRateClock(t)
+	a := clusterRow("a", "a1", 10)
+	a.SpendOut, a.SpendFresh, a.SpendCacheRead, a.SpendCacheWrite, a.SpendPromptTokens = tokens(1_000_000), tokens(1_000_000), tokens(1_000_000), tokens(1_000_000), tokens(1_000_000)
+	const width = 60
+	out := fanOutTotalsBlock([]clusterRecord{answeredRecord("a")}, []api.Session{a}, columnsOrFatal(t, "name,cpu,rss,tout,tin,cr,cw,prompt", nil), rateNow, width)
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("the block should break onto more than one line at width %d:\n%s", width, out)
+	}
+	for _, l := range lines {
+		if len(l) > width || !strings.HasPrefix(l, "totals a   ") {
+			t.Errorf("line %q should be at most %d wide and start with its lead", l, width)
+		}
+	}
+	for _, want := range []string{"mCPU 100 (1)", "TOUT 1.0M (1)", "PROMPT 1.0M (1)"} {
+		if !strings.Contains(strings.Join(lines, "   "), want) {
+			t.Errorf("field %q should print whole:\n%s", want, out)
+		}
+	}
+}
+
+// The block follows the columns the fit drew, not the columns asked for: at 120
+// columns the default table shows TOUT and RATE but not mCPU, so the block has
+// no mCPU field; at 200 it has one.
+func TestFanOutTotalsFollowTheDrawnColumns(t *testing.T) {
+	a := sampled("a1", api.SessionRunning, 10, 1<<20)
+	a.SpendOut = tokens(1000)
+	f := startFake(t, fakeAnswers, []api.Session{a})
+	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock})
+	for _, c := range []struct {
+		width      int
+		wantMCPU   bool
+		wantFields string
+	}{{120, false, "TOUT 1k (1)"}, {200, true, "mCPU 100 (1)"}} {
+		setWidth(t, c.width)
+		_, out, _ := runFanGet(t, "get", "sessions", "--cluster", "a", "--header")
+		var block, table string
+		for _, l := range strings.Split(out, "\n") {
+			switch {
+			case strings.HasPrefix(l, "totals"):
+				block += l + "\n"
+			case strings.Contains(l, "AGENT NAME"):
+				table = l
+			}
+		}
+		if table == "" || block == "" {
+			t.Errorf("width %d: the block and the table should both print:\n%s", c.width, out)
+			continue
+		}
+		if has := strings.Contains(block, "mCPU "); has != c.wantMCPU || strings.Contains(table, "mCPU") != c.wantMCPU {
+			t.Errorf("width %d: mCPU in the table = %v, in the block = %v, want %v\ntable: %q\nblock: %q", c.width, strings.Contains(table, "mCPU"), has, c.wantMCPU, table, block)
+		}
+		if !strings.Contains(block, c.wantFields) {
+			t.Errorf("width %d: the block should carry %q:\n%s", c.width, c.wantFields, block)
+		}
+	}
+}
