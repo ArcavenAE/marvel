@@ -3990,7 +3990,9 @@ func renderSessionsPartsShown(sessions []api.Session, cols []sessionColumn, head
 		b.WriteString(composerGapLines(sessions, &tally))
 	}
 	b.WriteString(tally.line())
-	return header, res.table, b.String(), shownColumns(allCols, res.cols)
+	// The totals follow the columns the fit drew, which on the default view
+	// include opt-in columns the operator never listed (design section 2.1).
+	return header, res.table, b.String(), res.cols
 }
 
 // composerGapLines names each seat whose COMPOSER cell is unknown for a reason
