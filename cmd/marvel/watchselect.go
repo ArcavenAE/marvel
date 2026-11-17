@@ -223,7 +223,6 @@ func (ws *watchSort) sessionsViewTotals(sessions []api.Session, header string, f
 	if h > 0 {
 		top0 := ws.top
 		for pass := 0; pass < 2; pass++ {
-			ws.top = top0
 			fixed := strings.Count(used, "\n") + strings.Count(pre, "\n") + 1 + strings.Count(post, "\n")
 			if ws.status != "" {
 				fixed++

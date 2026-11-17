@@ -266,3 +266,19 @@ func TestTotalsOptionSlots(t *testing.T) {
 		t.Errorf("no options:\n got %q\nwant %q", got, want)
 	}
 }
+
+// The fan-out frame prints no totals line until its own ticket lands
+// (aae-orc-onecx), which inverts this assertion.
+func TestTotalsNotInTheFanOutFrameYet(t *testing.T) {
+	r := newFanRig(t, time.Hour, time.Hour, "a", "b")
+	r.waitStarted("a", 1)
+	r.waitStarted("b", 1)
+	r.answer("a", 1, "a-one")
+	r.answer("b", 1, "b-one")
+	f := r.frame("both clusters' rows", func(f string) bool {
+		return strings.Contains(f, "a-one") && strings.Contains(f, "b-one")
+	})
+	if len(totalsLines(f)) != 0 {
+		t.Errorf("the fan-out frame must not carry a totals line yet:\n%s", f)
+	}
+}
