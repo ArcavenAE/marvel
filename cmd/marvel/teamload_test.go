@@ -387,3 +387,26 @@ func TestTeamLoadAllTeamsNeedsTwoRows(t *testing.T) {
 		t.Errorf("fixture: two team rows should get the row")
 	}
 }
+
+// The rule is per field: a fresh team whose ACTIVE% alone is - (no measured
+// seat) still adds to SEATS and LIMITED, and counts as summed in the label.
+// Only a stale or never-observed row adds to no sum (design section 2.11).
+func TestTeamLoadAllTeamsDashInOneFieldDoesNotDropTheRow(t *testing.T) {
+	a, b := twoTeams()
+	idle := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct, r.Limited = "idle", 4, 3, 0, 0, 2
+	})
+	line := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a, b, idle))
+	if !strings.Contains(line, "10/14") {
+		t.Errorf("the idle team's seats (3 of 4) should be summed: 10/14:\n%s", line)
+	}
+	if fields := strings.Fields(line); len(fields) == 0 || fields[len(fields)-1] != "4" {
+		t.Errorf("the idle team's limited seats (2) should be summed: 4:\n%s", line)
+	}
+	if !strings.Contains(line, "66% (5 of 10)") {
+		t.Errorf("ACTIVE%% should stay the measured seats' mean over all running seats:\n%s", line)
+	}
+	if strings.Contains(line, "all teams (") {
+		t.Errorf("the idle team is fresh, so none was left out and the label has no count:\n%s", line)
+	}
+}
