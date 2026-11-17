@@ -643,7 +643,7 @@ type Bus struct {
 	Hub *Hub `yaml:"hub,omitempty"`
 	// HubMonitor is the loopback address of a hub's monitor, read by this
 	// cluster when it shares the hub's host (aae-orc-stqn9). HubExpectedLeafs
-	// names the clusters it expects the hub to list. Compile-only stub.
+	// names the clusters it expects the hub to list.
 	HubMonitor       string   `yaml:"hub_monitor,omitempty"`
 	HubExpectedLeafs []string `yaml:"hub_expected_leafs,omitempty"`
 	// GlobalRoles are the role names this cluster admits to the global tier,

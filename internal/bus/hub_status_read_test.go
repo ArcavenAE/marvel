@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -196,5 +197,78 @@ func TestPollHubReadsTheConfiguredAddressOnly(t *testing.T) {
 	s.pollHub()
 	if !reflect.DeepEqual(got, []string{"127.0.0.1:9"}) {
 		t.Errorf("pollHub read %v, want only the configured 127.0.0.1:9", got)
+	}
+}
+
+// A monitor that accepts the connection and never answers is not observed, and
+// the line names the timeout. The bound is shortened for the test.
+func TestPollHubTimeoutIsNotObserved(t *testing.T) {
+	old := hubReadTimeout
+	hubReadTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { hubReadTimeout = old })
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = c.Close() })
+		}
+	}()
+	s, m, _ := newTestSupervisor(t, "")
+	m.bus.HubMonitor = ln.Addr().String()
+	m.bus.HubExpectedLeafs = []string{"alpha"}
+	done := make(chan struct{})
+	go func() { s.pollHub(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pollHub was still waiting 5s after a 150ms bound, against a monitor that never answers")
+	}
+	all := strings.ToLower(strings.Join(s.Status().HubStatus, "\n"))
+	if !strings.Contains(all, "not observed") || !strings.Contains(all, "timed out") {
+		t.Errorf("a monitor that never answers did not read as not observed with a timeout:\n%s", all)
+	}
+}
+
+// A body past the cap is cut, so the leaf list it carries is not read.
+func TestPollHubBodyPastTheCapIsNotObserved(t *testing.T) {
+	old := hubBodyLimit
+	hubBodyLimit = 64
+	t.Cleanup(func() { hubBodyLimit = old })
+	s, m, _ := newTestSupervisor(t, "")
+	m.bus.HubMonitor = hubMonitor(t, `{"leafnodes":1,"pad":"`+strings.Repeat("x", 200)+`","leafs":[{"name":"alpha"}]}`)
+	m.bus.HubExpectedLeafs = []string{"alpha"}
+	s.pollHub()
+	all := strings.ToLower(strings.Join(s.Status().HubStatus, "\n"))
+	if !strings.Contains(all, "not observed") || strings.Contains(all, "present") {
+		t.Errorf("a body past the cap was read:\n%s", all)
+	}
+}
+
+// The window a reading stays observed for follows the supervisor's poll
+// interval, as the leaf window does.
+func TestHubWindowFollowsThePollInterval(t *testing.T) {
+	s, m, _ := newTestSupervisor(t, "")
+	at := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	now := at
+	s.now = func() time.Time { return now }
+	s.hubRead = func(string) ([]string, error) { return []string{"alpha"}, nil }
+	m.bus.HubMonitor = "127.0.0.1:9"
+	m.bus.HubExpectedLeafs = []string{"alpha"}
+	s.pollHub()
+	now = at.Add(25 * time.Second)
+	s.leafPoll = 10 * time.Second // window 30s: still observed
+	if all := strings.Join(s.Status().HubStatus, "\n"); strings.Contains(all, "not observed") {
+		t.Errorf("a 25s old reading with a 10s poll (30s window) read as stale:\n%s", all)
+	}
+	s.leafPoll = 5 * time.Second // window 15s: stale
+	if all := strings.Join(s.Status().HubStatus, "\n"); !strings.Contains(all, "not observed") {
+		t.Errorf("a 25s old reading with a 5s poll (15s window) was still observed:\n%s", all)
 	}
 }

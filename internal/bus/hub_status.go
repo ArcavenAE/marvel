@@ -18,13 +18,14 @@ import (
 // director's. A reading too old to trust, or one that failed, is "not
 // observed", never a finding.
 
-const (
-	// hubValidPolls is how many tick intervals a hub reading stays observed.
-	hubValidPolls = 3
-	// hubReadTimeout bounds one read of the hub monitor.
+// hubValidPolls is how many tick intervals a hub reading stays observed.
+const hubValidPolls = 3
+
+// hubReadTimeout bounds one read of the hub monitor, and hubBodyLimit the body
+// read from it. They are variables so a test can shorten them.
+var (
 	hubReadTimeout = 3 * time.Second
-	// hubBodyLimit bounds the body read from the monitor.
-	hubBodyLimit = 1 << 20
+	hubBodyLimit   = int64(1 << 20)
 )
 
 // HubReading is one read of a hub's loopback /leafz.
