@@ -237,4 +237,9 @@ func TestCheckStructureReadsABareBroker(t *testing.T) {
 	if st.Healthy() || st.Problems() == "" {
 		t.Errorf("bare broker reads healthy: %+v", st)
 	}
+	// The serving version is what /varz reports (aae-orc-ktts0), read from the
+	// running broker and not from the file.
+	if want := binaryVersion(ns); st.Version != want {
+		t.Errorf("serving version = %q, want %q from /varz", st.Version, want)
+	}
 }
