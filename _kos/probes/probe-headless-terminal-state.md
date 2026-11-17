@@ -2,7 +2,7 @@ Closed 2026-10-25: done (headless completion semantics decided)
 
 # Probe brief: what a headless role's terminal state means, and whether tmux can carry it
 
-**Status:** SP1, SP2 and SP5 answered (2026-09-12, finding-038; 2026-09-08,
+**Status:** COMPLETE 2026-09-12. SP1, SP2 and SP5 answered (2026-09-12, finding-038; 2026-09-08,
 finding-036). SP3 and SP4 were ruled by the operator in ADR-010 (completion
 target, state plus policy, no new kind) and the write path shipped under
 `aae-orc-bxeh`. Scheduled as bd `aae-orc-vsju`.

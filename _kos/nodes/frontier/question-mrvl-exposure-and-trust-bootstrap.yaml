@@ -154,6 +154,19 @@ content: |
   issues #239, #243) rather than a marvel session. Measurement only; no
   fix proposed and the trust-model and bus questions left to their
   owners.
+
+  HARVEST 2026-11-17 (finding-marvel-3gz5, read at main b7c1f891). A second
+  first-use failure mode, on macOS, was seen once on one machine after an OS
+  upgrade: a remote read failed with "no route to host" while `nc` and `ping`
+  to the same address succeeded. macOS attributes a command-line binary's LAN
+  connection to its responsible app, the terminal, and system binaries are
+  exempt, so the usual network checks pass while marvel fails and send the
+  diagnosis toward marvel or the peer. The admin guide's line that every LAN
+  connection from that terminal fails is contradicted by that evidence. The
+  finding marks as inferred that the upgrade reset the terminal's grant. It is
+  recorded here as a failure mode of remote first use that this node did not
+  list; the fix is documentation, not a change to the trust bootstrap.
+
 edges:
   - target: elem-mrvl-protocol-ssh
     type: supports
@@ -164,6 +177,10 @@ edges:
   - target: elem-data-directory-permissions
     type: supports
     note: "every mode in the documented ~/.marvel table verified against reality on a virgin host, including the 0600 private-key enforcement"
+  - target: finding-marvel-3gz5-macos-local-network-permission-blocks-remote-cluster
+    type: supports
+    note: "a first-use failure on macOS: the local network permission blocks marvel while system binaries are exempt"
+
 provenance:
   created_by: agent
   session: marvel-recon-243-mrvl-first-use-2026-08-25

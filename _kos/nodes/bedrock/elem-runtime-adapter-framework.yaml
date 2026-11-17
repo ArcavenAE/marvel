@@ -1,9 +1,10 @@
 id: elem-runtime-adapter-framework
 type: element
 confidence: bedrock
-title: "runtime adapter framework: six adapters behind one event vocabulary"
+title: "runtime adapter framework: seven adapters behind one event vocabulary"
 content: |
-  Six adapters in `internal/runtime/`, all registered in
+  Seven adapters in `internal/runtime/` (the table lists the six of the first
+  writing; goose is the seventh, see the note after it), all registered in
   `NewRegistry` (adapter.go), each carrying a different integration
   depth against the harness it launches:
 
@@ -16,12 +17,21 @@ content: |
   | **simulator** | load-test target. Injects the identity flags the simulator's heartbeat path requires; without them a simulator launched through the generic fallback never heartbeats and restart-loops under `restart_policy = always`. | no | no |
   | **generic** | minimal, and the registry fallback. Env vars only. Pane content is read on demand via `marvel capture`; `GenericScraper` (capture-pane history scrape with a per-session high-water mark) is written and unit-tested but not yet constructed anywhere in production code. | no | no |
 
+  Added after the table was written (harvest 2026-11-17, read at main
+  b7c1f891): **goose** is registered as a further adapter (`r.Register(&Goose{})`
+  in `NewRegistry`, `internal/runtime/goose.go`). Its headless launch was
+  refused until marvel#1253 added the watchdog wrapper and lifted the refusal,
+  and its design is `docs/design/goose-adapter-v1.1.md`. The registry now holds
+  seven named adapters in all (forestage, claude, codex, opencode, goose,
+  simulator, generic). The twelve-kind vocabulary and the rest of the text
+  below were not re-read for goose.
+
   Stream capability is `SupportsStream`, true only when
   `Runtime.Mode` is headless: an interactive harness renders a TUI to
   the pane and has no structured output to redirect. Projection is
   `ProjectionFor(ctx, dir).Supported`.
 
-  The shared contract behind all six is a **twelve-kind event
+  The shared contract behind the six in the table is a **twelve-kind event
   vocabulary** (session started/ended, turn started/completed, message
   delta/completed, tool call/result, permission requested, auth
   required, health heartbeat, error). It lives in two packages under

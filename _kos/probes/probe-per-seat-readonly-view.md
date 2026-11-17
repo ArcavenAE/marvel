@@ -5,7 +5,7 @@
 **Date opened:** 2026-10-06
 **Idea:** `_kos/ideas/per-seat-readonly-default-branch-view.md`, mechanism 2;
 bears on the orc question `question-slotefs-agent-filesystem-mediation`.
-**Status:** RUN 2026-10-06 on macOS. Result in
+**Status:** COMPLETE 2026-10-06, run on macOS. Result in
 `_kos/findings/finding-marvel-jj0s-per-seat-readonly-view.md`.
 
 Everything under "Pre-registration" was written before any rig exists. The

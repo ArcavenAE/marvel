@@ -75,6 +75,10 @@ edges:
   - target: question-permission-model
     type: supports
     note: "Tools-field projection is one input to the permission model marvel constructs at spawn"
+  - target: finding-marvel-0qdn-opencode-t1-probe
+    type: supports
+    note: "names how a director tool is named under a deny-everything rule as a question the opencode probe was to settle"
+
 provenance:
   created_by: human
   session: session-2026-09-17

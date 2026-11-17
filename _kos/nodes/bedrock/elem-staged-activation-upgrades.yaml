@@ -63,6 +63,17 @@ content: |
   (#485, #486, finding-061). The two-plane model stands; this node is
   unchanged except for this pointer.
 
+  HARVEST 2026-11-17 (read at main b7c1f891). The finding-062 sentence that
+  the direct path deletes the prior binary describes marvel at bc327df and is
+  behind the code. `internal/upgrade/store.go` now implements the version
+  store: the direct channel keeps the prior build under
+  `versions/<version>/marvel`, and a Homebrew keg or a mise install is recorded
+  where it is and never moved. So version-store layout, listed above as open,
+  has a shape in code. What is not built is the reading side: the file says
+  nothing reads the record yet, and names `upgrade --check` and the fallback to
+  the prior binary as its readers. The two-plane model itself is not
+  contradicted.
+
   RUNNING BUILD NOW REPORTED (marvel#500, #510, 2026-10-03). The daemon
   reports its build and `marvel version` shows it beside the client's,
   answering the gap finding-061 named. One possible trap shaped it: that

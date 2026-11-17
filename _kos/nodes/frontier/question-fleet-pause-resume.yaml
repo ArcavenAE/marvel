@@ -82,6 +82,19 @@ content: |
   shift reads the handoffs. Idea only; nothing is measured or built, and it
   changes none of the measurements or rulings above.
 
+  HARVEST 2026-11-17 (read at main b7c1f891, merged PR states checked). The
+  text above is behind the code in two places. Suspend is built in part:
+  `marvel suspend` and `marvel resume` (marvel#1262), the stand-down of the
+  limits and metrics passes with gated tmux calls (marvel#1264) and the shift of
+  the remaining timers by the length of the pause at resume (marvel#1265), in
+  `cmd/marvel/suspend.go`. Hibernate is no longer idea only: hibernate and wake
+  in handoff mode merged as marvel#1271, with the fix that a seat is ended only
+  on a handoff written after the request (marvel#1397), in
+  `cmd/marvel/hibernate.go`. The merge title of marvel#1271 says its verb names
+  are unruled. The checks listed "before any build" were not re-read against
+  those builds, and the three pause methods keep the supervisor's judgment, not
+  moved here.
+
 edges:
   - target: elem-tmux-session-substrate
     type: derives

@@ -59,6 +59,15 @@ content: |
     with the RD-4 warning (an apply-time warning for secret-looking Args).
   finding-060 is the earlier ruling that the control plane is not a redaction
   boundary for run output.
+
+  HARVEST 2026-11-17 (read at main b7c1f891). The redaction rulings above are
+  built: marvel#784 (redact secret-looking Env values on every response, RD-1)
+  and marvel#793 (the userinfo of URL-shaped Env values) are merged, so
+  "marvel#784 (open; not yet on main)" above is dated. The recommendation to
+  rescope aae-orc-zvrau was valid until 2026-10-22, which has passed, and it
+  was not re-checked here; the architect seat owes that re-check. What remains
+  is a work item, not a knowledge question.
+
 edges:
   - target: question-role-tools-field-projection
     type: derives

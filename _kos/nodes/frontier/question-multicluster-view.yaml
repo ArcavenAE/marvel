@@ -61,6 +61,17 @@ content: |
   The cap's value is not named and its basis is open with the operator.
   Whether the three OPEN items above are now answered is not read here.
 
+  HARVEST 2026-11-17 (read at main b7c1f891; issue states checked). The line
+  above that the three OPEN items are not read can now be answered in part. The
+  multi-cluster read is built for `get sessions`: `--cluster a,b` and
+  `--all-clusters` (marvel#830, closed), the merge of two config entries that
+  reach one daemon (marvel#831, closed), `get sessions -w` across clusters
+  (marvel#832, closed) and the request deadline (marvel#761, closed), with the
+  fan-out in `cmd/marvel/fanout.go`. Still open are `get teams` and `events`
+  across clusters (marvel#833) and a read-only permission level for
+  non-operator readers (marvel#834). Which of the three OPEN items above each
+  of these answers is not read here.
+
 edges:
   - target: question-multi-host
     type: derives

@@ -186,6 +186,14 @@ content: |
   placement) answers whether P1 works with no marvel code change and
   names what needs one. Whether marvel grows a container field on
   Runtime is decided after.
+
+  HARVEST 2026-11-17 (read at main b7c1f891). "Whether marvel grows a container
+  field" is no longer open: a workspace manifest carries a `placement` field
+  (localhost or container) and a container image that is required when
+  placement resolves to container (`internal/api/manifest.go`). The decision
+  was made and part of it built. The sub-questions listed open above, and P2,
+  were not re-read against that build.
+
 edges:
   - target: finding-051-container-in-pane-sessions
     type: supports

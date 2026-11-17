@@ -36,8 +36,10 @@ content: |
   with no cap, floor or gate.
 
   OPEN, the operator's three decisions in the design's section 8, none ruled
-  here: whether a spawn floor on low memory exists (the design recommends none
-  now, a reading in spawn events, and a decision after a week of readings; a floor
+  here (a later audit records two of the three as ruled; no document in this
+  repository carries those rulings, so they are not written here, see HARVEST
+  2026-11-17 below): whether a spawn floor on low memory exists (the design
+  recommends none now, a reading in spawn events, and a decision after a week of readings; a floor
   would follow the admission rules, operator-declared and never refusing repair);
   age recycling for every long-running interactive role, with the bound the
   operator sets; and recovering the busiest host's file-event daemon, which is
@@ -56,6 +58,18 @@ content: |
   capture counted 773 git processes in 60 s, which marvel's own code does not
   explain, so that rate is not attributed to marvel.
 
+  HARVEST 2026-11-17 (finding-marvel-2uv2, finding-marvel-vdni, read at main
+  b7c1f891). The fix named above merged as marvel#1228 on 2026-11-02, and the
+  after-fix record, finding-marvel-2uv2, reads that a quiet fleet now writes
+  almost nothing. The line "nothing is merged" above was true only before that
+  date. What the record does not hold is a re-measure on a live host: its host
+  traces were not reproduced, so the file-event growth cause stays unconfirmed.
+  The proposed host watch has a first piece on main: the host vitals sampler
+  (marvel#1298, `internal/hostvitals`), off unless the cluster turns it on,
+  which finding-marvel-vdni shapes as a read on a pass that already runs, not a
+  new loop with its own cost. The three decisions listed OPEN above are not
+  recorded as ruled in this repository.
+
 edges:
   - target: question-shift-triggers
     type: supports
@@ -69,6 +83,12 @@ edges:
   - target: finding-marvel-exy5-daemon-state-write-and-tmux-exec-rate
     type: supports
     note: "the measured write and exec rates; marvel's own footprint by the subject test"
+  - target: finding-marvel-2uv2-bolt-and-tmux-write-rate
+    type: supports
+    note: "the after-fix record of marvel's own write and exec rates: a quiet fleet writes almost nothing"
+  - target: finding-marvel-vdni-host-vitals-sampler
+    type: supports
+    note: "the host vitals sampler is a read on a pass that already runs, not a new loop"
 
 provenance:
   created_by: agent

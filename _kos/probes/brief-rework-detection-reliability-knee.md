@@ -1,6 +1,6 @@
 # Probe brief: rework as the degradation proxy for the reliability knee
 
-**Status:** RUN 2026-08-08. Result: `probe-rework-detection-result.md`.
+**Status:** COMPLETE 2026-08-08. Result: `probe-rework-detection-result.md`.
 Outcome: the pre-stated success signals were not met and one pre-stated
 failure signal fired. The knee is undecidable from this corpus. Three
 structural reasons, all measured, all new: 67 of 78 compaction boundaries

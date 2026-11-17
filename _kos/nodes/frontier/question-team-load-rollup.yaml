@@ -51,6 +51,15 @@ content: |
   depends on item 3, and item 7 on item 4.
 
   OPEN: D1.
+
+  HARVEST 2026-11-17 (read at main b7c1f891). The NOT RULED and OPEN lines on D1
+  above are behind the design: its status line records D1 and the stale-claim
+  guard ruled on 2026-10-15, as plain bucket now with signing in a later
+  release. That differs from the architect's re-checked recommendation of
+  signed records above, which the ruling did not take for now. The local
+  `get teams --load` is built (`cmd/marvel/teamload.go`); the cross-cluster
+  half is not read here.
+
 edges:
   - target: question-multi-host
     type: derives
