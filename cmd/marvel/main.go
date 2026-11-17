@@ -1338,11 +1338,11 @@ A row follows the sessions cells' three states: a value while fresh, ? once the
 daemon stopped computing it, - when it never did. A team with no seat that has a
 reading prints - for ACTIVE%, never 0%. With two or more teams a last row, all teams,
 sums the fresh team rows: SEATS and LIMITED are sums, and ACTIVE% is the mean over every
-measured seat, not a mean of the team means. Its (N of M) is the measured seats against
-the running seats of every fresh team, so a fresh team with no measured seat adds its
-running seats to M and nothing to the mean. A stale or never-observed team adds nothing,
-and the label then reads all teams (N of M), N teams summed of M shown. Diagnostic only:
-nothing gates on it.
+measured seat, not a mean of the team means. Its cell reads (measured of running): the
+measured seats against the running seats of every fresh team, so a fresh team with no
+measured seat adds its running seats and nothing to the mean. A stale or never-observed
+team adds nothing, and the label then counts the teams, as in all teams (2 of 4) for two
+fresh teams of four shown. Diagnostic only: nothing gates on it.
 
 -o json|yaml (get team, get workspace and get sessions) prints a document instead of
 the table. For get team and get workspace it is two labelled sections.
