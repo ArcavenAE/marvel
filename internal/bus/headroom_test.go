@@ -114,6 +114,9 @@ func storeLowEvents(ring *events.Ring) []events.Event {
 // restarts the broker.
 func TestHeadroomLowWarnsOncePerChangeAndNeverHoldsOrRestarts(t *testing.T) {
 	s, _, ring := newTestSupervisor(t, "")
+	// The test drives checkStructure by hand and counts its events, so the
+	// supervisor's own tick must not run it as well (marvel#1474).
+	s.leafPoll = time.Hour
 	// Set before Start, so the first tick reads the scripted headroom and not
 	// the free space of the machine the test runs on.
 	var mu sync.Mutex
