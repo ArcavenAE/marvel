@@ -25,7 +25,7 @@ func answeredRecord(name string) clusterRecord {
 func totalsBlockLines(t *testing.T, records []clusterRecord, rows []api.Session, cols string) []string {
 	t.Helper()
 	withRateClock(t)
-	out := fanOutTotalsBlock(records, rows, columnsOrFatal(t, cols, nil), rateNow, 0)
+	out := fanOutTotalsBlock(records, rows, columnsOrFatal(t, cols, nil), rateNow, 0, nil)
 	out = strings.TrimRight(out, "\n")
 	if out == "" {
 		return nil
@@ -131,6 +131,29 @@ func TestFanOutTotalsStartingLeaderMarksTheFoldedLine(t *testing.T) {
 	}
 }
 
+// A starting member folded into an answered leader marks the leader's line: the
+// fold overwrote the member's outcome, so the caller hands the block the names
+// of the clusters that were starting when they were folded.
+func TestFanOutTotalsStartingFoldedMemberMarksTheLeader(t *testing.T) {
+	withRateClock(t)
+	n := 1
+	records := []clusterRecord{
+		answeredRecord("a"),
+		{Cluster: "b", Outcome: outcomeSameDaemon, SameDaemonAs: "a", Sessions: &n},
+	}
+	rows := []api.Session{clusterRow("a", "a1", 10), clusterRow("b", "b-only", 5)}
+	want := "totals a (+ b, same daemon) (starting)   2 sessions   mCPU 150 (2)"
+	got := strings.TrimRight(fanOutTotalsBlock(records, rows, columnsOrFatal(t, "name,cpu", nil), rateNow, 0, map[string]bool{"b": true}), "\n")
+	if got != want {
+		t.Errorf("a starting folded member should mark the leader's line:\n got %q\nwant %q", got, want)
+	}
+	// The control: the same records with no starting member carry no mark.
+	got = strings.TrimRight(fanOutTotalsBlock(records, rows, columnsOrFatal(t, "name,cpu", nil), rateNow, 0, nil), "\n")
+	if strings.Contains(got, "(starting)") {
+		t.Errorf("no member was starting, so no mark:\n%q", got)
+	}
+}
+
 // Through the command: --header prints the block above the merged table, even
 // into a pipe; a plain pipe prints none; there is no grand total across
 // clusters.
@@ -197,7 +220,7 @@ func TestFanOutTotalsBlockBreaksAtTheWidth(t *testing.T) {
 	a := clusterRow("a", "a1", 10)
 	a.SpendOut, a.SpendFresh, a.SpendCacheRead, a.SpendCacheWrite, a.SpendPromptTokens = tokens(1_000_000), tokens(1_000_000), tokens(1_000_000), tokens(1_000_000), tokens(1_000_000)
 	const width = 60
-	out := fanOutTotalsBlock([]clusterRecord{answeredRecord("a")}, []api.Session{a}, columnsOrFatal(t, "name,cpu,rss,tout,tin,cr,cw,prompt", nil), rateNow, width)
+	out := fanOutTotalsBlock([]clusterRecord{answeredRecord("a")}, []api.Session{a}, columnsOrFatal(t, "name,cpu,rss,tout,tin,cr,cw,prompt", nil), rateNow, width, nil)
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if len(lines) < 2 {
 		t.Fatalf("the block should break onto more than one line at width %d:\n%s", width, out)

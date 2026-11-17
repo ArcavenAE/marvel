@@ -555,8 +555,11 @@ var keyArgCommands = map[string]int{
 
 // fanOutTotalsBlock is the block of totals lines a one-shot fan-out read prints
 // above the merged table, one per cluster whose rows the table shows, in the
-// order of the records (docs/design/cluster-rollup-header.md section 2.5). The
-// red commit holds this stub; the tests fail on its empty answer.
-func fanOutTotalsBlock(records []clusterRecord, rows []api.Session, shown []sessionColumn, now time.Time, width int) string {
+// order of the records (docs/design/cluster-rollup-header.md section 2.5).
+// startedFolded names the clusters that were starting when the fold merged them
+// into a leader: the fold overwrites a member's outcome, so the marker is kept
+// off clusterRecord (design section 2.9, the architect's choice b). The red
+// commit holds this stub; the tests fail on its empty answer.
+func fanOutTotalsBlock(records []clusterRecord, rows []api.Session, shown []sessionColumn, now time.Time, width int, startedFolded map[string]bool) string {
 	return ""
 }
