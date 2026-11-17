@@ -44,6 +44,10 @@ edges:
   - target: question-multi-host
     type: derives
     note: "the file channel rides the federated mrvl:// transport between hosts"
+  - target: finding-marvel-k1vd-cross-cluster-file-sharing-scope
+    type: supports
+    note: "scopes file sharing between clusters into classes A to E, of which marvel cp serves A"
+
 provenance:
   created_by: agent
   session: harvest-2026-11-02

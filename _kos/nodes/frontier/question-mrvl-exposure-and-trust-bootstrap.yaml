@@ -164,6 +164,10 @@ edges:
   - target: elem-data-directory-permissions
     type: supports
     note: "every mode in the documented ~/.marvel table verified against reality on a virgin host, including the 0600 private-key enforcement"
+  - target: finding-marvel-3gz5-macos-local-network-permission-blocks-remote-cluster
+    type: supports
+    note: "a first-use failure on macOS: the local network permission blocks marvel while system binaries are exempt"
+
 provenance:
   created_by: agent
   session: marvel-recon-243-mrvl-first-use-2026-08-25

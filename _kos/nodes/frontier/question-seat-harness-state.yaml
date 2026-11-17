@@ -60,6 +60,10 @@ edges:
     note: "What a seat may load and run is decided partly by the trust and settings state prepared here"
   - target: elem-runtime-adapter-framework
     type: derives
+  - target: finding-marvel-0qdn-opencode-t1-probe
+    type: supports
+    note: "the opencode launch-time half: a private home needs a provider entry or the seat hangs, and an ambient provider key chooses the model when none is configured"
+
 provenance:
   created_by: agent
   session: harvest-2026-10-03

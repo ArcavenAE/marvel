@@ -69,6 +69,12 @@ edges:
   - target: finding-marvel-exy5-daemon-state-write-and-tmux-exec-rate
     type: supports
     note: "the measured write and exec rates; marvel's own footprint by the subject test"
+  - target: finding-marvel-2uv2-bolt-and-tmux-write-rate
+    type: supports
+    note: "the after-fix record of marvel's own write and exec rates: a quiet fleet writes almost nothing"
+  - target: finding-marvel-vdni-host-vitals-sampler
+    type: supports
+    note: "the host vitals sampler is a read on a pass that already runs, not a new loop"
 
 provenance:
   created_by: agent
