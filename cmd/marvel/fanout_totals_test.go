@@ -33,9 +33,10 @@ func totalsBlockLines(t *testing.T, records []clusterRecord, rows []api.Session,
 	return strings.Split(out, "\n")
 }
 
-// Each cluster whose rows the table shows gets one line, from its own rows, in
-// the order of the status lines. A cluster that did not answer, and one that
-// answered with no rows, print none.
+// Each cluster that answered gets one line, from its own rows, in the order of
+// the status lines. An answered cluster with no sessions prints 0 sessions and
+// dashes, so it does not read as a cluster that did not answer; a cluster that
+// did not answer and shows no rows prints none (design section 2.9).
 func TestFanOutTotalsOneLinePerCluster(t *testing.T) {
 	records := []clusterRecord{
 		answeredRecord("a"),
@@ -52,6 +53,7 @@ func TestFanOutTotalsOneLinePerCluster(t *testing.T) {
 	want := []string{
 		"totals a   2 sessions   mCPU 250 (2)",
 		"totals b   1 session   mCPU 400 (1)",
+		"totals empty   0 sessions   mCPU -",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("block =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -88,6 +90,42 @@ func TestFanOutTotalsStartingMarked(t *testing.T) {
 		"totals a   1 session   mCPU 100 (1)",
 		"totals c (starting)   1 session   mCPU 200 (1)",
 	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("block =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// Several members folded into one leader read "(+ b, c, same daemon)", in the
+// order of the status lines, and each member's kept rows count once.
+func TestFanOutTotalsSeveralFoldedMembers(t *testing.T) {
+	n := 1
+	records := []clusterRecord{
+		answeredRecord("a"),
+		{Cluster: "b", Outcome: outcomeSameDaemon, SameDaemonAs: "a", Sessions: &n},
+		{Cluster: "c", Outcome: outcomeSameDaemon, SameDaemonAs: "a", Sessions: &n},
+	}
+	rows := []api.Session{
+		clusterRow("c", "c-only", 20),
+		clusterRow("a", "a1", 10),
+		clusterRow("b", "b-only", 5),
+	}
+	got := totalsBlockLines(t, records, rows, "name,cpu")
+	want := []string{"totals a (+ b, c, same daemon)   3 sessions   mCPU 350 (3)"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("block =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A starting leader marks the folded line as a lower bound, after the note.
+func TestFanOutTotalsStartingLeaderMarksTheFoldedLine(t *testing.T) {
+	n := 1
+	records := []clusterRecord{
+		{Cluster: "a", Outcome: outcomeStarting},
+		{Cluster: "b", Outcome: outcomeSameDaemon, SameDaemonAs: "a", Sessions: &n},
+	}
+	rows := []api.Session{clusterRow("a", "a1", 10), clusterRow("b", "b-only", 5)}
+	got := totalsBlockLines(t, records, rows, "name,cpu")
+	want := []string{"totals a (+ b, same daemon) (starting)   2 sessions   mCPU 150 (2)"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("block =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
