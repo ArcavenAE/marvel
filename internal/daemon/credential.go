@@ -106,9 +106,14 @@ type credentialRevealResult struct {
 // handleCredentialReveal returns a credential's secret value. It is the one
 // path that returns a value, and the daemon reaches it only for a local-socket
 // caller (dispatchAs gates credential.reveal to the local socket; brief 9 S3).
+// It answers only once the cluster entry sets allow_credential_reveal: true;
+// until then it refuses before it reads the request.
 // The reveal is recorded on the event ring and the log, naming the credential
 // and never the value.
 func (d *Daemon) handleCredentialReveal(params json.RawMessage, c caller) daemonrpc.Response {
+	if !d.revealAllowed.Load() {
+		return daemonrpc.Response{Error: errRevealNotEnabled}
+	}
 	var p credentialNameParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}

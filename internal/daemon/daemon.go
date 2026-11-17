@@ -127,6 +127,9 @@ type Daemon struct {
 	// without adopting: every tmux call waits for resume, and only the
 	// methods that answer while starting are served (SR-E).
 	suspendHeld atomic.Bool
+	// revealAllowed is whether credential.reveal is answered: off until the
+	// cluster's allow_credential_reveal switch is read at start.
+	revealAllowed atomic.Bool
 	// freezer stops and resumes recorded processes; nil means suspend.New().
 	freezer *suspend.Freezer
 	// suspendMu serializes suspend and resume. collectorFor builds the pid
@@ -710,6 +713,7 @@ func (d *Daemon) Start(socketPath string) (err error) {
 	// tmux posture.
 	d.loadScheduleHistoryMax(socketPath)
 	d.loadHostVitals(socketPath)
+	d.loadCredentialReveal(socketPath)
 	d.loadAccountWarn(socketPath)
 	d.identifyCluster(socketPath)
 	d.loadSuspendRecord(socketPath)

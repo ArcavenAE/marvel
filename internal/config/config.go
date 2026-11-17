@@ -319,6 +319,9 @@ type Cluster struct {
 	// swap and memory pressure read once a minute and reported, nothing acted
 	// on. Unset is off.
 	HostVitals bool `yaml:"host_vitals,omitempty"`
+	// AllowCredentialReveal lets the daemon answer credential.reveal on its
+	// local socket. Unset or false means reveal is refused.
+	AllowCredentialReveal bool `yaml:"allow_credential_reveal,omitempty"`
 	// AccountWarnPercent is the used percentage at which an account's
 	// rate-limit window reads as near its limit in get budgets and is reported
 	// once. Unset means DefaultAccountWarnPercent; 0 turns it off; 1 to 100 is

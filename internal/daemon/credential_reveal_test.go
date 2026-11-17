@@ -30,6 +30,7 @@ func seedLeaf(t *testing.T) *Daemon {
 
 func TestCredentialRevealOnLocalSocketReturnsValue(t *testing.T) {
 	d := seedLeaf(t)
+	d.revealAllowed.Store(true)
 
 	resp := d.dispatchAs(daemonrpc.Request{Method: "credential.reveal", Params: nameParams(t, revealName)}, localCaller())
 	if resp.Error != "" {
