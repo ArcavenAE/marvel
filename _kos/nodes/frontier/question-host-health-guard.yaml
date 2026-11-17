@@ -56,6 +56,18 @@ content: |
   capture counted 773 git processes in 60 s, which marvel's own code does not
   explain, so that rate is not attributed to marvel.
 
+  HARVEST 2026-11-17 (finding-marvel-2uv2, finding-marvel-vdni, read at main
+  b7c1f891). The fix named above merged as marvel#1228 on 2026-11-02, and the
+  after-fix record, finding-marvel-2uv2, reads that a quiet fleet now writes
+  almost nothing. The line "nothing is merged" above was true only before that
+  date. What the record does not hold is a re-measure on a live host: its host
+  traces were not reproduced, so the file-event growth cause stays unconfirmed.
+  The proposed host watch has a first piece on main: the host vitals sampler
+  (marvel#1298, `internal/hostvitals`), off unless the cluster turns it on,
+  which finding-marvel-vdni shapes as a read on a pass that already runs, not a
+  new loop with its own cost. The three decisions listed OPEN above are not
+  recorded as ruled in this repository.
+
 edges:
   - target: question-shift-triggers
     type: supports

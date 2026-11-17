@@ -16,8 +16,9 @@ content: |
   that time, because the next sweep's search window covered the gap; the
   items that closed inside it were still unobserved.
 
-  marvel today has no scheduled work. The Schedule resource (the CronJob
-  row in elem-k8s-resource-model) is model-only: no type, no code, no CLI.
+  As of 2026-09-27 marvel had no scheduled work; see HARVEST 2026-11-17 below
+  for what is built now. The Schedule resource (the CronJob row in
+  elem-k8s-resource-model) is model-only: no type, no code, no CLI.
 
   Open:
   - Does marvel own the clock (a declared schedule that delivers a cue to
@@ -26,7 +27,8 @@ content: |
     the cue to director?
   - What does a cue deliver into an interactive seat, given that a pane
     inject is not a dispatch channel (finding-040) and an interactive
-    seat takes no first prompt today (finding-055, marvel#391)?
+    seat takes no first prompt (finding-055, marvel#391; as of 2026-09-27, and
+  built for claude since, see HARVEST 2026-11-17)?
   - Where does "last ran" live so the alarm survives a daemon restart?
 
   An alarm alone would have surfaced the 19-hour gap. It is the smaller
@@ -59,10 +61,28 @@ content: |
   lost, so an exit-0 scheduled run can be recorded failed and spend a retry,
   or freeze the schedule under `on_failure = freeze`. Not fixed; tests follow
   the tmux version gate. See elem-tmux-session-substrate.
+  HARVEST 2026-11-17 (finding-marvel-36f7, read at main b7c1f891). The question
+  of whether marvel owns the clock is answered in part by the build, as 36f7
+  records: the headless schedule block is built through S-3 (marvel#650, above),
+  and declared cadence through T3 (marvel#1052 and the slot clock of
+  marvel#1071, which writes `open` or `skipped` records per due time). The
+  Schedule resource kind stays model-only by design. Not built: admission has no
+  schedule trigger, and a claude or codex headless run has no wall-clock kill,
+  since `active_deadline` is enforced only by the goose watchdog. On the second
+  open item, an interactive claude seat now takes a first message: runtime
+  prompt (marvel#1046), the apply-time advisory when none will happen
+  (marvel#1047), a successor's message naming its predecessor (marvel#1069) and
+  a record of which first prompt a spawn carried (marvel#1070). That is claude
+  only. The third open item, where "last ran" lives, is held in the per-slot
+  records above; whether it survives a daemon restart is not read here.
+
 edges:
   - target: question-agent-communication-broker
     type: derives
     note: "a cue into a seat is a message; the bus, not a keystroke, is its channel"
+  - target: finding-marvel-36f7-scheduled-work-two-customers
+    type: partially_resolves
+    note: "records the built schedule block and declared cadence, and what is not built"
 notes: |
   Source: harvest distribution manifest 2026-09-27, row 16.
   Related: elem-k8s-resource-model (Schedule, model-only), finding-040,
