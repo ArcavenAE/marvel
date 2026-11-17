@@ -51,8 +51,10 @@ func TestHubStatusNamesMissingExpectedLeafAsDiagnostic(t *testing.T) {
 	if _, ok := lineWith(lines, "partition"); ok {
 		t.Errorf("one leaf missing printed a partition line:\n%s", joined(lines))
 	}
-	if _, ok := lineWith(lines, "charlie"); ok && strings.Contains(strings.ToLower(joined(lines)), "charlie missing") {
-		t.Errorf("a present leaf was named missing:\n%s", joined(lines))
+	for _, l := range lines {
+		if strings.Contains(strings.ToLower(l), "missing") && (strings.Contains(l, "alpha") || strings.Contains(l, "charlie")) {
+			t.Errorf("a present leaf shares a line with \"missing\": %q", l)
+		}
 	}
 }
 
@@ -168,5 +170,45 @@ func TestHubStatusNoExpectedListMakesNoComparison(t *testing.T) {
 		if !strings.Contains(all, "not an alert") {
 			t.Errorf("%s: lines are not labelled \"not an alert\":\n%s", name, joined(lines))
 		}
+	}
+}
+
+// One remote leaf expected and absent, the local one present, is the partition
+// case too. Only the local leaf expected has no remote to miss, so it is not.
+func TestHubStatusPartitionNeedsAtLeastOneRemoteLeaf(t *testing.T) {
+	t.Parallel()
+	one := HubStatusLines(HubReading{ObservedAt: hubNow.Add(-time.Second), Leafs: []string{"alpha"}},
+		[]string{"alpha", "bravo"}, "alpha", hubNow, hubValid)
+	if _, ok := lineWith(one, "partition"); !ok {
+		t.Errorf("one remote leaf missing, the local present: no partition line:\n%s", joined(one))
+	}
+	local := HubStatusLines(HubReading{ObservedAt: hubNow.Add(-time.Second), Leafs: []string{"alpha"}},
+		[]string{"alpha"}, "alpha", hubNow, hubValid)
+	if _, ok := lineWith(local, "partition"); ok {
+		t.Errorf("only the local leaf expected, a partition line printed:\n%s", joined(local))
+	}
+}
+
+// A reading stamped after now (clock skew) is observed, not stale.
+func TestHubStatusReadingFromTheFutureIsNotStale(t *testing.T) {
+	t.Parallel()
+	lines := HubStatusLines(HubReading{ObservedAt: hubNow.Add(3 * time.Second), Leafs: []string{"alpha"}},
+		[]string{"alpha"}, "alpha", hubNow, hubValid)
+	if strings.Contains(strings.ToLower(joined(lines)), "not observed") {
+		t.Errorf("a reading a few seconds ahead of now read as not observed:\n%s", joined(lines))
+	}
+}
+
+// A leaf the hub lists that nobody expected is named, and is not missing.
+func TestHubStatusNamesAnUnexpectedLeaf(t *testing.T) {
+	t.Parallel()
+	lines := HubStatusLines(HubReading{ObservedAt: hubNow.Add(-time.Second), Leafs: []string{"alpha", "zulu"}},
+		[]string{"alpha"}, "alpha", hubNow, hubValid)
+	l, ok := lineWith(lines, "zulu")
+	if !ok || !strings.Contains(strings.ToLower(l), "unexpected") {
+		t.Errorf("an unexpected leaf is not named as such:\n%s", joined(lines))
+	}
+	if ok && strings.Contains(strings.ToLower(l), "missing") {
+		t.Errorf("an unexpected leaf was named missing: %q", l)
 	}
 }
