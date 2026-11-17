@@ -1283,25 +1283,31 @@ keeps its last reading across a restart.
 
 For a seat with a statusline feed, ACTIVE% is provisional: the share of the last 15
 minutes the seat spent waiting on model responses (API time), read from the same
-stored totals as TOUT and RATE. Tool runs count as inactive, so a busy seat can read
+statusline totals as COST. Tool runs count as inactive, so a busy seat can read
 low and a seat in a long build near 0%. The definition is still being developed. It
 is a - until 15 minutes of samples exist (including the first 15 minutes after the
 total drops), and a ? once the feed has been silent past the window or went silent
-for over three minutes inside it, as RATE does. Every other seat keeps the tick
+for over three minutes inside it, as cost_rate does. Every other seat keeps the tick
 reading above, and --load averages whatever each seat shows.
 
-TOUT and RATE fill from the token stream of a headless seat. An interactive seat has
-no such stream, so both show a - for it, with two exceptions. An interactive codex seat
-fills TOUT from the output total in its rollout, and RATE stays a -. An interactive
-claude seat with a statusline feed shows Claude Code's own running cost total as TOUT
-(~$4.12) and its change per minute over the quiet window as RATE (~$0.11/m). The ~ marks
-an estimate: it is the harness's list-price figure, not a bill, and under a subscription it
-measures usage, not money. RATE shows a - until a full window of readings exists, which
-includes the first window after the total drops (a restart, /clear or a new session starts
-a fresh baseline), a ? once the feed has been silent past the window or while a silence of over three minutes (a stopped seat, a daemon restart) is inside it, and never a negative
-figure. A seat with a token stream keeps its token cells, so one seat never shows both
-units, and sorting by RATE orders token rates only (a dollar rate sorts below them). That is
-the expected shape, not a broken feed.
+TOUT is output tokens, and RATE is output tokens a second. Both fill from the token
+stream of a headless seat. An interactive claude seat fills TOUT from the output
+tokens in its transcript (the main file only; subagent transcripts are not counted),
+and RATE stays a -. An interactive codex seat fills TOUT from the output total in
+its rollout, and RATE stays a -. A seat with neither shows a - in both. A trailing +
+on TOUT marks a lower bound: the sum began partway through the session, or the
+reader lost its place (the file shrank or was replaced). Sorting by RATE orders the
+seats that have a number; a seat showing - or ? sorts below them.
+
+Dollars are not in TOUT or RATE. COST (opt-in, --columns cost) is Claude Code's own
+running cost total for a seat with a statusline feed, as ~$4.12, or a - when the
+feed never carried one. The ~ marks an estimate: it is the harness's list-price
+figure, not a bill, and under a subscription it measures usage, not money. The
+per-minute change in that total has no column; marvel describe session carries it
+as cost_rate (~$0.11/m). It shows a - until a full quiet window of readings exists,
+which includes the first window after the total drops (a restart, /clear or a new
+session starts a fresh baseline), a ? once the feed has been silent past the window
+or while a silence of over three minutes is inside it, and never a negative figure.
 
 A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat reported
 it, which is weaker than token flow: * reported by statusline or heartbeat,
