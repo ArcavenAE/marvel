@@ -3213,6 +3213,7 @@ func printBusStatus(w io.Writer, st bus.Status) {
 	if st.Version != "" {
 		_, _ = fmt.Fprintf(w, "version:  %s\n", st.Version)
 	}
+	printBusBinary(w, st)
 	if st.Seat != "" {
 		_, _ = fmt.Fprintf(w, "seat:     %s (user director, password at %s)\n", st.Seat, st.SeatPassFile)
 	}
@@ -4249,3 +4250,43 @@ func paneCell(s api.Session) string {
 func isUnwatched(state string) bool {
 	return state == api.HarnessStateUncovered || state == api.HarnessStateControlFailed
 }
+
+// printBusBinary renders the binary rows of bus status (aae-orc-ktts0): the
+// path the supervisor execs and how it was chosen, where that path points,
+// whether it is still there, and the version the running broker reports. A
+// serving version that differs from the file on disk is named, as a
+// diagnostic only.
+func printBusBinary(w io.Writer, st bus.Status) {
+	if st.Binary == "" {
+		return
+	}
+	how := "looked up on PATH"
+	if st.BinaryConfigured {
+		how = "bus.binary"
+	}
+	_, _ = fmt.Fprintf(w, "binary:   %s (%s)\n", st.Binary, how)
+	if st.BinaryRealpath != "" {
+		_, _ = fmt.Fprintf(w, "realpath: %s\n", st.BinaryRealpath)
+	}
+	exists := "no"
+	if st.BinaryExists {
+		exists = "yes"
+	}
+	_, _ = fmt.Fprintf(w, "exists:   %s\n", exists)
+	if st.ServingVersion == "" {
+		return
+	}
+	if knownVersion(st.Version) && knownVersion(st.ServingVersion) && versionForm(st.ServingVersion) != versionForm(st.Version) {
+		_, _ = fmt.Fprintf(w, "serving:  %s (differs from the binary on disk, %s; diagnostic only)\n", st.ServingVersion, st.Version)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "serving:  %s\n", st.ServingVersion)
+}
+
+// knownVersion is true for a version reading that names a version: neither
+// empty nor the "unknown" a failed read gives.
+func knownVersion(v string) bool { return v != "" && v != "unknown" }
+
+// versionForm puts a version in the "v" form nats-server --version prints, so
+// "2.14.6" and "v2.14.6" compare equal.
+func versionForm(v string) string { return "v" + strings.TrimPrefix(v, "v") }

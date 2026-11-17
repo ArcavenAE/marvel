@@ -35,6 +35,10 @@ type Structure struct {
 	// predicate only once the client listener is rendered with TLS
 	// (aae-orc-5yqw3). Until then false is the interim posture, not a miss.
 	TLS bool `json:"tls"`
+	// Version is what the running broker reports as /varz version, empty when
+	// the reading carries none. It is read for bus status and never enters
+	// Healthy or Problems (aae-orc-ktts0).
+	Version string `json:"version,omitempty"`
 }
 
 // Provisioned is true when every declared service-scope object exists.
@@ -112,12 +116,18 @@ func CheckStructure(ctx context.Context, url, user, password, monitorAddr string
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var varz struct {
-		AuthRequired bool `json:"auth_required"`
-		TLSRequired  bool `json:"tls_required"`
+		AuthRequired bool   `json:"auth_required"`
+		TLSRequired  bool   `json:"tls_required"`
+		Version      string `json:"version"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&varz); err != nil {
 		return st, fmt.Errorf("decode /varz: %w", err)
 	}
 	st.Authorized, st.TLS = varz.AuthRequired, varz.TLSRequired
+	// /varz reports "2.14.6" where `nats-server --version` prints "v2.14.6";
+	// both are kept in the v form so an unchanged binary never reads as skew.
+	if varz.Version != "" {
+		st.Version = "v" + strings.TrimPrefix(varz.Version, "v")
+	}
 	return st, nil
 }

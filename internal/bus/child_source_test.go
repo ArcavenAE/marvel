@@ -32,12 +32,12 @@ var childStartFuncs = map[string]bool{
 }
 
 // allowedChildStarts are the child starts a non-test file in this package may
-// have, each as "<enclosing func> <function>": binaryVersion's one
-// `<bin> --version` run, which reads the version token and never serves. The
+// have, each as "<enclosing func> <function>": binaryVersionWithin's one
+// `<bin> --version` run (binaryVersion calls it with no bound), which reads the version token and never serves. The
 // broker itself starts through workload.Process.
 var allowedChildStarts = []string{
-	"binaryVersion os/exec.Command",
-	"binaryVersion (*os/exec.Cmd).Output",
+	"binaryVersionWithin os/exec.CommandContext",
+	"binaryVersionWithin (*os/exec.Cmd).Output",
 }
 
 // childStarts returns "<enclosing func> <function>" for every use of a
@@ -86,7 +86,7 @@ func childStarts(fset *token.FileSet, files []*ast.File, info *types.Info) map[s
 
 // The broker is a managed child of workload.Process, which holds the one spawn
 // path and its allowlisted environment (aae-orc-oo62t). No non-test file in
-// this package starts a child except binaryVersion's `--version` run.
+// this package starts a child except binaryVersionWithin's `--version` run.
 func TestBusStartsNoChildExceptTheVersionProbe(t *testing.T) {
 	paths, err := filepath.Glob("*.go")
 	if err != nil {
