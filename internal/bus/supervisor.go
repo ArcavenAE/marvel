@@ -178,6 +178,20 @@ type Status struct {
 	// whose PATH disagrees with the mise pin is visible here rather than
 	// discovered at an upgrade.
 	Version string `json:"version,omitempty"`
+	// Binary is the path the supervisor execs: the bus.binary path, or the
+	// PATH lookup's result. BinaryConfigured says which. BinaryRealpath is
+	// where that path points now, empty when it points nowhere, and
+	// BinaryExists is read at the time of the status, so a keg removed by a
+	// cleanup shows by name (aae-orc-ktts0).
+	Binary           string `json:"binary,omitempty"`
+	BinaryConfigured bool   `json:"binary_configured"`
+	BinaryRealpath   string `json:"binary_realpath,omitempty"`
+	BinaryExists     bool   `json:"binary_exists"`
+	// ServingVersion is the version the running broker reports on /varz,
+	// from the structural reading. Empty until one exists. It can differ
+	// from Version when the file on disk changed under a running broker;
+	// that skew is a diagnostic and never changes ready.
+	ServingVersion string `json:"serving_version,omitempty"`
 	// Pidfile is what the bus pidfile proved at the last start: proven, stale
 	// (removed, nothing signalled), legacy (no identity record) or none.
 	Pidfile string `json:"pidfile,omitempty"`
@@ -982,11 +996,18 @@ func (s *Supervisor) Status() Status {
 	st := Status{
 		Managed: true, Listen: s.mgr.bus.Listen, URL: s.mgr.bus.URL, Domain: s.mgr.Domain(),
 		Class: s.mgr.bus.Class, Provider: s.mgr.bus.Provider, Mode: string(s.mgr.bus.Mode), CallerIdentity: s.mgr.bus.CallerIdentity,
-		Version:  s.version,
+		Version: s.version,
+		Binary:  s.binary, BinaryConfigured: s.mgr.bus.Binary != "",
 		ConfPath: s.mgr.ConfPath(), PID: snap.Pid, Adopted: snap.Adopted, Ready: s.readyLocked(snap), Restarts: snap.Restarts,
 		Pidfile: pidState, WriteFailed: s.writeFailed, WriteSkipped: s.writeSkipped, HeadroomLow: s.headroomLow,
 	}
+	if real, err := filepath.EvalSymlinks(s.binary); err == nil {
+		if fi, err := os.Stat(real); err == nil && !fi.IsDir() {
+			st.BinaryRealpath, st.BinaryExists = real, true
+		}
+	}
 	if s.structureKnown {
+		st.ServingVersion = s.structure.Version
 		st.Structure = &StructureStatus{
 			Provisioned: s.structure.Provisioned(), Authorized: s.structure.Authorized, TLS: s.structure.TLS,
 			Missing: append([]string(nil), s.structure.Missing...),
