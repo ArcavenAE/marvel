@@ -3858,7 +3858,7 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 		if len(ws.lastSessions) > 0 {
 			fmt.Fprintf(&buf, "last known state:\n")
 			sortSessions(ws.lastSessions, ws)
-			buf.WriteString(ws.sessionsViewTotals(ws.lastSessions, "", fit, buf.String(), ws.showHeader, ws.asOf))
+			buf.WriteString(ws.sessionsViewTotals(ws.lastSessions, "", fit, buf.String(), ws.singleTotals(ws.lastSessions, fit.width, ws.asOf)))
 		}
 		ws.writeStatus(&buf)
 		return buf.String()
@@ -3869,7 +3869,7 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 	if ws.late {
 		heldAsOf = ws.asOf
 	}
-	buf.WriteString(ws.sessionsViewTotals(ws.lastSessions, header, fit, buf.String(), ws.showHeader, heldAsOf))
+	buf.WriteString(ws.sessionsViewTotals(ws.lastSessions, header, fit, buf.String(), ws.singleTotals(ws.lastSessions, fit.width, heldAsOf)))
 	ws.writeStatus(&buf)
 	return buf.String()
 }

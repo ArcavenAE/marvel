@@ -41,7 +41,19 @@ type fanRig struct {
 
 func newFanRig(t *testing.T, stale, timeout time.Duration, names ...string) *fanRig {
 	t.Helper()
-	setWidth(t, 200)
+	var clusters []fanWatchCluster
+	for _, n := range names {
+		clusters = append(clusters, fanWatchCluster{name: n})
+	}
+	return newFanRigWith(t, 200, 0, stale, timeout, clusters)
+}
+
+// newFanRigWith is newFanRig with the terminal's width and height, and the
+// clusters themselves, so a test can name a repeat address; each option
+// edits the config before the loop starts.
+func newFanRigWith(t *testing.T, width, height int, stale, timeout time.Duration, clusters []fanWatchCluster, opts ...func(*fanWatchConfig)) *fanRig {
+	t.Helper()
+	setWidth(t, width)
 	r := &fanRig{
 		t:       t,
 		keys:    make(chan byte, 4),
@@ -54,15 +66,12 @@ func newFanRig(t *testing.T, stale, timeout time.Duration, names ...string) *fan
 		clock:   watchT0,
 		seen:    map[fanKey]bool{},
 	}
-	var clusters []fanWatchCluster
-	for _, n := range names {
-		clusters = append(clusters, fanWatchCluster{name: n})
-	}
 	cols, _, err := loadSessionColumnsSel("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ws := newWatchState(cols)
+	ws.height = height
 	cfg := fanWatchConfig{
 		clusters: clusters,
 		interval: 2 * time.Second,
@@ -91,6 +100,9 @@ func newFanRig(t *testing.T, stale, timeout time.Duration, names ...string) *fan
 			default:
 			}
 		},
+	}
+	for _, o := range opts {
+		o(&cfg)
 	}
 	go func() { fanWatchLoop(ws, cfg, r.keys, r.ticks); close(r.done) }()
 	t.Cleanup(func() {

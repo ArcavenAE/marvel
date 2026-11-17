@@ -291,7 +291,7 @@ func renderFanFrame(ws *watchSort, cfg fanWatchConfig, states []*fanState, now t
 			}
 		}
 	}
-	foldSameDaemon(keys, stamps, oks, records, rowSets)
+	startedFolded := foldSameDaemon(keys, stamps, oks, records, rowSets)
 	index := map[string]int{}
 	for i, s := range states {
 		index[s.name] = i
@@ -319,7 +319,26 @@ func renderFanFrame(ws *watchSort, cfg fanWatchConfig, states []*fanState, now t
 		noTrunc:  ws.noTrunc,
 		lead:     fanOutLead(ws.explicit),
 	}
-	buf.WriteString(ws.sessionsView(ws.lastSessions, "", fit, buf.String()))
+	// A cluster that failed or is late shows the rows of its last good read, and
+	// its line says when that was.
+	held := map[string]time.Time{}
+	for _, s := range states {
+		if s.repeatOf == "" && s.have && (s.failed || s.late) {
+			held[s.name] = s.asOf
+		}
+	}
+	// A repeat address is not polled and its rows are skipped, so it has no line
+	// and is not named as a member of one.
+	var polled []clusterRecord
+	for i, s := range states {
+		if s.repeatOf == "" {
+			polled = append(polled, records[i])
+		}
+	}
+	block := func(shown []sessionColumn, cut bool) string {
+		return fanTotalsBlock(polled, ws.lastSessions, shown, rateClock(), fit.width, startedFolded, held, cut)
+	}
+	buf.WriteString(ws.sessionsViewTotals(ws.lastSessions, "", fit, buf.String(), block))
 	ws.writeStatus(&buf)
 	return buf.String()
 }

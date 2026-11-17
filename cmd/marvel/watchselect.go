@@ -175,34 +175,49 @@ func (ws *watchSort) headerTarget(string) (attachTarget, error) {
 	return attachTarget{Socket: h.Status.TmuxSocket, Remote: remote, Host: host}, nil
 }
 
-// sessionsView is renderSessionsView for the watch screen: the selected row is
-// marked, and when the screen has a height the table is cut to the rows that
-// fit, scrolled only as far as keeps the selected row on screen. used is the
-// frame so far, whose lines count against the height.
-func (ws *watchSort) sessionsView(sessions []api.Session, header string, fit fitOptions, used string) string {
-	return ws.sessionsViewTotals(sessions, header, fit, used, false, time.Time{})
+// totalsBuilder draws the totals lines for the columns the fit drew. cut says
+// the table is cut, so each line ends with the count of the rows it covers
+// (design section 2.8). The text is whole lines, each ending in a newline.
+type totalsBuilder func(shown []sessionColumn, cut bool) string
+
+// singleTotals is the builder of the one totals line of a single-cluster frame,
+// held rows carrying the time they were read. It is nil when the screen shows no
+// header, which is where the line lives.
+func (ws *watchSort) singleTotals(sessions []api.Session, width int, asOf time.Time) totalsBuilder {
+	if !ws.showHeader {
+		return nil
+	}
+	return func(shown []sessionColumn, cut bool) string {
+		covered := 0
+		if cut {
+			covered = len(sessions)
+		}
+		return wrapTotals(renderTotals(sessions, shown, rateClock(), totalsOpts{asOf: asOf, covered: covered}), width)
+	}
 }
 
-// sessionsViewTotals is sessionsView that can carry the totals line, which
-// counts against the height with the rest of the header. The totals cover every
-// row, so a cut table says so on the line; the line is built first without that
-// suffix, and rebuilt with it when the table is cut, so the line counted in the
-// budget is the line drawn (design section 2.8). asOf stamps rows held from an
-// earlier read.
-func (ws *watchSort) sessionsViewTotals(sessions []api.Session, header string, fit fitOptions, used string, totals bool, asOf time.Time) string {
+// sessionsViewTotals is renderSessionsView for the watch screen: the selected
+// row is marked, and when the screen has a height the table is cut to the rows
+// that fit, scrolled only as far as keeps the selected row on screen. used is
+// the frame so far, whose lines count against the height. It can carry the
+// totals lines, which count against the height with the rest of the header. The totals cover every
+// row, so a cut table says so on the lines; they are built first without that
+// suffix, and rebuilt with it when the table is cut, so what is counted in the
+// budget is what is drawn (design section 2.8). A nil build carries none.
+func (ws *watchSort) sessionsViewTotals(sessions []api.Session, header string, fit fitOptions, used string, build totalsBuilder) string {
 	pre, table, post, shown := renderSessionsPartsShown(sessions, ws.columns, header, fit)
 	basePre := pre
-	withLine := func(covered int) string {
-		if !totals {
+	withLine := func(cut bool) string {
+		if build == nil {
 			return basePre
 		}
-		line := wrapTotals(renderTotals(sessions, shown, rateClock(), totalsOpts{asOf: asOf, covered: covered}), fit.width)
+		line := build(shown, cut)
 		if header != "" {
 			return strings.TrimRight(basePre, "\n") + "\n" + line + "\n"
 		}
 		return line + basePre
 	}
-	pre = withLine(0)
+	pre = withLine(false)
 	lines := strings.Split(strings.TrimSuffix(table, "\n"), "\n")
 	if len(lines) != len(sessions)+1 {
 		return pre + table + post // not one line a row; draw it as it is
@@ -245,10 +260,10 @@ func (ws *watchSort) sessionsViewTotals(sessions []api.Session, header string, f
 			top = max(min(top, len(rows)-budget), 0)
 			ws.top = top
 			lo, hi = top, min(top+budget, len(rows))
-			if !cut || !totals || pass == 1 {
+			if !cut || build == nil || pass == 1 {
 				break
 			}
-			pre = withLine(len(sessions)) // the suffix only adds height: count it and decide again
+			pre = withLine(true) // the suffix only adds height: count it and decide again
 		}
 	}
 

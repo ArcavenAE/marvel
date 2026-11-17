@@ -333,3 +333,31 @@ func TestCollectFanOutNamesAStartingMergedMember(t *testing.T) {
 		t.Errorf("b = %+v, started = %v, want a merged member named as starting", records[1], started)
 	}
 }
+
+// A starting folded member marks only the leader it was folded into, not every
+// line in the block.
+func TestFanOutTotalsStartingMemberMarksOnlyItsOwnLeader(t *testing.T) {
+	n := 1
+	records := []clusterRecord{
+		answeredRecord("a"),
+		{Cluster: "b", Outcome: outcomeSameDaemon, SameDaemonAs: "a", Sessions: &n},
+		answeredRecord("c"),
+		{Cluster: "d", Outcome: outcomeSameDaemon, SameDaemonAs: "c", Sessions: &n},
+	}
+	rows := []api.Session{
+		clusterRow("a", "a1", 10), clusterRow("b", "b-only", 5),
+		clusterRow("c", "c1", 20), clusterRow("d", "d-only", 5),
+	}
+	withRateClock(t)
+	out := fanOutTotalsBlock(records, rows, columnsOrFatal(t, "name,cpu", nil), rateNow, 0, map[string]bool{"b": true})
+	got := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(got) != 2 {
+		t.Fatalf("want one line per leader, got %d:\n%s", len(got), strings.Join(got, "\n"))
+	}
+	if !strings.HasPrefix(got[0], "totals a (+ b, same daemon) (starting)   2 sessions") {
+		t.Errorf("a's line should carry the mark from its starting member b:\n%s", got[0])
+	}
+	if strings.Contains(got[1], "(starting)") {
+		t.Errorf("c's line must not carry a mark from a member of another leader:\n%s", got[1])
+	}
+}
