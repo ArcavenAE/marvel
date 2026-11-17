@@ -908,6 +908,16 @@ func ValidateBus(cluster string, b *Bus) error {
 			errs = append(errs, fmt.Errorf("%w: cluster %q: hub.ca_file %q must be an absolute path (or ~-relative); the broker resolves it, not the daemon", ErrInvalidBus, cluster, b.Hub.CAFile))
 		}
 	}
+	if b.HubMonitor != "" {
+		if err := checkHubMonitor(b.HubMonitor); err != nil {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: hub_monitor: %v", ErrInvalidBus, cluster, err))
+		}
+	}
+	for _, name := range b.HubExpectedLeafs {
+		if err := validSubjectToken("hub_expected_leafs entry", name); err != nil {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: hub_expected_leafs: %v", ErrInvalidBus, cluster, err))
+		}
+	}
 	for _, name := range b.GlobalRoles {
 		if err := validSubjectToken("global_roles entry", name); err != nil {
 			errs = append(errs, fmt.Errorf("%w: cluster %q: %v", ErrInvalidBus, cluster, err))
@@ -1003,6 +1013,8 @@ func (b *Bus) Resolve(stateDir string) ResolvedBus {
 	// Resolve does not validate: a value ValidateBus refuses resolves to no
 	// cap rather than to a guess.
 	r.Binary = b.Binary
+	r.HubMonitor = b.HubMonitor
+	r.HubExpectedLeafs = append([]string(nil), b.HubExpectedLeafs...)
 	r.MaxFileStore, _ = ParseStoreSize(b.MaxFileStore)
 	r.MaxMemoryStore, _ = ParseStoreSize(b.MaxMemoryStore)
 	if r.Class == "" {
@@ -1362,4 +1374,25 @@ func CheckBusBinary(path string) error {
 		}
 	}
 	return nil
+}
+
+// checkHubMonitor accepts a loopback host:port: the hub's monitor takes no
+// credential and is read only from the hub's own host, so a host name other
+// than localhost, a LAN address, a URL or a bad port is refused.
+func checkHubMonitor(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("%q is not a host:port", addr)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("%q: port %q is out of range 1..65535", addr, port)
+	}
+	if host == "localhost" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("%q is not a loopback address; the monitor is read from the hub's own host", addr)
 }

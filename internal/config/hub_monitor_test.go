@@ -53,3 +53,37 @@ func TestHubMonitorMustBeALoopbackHostPort(t *testing.T) {
 		}
 	}
 }
+
+// Each expected leaf is a cluster name, so an empty entry or one with a space
+// is refused; an absent list and an empty list both resolve to no entries.
+func TestHubExpectedLeafsEntriesAreClusterNames(t *testing.T) {
+	t.Parallel()
+	for name, list := range map[string][]string{"empty entry": {"alpha", ""}, "a space": {"alpha bravo"}, "a dot": {"alpha.bravo"}} {
+		if err := ValidateBus("alpha", &Bus{Managed: true, Listen: "127.0.0.1:4222", HubExpectedLeafs: list}); err == nil {
+			t.Errorf("%s: %q was accepted", name, list)
+		}
+	}
+	for name, b := range map[string]*Bus{
+		"absent": {Managed: true, Listen: "127.0.0.1:4222"},
+		"empty":  {Managed: true, Listen: "127.0.0.1:4222", HubExpectedLeafs: []string{}},
+	} {
+		if got := b.Resolve("/state").HubExpectedLeafs; len(got) != 0 {
+			t.Errorf("%s: resolved to %v, want none", name, got)
+		}
+	}
+}
+
+// 127.0.0.2 is loopback; the port edges are 1 and 65535.
+func TestHubMonitorLoopbackAndPortEdges(t *testing.T) {
+	t.Parallel()
+	for _, ok := range []string{"127.0.0.2:1", "127.0.0.1:65535"} {
+		if err := ValidateBus("alpha", &Bus{Managed: true, Listen: "127.0.0.1:4222", HubMonitor: ok}); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"127.0.0.1:0", "127.0.0.1:65536"} {
+		if err := ValidateBus("alpha", &Bus{Managed: true, Listen: "127.0.0.1:4222", HubMonitor: bad}); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
