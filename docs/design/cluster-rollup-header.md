@@ -116,6 +116,16 @@ Answers to the builder's questions on T2 (aae-orc-g5gil), 2026-11-17.
 - **Slot order.** `totals`, then the cluster label (T3), then the same-daemon note, then `(starting)`, then `(as of HH:MM:SS)`, then the fields. `totalsOpts` carries the as-of time and the covered-row count; `renderTotals` stays pure.
 - **The cut and the line's height.** Build the line without the suffix and decide the cut; if the table is cut, rebuild with the suffix, recount, and decide again, so the line counted is the line drawn. The suffix only adds height, so this settles in at most two passes. No fixed one-line reservation.
 
+
+### 2.9 Fan-out details
+
+Answers to the builder's questions on T3 (aae-orc-onvts), 2026-11-17.
+
+- **Several folded members** read `totals a (+ b, c, same daemon)`, members in the status lines' order.
+- **The starting mark** goes on the line when any record folded into it is starting, the leader or a member, because any one of them makes the line a lower bound: `totals a (+ b, same daemon) (starting)`.
+- **An answered cluster with no sessions** prints `totals a   0 sessions`, its shown fields `-`, so it does not read as a cluster that did not answer. Only a cluster that did not answer and shows no rows prints no line.
+- **No header in fan-out.** A fan-out read prints no daemon header, so on a TTY or with `--header` the totals block is the first thing on stdout, above the merged table; the per-cluster status lines go to stderr as today.
+
 ## 3. Which views carry it
 
 | View | Carries it? | Why |
@@ -165,7 +175,7 @@ Flat tickets with dependency edges; no umbrella. The supervisor files them. Each
 **T3. Fan-out one-shot.** Files: `fanout.go`. Depends on T1.
 - Group rows by `Cluster` before the sort, fold same_daemon members into their leader, mark starting, print the block above the merged table.
 - Red tests:
-  - `TestFanOutTotalsOneLinePerCluster`: each line from its own cluster's rows; a cluster with no rows prints none.
+  - `TestFanOutTotalsOneLinePerCluster`: each line from its own cluster's rows; a cluster that did not answer prints none; a cluster that answered with no sessions prints `totals <cluster>   0 sessions`, its shown fields `-`.
   - `TestFanOutTotalsSameDaemonFoldsIntoLeader`: two names, one daemon; the member prints no line, its kept rows count once on the leader's line, which names it.
   - `TestFanOutTotalsStartingMarked`.
   - `TestFanOutTotalsNotIntoPipe`.
