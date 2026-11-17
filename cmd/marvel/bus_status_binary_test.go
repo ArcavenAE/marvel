@@ -61,3 +61,24 @@ func TestPrintBusStatusNamesTheBinaryItsRealpathAndTheServingVersion(t *testing.
 		}
 	}
 }
+
+// A skew is printed only when both sides are known versions, compared in the
+// same form (review L2): "unknown" and an empty reading print no skew, and
+// "2.14.6" against "v2.14.6" is the same version.
+func TestPrintBusStatusSkewNeedsTwoKnownVersionsInTheSameForm(t *testing.T) {
+	cases := map[string]string{
+		"disk unknown":    `"version":"unknown","serving_version":"v2.14.6"`,
+		"serving unknown": `"version":"v2.14.6","serving_version":"unknown"`,
+		"disk empty":      `"serving_version":"v2.14.6"`,
+		"same, no v":      `"version":"2.14.6","serving_version":"v2.14.6"`,
+	}
+	for name, versions := range cases {
+		st := busStatusFromJSON(t, `{"managed":true,"leaf":"n/a","url":"u","listen":"l","domain":"d",`+versions+`,
+			"binary":"/opt/pin/bin/nats-server","binary_configured":true,"binary_exists":true}`)
+		var b strings.Builder
+		printBusStatus(&b, st)
+		if got := b.String(); strings.Contains(got, "differs") {
+			t.Errorf("%s: a skew line was printed:\n%s", name, got)
+		}
+	}
+}

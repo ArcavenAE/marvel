@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // bus status names the broker binary (aae-orc-ktts0): the path the supervisor
@@ -120,5 +122,123 @@ func TestBusStatusBinaryFromPathIsNotConfigured(t *testing.T) {
 	}
 	if got["binary_exists"] != true {
 		t.Errorf("binary_exists = %v, want true", got["binary_exists"])
+	}
+}
+
+// countingNATS writes a stand-in nats-server that answers --version with the
+// given token and appends a line to counts each time it is asked.
+func countingNATS(t *testing.T, path, counts, version string) {
+	t.Helper()
+	body := "#!/bin/sh\necho x >> '" + counts + "'\necho \"nats-server: " + version + "\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func askedCount(t *testing.T, counts string) int {
+	t.Helper()
+	b, err := os.ReadFile(counts)
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(b), "x")
+}
+
+// The version of the file on disk is read again when the file changes, so a
+// binary swapped in place under a running supervisor shows (aae-orc-ktts0,
+// review L1). An unchanged file is not run again: --version is asked once
+// across repeated status calls.
+func TestBusStatusRereadsTheDiskVersionWhenTheFileChanges(t *testing.T) {
+	root := t.TempDir()
+	counts := filepath.Join(root, "asked")
+	bin := filepath.Join(root, "nats-server")
+	countingNATS(t, bin, counts, "v2.14.6")
+
+	s, err := NewSupervisor(binaryManager(t, bin), t.TempDir(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attach(t, s, newProcTable(t))
+	before := askedCount(t, counts)
+
+	for i := 0; i < 2; i++ {
+		if got := statusFields(t, s)["version"]; got != "v2.14.6" {
+			t.Fatalf("status %d: version = %v, want v2.14.6", i, got)
+		}
+	}
+	if n := askedCount(t, counts); n != before {
+		t.Errorf("--version asked %d times for an unchanged file, want no new ask beyond the %d at start", n, before)
+	}
+
+	// The same path, new content, as an in-place upgrade does.
+	countingNATS(t, bin, counts, "v2.15.0-rc1")
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(bin, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if got := statusFields(t, s)["version"]; got != "v2.15.0-rc1" {
+		t.Errorf("after an in-place swap: version = %v, want the new file's v2.15.0-rc1", got)
+	}
+	if got := statusFields(t, s)["version"]; got != "v2.15.0-rc1" {
+		t.Errorf("second status after the swap: version = %v", got)
+	}
+	if n := askedCount(t, counts); n != before+1 {
+		t.Errorf("--version asked %d times in all, want %d (one new ask for the one change)", n, before+1)
+	}
+}
+
+// A binary that does not answer --version in time reads "unknown", and the
+// status returns inside the bound: it never hangs on the file it is reporting.
+func TestBusStatusDiskVersionReadIsTimeBounded(t *testing.T) {
+	root := t.TempDir()
+	counts := filepath.Join(root, "asked")
+	bin := filepath.Join(root, "nats-server")
+	countingNATS(t, bin, counts, "v2.14.6")
+
+	s, err := NewSupervisor(binaryManager(t, bin), t.TempDir(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attach(t, s, newProcTable(t))
+
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(bin, later, later); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	got := statusFields(t, s)["version"]
+	if took := time.Since(start); took > 4*time.Second {
+		t.Errorf("status took %v with a binary that never answers --version, want it bounded near one second", took)
+	}
+	if got != "unknown" {
+		t.Errorf("version = %v, want \"unknown\" for a read that timed out", got)
+	}
+}
+
+// A bus.binary path that became a directory after start is not a binary: the
+// status says it does not exist and gives no realpath.
+func TestBusStatusABinaryReplacedByADirectoryDoesNotExist(t *testing.T) {
+	root := t.TempDir()
+	bin := fakeNATS(t, filepath.Join(root, "pin"), "v2.14.6")
+	s, err := NewSupervisor(binaryManager(t, bin), t.TempDir(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attach(t, s, newProcTable(t))
+	if err := os.Remove(bin); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := statusFields(t, s)
+	if got["binary_exists"] != false {
+		t.Errorf("binary_exists = %v for a directory, want false", got["binary_exists"])
+	}
+	if v, ok := got["binary_realpath"]; ok && v != "" {
+		t.Errorf("binary_realpath = %v for a directory, want none", v)
 	}
 }
