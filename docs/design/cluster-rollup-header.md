@@ -78,7 +78,7 @@ TOUT and COST are separate fields. Neither feeds the other, and no total convert
 ### 2.4 Watch mode
 
 - **The totals are over every row the daemon returned, not the rows the cut leaves on screen.** A total that moved as the cursor scrolled would describe the viewport, not the cluster.
-- When the table is cut, the line ends `of M`, in the cut line's own words, so a reader knows the totals cover rows off screen.
+- When the table is cut, the line ends `covers all M rows` (2.8), so a reader knows the totals cover rows off screen.
 - The totals line counts against the screen height: in single-cluster `-w` it is part of `pre` (the header); in fan-out it is written into `buf` before `ws.sessionsView`, so it is counted as `used`. Either way the selected row stays on screen.
 - **Held rows:** when the table shows rows from an earlier read (single-cluster `ws.late` or `ws.disconnected`; a fan-out cluster whose poll failed), the totals line still prints and carries that read's time: `totals (as of 15:02:11)`. A fresh read drops the stamp. The RATE count follows the table as `now` advances: a held row's fresh rate expires in the total exactly when its cell turns `?`.
 - The line reads the same clock the row cells read (`rateClock`), never one of its own.
@@ -106,6 +106,15 @@ Answers to the builder's questions on T1 (aae-orc-ycg76), 2026-11-17. The rule b
 - **RSS** uses the cell's `formatBytes`, so 24.1 GiB prints `24G`; token fields use `formatTokenCount`, as the cells do.
 - **`-o json` and `-o yaml`** need no test of their own beyond one assertion: with `--header` set, `-o json` output is byte-identical to the output before this change (in `TestTotalsNotIntoPipe`).
 - **The session count agrees in number:** `1 session`, `2 sessions`, `0 sessions`.
+
+### 2.8 Watch-mode details
+
+Answers to the builder's questions on T2 (aae-orc-g5gil), 2026-11-17.
+
+- **The cut wording.** When `-w` cuts the table, the totals line ends `   covers all 37 rows`. It names the rows the totals cover, not the rows drawn, so it never reads as a total of the visible rows; the cut line below the table still says which rows are on screen. This replaces "of M" in 2.4.
+- **Held rows, disconnected frame.** The line prints under `last known state:`, counted in `used`, as `totals (as of HH:MM:SS)` from the last good read's stamp. In the late frame it joins `pre` with the same stamp. A fresh read drops the stamp.
+- **Slot order.** `totals`, then the cluster label (T3), then the same-daemon note, then `(starting)`, then `(as of HH:MM:SS)`, then the fields. `totalsOpts` carries the as-of time and the covered-row count; `renderTotals` stays pure.
+- **The cut and the line's height.** Build the line without the suffix and decide the cut; if the table is cut, rebuild with the suffix, recount, and decide again, so the line counted is the line drawn. The suffix only adds height, so this settles in at most two passes. No fixed one-line reservation.
 
 ## 3. Which views carry it
 
