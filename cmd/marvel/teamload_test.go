@@ -329,3 +329,62 @@ func TestTeamLoadAllTeamsActiveIsSeatWeighted(t *testing.T) {
 		t.Errorf("no measured seat should print - and no percentage:\n%q", line)
 	}
 }
+
+// The label sits in the TEAM column, under TEAM, with WORKSPACE left blank
+// (design section 3, T5, architect's answer 1).
+func TestTeamLoadAllTeamsLabelIsInTheTeamColumn(t *testing.T) {
+	a, b := twoTeams()
+	out := renderRows(t, loadAt.Add(time.Second), a, b)
+	line := allTeamsLine(out)
+	head := strings.SplitN(out, "\n", 2)[0]
+	if line == "" {
+		t.Fatalf("the table should end in an all teams row:\n%s", out)
+	}
+	if got, want := strings.Index(line, "all teams"), strings.Index(head, "TEAM"); got != want {
+		t.Errorf("all teams starts at column %d, want it under TEAM at %d:\n%s", got, want, out)
+	}
+	if strings.TrimSpace(line[:strings.Index(line, "all teams")]) != "" {
+		t.Errorf("WORKSPACE should be blank in the all teams row:\n%s", line)
+	}
+}
+
+// A team row that is stale or never observed adds nothing to the sums, and the
+// label then says how many of the shown team rows it summed.
+func TestTeamLoadAllTeamsSumsFreshRowsOnly(t *testing.T) {
+	a, b := twoTeams()
+	stale := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct, r.Limited = "old", 9, 8, 8, 10, 5
+		r.ValidUntil = loadAt
+	})
+	never := loadRow(func(r *api.TeamLoad) {
+		r.Team, r.Declared, r.Running, r.ActiveMeasured, r.ActiveMeanPct, r.Limited = "new", 9, 8, 8, 10, 5
+		r.ObservedAt, r.ValidUntil = time.Time{}, time.Time{}
+	})
+	line := allTeamsLine(renderRows(t, loadAt.Add(time.Minute), a, stale, b, never))
+	if !strings.Contains(line, "all teams (2 of 4)") {
+		t.Errorf("two of the four shown team rows were fresh:\n%s", line)
+	}
+	if !strings.Contains(line, "7/10") || !strings.Contains(line, "66% (5 of 7)") {
+		t.Errorf("the sums should come from the two fresh rows only (7/10, 66%% of 5 of 7):\n%s", line)
+	}
+	fields := strings.Fields(line)
+	if fields[len(fields)-1] != "2" {
+		t.Errorf("limited should sum the fresh rows only (2):\n%s", line)
+	}
+	// With every row fresh the label carries no count.
+	a2, b2 := twoTeams()
+	if l := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a2, b2)); strings.Contains(l, "(") && strings.Contains(l, "of 2)") {
+		t.Errorf("no row was left out, so the label has no (N of M):\n%s", l)
+	}
+}
+
+// One team row is its own total, so the row appears only for two or more.
+func TestTeamLoadAllTeamsNeedsTwoRows(t *testing.T) {
+	a, b := twoTeams()
+	if l := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a)); l != "" {
+		t.Errorf("one team row should get no all teams row:\n%s", l)
+	}
+	if l := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a, b)); l == "" {
+		t.Errorf("fixture: two team rows should get the row")
+	}
+}
