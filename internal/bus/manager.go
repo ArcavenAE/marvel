@@ -27,6 +27,13 @@ type TeamLister interface {
 	ListTeams() []api.Team
 }
 
+// BrokerNamer reports the server name the running broker holds. running is
+// false when no broker of ours is running; an error means the answer could not
+// be read, which a render treats as not knowing.
+type BrokerNamer interface {
+	ServerName() (name string, running bool, err error)
+}
+
 // Reloader tells a running broker to re-read authorization. Supervision
 // (aae-orc-xy1dh) wires SIGHUP here; until then the field is nil and a
 // regenerate only rewrites the files.
@@ -75,6 +82,10 @@ type Manager struct {
 
 	// Reloader is set by supervision once a broker process exists.
 	Reloader Reloader
+	// Broker answers what the running broker is called, so a render never
+	// puts a server_name into a conf the running broker would refuse to
+	// reload (aae-orc-a7h5h). Nil reads as no broker running.
+	Broker BrokerNamer
 
 	// Events receives bus.global-role-unadmitted. Nil is safe: the daemon wires
 	// its ring, and a test may leave it unset.
@@ -371,6 +382,25 @@ func (m *Manager) Regenerate() (bool, error) {
 	return changed, nil
 }
 
+// omitServerName reports whether the conf leaves server_name out: when a broker
+// is running and does not already hold the cluster's name, or when its name
+// cannot be read. With no broker running the next start reads the conf, so the
+// name goes in (aae-orc-a7h5h).
+func (m *Manager) omitServerName() bool {
+	if m.Broker == nil {
+		return false
+	}
+	name, running, err := m.Broker.ServerName()
+	switch {
+	case !running:
+		return false
+	case err != nil:
+		return true
+	default:
+		return name != m.domain
+	}
+}
+
 // Render renders both files and writes them if anything changed, WITHOUT
 // asking the broker to reload. The enrollment path uses it when only a fresh
 // process can pick the change up: the leaf seed reaches the broker through its
@@ -393,6 +423,7 @@ func (m *Manager) Render() (bool, error) {
 		LeafAttached: m.leafAttached.Load(),
 		Admin:        m.admin,
 	}
+	spec.OmitServerName = m.omitServerName()
 	if m.bus.Seat != nil && m.seat != "" {
 		spec.Seat = &SeatUser{Workspace: m.bus.Seat.Workspace, Team: m.bus.Seat.Team, Password: m.seat}
 	}
