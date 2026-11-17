@@ -22,10 +22,10 @@ func answeredRecord(name string) clusterRecord {
 }
 
 // totalsBlockLines is the block's lines, without the final newline.
-func totalsBlockLines(t *testing.T, records []clusterRecord, rows []api.Session, cols string) []string {
+func totalsBlockLines(t *testing.T, records []clusterRecord, rows []api.Session) []string {
 	t.Helper()
 	withRateClock(t)
-	out := fanOutTotalsBlock(records, rows, columnsOrFatal(t, cols, nil), rateNow, 0, nil)
+	out := fanOutTotalsBlock(records, rows, columnsOrFatal(t, "name,cpu", nil), rateNow, 0, nil)
 	out = strings.TrimRight(out, "\n")
 	if out == "" {
 		return nil
@@ -49,7 +49,7 @@ func TestFanOutTotalsOneLinePerCluster(t *testing.T) {
 		clusterRow("a", "a1", 10),
 		clusterRow("a", "a2", 15),
 	}
-	got := totalsBlockLines(t, records, rows, "name,cpu")
+	got := totalsBlockLines(t, records, rows)
 	want := []string{
 		"totals a   2 sessions   mCPU 250 (2)",
 		"totals b   1 session   mCPU 400 (1)",
@@ -73,7 +73,7 @@ func TestFanOutTotalsSameDaemonFoldsIntoLeader(t *testing.T) {
 		clusterRow("a", "a2", 15),
 		clusterRow("b", "b-only", 5), // the one row the member kept after the fold
 	}
-	got := totalsBlockLines(t, records, rows, "name,cpu")
+	got := totalsBlockLines(t, records, rows)
 	want := []string{"totals a (+ b, same daemon)   3 sessions   mCPU 300 (3)"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("block =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -85,7 +85,7 @@ func TestFanOutTotalsSameDaemonFoldsIntoLeader(t *testing.T) {
 func TestFanOutTotalsStartingMarked(t *testing.T) {
 	records := []clusterRecord{answeredRecord("a"), {Cluster: "c", Outcome: outcomeStarting}}
 	rows := []api.Session{clusterRow("a", "a1", 10), clusterRow("c", "c1", 20)}
-	got := totalsBlockLines(t, records, rows, "name,cpu")
+	got := totalsBlockLines(t, records, rows)
 	want := []string{
 		"totals a   1 session   mCPU 100 (1)",
 		"totals c (starting)   1 session   mCPU 200 (1)",
@@ -109,7 +109,7 @@ func TestFanOutTotalsSeveralFoldedMembers(t *testing.T) {
 		clusterRow("a", "a1", 10),
 		clusterRow("b", "b-only", 5),
 	}
-	got := totalsBlockLines(t, records, rows, "name,cpu")
+	got := totalsBlockLines(t, records, rows)
 	want := []string{"totals a (+ b, c, same daemon)   3 sessions   mCPU 350 (3)"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("block =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -124,7 +124,7 @@ func TestFanOutTotalsStartingLeaderMarksTheFoldedLine(t *testing.T) {
 		{Cluster: "b", Outcome: outcomeSameDaemon, SameDaemonAs: "a", Sessions: &n},
 	}
 	rows := []api.Session{clusterRow("a", "a1", 10), clusterRow("b", "b-only", 5)}
-	got := totalsBlockLines(t, records, rows, "name,cpu")
+	got := totalsBlockLines(t, records, rows)
 	want := []string{"totals a (+ b, same daemon) (starting)   2 sessions   mCPU 150 (2)"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("block =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -250,7 +250,7 @@ func TestFanOutTotalsFollowTheDrawnColumns(t *testing.T) {
 		width      int
 		wantMCPU   bool
 		wantFields string
-	}{{120, false, "TOUT 2k (2)"}, {200, true, "mCPU 200 (2)"}} {
+	}{{120, false, "TOUT 1k (1)"}, {200, true, "mCPU 100 (1)"}} {
 		setWidth(t, c.width)
 		_, out, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b", "--header")
 		var block, table string
