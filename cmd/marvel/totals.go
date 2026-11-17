@@ -14,7 +14,9 @@ import (
 // mark of docs/design/cluster-rollup-header.md join it with the tickets that
 // print them.
 type totalsOpts struct {
-	label string
+	label   string
+	asOf    time.Time // when held rows were read; zero for a fresh read
+	covered int       // rows the totals cover, set when the table is cut
 }
 
 // totalsSum is one field's running sum: how many rows had a value, how many of
