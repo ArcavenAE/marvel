@@ -2,7 +2,7 @@ Closed 2026-10-25: probe done
 
 # Probe brief: the window resolver's key is narrower than the fact it stores
 
-**Status:** RUN 2026-08-28. Result: firm conclusion, captured in
+**Status:** COMPLETE 2026-08-28. Result: firm conclusion, captured in
 `_kos/findings/finding-031-window-key-narrower-than-fact.md`. Design study
 only — no production code, per the commissioning ticket.
 **Question:** `question-router-and-backend-layering` (marvel, the direct

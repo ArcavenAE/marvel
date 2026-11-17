@@ -1,7 +1,7 @@
 # Probe brief: context-pressure extraction from real harness streams
 
-**Status:** OPEN (brief only; not started). Scheduled as bd `aae-orc-<probe>`,
-blocks `aae-orc-w5su`.
+**Status:** COMPLETE 2026-08-01. Result: `_kos/findings/finding-007-context-pressure-extraction.md`
+(bd `aae-orc-frkq`, which blocked `aae-orc-w5su`).
 **Question:** `question-stream-attachment` (per-harness binding, producer half)
 **Probe medium:** code (run each harness on kinu, read real streams)
 **Timebox:** 1 session
