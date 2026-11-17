@@ -367,14 +367,13 @@ func TestTeamLoadAllTeamsSumsFreshRowsOnly(t *testing.T) {
 	if !strings.Contains(line, "7/10") || !strings.Contains(line, "66% (5 of 7)") {
 		t.Errorf("the sums should come from the two fresh rows only (7/10, 66%% of 5 of 7):\n%s", line)
 	}
-	fields := strings.Fields(line)
-	if fields[len(fields)-1] != "2" {
+	if fields := strings.Fields(line); len(fields) == 0 || fields[len(fields)-1] != "2" {
 		t.Errorf("limited should sum the fresh rows only (2):\n%s", line)
 	}
 	// With every row fresh the label carries no count.
 	a2, b2 := twoTeams()
-	if l := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a2, b2)); strings.Contains(l, "(") && strings.Contains(l, "of 2)") {
-		t.Errorf("no row was left out, so the label has no (N of M):\n%s", l)
+	if l := allTeamsLine(renderRows(t, loadAt.Add(time.Second), a2, b2)); l == "" || strings.Contains(l, "all teams (") {
+		t.Errorf("a row should print, and with no row left out its label has no (N of M):\n%q", l)
 	}
 }
 
