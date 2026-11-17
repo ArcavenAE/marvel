@@ -141,6 +141,10 @@ type Supervisor struct {
 	// read is no information and leaves it where it was, so the reading
 	// ages instead of being refreshed by an error.
 	leafObservedAt time.Time
+	// hubReading is the last read of the hub monitor, under mu (aae-orc-stqn9).
+	hubReading HubReading
+	// hubRead replaces the monitor read in a test; nil reads the monitor.
+	hubRead func(mon string) ([]string, error)
 	// leafSeedInEnv records whether the running broker was spawned with the
 	// leaf seed in its environment. nats-server reads its environment once at
 	// start, so this is what decides whether a newly enrolled leaf can come up
@@ -202,6 +206,9 @@ type Status struct {
 	// Pidfile is what the bus pidfile proved at the last start: proven, stale
 	// (removed, nothing signalled), legacy (no identity record) or none.
 	Pidfile string `json:"pidfile,omitempty"`
+	// HubStatus is the hub's leaf list as diagnostic lines, empty when no
+	// hub_monitor is configured (aae-orc-stqn9).
+	HubStatus []string `json:"hub_status,omitempty"`
 	// Seat is "<workspace>/<team>" when a director seat is declared; the
 	// user is always director and its password sits at SeatPassFile.
 	Seat         string `json:"seat,omitempty"`
@@ -1153,6 +1160,7 @@ func (s *Supervisor) Status() Status {
 	if !snap.Ready && snap.BackoffUntil.After(time.Now()) {
 		st.BackoffUntil = snap.BackoffUntil.Format(time.RFC3339)
 	}
+	st.HubStatus = s.hubLinesLocked()
 	return st
 }
 

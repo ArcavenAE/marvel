@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -181,7 +182,7 @@ func TestStatusEmbedsTheBusStatus(t *testing.T) {
 	if err := json.Unmarshal(resp.Result, &want); err != nil {
 		t.Fatal(err)
 	}
-	if *st.Bus != want {
+	if !reflect.DeepEqual(*st.Bus, want) {
 		t.Errorf("embedded bus = %+v, want what bus.status returns, %+v", *st.Bus, want)
 	}
 }

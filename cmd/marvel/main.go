@@ -3232,6 +3232,10 @@ func printBusStatus(w io.Writer, st bus.Status) {
 		_, _ = fmt.Fprintf(w, "backoff:  until %s\n", st.BackoffUntil)
 	}
 	_, _ = fmt.Fprintf(w, "conf:     %s\n", st.ConfPath)
+	// The hub's leaf list, as diagnostic lines and never an alert (aae-orc-stqn9).
+	for _, l := range st.HubStatus {
+		_, _ = fmt.Fprintln(w, l)
+	}
 }
 
 // stopWarning renders what a teardown leaves standing. Returns an empty
