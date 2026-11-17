@@ -713,6 +713,7 @@ func (d *Daemon) Start(socketPath string) (err error) {
 	// tmux posture.
 	d.loadScheduleHistoryMax(socketPath)
 	d.loadHostVitals(socketPath)
+	d.loadCredentialReveal(socketPath)
 	d.loadAccountWarn(socketPath)
 	d.identifyCluster(socketPath)
 	d.loadSuspendRecord(socketPath)
