@@ -133,7 +133,7 @@ func readStampWithin(t clusterTarget, timeout time.Duration) (daemonStamp, bool)
 // left of that one fan-out timer, as the watch poll's does, so a slow daemon
 // loses its stamp and keeps its rows (#1085). timer is the one the reads were
 // started with, passed down rather than read again (#1093).
-func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [][]api.Session, fingerprints []string, began []time.Time, timer time.Duration) {
+func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [][]api.Session, fingerprints []string, began []time.Time, timer time.Duration) map[string]bool {
 	keys := make([]string, len(targets))
 	count := map[string]int{}
 	for i, rec := range records {
@@ -163,7 +163,7 @@ func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [
 		}()
 	}
 	wg.Wait()
-	foldSameDaemon(keys, stamps, ok, records, rowSets)
+	return foldSameDaemon(keys, stamps, ok, records, rowSets)
 }
 
 // foldSameDaemon merges the entries that share a non-empty key, given the
@@ -171,7 +171,8 @@ func mergeSameDaemon(targets []clusterTarget, records []clusterRecord, rowSets [
 // that reported a stamp reads same_daemon and names it. The rows shown are the
 // union: a merged entry's row is kept only when no earlier row has its key, so
 // nothing is dropped that a read saw and the other missed.
-func foldSameDaemon(keys []string, stamps []daemonStamp, ok []bool, records []clusterRecord, rowSets [][]api.Session) {
+func foldSameDaemon(keys []string, stamps []daemonStamp, ok []bool, records []clusterRecord, rowSets [][]api.Session) map[string]bool {
+	startedFolded := map[string]bool{}
 	groups := map[string][]int{}
 	var order []string
 	for i, k := range keys {
@@ -213,6 +214,11 @@ func foldSameDaemon(keys []string, stamps []daemonStamp, ok []bool, records []cl
 			}
 			rowSets[i] = kept
 			n := len(kept)
+			// The overwrite below hides that the member was starting; the totals
+			// line needs it, and clusterRecord (and so -o json) must not carry it.
+			if records[i].Outcome == outcomeStarting {
+				startedFolded[records[i].Cluster] = true
+			}
 			records[i].Outcome = outcomeSameDaemon
 			records[i].SameDaemonAs = records[lead].Cluster
 			records[i].Sessions = &n
@@ -220,4 +226,5 @@ func foldSameDaemon(keys []string, stamps []daemonStamp, ok []bool, records []cl
 			records[i].Next = ""
 		}
 	}
+	return startedFolded
 }
