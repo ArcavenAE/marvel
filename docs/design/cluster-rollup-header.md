@@ -141,7 +141,7 @@ Answers to the builder's questions on T4 (aae-orc-onecx), 2026-11-17.
 Answers to the builder's questions on T5 (aae-orc-sf197), 2026-11-17.
 
 - **Layout.** `all teams` goes in the TEAM column and WORKSPACE is blank, since the row spans workspaces.
-- **Stale rows.** A team row that prints `?` or `-` adds nothing to any sum (2.2). When any team row was left out, the TEAM cell reads `all teams (N of M)`, N the teams summed and M the team rows shown, and the help sentence says so.
+- **Stale rows, per field.** Each field sums the team rows whose cell in that field shows a value (2.2). A team row that is expired or never observed shows `?` or `-` in every field, so it adds to no sum; a fresh team whose ACTIVE% alone is `-` (no measured seat) still adds to SEATS and LIMITED. When any team row was expired or never observed, the TEAM cell reads `all teams (N of M)`, N the team rows that were fresh and M the team rows shown, and the help sentence says so.
 - **ACTIVE%.** In `(N of M)`, M is the running seats summed over the teams the row summed, as in a team row.
 - **One team.** The row appears only with two or more team rows.
 
