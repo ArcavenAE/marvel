@@ -545,3 +545,58 @@ func TestSandboxProfileWithNoSpaceBeforeTheQuoteDoesNotNameTheParameter(t *testi
 		t.Errorf("-D parameters = %v, want the five", names)
 	}
 }
+
+// A network deny after the bus allow that the launch cannot read as one
+// localhost port would cancel the bus at run time, so the launch refuses the
+// profile instead (#1497 round 2 review, Low 4). A deny before the allow is
+// overridden by it and does no harm, and a deny of another operation or in a
+// comment is not a network-outbound deny.
+func TestSandboxBusProfileWithAnUnreadableNetworkDenyAfterTheAllowIsRefused(t *testing.T) {
+	t.Parallel()
+	const allow = "(allow network-outbound (remote ip (string-append \"localhost:\" (param \"BUS_PORT\"))))\n"
+	head := "(version 1)\n(deny default)\n(allow process-exec (literal (param \"DIRECTOR_MCP_BIN\")))\n(allow file-read* (literal (param \"BUS_PASS_FILE\")))\n"
+	for name, tc := range map[string]struct {
+		deny    string
+		before  bool
+		refused bool
+	}{
+		"a wildcard port after":            {`(deny network-outbound (remote ip "localhost:*"))`, false, true},
+		"a two-filter deny after":          {`(deny network-outbound (remote ip "localhost:9001") (remote tcp))`, false, true},
+		"a bare outbound deny after":       {`(deny network-outbound)`, false, true},
+		"a bare network wildcard after":    {`(deny network*)`, false, true},
+		"a multi-line wildcard port after": {"(deny network-outbound\n  (remote ip \"localhost:*\"))", false, true},
+		"a wildcard port before":           {`(deny network-outbound (remote ip "localhost:*"))`, true, false},
+		"a bare outbound deny before":      {`(deny network-outbound)`, true, false},
+		"a bind deny after":                {`(deny network-bind)`, false, false},
+		"a file deny after":                {`(deny file-write* (subpath "/etc"))`, false, false},
+		"a commented deny after":           {`; (deny network-outbound)`, false, false},
+		"a readable single port after":     {`(deny network-outbound (remote ip "localhost:9001"))`, false, false},
+		"a readable multi-line port after": {"(deny network-outbound\n  (remote ip \"localhost:9001\"))", false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			text := head + allow + tc.deny + "\n"
+			if tc.before {
+				text = head + tc.deny + "\n" + allow
+			}
+			r := newBusRig(t, text)
+			_, _, _, fail := r.wrapBus(t)
+			switch {
+			case tc.refused && (fail == nil || fail.reason != RefusalSandboxHarness):
+				t.Fatalf("fail = %+v, want a refusal with reason %q", fail, RefusalSandboxHarness)
+			case !tc.refused && fail != nil:
+				t.Fatalf("refused: %s", fail.msg)
+			}
+		})
+	}
+}
+
+// The refusal names the deny it could not read, so the profile's author can
+// rewrite it as a single localhost port.
+func TestSandboxBusProfileRefusalQuotesTheUnreadableDeny(t *testing.T) {
+	t.Parallel()
+	r := newBusRig(t, busProfile+"(deny network-outbound (remote ip \"localhost:*\"))\n")
+	_, _, _, fail := r.wrapBus(t)
+	if fail == nil || !strings.Contains(fail.msg, `(deny network-outbound (remote ip "localhost:*"))`) {
+		t.Fatalf("fail = %+v, want a message quoting the deny", fail)
+	}
+}
