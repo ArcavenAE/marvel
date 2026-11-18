@@ -512,8 +512,9 @@ func TestSandboxBusPortRefusalFollowsTheStagedProfilesDenies(t *testing.T) {
 		"(deny network-outbound (remote ip \"localhost:9001\"))\n" +
 		"(deny network-outbound (remote ip \"localhost:9002\"))\n" +
 		"(deny network* (remote ip \"localhost:9004\"))\n" +
+		"(deny network-outbound(remote ip \"localhost:9005\"))\n" +
 		"; (deny network-outbound (remote ip \"localhost:9003\")) is a comment\n"
-	for port, refused := range map[string]bool{"9001": true, "9002": true, "9004": true, "9003": false, "4242": false, "4333": false} {
+	for port, refused := range map[string]bool{"9001": true, "9002": true, "9004": true, "9005": true, "9003": false, "4242": false, "4333": false} {
 		t.Run(port, func(t *testing.T) {
 			r := newBusRig(t, custom)
 			r.env["NATS_URL"] = "nats://127.0.0.1:" + port
@@ -560,18 +561,21 @@ func TestSandboxBusProfileWithAnUnreadableNetworkDenyAfterTheAllowIsRefused(t *t
 		before  bool
 		refused bool
 	}{
-		"a wildcard port after":            {`(deny network-outbound (remote ip "localhost:*"))`, false, true},
-		"a two-filter deny after":          {`(deny network-outbound (remote ip "localhost:9001") (remote tcp))`, false, true},
-		"a bare outbound deny after":       {`(deny network-outbound)`, false, true},
-		"a bare network wildcard after":    {`(deny network*)`, false, true},
-		"a multi-line wildcard port after": {"(deny network-outbound\n  (remote ip \"localhost:*\"))", false, true},
-		"a wildcard port before":           {`(deny network-outbound (remote ip "localhost:*"))`, true, false},
-		"a bare outbound deny before":      {`(deny network-outbound)`, true, false},
-		"a bind deny after":                {`(deny network-bind)`, false, false},
-		"a file deny after":                {`(deny file-write* (subpath "/etc"))`, false, false},
-		"a commented deny after":           {`; (deny network-outbound)`, false, false},
-		"a readable single port after":     {`(deny network-outbound (remote ip "localhost:9001"))`, false, false},
-		"a readable multi-line port after": {"(deny network-outbound\n  (remote ip \"localhost:9001\"))", false, false},
+		"a wildcard port after":             {`(deny network-outbound (remote ip "localhost:*"))`, false, true},
+		"a two-filter deny after":           {`(deny network-outbound (remote ip "localhost:9001") (remote tcp))`, false, true},
+		"a bare outbound deny after":        {`(deny network-outbound)`, false, true},
+		"a bare network wildcard after":     {`(deny network*)`, false, true},
+		"a multi-line wildcard port after":  {"(deny network-outbound\n  (remote ip \"localhost:*\"))", false, true},
+		"a no-space wildcard port after":    {`(deny network-outbound(remote ip "localhost:*"))`, false, true},
+		"a no-space network wildcard after": {`(deny network*(remote ip "localhost:*"))`, false, true},
+		"a no-space readable port after":    {`(deny network-outbound(remote ip "localhost:9001"))`, false, false},
+		"a wildcard port before":            {`(deny network-outbound (remote ip "localhost:*"))`, true, false},
+		"a bare outbound deny before":       {`(deny network-outbound)`, true, false},
+		"a bind deny after":                 {`(deny network-bind)`, false, false},
+		"a file deny after":                 {`(deny file-write* (subpath "/etc"))`, false, false},
+		"a commented deny after":            {`; (deny network-outbound)`, false, false},
+		"a readable single port after":      {`(deny network-outbound (remote ip "localhost:9001"))`, false, false},
+		"a readable multi-line port after":  {"(deny network-outbound\n  (remote ip \"localhost:9001\"))", false, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			text := head + allow + tc.deny + "\n"
