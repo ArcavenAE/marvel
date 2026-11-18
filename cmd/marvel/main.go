@@ -1778,7 +1778,7 @@ func credentialCmd() *cobra.Command {
 	var reveal bool
 	get := &cobra.Command{
 		Use:   "get <name>",
-		Short: "Show a credential's metadata, or its value with --reveal (local socket only, and the daemon must set allow_credential_reveal)",
+		Short: "Show a credential's metadata, or its value with --reveal (local socket only, and only when this cluster's config entry sets allow_credential_reveal: true)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params, _ := json.Marshal(map[string]string{"name": args[0]})
