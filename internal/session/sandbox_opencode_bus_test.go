@@ -511,8 +511,9 @@ func TestSandboxBusPortRefusalFollowsTheStagedProfilesDenies(t *testing.T) {
 	custom := busProfile +
 		"(deny network-outbound (remote ip \"localhost:9001\"))\n" +
 		"(deny network-outbound (remote ip \"localhost:9002\"))\n" +
+		"(deny network* (remote ip \"localhost:9004\"))\n" +
 		"; (deny network-outbound (remote ip \"localhost:9003\")) is a comment\n"
-	for port, refused := range map[string]bool{"9001": true, "9002": true, "9003": false, "4242": false, "4333": false} {
+	for port, refused := range map[string]bool{"9001": true, "9002": true, "9004": true, "9003": false, "4242": false, "4333": false} {
 		t.Run(port, func(t *testing.T) {
 			r := newBusRig(t, custom)
 			r.env["NATS_URL"] = "nats://127.0.0.1:" + port
