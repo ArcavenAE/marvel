@@ -1518,6 +1518,9 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		// same order as the old reconcileRoleAt (clear, then create), so
 		// nextIndex computes against live sessions only and `marvel get
 		// sessions` doesn't carry the ghost forward.
+		// The keys of the seats it clears are the replacements' predecessors:
+		// read them first.
+		crashedSeats := c.crashedPredecessors(t, plan.Role, plan.Generation)
 		c.sessMgr.ClearCrashedForRole(t.Workspace, t.Name, plan.Role)
 		// The same goes for a scheduled role's earlier firings: their
 		// finished rows are in the run history, so they go when the next
@@ -1533,7 +1536,11 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		}
 		// A wake starts each seat as a successor of the seat it replaces, with
 		// MARVEL_PREDECESSOR naming it, as a shift does (design section 6).
+		// A crash repair does the same with the seats it just cleared.
 		preds := c.wakePredecessors(t, plan.Role)
+		if len(preds) == 0 {
+			preds = crashedSeats
+		}
 		for i := 0; i < plan.Spawn; i++ {
 			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, plan.Role, plan.Generation, c.nextIndex(t, role, plan.Generation))
 			sess := &api.Session{

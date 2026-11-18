@@ -115,3 +115,42 @@ func TestCrashRepairSkipsPredecessorStillAlive(t *testing.T) {
 		t.Errorf("no crashed seat: predecessors = %v, want none", got)
 	}
 }
+
+// TestCrashRepairSpawnCarriesThePredecessor: the whole path. A pane dies, the
+// reap marks the seat Crashed, and after the backoff the reconciler clears the
+// marker and spawns the replacement. The replacement's row names the seat it
+// replaces, which the adapter exports as MARVEL_PREDECESSOR. Reading the key
+// after the clear, or not handing it to the spawn, leaves it empty.
+func TestCrashRepairSpawnCarriesThePredecessor(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	createTeamFixture(t, store, "test-crash-pred", "squad", []api.Role{
+		{
+			Name: "worker", Replicas: 1,
+			Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}},
+		},
+	})
+
+	ctrl.ReconcileOnce()
+	first := store.ListSessionsByTeamRole("test-crash-pred", "squad", "worker")
+	if len(first) != 1 || first[0].Predecessor != "" {
+		t.Fatalf("setup: first spawn = %+v, want one seat with no predecessor", first)
+	}
+	killPaneAndWait(t, first[0].PaneID)
+	ctrl.ReconcileOnce() // reap: the row stays as a Crashed marker
+	clock.Advance(90 * time.Second)
+	ctrl.ReconcileOnce() // backoff elapsed: clear the marker, spawn the replacement
+
+	got := store.ListSessionsByTeamRole("test-crash-pred", "squad", "worker")
+	if len(got) != 1 || got[0].State != api.SessionRunning {
+		t.Fatalf("after repair: sessions = %+v, want one Running replacement", got)
+	}
+	if got[0].Predecessor != first[0].Key() {
+		t.Errorf("replacement predecessor = %q, want the crashed seat %q", got[0].Predecessor, first[0].Key())
+	}
+}
