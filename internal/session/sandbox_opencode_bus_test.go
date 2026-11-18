@@ -377,3 +377,22 @@ func TestSandboxWrapDecidesFromTheStagedCopy(t *testing.T) {
 		t.Fatalf("wrap = %+v, want a refusal with reason %q: the staged copy names the shim and none was found", got, RefusalSandboxHarness)
 	}
 }
+
+// A pass file reached through a symlinked directory is handed to the profile by
+// its resolved path, the one the sandbox matches a literal against.
+func TestSandboxBusPassFileIsPassedResolved(t *testing.T) {
+	t.Parallel()
+	r := newBusRig(t, busProfile)
+	via := filepath.Join(t.TempDir(), "tokens-link")
+	if err := os.Symlink(r.mgr.TokenDir, via); err != nil {
+		t.Fatal(err)
+	}
+	r.env["DIRECTOR_NATS_PASS_FILE"] = filepath.Join(via, "seat.pass")
+	_, values, _, fail := r.wrapBus(t)
+	if fail != nil {
+		t.Fatalf("refused: %s", fail.msg)
+	}
+	if values["BUS_PASS_FILE"] != r.passFile {
+		t.Errorf("BUS_PASS_FILE = %q, want the resolved path %q", values["BUS_PASS_FILE"], r.passFile)
+	}
+}

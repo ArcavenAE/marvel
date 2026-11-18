@@ -462,6 +462,9 @@ func (m *Manager) wrapInSandbox(sess *api.Session, plan *launchPlan) *sandboxFai
 		if info, err := os.Lstat(state); err != nil || !info.IsDir() {
 			return f(RefusalSandboxHarness, "the shim's state directory is not a directory")
 		}
+		if err := os.Chmod(state, 0o700); err != nil {
+			return f(RefusalSandboxHarness, "the shim's state directory cannot be made private: %v", err)
+		}
 		if plan.env == nil {
 			plan.env = map[string]string{}
 		}
