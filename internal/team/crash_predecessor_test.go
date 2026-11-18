@@ -1,6 +1,7 @@
 package team
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -359,5 +360,113 @@ func TestWakeFillsTheRemainingSeatsFromCrashedMarkers(t *testing.T) {
 	sort.Strings(want)
 	if !reflect.DeepEqual(preds, want) {
 		t.Errorf("supervisor seats name %v, want the hibernated seat and the crashed marker: %v", preds, want)
+	}
+}
+
+func crashRig(t *testing.T, replicas int) (*api.Store, *Controller, *testClock, string) {
+	t.Helper()
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+	root := realDir(t)
+	if err := store.CreateWorkspace(&api.Workspace{Name: "test-crash-rig", Root: root, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CreateTeam(&api.Team{
+		Name: "squad", Workspace: "test-crash-rig", Generation: 1,
+		Roles:              []api.Role{{Name: "worker", Replicas: replicas, WorkDir: root, Runtime: api.Runtime{Name: "sleep", Command: "sleep", Args: []string{"300"}}}},
+		ConvergencePosture: api.PostureConverge, CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return store, ctrl, clock, root
+}
+
+func aliveWorkers(store *api.Store) []api.Session {
+	var out []api.Session
+	for _, s := range store.ListSessionsByTeamRole("test-crash-rig", "squad", "worker") {
+		if s.State.CountsAsAlive() {
+			out = append(out, s)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// A key is spent once a created seat takes it. At replicas 2 the first seat
+// crashes and is replaced, and the replacement crashes in turn: it names the seat
+// it replaces, and the key the first replacement took is not offered again.
+func TestCrashRepairNamesOnlyTheLatestCrashedSeat(t *testing.T) {
+	store, ctrl, clock, _ := crashRig(t, 2)
+	ctrl.ReconcileOnce()
+	seats := aliveWorkers(store)
+	if len(seats) != 2 {
+		t.Fatalf("setup: %d seats after the first pass, want 2", len(seats))
+	}
+	repair := func(victim api.Session) api.Session {
+		t.Helper()
+		before := map[time.Time]bool{}
+		for _, s := range aliveWorkers(store) {
+			before[s.CreatedAt] = true
+		}
+		killPaneAndWait(t, victim.PaneID)
+		ctrl.ReconcileOnce() // reap
+		clock.Advance(30 * time.Minute)
+		ctrl.ReconcileOnce() // backoff elapsed: the replacement
+		var fresh []api.Session
+		for _, s := range aliveWorkers(store) {
+			if !before[s.CreatedAt] {
+				fresh = append(fresh, s)
+			}
+		}
+		if len(fresh) != 1 {
+			var all []string
+			for _, s := range store.ListSessionsByTeamRole("test-crash-rig", "squad", "worker") {
+				all = append(all, s.Name+" "+string(s.State)+" pred="+s.Predecessor)
+			}
+			t.Fatalf("after repairing %s: replacements = %d, want one; sessions: %v", victim.Key(), len(fresh), all)
+		}
+		return fresh[0]
+	}
+	first := repair(seats[0])
+	if first.Predecessor != seats[0].Key() {
+		t.Fatalf("first replacement names %q, want %q", first.Predecessor, seats[0].Key())
+	}
+	second := repair(first)
+	if second.Predecessor != first.Key() {
+		t.Errorf("second replacement names %q, want the seat it replaces, %q", second.Predecessor, first.Key())
+	}
+}
+
+// A refused Create takes nothing: the placement is fixed on a later tick, and
+// the replacement created then still names the crashed seat.
+func TestCrashRepairRefusedCreateKeepsTheKey(t *testing.T) {
+	store, ctrl, clock, root := crashRig(t, 1)
+	ctrl.ReconcileOnce()
+	seats := aliveWorkers(store)
+	if len(seats) != 1 {
+		t.Fatalf("setup: %d seats after the first pass, want 1", len(seats))
+	}
+	killPaneAndWait(t, seats[0].PaneID)
+	ctrl.ReconcileOnce() // reap
+	clock.Advance(30 * time.Minute)
+
+	moved := root + ".moved"
+	if err := os.Rename(root, moved); err != nil {
+		t.Fatal(err)
+	}
+	ctrl.ReconcileOnce() // the workdir is gone: Create refuses the replacement
+	if got := aliveWorkers(store); len(got) != 0 {
+		t.Fatalf("setup: a replacement was created with the workdir gone: %+v", got)
+	}
+	if err := os.Rename(moved, root); err != nil {
+		t.Fatal(err)
+	}
+	ctrl.ReconcileOnce()
+	got := aliveWorkers(store)
+	if len(got) != 1 || got[0].Predecessor != seats[0].Key() {
+		t.Errorf("replacement after the refusal = %+v, want one seat naming %q", got, seats[0].Key())
 	}
 }
