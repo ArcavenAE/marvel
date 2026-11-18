@@ -289,6 +289,11 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 						Cluster: s.name, Outcome: outcomeNoAnswer, Phase: "reply",
 						Cause: fmt.Sprintf("no answer within %s", cfg.timeout),
 					})
+					if t.seq <= s.staleUpTo {
+						// It began before the child, so the poll after the
+						// return starts now and does not wait for a tick.
+						start(s)
+					}
 				}
 				if !ws.showHelp {
 					draw()
