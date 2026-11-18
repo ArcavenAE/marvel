@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -266,7 +267,12 @@ func TestCrashPredecessorsStayWithTheirGeneration(t *testing.T) {
 // tick that clears the crashed row. The seat created on a later tick still
 // names the crashed one (review of marvel#1493, Medium 1).
 func TestCrashRepairDeferredByAViewBuildStillNamesTheSeat(t *testing.T) {
-	store, ctrl, _, _ := viewSpawnRig(t, spawnGit{}, 10*time.Second)
+	// The remote hangs, so each seat's view build outlasts one tick and its spawn
+	// waits until the 500ms spawn bound passes: a deferral that does not depend
+	// on timing between two ticks.
+	var hung atomic.Bool
+	hung.Store(true)
+	store, ctrl, keeper, _ := viewSpawnRig(t, spawnGit{hung: &hung}, 500*time.Millisecond)
 	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
 	ctrl.now = clock.Now
 
@@ -281,6 +287,10 @@ func TestCrashRepairDeferredByAViewBuildStillNamesTheSeat(t *testing.T) {
 	first := teamSessions(store, "slow")[0]
 	killPaneAndWait(t, first.PaneID)
 	ctrl.ReconcileOnce() // reap: the row stays as a Crashed marker
+	// The replacement has the crashed seat's name, so its view starts over.
+	if err := keeper.Teardown(first.Key()); err != nil {
+		t.Fatal(err)
+	}
 	clock.Advance(90 * time.Second)
 
 	var deferred bool
