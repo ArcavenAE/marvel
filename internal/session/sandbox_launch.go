@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	stdruntime "runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,6 +71,11 @@ const (
 	sandboxStateEnv     = "DIRECTOR_STATE"
 	sandboxStateDir     = "director-state"
 )
+
+// sandboxDeniedServicePorts are the local service ports opencode-local-bus.sb
+// denies after its bus allow. The last match wins, so a bus on one of them
+// would be allowed and then cancelled; the launch refuses it instead.
+var sandboxDeniedServicePorts = []int{4242, 7422, 7442, 3307}
 
 // maxSandboxProfileBytes bounds the profile marvel copies.
 const maxSandboxProfileBytes = 1 << 20
@@ -517,6 +523,9 @@ func loopbackPort(raw string) (string, error) {
 	n, err := strconv.Atoi(u.Port())
 	if err != nil || n < 1 || n > 65535 {
 		return "", errors.New("does not carry a port from 1 to 65535")
+	}
+	if slices.Contains(sandboxDeniedServicePorts, n) {
+		return "", fmt.Errorf("names port %d, which the profile denies for another local service after its bus allow", n)
 	}
 	return strconv.Itoa(n), nil
 }
