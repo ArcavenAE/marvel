@@ -600,3 +600,17 @@ func TestSandboxBusProfileRefusalQuotesTheUnreadableDeny(t *testing.T) {
 		t.Fatalf("fail = %+v, want a message quoting the deny", fail)
 	}
 }
+
+// The deny is measured from the LAST use of the bus parameter: a profile that
+// allows the port twice, with a deny between the two, is overridden by the
+// second allow and is accepted.
+func TestSandboxBusProfileDenyBetweenTwoBusAllowsIsAccepted(t *testing.T) {
+	t.Parallel()
+	const allow = "(allow network-outbound (remote ip (string-append \"localhost:\" (param \"BUS_PORT\"))))\n"
+	text := "(version 1)\n(deny default)\n(allow process-exec (literal (param \"DIRECTOR_MCP_BIN\")))\n(allow file-read* (literal (param \"BUS_PASS_FILE\")))\n" +
+		allow + "(deny network-outbound (remote ip \"localhost:*\"))\n" + allow
+	r := newBusRig(t, text)
+	if _, _, _, fail := r.wrapBus(t); fail != nil {
+		t.Fatalf("refused: %s", fail.msg)
+	}
+}
