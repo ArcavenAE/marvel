@@ -148,7 +148,7 @@ func sbplNames(code, param string) bool {
 	return regexp.MustCompile(`\(\s*param\s+"` + regexp.QuoteMeta(param) + `"\s*\)`).MatchString(code)
 }
 
-var sbplDenyPortRE = regexp.MustCompile(`\(\s*deny\s+network(?:-outbound|\*)\s+\(\s*remote\s+ip\s+"localhost:(\d+)"\s*\)\s*\)`)
+var sbplDenyPortRE = regexp.MustCompile(`\(\s*deny\s+network(?:-outbound|\*)\s*\(\s*remote\s+ip\s+"localhost:(\d+)"\s*\)\s*\)`)
 
 // sbplDeniedPorts returns the localhost ports the profile's code denies for
 // outbound network. A bus on one of them would be allowed by the bus rule and
@@ -188,8 +188,10 @@ func sbplBusPortDenyProblem(code string) string {
 }
 
 // sbplNetworkDenyRE finds the start of a deny of outbound network: the
-// operations network-outbound and network*, with a form that follows or ends.
-var sbplNetworkDenyRE = regexp.MustCompile(`\(\s*deny\s+network(?:-outbound|\*)(?:[\s)])`)
+// operations network-outbound and network*, followed by a space, a form or the
+// end of the deny. sandbox-exec ends a symbol at a parenthesis, so no space is
+// needed before a filter (measured in scratch).
+var sbplNetworkDenyRE = regexp.MustCompile(`\(\s*deny\s+network(?:-outbound|\*)(?:[\s()])`)
 
 // sbplFormAt returns the balanced parenthesised form that starts at code[i].
 func sbplFormAt(code string, i int) string {
