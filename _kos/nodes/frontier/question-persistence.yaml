@@ -35,8 +35,8 @@ edges:
     type: discovered_from
     note: "left open by the MVP build (was: leaves-open on elem-mvp-complete)"
   - target: aae-orc::question-marvel-beyond-mvp
-    type: derives
-    note: "Cross-repo projection from orchestrator F5"
+    type: discovered_from
+    note: "Cross-repo projection from orchestrator F5. The target was graveyarded 2026-11-18: its post-MVP question is answered by marvel's roadmap rev-3, and what it kept open (per-role model and effort fields) is a different topic. Kept as provenance, not as a dependency."
 provenance:
   created_by: human
   session: session-008
