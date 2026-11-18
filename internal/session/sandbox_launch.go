@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
@@ -71,11 +72,6 @@ const (
 	sandboxStateEnv     = "DIRECTOR_STATE"
 	sandboxStateDir     = "director-state"
 )
-
-// sandboxDeniedServicePorts are the local service ports opencode-local-bus.sb
-// denies after its bus allow. The last match wins, so a bus on one of them
-// would be allowed and then cancelled; the launch refuses it instead.
-var sandboxDeniedServicePorts = []int{4242, 7422, 7442, 3307}
 
 // maxSandboxProfileBytes bounds the profile marvel copies.
 const maxSandboxProfileBytes = 1 << 20
@@ -147,14 +143,30 @@ func sbplCode(text []byte) string {
 // sbplNames reports whether the comment-free code of a profile names the
 // parameter, with any whitespace between the form's parts.
 func sbplNames(code, param string) bool {
-	return regexp.MustCompile(`\(\s*param\s+"` + regexp.QuoteMeta(param) + `"\s*\)`).MatchString(code)
+	return regexp.MustCompile(`\(\s*param\s*"` + regexp.QuoteMeta(param) + `"\s*\)`).MatchString(code)
+}
+
+var sbplDenyPortRE = regexp.MustCompile(`\(\s*deny\s+network(?:-outbound|\*)\s+\(\s*remote\s+ip\s+"localhost:(\d+)"\s*\)\s*\)`)
+
+// sbplDeniedPorts returns the localhost ports the profile's code denies for
+// outbound network. A bus on one of them would be allowed by the bus rule and
+// then cancelled by the deny when it comes later (the last match wins), so the
+// launch refuses it. The reading is conservative: a deny anywhere counts.
+func sbplDeniedPorts(code string) []int {
+	var ports []int
+	for _, m := range sbplDenyPortRE.FindAllStringSubmatch(code, -1) {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			ports = append(ports, n)
+		}
+	}
+	return ports
 }
 
 // openPrivateDir opens path as a directory without following a link at its last
 // element, so a link swapped in after the directory was made is refused and
 // never reaches a chmod through the path.
 func openPrivateDir(path string) (*os.File, error) {
-	return nil, errors.New("not implemented")
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
 }
 
 // sandboxPlan is what site 2 staged for one launch.
@@ -472,11 +484,14 @@ func (m *Manager) wrapInSandbox(sess *api.Session, plan *launchPlan) *sandboxFai
 		if err := os.MkdirAll(state, 0o700); err != nil {
 			return f(RefusalSandboxHarness, "the shim's state directory cannot be made: %v", err)
 		}
-		if info, err := os.Lstat(state); err != nil || !info.IsDir() {
-			return f(RefusalSandboxHarness, "the shim's state directory is not a directory")
+		dir, err := openPrivateDir(state)
+		if err != nil {
+			return f(RefusalSandboxHarness, "the shim's state directory is not a directory of its own (a link is refused): %v", err)
 		}
-		if err := os.Chmod(state, 0o700); err != nil {
-			return f(RefusalSandboxHarness, "the shim's state directory cannot be made private: %v", err)
+		cerr := dir.Chmod(0o700)
+		_ = dir.Close()
+		if cerr != nil {
+			return f(RefusalSandboxHarness, "the shim's state directory cannot be made private: %v", cerr)
 		}
 		if plan.env == nil {
 			plan.env = map[string]string{}
@@ -484,7 +499,7 @@ func (m *Manager) wrapInSandbox(sess *api.Session, plan *launchPlan) *sandboxFai
 		plan.env[sandboxStateEnv] = state
 	}
 	if sbplNames(sb.code, sandboxBusPortParam) {
-		port, err := loopbackPort(plan.env["NATS_URL"])
+		port, err := loopbackPort(plan.env["NATS_URL"], sbplDeniedPorts(sb.code))
 		if err != nil {
 			return f(RefusalSandboxHarness, "its profile names %s and NATS_URL %v", sandboxBusPortParam, err)
 		}
@@ -514,7 +529,7 @@ func (m *Manager) wrapInSandbox(sess *api.Session, plan *launchPlan) *sandboxFai
 // loopbackPort returns the port of a NATS URL that names this host by a loopback
 // address, and an error for anything else, so the profile never opens a port on
 // another machine.
-func loopbackPort(raw string) (string, error) {
+func loopbackPort(raw string, denied []int) (string, error) {
 	if raw == "" {
 		return "", errors.New("is not set")
 	}
@@ -531,8 +546,8 @@ func loopbackPort(raw string) (string, error) {
 	if err != nil || n < 1 || n > 65535 {
 		return "", errors.New("does not carry a port from 1 to 65535")
 	}
-	if slices.Contains(sandboxDeniedServicePorts, n) {
-		return "", fmt.Errorf("names port %d, which the profile denies for another local service after its bus allow", n)
+	if slices.Contains(denied, n) {
+		return "", fmt.Errorf("names port %d, which the profile denies for another local service (the last matching rule wins, so the bus allow would be cancelled)", n)
 	}
 	return strconv.Itoa(n), nil
 }
