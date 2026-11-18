@@ -62,7 +62,7 @@ func TestOpenCodeLocalBusProfileOrderAndContent(t *testing.T) {
 		execParams = append(execParams, m[1])
 	}
 	sort.Strings(execParams)
-	if strings.Join(execParams, ",") != "DIRECTOR_MCP_BIN,HARNESS_BIN,MARVEL_BIN" {
+	if strings.Join(execParams, ",") != "DIRECTOR_MCP_BIN,HARNESS_BIN,MARVEL_BIN" || strings.Count(execRules[0], "(literal") != 3 || strings.Contains(execRules[0], "subpath") {
 		t.Errorf("the exec rule admits %v, want exactly the harness, marvel and the shim", execParams)
 	}
 	// Writes: one rule, the seat's trees and /dev; the state directory is inside them.
