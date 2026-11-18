@@ -213,7 +213,10 @@ func (c *Controller) planHandoffPutLocked(token, text string) (handoffPutPlan, e
 			return plan, fmt.Errorf("%w: role %s", ErrHandoffNoPath, sess.Role)
 		}
 		plan.teamKey, plan.role, plan.generation, plan.req, plan.retire = teamKey, sess.Role, t.Generation, req, true
-		plan.path, plan.body = rr.Path, handoffBody(text, rr.Marker)
+		plan.path = rr.Path
+		if plan.body, err = handoffBody(text, rr.Marker); err != nil {
+			return plan, err
+		}
 		if info, ok := c.heldRetireDirInfoLocked(rr); ok {
 			plan.held = info
 		}
@@ -248,7 +251,10 @@ func (c *Controller) planHandoffPutLocked(token, text string) (handoffPutPlan, e
 		return plan, fmt.Errorf("%w: %v", ErrHandoffNoPath, err)
 	}
 	plan.teamKey, plan.role, plan.generation, plan.req = teamKey, role.Name, t.Generation, req
-	plan.path, plan.body = path, handoffBody(text, role.Shift.HandoffMarker)
+	plan.path = path
+	if plan.body, err = handoffBody(text, role.Shift.HandoffMarker); err != nil {
+		return plan, err
+	}
 	if info, ok := c.heldHandoffDirInfoLocked(teamKey, role.Name, req); ok {
 		plan.held = info
 	}
@@ -287,13 +293,19 @@ func (c *Controller) recheckHandoffPutLocked(token string, plan handoffPutPlan) 
 
 // handoffBody is the text, trimmed of trailing space, ending with the marker as
 // its last line and a newline. A text that already ends with the marker does
-// not get it twice.
-func handoffBody(text, marker string) string {
+// not get it twice. A body with nothing non-blank above the marker is refused,
+// by the rule the completion check applies to the file (marvel#612).
+func handoffBody(text, marker string) (string, error) {
 	body := strings.TrimRight(text, " \t\r\n")
-	if strings.TrimSpace(body[strings.LastIndexByte(body, '\n')+1:]) != marker {
+	i := strings.LastIndexByte(body, '\n')
+	if strings.TrimSpace(body[i+1:]) != marker {
 		body += "\n" + marker
+		i = strings.LastIndexByte(body, '\n')
 	}
-	return body + "\n"
+	if !hasContentAboveMarker([]byte(body), i) {
+		return "", fmt.Errorf("%w: nothing above the marker", ErrHandoffTooLarge)
+	}
+	return body + "\n", nil
 }
 
 // writeHandoffFile writes body at path, a file directly in the directory marvel

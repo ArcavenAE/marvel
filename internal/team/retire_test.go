@@ -579,7 +579,7 @@ func TestRetireWaitsForAReadBegunAfterTheDeadline(t *testing.T) {
 	f.clock.Advance(api.DefaultShiftHandoffWindow - time.Second)
 	f.advance() // a read before the deadline finds nothing
 	path, _ := api.ExpandHandoffPath(role.Shift.Handoff, sess.Name)
-	if err := os.WriteFile(path, []byte(putMarker+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("notes\n"+putMarker+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	f.clock.Advance(2 * time.Second)
@@ -739,7 +739,7 @@ func TestRetireIgnoresAReadBegunBeforeTheExit(t *testing.T) {
 	f.retire(sess)
 	f.advance() // a read before the exit finds no file
 	path, _ := api.ExpandHandoffPath(role.Shift.Handoff, sess.Name)
-	if err := os.WriteFile(path, []byte(putMarker+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("notes\n"+putMarker+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	f.crash(sess)

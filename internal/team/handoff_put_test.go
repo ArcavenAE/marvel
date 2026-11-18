@@ -236,6 +236,15 @@ func TestPutHandoffRefusals(t *testing.T) {
 		{"over the cap", func(f *putFixture) (string, string) {
 			return f.token, strings.Repeat("x", MaxHandoffPutBytes+1)
 		}, ErrHandoffTooLarge},
+		// The built body must have something above the marker, the rule the
+		// completion check applies to the file (marvel#612): a text that is only
+		// the marker, or the marker behind blank lines, would be written as a
+		// handoff that reads as finished with nothing in it.
+		{"text that is only the marker", func(f *putFixture) (string, string) { return f.token, putMarker }, ErrHandoffTooLarge},
+		{"the marker alone on its line with a newline", func(f *putFixture) (string, string) { return f.token, putMarker + "\n" }, ErrHandoffTooLarge},
+		{"blank lines then the marker", func(f *putFixture) (string, string) {
+			return f.token, "\n\n  \t\n" + putMarker + "\n"
+		}, ErrHandoffTooLarge},
 		{"a sibling replica that holds no request", func(f *putFixture) (string, string) {
 			tok, hash, _ := api.NewHeartbeatToken()
 			sib := api.Session{
@@ -588,4 +597,62 @@ func TestRemoveHandoffFileRemovesOnlyTheHeldFile(t *testing.T) {
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the held file at the path: Lstat err = %v, want it removed", err)
 	}
+}
+
+// A put that has nothing above the marker is refused on the retire and the
+// hibernate paths too, which build the body through the same function as the
+// shift path (marvel#612). Each leaves no file and writes no receipt, and the
+// same seat can then put real content.
+func TestPutHandoffRefusesMarkerOnlyTextOnTheRetireAndHibernatePaths(t *testing.T) {
+	for name, start := range map[string]func(t *testing.T) (*retireFixture, api.Session, string){
+		"retire": func(t *testing.T) (*retireFixture, api.Session, string) {
+			f := newRetireFixture(t, "test-put-retire", handoffRole(realTempDir(t)))
+			sess := f.seat(testShiftRole, 0)
+			tok := bindToken(t, f, sess)
+			f.retire(sess)
+			return f, sess, tok
+		},
+		"hibernate": func(t *testing.T) (*retireFixture, api.Session, string) {
+			f := newRetireFixture(t, "test-put-hib", hibernateRole("worker", realTempDir(t), 1))
+			sess := f.seat("worker", 0)
+			tok := bindToken(t, f, sess)
+			f.hibernate(HibernateOptions{Actor: "op", Source: "cli"})
+			f.tick()
+			return f, sess, tok
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, _, tok := start(t)
+			for _, text := range []string{putMarker, "\n\n" + putMarker + "\n"} {
+				if _, err := f.ctrl.PutHandoff(tok, text); !errors.Is(err, ErrHandoffTooLarge) {
+					t.Fatalf("PutHandoff(%q) error = %v, want %v", text, err, ErrHandoffTooLarge)
+				}
+			}
+			put, err := f.ctrl.PutHandoff(tok, "what I was doing")
+			if err != nil {
+				t.Fatalf("a put with content after the refusals: %v", err)
+			}
+			b, err := os.ReadFile(put.Path)
+			if err != nil || string(b) != "what I was doing\n"+putMarker+"\n" {
+				t.Fatalf("file = %q (%v), want the content and the marker", b, err)
+			}
+		})
+	}
+}
+
+// bindToken gives sess a heartbeat token, as a seat that talks to the daemon
+// holds, and returns it.
+func bindToken(t *testing.T, f *retireFixture, sess api.Session) string {
+	t.Helper()
+	tok, hash, err := api.NewHeartbeatToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		live.HeartbeatToken, live.HeartbeatTokenHash = tok, hash
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return tok
 }

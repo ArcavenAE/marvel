@@ -170,9 +170,15 @@ write. The default conforms to the contract:
    out. A role with no declared handoff gets the bare notice.
 2. **Observe (the seam).** A role that declares
    `handoff = "<path with {session}>"` and `handoff_marker = "<line>"` gets a
-   terminal-marker check: marvel shifts when the file exists and its last
-   line is the marker. This is the observation seam; marvel reads one line of
-   one declared file and nothing else.
+   terminal-marker check: marvel shifts when the file exists, its last line
+   is the marker, and at least one non-blank line stands above the marker
+   (no minimum length). A file holding only the marker, or the marker behind
+   blank lines, is not complete, so a template copied and left unfilled does
+   not retire the seat; marvel does not judge what the line above says, so a
+   template with placeholder lines above the marker still reads complete.
+   This is the observation seam; marvel reads the last 4096 bytes of one
+   declared file and nothing else, so blank lines past that window between the
+   content and the marker also read as marker-only.
 3. **Escalate, never shift unwatched.** If `handoff_window` (default 5m)
    expires with no marker, or the role declares no handoff path, marvel emits
    `shift.handoff-missing` (warning: session, age, requested-at), leaves the

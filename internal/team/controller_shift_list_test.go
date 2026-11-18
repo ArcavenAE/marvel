@@ -606,7 +606,7 @@ func TestHandoffCompleteRefusesNonRegularFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := filepath.Join(dir, "target.md")
-	if err := os.WriteFile(target, []byte("END HANDOFF\n"), 0o600); err != nil {
+	if err := os.WriteFile(target, []byte("notes\nEND HANDOFF\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "link.md")
