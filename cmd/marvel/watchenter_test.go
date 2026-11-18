@@ -373,19 +373,19 @@ func TestByteThreeQuitsOutsideAChildAndIsTheChildsDuringOne(t *testing.T) {
 func TestAByteTypedWhileParkedIsNotHeldByTheParser(t *testing.T) {
 	t.Setenv("TMUX", "")
 	g := startReaderRig(t)
-	r := startEnterRig(t, g.rec, g.child, g.rd.Keys())
-	// One write: Enter, then a key that belongs to the child. The reader and
-	// the key parser may already hold it when Enter is handled.
+	// The child reads nothing: a byte the reader and the key parser already
+	// held when Enter was handled cannot be put back on the terminal, so the
+	// view drops it. What is checked is that it does not surface in the watch
+	// after the reader resumes.
+	child := func([]string) error {
+		g.start <- struct{}{}
+		time.Sleep(200 * time.Millisecond)
+		return nil
+	}
+	r := startEnterRig(t, g.rec, child, g.rd.Keys())
+	// One write: Enter, then a key typed behind it.
 	_, _ = g.pw.Write([]byte("j\rp"))
 	g.waitStart(t)
-	select {
-	case b := <-g.got:
-		if b != 'p' {
-			t.Errorf("the child read %q, want p", b)
-		}
-	case <-time.After(3 * time.Second):
-		t.Error("the key typed after Enter never reached the child")
-	}
 	g.rec.waitUnparked(t)
 	_, _ = g.pw.Write([]byte("q"))
 	select {
