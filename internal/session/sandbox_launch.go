@@ -1,20 +1,22 @@
 package session
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
 	"regexp"
 	stdruntime "runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
@@ -61,6 +63,14 @@ const defaultSandboxExec = "/usr/bin/sandbox-exec"
 const (
 	sandboxShimParam   = "DIRECTOR_MCP_BIN"
 	sandboxShimCommand = "director-mcp"
+	// sandboxBusPortParam and sandboxBusPassParam are filled only for a profile
+	// that names them: the bus port, read from the seat's NATS_URL, and the seat's
+	// bus password file. sandboxStateEnv is the director shim's state directory,
+	// which a profile that names the shim gets inside the seat's own tree.
+	sandboxBusPortParam = "BUS_PORT"
+	sandboxBusPassParam = "BUS_PASS_FILE"
+	sandboxStateEnv     = "DIRECTOR_STATE"
+	sandboxStateDir     = "director-state"
 )
 
 // maxSandboxProfileBytes bounds the profile marvel copies.
@@ -98,11 +108,134 @@ type sandboxLaunch struct {
 	shimBin string
 }
 
+// sbplCode returns profile text with its comments removed. A comment starts at a
+// semicolon outside a double-quoted string and ends at the line's end, so a
+// semicolon inside a path literal is kept.
+func sbplCode(text []byte) string {
+	var b strings.Builder
+	inString := false
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case inString:
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(text) {
+				i++
+				b.WriteByte(text[i])
+			} else if c == '"' {
+				inString = false
+			}
+		case c == '"':
+			inString = true
+			b.WriteByte(c)
+		case c == ';':
+			for i < len(text) && text[i] != '\n' {
+				i++
+			}
+			b.WriteByte('\n')
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// sbplNames reports whether the comment-free code of a profile names the
+// parameter, with any whitespace between the form's parts. At least one space
+// follows param: sandbox-exec reads param"X" as one unbound symbol and rejects
+// the profile, so that spelling is never a naming.
+func sbplNames(code, param string) bool {
+	return regexp.MustCompile(`\(\s*param\s+"` + regexp.QuoteMeta(param) + `"\s*\)`).MatchString(code)
+}
+
+var sbplDenyPortRE = regexp.MustCompile(`\(\s*deny\s+network(?:-outbound|\*)\s*\(\s*remote\s+ip\s+"localhost:(\d+)"\s*\)\s*\)`)
+
+// sbplDeniedPorts returns the localhost ports the profile's code denies for
+// outbound network. A bus on one of them would be allowed by the bus rule and
+// then cancelled by the deny when it comes later (the last match wins), so the
+// launch refuses it. The reading is conservative: a deny anywhere counts.
+func sbplDeniedPorts(code string) []int {
+	var ports []int
+	for _, m := range sbplDenyPortRE.FindAllStringSubmatch(code, -1) {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			ports = append(ports, n)
+		}
+	}
+	return ports
+}
+
+// sbplBusPortDenyProblem reports a network deny in the staged code that the
+// launch cannot read as one localhost port and that comes after the last use of
+// the bus parameter. The last matching rule wins, so such a deny (a wildcard
+// port, a bare network deny, a deny with more than one filter) would cancel the
+// bus allow at run time; the launch refuses the profile and quotes the deny.
+// A deny before the allow is overridden by it, and a deny of another operation
+// is not an outbound deny. It returns "" when there is none.
+func sbplBusPortDenyProblem(code string) string {
+	use := strings.LastIndex(code, `"`+sandboxBusPortParam+`"`)
+	if use < 0 {
+		return ""
+	}
+	rest := code[use:]
+	for _, loc := range sbplNetworkDenyRE.FindAllStringIndex(rest, -1) {
+		form := sbplFormAt(rest, loc[0])
+		if sbplDenyPortRE.FindString(form) == form {
+			continue
+		}
+		return strings.Join(strings.Fields(form), " ")
+	}
+	return ""
+}
+
+// sbplNetworkDenyRE finds the start of a deny of outbound network: the
+// operations network-outbound and network*, followed by a space, a form or the
+// end of the deny. sandbox-exec ends a symbol at a parenthesis, so no space is
+// needed before a filter (measured in scratch).
+var sbplNetworkDenyRE = regexp.MustCompile(`\(\s*deny\s+network(?:-outbound|\*)(?:[\s()])`)
+
+// sbplFormAt returns the balanced parenthesised form that starts at code[i].
+func sbplFormAt(code string, i int) string {
+	depth := 0
+	inString := false
+	for j := i; j < len(code); j++ {
+		c := code[j]
+		switch {
+		case inString:
+			switch c {
+			case '\\':
+				j++
+			case '"':
+				inString = false
+			}
+		case c == '"':
+			inString = true
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+			if depth == 0 {
+				return code[i : j+1]
+			}
+		}
+	}
+	return code[i:]
+}
+
+// openPrivateDir opens path as a directory without following a link at its last
+// element, so a link swapped in after the directory was made is refused and
+// never reaches a chmod through the path.
+func openPrivateDir(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
+}
+
 // sandboxPlan is what site 2 staged for one launch.
 type sandboxPlan struct {
 	launch   sandboxLaunch
 	copyPath string
 	sha      string
+	// code is the staged copy with its comments removed: the bytes sandbox-exec
+	// reads decide which optional parameters the launch fills.
+	code string
 }
 
 // roleOf finds the role a session belongs to.
@@ -247,7 +380,7 @@ func (m *Manager) resolveSandbox(sess *api.Session) (*sandboxLaunch, *sandboxFai
 		return fail(RefusalSandboxHarness, "the marvel binary cannot be resolved")
 	}
 	launch := &sandboxLaunch{profile: profile, harnessBin: harness, marvelBin: marvelBin}
-	if bytes.Contains(profileText, []byte(`(param "`+sandboxShimParam+`")`)) {
+	if sbplNames(sbplCode(profileText), sandboxShimParam) {
 		shim, err := m.resolveBinary(sandboxShimCommand)
 		if err != nil {
 			return fail(RefusalSandboxHarness, "its profile names %s and %s cannot be resolved: %v", sandboxShimParam, sandboxShimCommand, err)
@@ -357,7 +490,7 @@ func (m *Manager) stageSandboxProfile(sess *api.Session, l *sandboxLaunch) (*san
 			}
 		}
 	}
-	return &sandboxPlan{launch: *l, copyPath: copyPath, sha: hex.EncodeToString(sum[:])}, nil
+	return &sandboxPlan{launch: *l, copyPath: copyPath, sha: hex.EncodeToString(sum[:]), code: sbplCode(back)}, nil
 }
 
 // wrapInSandbox is the counterpart of wrapInContainer: it prefixes the planned
@@ -397,8 +530,49 @@ func (m *Manager) wrapInSandbox(sess *api.Session, plan *launchPlan) *sandboxFai
 		"HARNESS_BIN": sb.launch.harnessBin,
 		"REALHOME":    realHome,
 	}
-	if sb.launch.shimBin != "" {
-		params[sandboxShimParam] = sb.launch.shimBin
+	if sbplNames(sb.code, sandboxShimParam) {
+		shim := sb.launch.shimBin
+		if shim == "" {
+			var err error
+			if shim, err = m.resolveBinary(sandboxShimCommand); err != nil {
+				return f(RefusalSandboxHarness, "its profile names %s and %s cannot be resolved: %v", sandboxShimParam, sandboxShimCommand, err)
+			}
+		}
+		params[sandboxShimParam] = shim
+		state := filepath.Join(home, sandboxStateDir)
+		if err := os.MkdirAll(state, 0o700); err != nil {
+			return f(RefusalSandboxHarness, "the shim's state directory cannot be made: %v", err)
+		}
+		dir, err := openPrivateDir(state)
+		if err != nil {
+			return f(RefusalSandboxHarness, "the shim's state directory is not a directory of its own (a link is refused): %v", err)
+		}
+		cerr := dir.Chmod(0o700)
+		_ = dir.Close()
+		if cerr != nil {
+			return f(RefusalSandboxHarness, "the shim's state directory cannot be made private: %v", cerr)
+		}
+		if plan.env == nil {
+			plan.env = map[string]string{}
+		}
+		plan.env[sandboxStateEnv] = state
+	}
+	if sbplNames(sb.code, sandboxBusPortParam) {
+		if deny := sbplBusPortDenyProblem(sb.code); deny != "" {
+			return f(RefusalSandboxHarness, "its profile names %s and holds a network deny after it that the launch cannot read as one localhost port, which would cancel the bus rule (write it as (deny network-outbound (remote ip \"localhost:N\"))): %s", sandboxBusPortParam, deny)
+		}
+		port, err := loopbackPort(plan.env["NATS_URL"], sbplDeniedPorts(sb.code))
+		if err != nil {
+			return f(RefusalSandboxHarness, "its profile names %s and NATS_URL %v", sandboxBusPortParam, err)
+		}
+		params[sandboxBusPortParam] = port
+	}
+	if sbplNames(sb.code, sandboxBusPassParam) {
+		pass, err := m.busPassFile(plan.env["DIRECTOR_NATS_PASS_FILE"])
+		if err != nil {
+			return f(RefusalSandboxHarness, "its profile names %s and the bus password file %v", sandboxBusPassParam, err)
+		}
+		params[sandboxBusPassParam] = pass
 	}
 	names := make([]string, 0, len(params))
 	for k := range params {
@@ -412,6 +586,59 @@ func (m *Manager) wrapInSandbox(sess *api.Session, plan *launchPlan) *sandboxFai
 	}
 	plan.command = b.String() + " " + plan.command
 	return nil
+}
+
+// loopbackPort returns the port of a NATS URL that names this host by a loopback
+// address, and an error for anything else, so the profile never opens a port on
+// another machine.
+func loopbackPort(raw string, denied []int) (string, error) {
+	if raw == "" {
+		return "", errors.New("is not set")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", errors.New("is not a URL")
+	}
+	switch u.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+	default:
+		return "", errors.New("does not name a loopback host")
+	}
+	n, err := strconv.Atoi(u.Port())
+	if err != nil || n < 1 || n > 65535 {
+		return "", errors.New("does not carry a port from 1 to 65535")
+	}
+	if slices.Contains(denied, n) {
+		return "", fmt.Errorf("names port %d, which the profile denies for another local service (the last matching rule wins, so the bus allow would be cancelled)", n)
+	}
+	return strconv.Itoa(n), nil
+}
+
+// busPassFile returns the resolved path of the seat's bus password file when it
+// is an absolute, clean path to a regular file (not a link) inside the private
+// token directory marvel wrote it to, and an error otherwise.
+func (m *Manager) busPassFile(path string) (string, error) {
+	switch {
+	case path == "":
+		return "", errors.New("is not set")
+	case !filepath.IsAbs(path) || filepath.Clean(path) != path:
+		return "", errors.New("is not an absolute, clean path")
+	case m.TokenDir == "":
+		return "", errors.New("has no token directory to be inside")
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", errors.New("is not a regular file")
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", errors.New("does not resolve")
+	}
+	tokens, err := filepath.EvalSymlinks(m.TokenDir)
+	if err != nil || !within(real, tokens) {
+		return "", errors.New("is not inside the token directory")
+	}
+	return real, nil
 }
 
 func (m *Manager) realHome() (string, error) {

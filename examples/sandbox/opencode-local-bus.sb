@@ -1,0 +1,85 @@
+(version 1)
+; An example sandbox-exec profile for a headless opencode seat that talks to a
+; model server on localhost and whose director shim may reach the bus. It is
+; opencode-local.sb plus three widenings the operator ruled for the shim
+; (2026-11-18). Point a role at a copy of it with sandbox_profile (an absolute
+; path).
+;
+; marvel starts the seat as
+;   /usr/bin/sandbox-exec -f <per-launch copy> -D K=V ... <command>
+; and fills these parameters:
+;   SESSION_DIR       the seat's private harness home
+;   WORKDIR           the role's working directory
+;   MARVEL_BIN        marvel's own binary
+;   HARNESS_BIN       the harness binary, symlinks resolved
+;   REALHOME          the home of the user marvel runs as
+;   DIRECTOR_MCP_BIN  the director-mcp binary, symlinks resolved
+;   BUS_PORT          the port of the seat's NATS_URL
+;   BUS_PASS_FILE     the seat's bus password file, resolved
+; marvel fills the last three only for a profile that names them, and refuses
+; the launch when the profile names one and it cannot be filled: director-mcp
+; is not on PATH, NATS_URL is not a loopback URL with a port, or the password
+; file is not a regular file inside marvel's private token directory. A
+; parameter named only in a semicolon comment does not count. Other comment
+; forms are not read as comments, so a name inside one counts as named.
+; SBPL applies the last matching rule, so a deny must come before the allows
+; that carve a path back out of it.
+;
+; The three widenings, each named here:
+;   1. The bus port. The seat may connect to localhost on BUS_PORT, and to no
+;      other port but the model server's.
+;   2. The bus password file. The seat may read the one file named by
+;      BUS_PASS_FILE, which holds the team bus password.
+;   3. DIRECTOR_STATE. marvel sets it to a director-state directory inside
+;      SESSION_DIR, so the shim writes its state only in the seat's own tree.
+;
+; What a process inside the sandbox can now do: the harness shares this
+; profile with the shim, so any process in it can read the team bus password
+; and reach the bus on that port. Nothing else outside the seat's trees is
+; readable or writable, and the other local service ports stay denied.
+
+(deny default)
+
+; exec: the harness, marvel's own binary and the shim. Nothing else, so a tool
+; that slips its permission gate cannot start a shell.
+(allow process-exec (literal (param "HARNESS_BIN")) (literal (param "MARVEL_BIN")) (literal (param "DIRECTOR_MCP_BIN")))
+(allow process-fork)
+(allow signal (target same-sandbox))
+(allow sysctl-read)
+
+; reads: stat anywhere, for path resolution; contents only where listed.
+(allow file-read-metadata)
+; the real home is unreadable. This rule comes before every allow that follows,
+; because workdirs and session homes usually sit under it.
+(deny file-read* (subpath (param "REALHOME")))
+(allow file-read* (literal "/") (subpath "/usr/lib") (subpath "/usr/share") (subpath "/System")
+  (subpath "/private/etc") (subpath "/private/var/db/timezone") (subpath "/dev"))
+(allow file-read* (subpath "/Library/Keychains") (subpath "/Library/Security") (subpath "/private/var/db/mds"))
+; the three binaries must be readable to be exec'd.
+(allow file-read* (literal (param "HARNESS_BIN")) (literal (param "MARVEL_BIN")) (literal (param "DIRECTOR_MCP_BIN")))
+; the seat's bus password file (widening 2).
+(allow file-read* (literal (param "BUS_PASS_FILE")))
+; the seat's own trees.
+(allow file-read* (subpath (param "SESSION_DIR")) (subpath (param "WORKDIR")))
+
+; writes: the seat's own trees and /dev only.
+(allow file-write* (subpath (param "SESSION_DIR")) (subpath (param "WORKDIR")) (subpath "/dev"))
+
+(allow mach-lookup)
+(allow ipc-posix-shm)
+
+; network: the model server on localhost only.
+(allow network-outbound (remote ip "localhost:11434"))
+; the bus, on the port the seat's NATS_URL names (widening 1).
+(allow network-outbound (remote ip (string-append "localhost:" (param "BUS_PORT"))))
+
+; explicit denies, last, as belts over deny default: other local services. The
+; bus port is not listed, because an explicit deny of it would cancel the allow
+; above. Write each belt as a single localhost port, as below: marvel refuses a
+; launch when a network deny after the BUS_PORT rule is a wildcard port, a bare
+; network deny or has more than one filter, since the last match would cancel
+; the bus.
+(deny network-outbound (remote ip "localhost:4242"))
+(deny network-outbound (remote ip "localhost:7422"))
+(deny network-outbound (remote ip "localhost:7442"))
+(deny network-outbound (remote ip "localhost:3307"))
