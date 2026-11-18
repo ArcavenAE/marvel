@@ -99,6 +99,9 @@ type enterRig struct {
 	gate   chan struct{}
 	mu     sync.Mutex
 	nfetch int
+	// quitExt ends a loop whose keys come from a reader on a pipe, where the
+	// rig's own keys channel is not read.
+	quitExt func()
 }
 
 func startEnterRig(t *testing.T, term terminalHandoff, run func([]string) error, ext <-chan byte) *enterRig {
@@ -143,11 +146,23 @@ func startEnterRig(t *testing.T, term terminalHandoff, run func([]string) error,
 	t.Cleanup(func() {
 		select {
 		case <-r.done:
+			return
 		default:
+		}
+		if r.quitExt != nil {
+			r.quitExt()
+		} else {
 			select {
 			case r.keys <- 'q':
 			default:
 			}
+		}
+		// The loop reads package variables that a later cleanup restores, so it
+		// has to be over before this cleanup returns.
+		select {
+		case <-r.done:
+		case <-time.After(2 * time.Second):
+			t.Errorf("the watch loop did not end within 2s of q")
 		}
 	})
 	r.frameWith("the row", func(f string) bool { return strings.Contains(f, "s1") })
@@ -330,6 +345,7 @@ func TestInplaceParksReaderAndRestores(t *testing.T) {
 	t.Setenv("TMUX", "")
 	g := startReaderRig(t)
 	r := startEnterRig(t, g.rec, g.child, g.rd.Keys())
+	r.quitExt = func() { _, _ = g.pw.Write([]byte("q")) }
 	_, _ = g.pw.Write([]byte("j\r"))
 	g.waitStart(t)
 	_, _ = g.pw.Write([]byte("Z"))
@@ -349,6 +365,7 @@ func TestByteThreeQuitsOutsideAChildAndIsTheChildsDuringOne(t *testing.T) {
 	t.Setenv("TMUX", "")
 	g := startReaderRig(t)
 	r := startEnterRig(t, g.rec, g.child, g.rd.Keys())
+	r.quitExt = func() { _, _ = g.pw.Write([]byte("q")) }
 	_, _ = g.pw.Write([]byte("j\r"))
 	g.waitStart(t)
 	_, _ = g.pw.Write([]byte{3})
@@ -388,6 +405,7 @@ func TestAByteTypedWhileParkedIsNotHeldByTheParser(t *testing.T) {
 		return nil
 	}
 	r := startEnterRig(t, g.rec, child, g.rd.Keys())
+	r.quitExt = func() { _, _ = g.pw.Write([]byte("q")) }
 	// One write: Enter, then a key typed behind it.
 	_, _ = g.pw.Write([]byte("j\rp"))
 	g.waitStart(t)
