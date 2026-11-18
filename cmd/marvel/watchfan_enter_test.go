@@ -30,6 +30,13 @@ type stFake struct {
 	mu       sync.Mutex
 	statuses int
 	gets     int
+	failing  bool // every request is answered with an error
+}
+
+func (f *stFake) setFailing(v bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failing = v
 }
 
 func startStFake(t *testing.T, rows []api.Session) *stFake {
@@ -59,6 +66,11 @@ func startStFake(t *testing.T, rows []api.Session) *stFake {
 				}
 				var data []byte
 				f.mu.Lock()
+				if f.failing {
+					f.mu.Unlock()
+					_ = json.NewEncoder(c).Encode(daemonrpc.Response{Error: "the fake daemon is failing"})
+					return
+				}
 				switch req.Method {
 				case "version":
 					data, _ = json.Marshal(map[string]any{"version": "x", "started_at": sdStart, "pid": 4243})
@@ -197,6 +209,57 @@ func TestFanEnterOnARemoteRowIsPrintOnly(t *testing.T) {
 	frame := startFanEnter(t, "r").enter()
 	if !strings.Contains(frame, "print only: ") || strings.Contains(frame, "plan: ") {
 		t.Errorf("a remote row should be print-only, never a run plan:\n%s", frame)
+	}
+}
+
+// The held status is dropped when its cluster fails, so Enter does not plan
+// against a socket the cluster may no longer have, and it is read again by the
+// first poll that answers after the failure.
+func TestFanStatusIsDroppedOnFailureAndReadAgainOnRecovery(t *testing.T) {
+	f := startStFake(t, stRows())
+	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock})
+	r := startFanEnter(t, "a")
+	r.frameWith("the row", func(fr string) bool { return strings.Contains(fr, "s1") })
+	// waitStatuses waits up to 2s for the count to reach at least n, and
+	// returns the count it ends on.
+	waitStatuses := func(n int) int {
+		t.Helper()
+		deadline := time.After(2 * time.Second)
+		for {
+			if s, _ := f.counts(); s >= n {
+				return s
+			}
+			select {
+			case <-deadline:
+				s, _ := f.counts()
+				return s
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
+	// The first poll reads the status once.
+	if s := waitStatuses(1); s != 1 {
+		t.Errorf("the first poll read daemon.status %d times, want once", s)
+	}
+	// The cluster fails: the held status goes, and Enter says so and plans nothing.
+	f.setFailing(true)
+	r.ticks <- time.Time{}
+	r.frameWith("cluster a failing", func(fr string) bool {
+		return strings.Contains(fr, "cluster a:") && !strings.Contains(fr, "cluster a: answered")
+	})
+	r.keys <- 'j'
+	r.keys <- 13
+	frame := r.frameWith("an Enter answer", func(fr string) bool {
+		return strings.Contains(fr, "plan:") || strings.Contains(fr, "print only:") || strings.Contains(fr, "cannot plan")
+	})
+	if !strings.Contains(frame, "no daemon status yet") || strings.Contains(frame, "plan: ") {
+		t.Errorf("after the cluster failed, Enter should say no daemon status yet and plan nothing:\n%s", frame)
+	}
+	// It answers again: the next poll reads the status once more.
+	f.setFailing(false)
+	r.ticks <- time.Time{}
+	if s := waitStatuses(2); s != 2 {
+		t.Errorf("after recovery daemon.status was read %d times in all, want 2", s)
 	}
 }
 
