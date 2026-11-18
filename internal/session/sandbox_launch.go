@@ -1,10 +1,12 @@
 package session
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -54,6 +56,13 @@ const sandboxRefusalSuffix = "#sandbox"
 // cannot stand in for the real one.
 const defaultSandboxExec = "/usr/bin/sandbox-exec"
 
+// The director shim parameter: filled only for a profile that names it (an
+// opencode seat's, which launches director-mcp as its MCP server).
+const (
+	sandboxShimParam   = "DIRECTOR_MCP_BIN"
+	sandboxShimCommand = "director-mcp"
+)
+
 // maxSandboxProfileBytes bounds the profile marvel copies.
 const maxSandboxProfileBytes = 1 << 20
 
@@ -83,6 +92,10 @@ type sandboxLaunch struct {
 	profile    string
 	harnessBin string
 	marvelBin  string
+	// shimBin is the director-mcp binary, symlinks resolved. It is set only when
+	// the profile names the DIRECTOR_MCP_BIN parameter, so a profile that does
+	// not name it never needs the shim installed.
+	shimBin string
 }
 
 // sandboxPlan is what site 2 staged for one launch.
@@ -192,7 +205,11 @@ func (m *Manager) resolveSandbox(sess *api.Session) (*sandboxLaunch, *sandboxFai
 	if err != nil {
 		return fail(RefusalSandboxProfile, "its profile is not readable")
 	}
+	profileText, err := io.ReadAll(io.LimitReader(f, maxSandboxProfileBytes+1))
 	_ = f.Close()
+	if err != nil {
+		return fail(RefusalSandboxProfile, "its profile is not readable")
+	}
 
 	var explicit api.Placement
 	if ws, err := m.store.GetWorkspace(sess.Workspace); err == nil {
@@ -229,7 +246,15 @@ func (m *Manager) resolveSandbox(sess *api.Session) (*sandboxLaunch, *sandboxFai
 	if err != nil || !filepath.IsAbs(marvelBin) {
 		return fail(RefusalSandboxHarness, "the marvel binary cannot be resolved")
 	}
-	return &sandboxLaunch{profile: profile, harnessBin: harness, marvelBin: marvelBin}, nil
+	launch := &sandboxLaunch{profile: profile, harnessBin: harness, marvelBin: marvelBin}
+	if bytes.Contains(profileText, []byte(`(param "`+sandboxShimParam+`")`)) {
+		shim, err := m.resolveBinary(sandboxShimCommand)
+		if err != nil {
+			return fail(RefusalSandboxHarness, "its profile names %s and %s cannot be resolved: %v", sandboxShimParam, sandboxShimCommand, err)
+		}
+		launch.shimBin = shim
+	}
+	return launch, nil
 }
 
 // resolveBinary turns a command word into the absolute, symlink-free path of an
@@ -371,6 +396,9 @@ func (m *Manager) wrapInSandbox(sess *api.Session, plan *launchPlan) *sandboxFai
 		"MARVEL_BIN":  sb.launch.marvelBin,
 		"HARNESS_BIN": sb.launch.harnessBin,
 		"REALHOME":    realHome,
+	}
+	if sb.launch.shimBin != "" {
+		params[sandboxShimParam] = sb.launch.shimBin
 	}
 	names := make([]string, 0, len(params))
 	for k := range params {
