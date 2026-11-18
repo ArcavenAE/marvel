@@ -138,7 +138,7 @@ type Controller struct {
 	// replacements have not yet taken, per role and generation. Memory only: a
 	// daemon restart between the clear and the spawn drops them.
 	crashMu      sync.Mutex
-	crashPending map[string][]string
+	crashPending map[crashPendingKey][]string
 
 	// Exposures is where the exposure gate reads what a slot has read. Nil
 	// means the store. A role with no Writes never reads it (marvel#945).
@@ -592,6 +592,7 @@ func (c *Controller) reconcileOnceLocked() []string {
 		return nil
 	}
 	c.prunedThisTick = nil
+	c.pruneCrashPending()
 
 	// The reap path converges with the health path on the crash-loop
 	// bookkeeping: a clean exit that vacates the pane is just as much a
@@ -1515,6 +1516,7 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		// this tick too, but the role still wants a replica; clearing there would
 		// let a flapping gate reset the refusal's start time and re-emit it.
 		c.sessMgr.ClearPlacementRefusal(t.Workspace, t.Name, plan.Role)
+		c.dropCrashPending(t, plan.Role, plan.Generation)
 	}
 
 	if plan.Spawn > 0 {

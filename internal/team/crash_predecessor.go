@@ -1,7 +1,6 @@
 package team
 
 import (
-	"fmt"
 	"slices"
 	"sort"
 	"strconv"
@@ -57,8 +56,15 @@ func seatIndex(key string) (int, bool) {
 	return idx, err == nil
 }
 
-func crashPendingKey(t *api.Team, role string, generation int64) string {
-	return fmt.Sprintf("%s/%s/g%d", t.Key(), role, generation)
+// crashPendingKey names one role's pending list in one generation of one team.
+type crashPendingKey struct {
+	team       string
+	role       string
+	generation int64
+}
+
+func pendingKey(t *api.Team, role string, generation int64) crashPendingKey {
+	return crashPendingKey{team: t.Key(), role: role, generation: generation}
 }
 
 // pendingCrashPredecessors is crashedPredecessors plus the keys an earlier tick
@@ -71,7 +77,7 @@ func crashPendingKey(t *api.Team, role string, generation int64) string {
 func (c *Controller) pendingCrashPredecessors(t *api.Team, role string, generation int64) []string {
 	fresh := c.crashedPredecessors(t, role, generation)
 	spent := liveNamed(c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role))
-	key := crashPendingKey(t, role, generation)
+	key := pendingKey(t, role, generation)
 
 	c.crashMu.Lock()
 	defer c.crashMu.Unlock()
@@ -91,7 +97,7 @@ func (c *Controller) pendingCrashPredecessors(t *api.Team, role string, generati
 		return nil
 	}
 	if c.crashPending == nil {
-		c.crashPending = map[string][]string{}
+		c.crashPending = map[crashPendingKey][]string{}
 	}
 	c.crashPending[key] = merged
 	return slices.Clone(merged)
@@ -100,7 +106,7 @@ func (c *Controller) pendingCrashPredecessors(t *api.Team, role string, generati
 // crashPredecessorTaken drops key from the pending list once a created seat
 // names it.
 func (c *Controller) crashPredecessorTaken(t *api.Team, role string, generation int64, key string) {
-	pk := crashPendingKey(t, role, generation)
+	pk := pendingKey(t, role, generation)
 	c.crashMu.Lock()
 	defer c.crashMu.Unlock()
 	rest := slices.DeleteFunc(slices.Clone(c.crashPending[pk]), func(k string) bool { return k == key })
@@ -109,4 +115,25 @@ func (c *Controller) crashPredecessorTaken(t *api.Team, role string, generation 
 		return
 	}
 	c.crashPending[pk] = rest
+}
+
+// dropCrashPending forgets a role's pending keys: the role wants no spawn, so
+// no replacement is coming for them.
+func (c *Controller) dropCrashPending(t *api.Team, role string, generation int64) {
+	c.crashMu.Lock()
+	defer c.crashMu.Unlock()
+	delete(c.crashPending, pendingKey(t, role, generation))
+}
+
+// pruneCrashPending forgets the pending keys of a team that is gone, of a
+// generation the team has left, and of a role the team no longer declares.
+func (c *Controller) pruneCrashPending() {
+	c.crashMu.Lock()
+	defer c.crashMu.Unlock()
+	for k := range c.crashPending {
+		team, err := c.store.GetTeam(k.team)
+		if err != nil || team.Generation != k.generation || !slices.ContainsFunc(team.Roles, func(r api.Role) bool { return r.Name == k.role }) {
+			delete(c.crashPending, k)
+		}
+	}
 }

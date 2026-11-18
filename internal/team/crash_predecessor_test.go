@@ -492,3 +492,133 @@ func TestCrashPredecessorsKeepIndexOrderAcrossTicks(t *testing.T) {
 	k2 := crashRow(t, store, "ops-writer-g1-2", 1, api.SessionCrashed, "")
 	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), []string{k2, k10}, "tick 2, an older crash with a higher index")
 }
+
+func pendingCount(c *Controller) int {
+	c.crashMu.Lock()
+	defer c.crashMu.Unlock()
+	return len(c.crashPending)
+}
+
+// Pending keys go when the team leaves the generation they were read in, when
+// the team is deleted, and when the role is no longer declared; a later spawn
+// of that role never names a seat from before.
+func TestCrashPendingIsPrunedWhenTheTeamMovesOn(t *testing.T) {
+	for name, change := range map[string]func(t *testing.T, store *api.Store, team *api.Team){
+		"generation changes": func(t *testing.T, store *api.Store, team *api.Team) {
+			if err := store.UpdateTeam(team.Key(), func(live *api.Team) error { live.Generation = 2; return nil }); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"team deleted": func(t *testing.T, store *api.Store, team *api.Team) {
+			if err := store.DeleteTeam(team.Key()); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"role removed": func(t *testing.T, store *api.Store, team *api.Team) {
+			if err := store.UpdateTeam(team.Key(), func(live *api.Team) error { live.Roles = nil; return nil }); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, ctrl, team := crashEnv(t, 1)
+			k := crashRow(t, store, "ops-writer-g1-0", 1, api.SessionCrashed, "")
+			wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", 1), []string{k}, "before")
+			if err := store.DeleteSession(k); err != nil {
+				t.Fatal(err)
+			}
+			if n := pendingCount(ctrl); n != 1 {
+				t.Fatalf("setup: %d pending lists, want 1", n)
+			}
+			change(t, store, team)
+			ctrl.pruneCrashPending()
+			if n := pendingCount(ctrl); n != 0 {
+				t.Errorf("%d pending lists after the prune, want none", n)
+			}
+		})
+	}
+}
+
+// A control for the prune: a team that stays as it is keeps its pending keys.
+func TestCrashPendingIsKeptWhileTheTeamStays(t *testing.T) {
+	store, ctrl, team := crashEnv(t, 1)
+	k := crashRow(t, store, "ops-writer-g1-0", 1, api.SessionCrashed, "")
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", 1), []string{k}, "before")
+	if err := store.DeleteSession(k); err != nil {
+		t.Fatal(err)
+	}
+	ctrl.pruneCrashPending()
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", 1), []string{k}, "after a prune that changes nothing")
+}
+
+// A role that wants no spawn has no replacement coming: a pass that finds it
+// steady forgets its pending keys, so the seat created when it scales up again
+// does not name a seat from before.
+func TestCrashPendingIsDroppedWhenTheRoleScalesDown(t *testing.T) {
+	store, ctrl, clock, root := crashRig(t, 1)
+	ctrl.ReconcileOnce()
+	seats := aliveWorkers(store)
+	if len(seats) != 1 {
+		t.Fatalf("setup: %d seats after the first pass, want 1", len(seats))
+	}
+	killPaneAndWait(t, seats[0].PaneID)
+	ctrl.ReconcileOnce() // reap
+	clock.Advance(30 * time.Minute)
+	moved := root + ".moved"
+	if err := os.Rename(root, moved); err != nil {
+		t.Fatal(err)
+	}
+	ctrl.ReconcileOnce() // the replacement is refused: its key stays pending
+	if n := pendingCount(ctrl); n != 1 {
+		t.Fatalf("setup: %d pending lists after the refused spawn, want 1", n)
+	}
+
+	setReplicas := func(n int) {
+		if err := store.UpdateTeam("test-crash-rig/squad", func(live *api.Team) error { live.Roles[0].Replicas = n; return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setReplicas(0)
+	ctrl.ReconcileOnce() // steady at zero
+	if n := pendingCount(ctrl); n != 0 {
+		t.Errorf("%d pending lists after the role scaled to zero, want none", n)
+	}
+	if err := os.Rename(moved, root); err != nil {
+		t.Fatal(err)
+	}
+	setReplicas(1)
+	ctrl.ReconcileOnce()
+	got := aliveWorkers(store)
+	if len(got) != 1 || got[0].Predecessor != "" {
+		t.Errorf("seat after the scale-up = %+v, want one seat with no predecessor", got)
+	}
+}
+
+// The reconcile pass itself prunes: a team that moves to a new generation while
+// a replacement is still refused loses the old generation's pending keys.
+func TestCrashPendingIsPrunedByTheReconcilePass(t *testing.T) {
+	store, ctrl, clock, root := crashRig(t, 1)
+	ctrl.ReconcileOnce()
+	seats := aliveWorkers(store)
+	if len(seats) != 1 {
+		t.Fatalf("setup: %d seats after the first pass, want 1", len(seats))
+	}
+	killPaneAndWait(t, seats[0].PaneID)
+	ctrl.ReconcileOnce() // reap
+	clock.Advance(30 * time.Minute)
+	if err := os.Rename(root, root+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Rename(root+".moved", root) })
+	ctrl.ReconcileOnce() // refused: the key stays pending
+	if n := pendingCount(ctrl); n != 1 {
+		t.Fatalf("setup: %d pending lists after the refused spawn, want 1", n)
+	}
+	if err := store.UpdateTeam("test-crash-rig/squad", func(live *api.Team) error { live.Generation = 2; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	ctrl.ReconcileOnce()
+	if n := pendingCount(ctrl); n != 0 {
+		t.Errorf("%d pending lists after a pass in the new generation, want none", n)
+	}
+}
