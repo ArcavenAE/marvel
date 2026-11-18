@@ -221,6 +221,11 @@ func (s *Store) Checkpoint() error {
 	if s.bolt == nil {
 		return nil
 	}
+	// Write the spend the interval has been holding back (marvel#777), so a
+	// detach, a teardown and a re-exec leave the file at the live totals.
+	s.mu.Lock()
+	s.flushSpendLocked()
+	s.mu.Unlock()
 	return s.bolt.Sync()
 }
 

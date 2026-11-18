@@ -856,6 +856,15 @@ func (d *Daemon) adoptAndRun(ctx context.Context, socketPath, network string) er
 		d.RunLimits(ctx, ReconcileInterval)
 	}()
 
+	// A stream spend held by its write interval goes out on a tick, so a seat that
+	// goes quiet leaves the file at most one interval and one tick behind
+	// (marvel#777).
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.RunSpendFlush(ctx, ReconcileInterval)
+	}()
+
 	// Tokens whose revoke failed when their seat ended are retried on a tick;
 	// the seat's end is reported only once.
 	d.wg.Add(1)
