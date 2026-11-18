@@ -46,6 +46,8 @@ func startStFake(t *testing.T, rows []api.Session) *stFake {
 		t.Fatal(err)
 	}
 	// The directory is left in the run's scratch TMPDIR; the test removes nothing.
+	// The socket is TMPDIR/stNNN/d.sock, so TMPDIR has to be short: a unix
+	// socket path over 104 characters cannot be bound.
 	f := &stFake{sock: filepath.Join(dir, "d.sock")}
 	ln, err := net.Listen("unix", f.sock)
 	if err != nil {
@@ -260,6 +262,24 @@ func TestFanStatusIsDroppedOnFailureAndReadAgainOnRecovery(t *testing.T) {
 	r.ticks <- time.Time{}
 	if s := waitStatuses(2); s != 2 {
 		t.Errorf("after recovery daemon.status was read %d times in all, want 2", s)
+	}
+	// One more poll of the recovered cluster, which holds its status again, so
+	// a third read would show.
+	_, before := f.counts()
+	r.ticks <- time.Time{}
+	deadline := time.After(10 * time.Second)
+	for {
+		if _, g := f.counts(); g > before {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("the poll after recovery never reached the daemon")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if s, _ := f.counts(); s != 2 {
+		t.Errorf("the status was read again while held: %d reads in all, want 2", s)
 	}
 }
 

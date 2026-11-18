@@ -9,6 +9,8 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemon"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // The watch view across clusters (docs/design/multicluster-read-view-plan.md,
@@ -32,6 +34,10 @@ type fanFetch struct {
 	fingerprint string
 	stamp       daemonStamp
 	stampOK     bool
+	// target is what Enter resolves a desk against on this cluster, read from
+	// its daemon status when the poll asked for it; targetOK says it was read.
+	target   attachTarget
+	targetOK bool
 }
 
 // fanEvent is what the loop did with one event, for a test to order itself by.
@@ -52,9 +58,15 @@ type fanWatchConfig struct {
 	fetch func(cluster string, seq uint64, wantStamp bool) fanFetch
 	// keyOf is daemonKey for a cluster and the fingerprint its dial verified.
 	keyOf func(cluster, fingerprint string) string
-	now   func() time.Time
-	out   func(frame string)
-	trace func(fanEvent) // optional
+	// status reads the attach target of a cluster that has none held, within
+	// what is left of the poll's one timer. It is optional: with none, Enter has
+	// nothing to resolve against. statusBudget is that timer, from the moment
+	// the poll started.
+	status       func(cluster string, within time.Duration) (attachTarget, bool)
+	statusBudget time.Duration
+	now          func() time.Time
+	out          func(frame string)
+	trace        func(fanEvent) // optional
 }
 
 // fanState is what the view holds for one cluster.
@@ -64,6 +76,8 @@ type fanState struct {
 	rows     []api.Session // the last good rows
 	stamp    daemonStamp
 	stampOK  bool
+	target   attachTarget // held while the cluster answers; dropped when it fails
+	targetOK bool
 	fp       string
 	asOf     time.Time // when rows were read
 	have     bool      // rows holds a good read
@@ -100,6 +114,23 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 	for i, c := range cfg.clusters {
 		states[i] = &fanState{fanWatchCluster: c}
 		byName[c.name] = states[i]
+	}
+	// Enter resolves a desk against the status its own cluster's poll brought
+	// back and holds. It makes no call, so a key never waits on a daemon, and
+	// the loop's one goroutine reads and writes the state, so it needs no lock.
+	// An entry that repeats another's address uses that one's status.
+	ws.target = func(cluster string) (attachTarget, error) {
+		s := byName[cluster]
+		if s == nil {
+			return attachTarget{}, fmt.Errorf("no cluster %q in the watch", cluster)
+		}
+		if o := byName[s.repeatOf]; s.repeatOf != "" && o != nil {
+			s = o
+		}
+		if !s.targetOK {
+			return attachTarget{}, errors.New("no daemon status yet")
+		}
+		return s.target, nil
 	}
 	results := make(chan fanResult, 8*len(states)+8)
 	timers := make(chan fanTimer, 8*len(states)+8)
@@ -139,6 +170,7 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 		}
 		s.seq++
 		seq, want := s.seq, wantStamp(s)
+		wantTarget := cfg.status != nil && !s.targetOK
 		s.inflight, s.late = true, false
 		arm := func(d time.Duration, kind string) {
 			s.timers = append(s.timers, time.AfterFunc(d, func() {
@@ -151,7 +183,14 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 		arm(cfg.stale, "stale")
 		arm(cfg.timeout, "timeout")
 		go func() {
+			began := time.Now()
 			f := cfg.fetch(s.name, seq, want)
+			// The status is read inside what is left of the one timer, as the
+			// stamp is, so a slow daemon loses its status for this poll and
+			// keeps its rows. A cluster that holds one is not asked again.
+			if left := cfg.statusBudget - time.Since(began); wantTarget && f.rec.answered() && left > 0 {
+				f.target, f.targetOK = cfg.status(s.name, left)
+			}
 			select {
 			case results <- fanResult{s.name, seq, f}:
 			case <-stop:
@@ -243,10 +282,14 @@ func (s *fanState) apply(f fanFetch, now time.Time) {
 		s.rows[i] = r
 	}
 	s.fp, s.stamp, s.stampOK = f.fingerprint, f.stamp, f.stampOK
+	if f.targetOK {
+		s.target, s.targetOK = f.target, true
+	}
 	s.asOf, s.have = now, true
 }
 
 func (s *fanState) fail(rec clusterRecord) {
+	s.target, s.targetOK = attachTarget{}, false
 	s.fetched, s.failed = true, true
 	s.rec = rec
 	s.rec.Cluster = s.name
@@ -407,8 +450,34 @@ func newFanWatchConfig(targets []clusterTarget, params json.RawMessage, interval
 			return f
 		},
 		keyOf: func(name, fp string) string { return daemonKey(byName[name].Addr, fp) },
-		now:   time.Now,
+		status: func(name string, within time.Duration) (attachTarget, bool) {
+			return readTargetWithin(byName[name], within)
+		},
+		statusBudget: timer,
+		now:          time.Now,
 	}
+}
+
+// readTargetWithin reads a cluster's daemon status and turns it into what an
+// attach resolves a desk against: the tmux socket the daemon reported and
+// whether the address is a remote one. It is the call the single-cluster view
+// makes for its header, made for one cluster of a set, and a refusal or a slow
+// answer reads as no target.
+func readTargetWithin(t clusterTarget, timeout time.Duration) (attachTarget, bool) {
+	opts := t.Opts
+	opts.StrictHostKey = true
+	opts.OfferOneKey = true
+	opts.Timeout = timeout
+	resp, err := daemonrpc.SendRequestWith(t.Addr, daemonrpc.Request{Method: "daemon.status"}, opts)
+	if err != nil || resp.Error != "" {
+		return attachTarget{}, false
+	}
+	var st daemon.DaemonStatus
+	if json.Unmarshal(resp.Result, &st) != nil {
+		return attachTarget{}, false
+	}
+	host, remote := attachHost(t.Addr)
+	return attachTarget{Socket: st.TmuxSocket, Remote: remote, Host: host}, true
 }
 
 // runFanWatch is get sessions -w across a cluster set.
