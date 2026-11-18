@@ -396,3 +396,34 @@ func TestSandboxBusPassFileIsPassedResolved(t *testing.T) {
 		t.Errorf("BUS_PASS_FILE = %q, want the resolved path %q", values["BUS_PASS_FILE"], r.passFile)
 	}
 }
+
+// A state directory that already exists with a relaxed mode is made private.
+func TestSandboxShimStateDirectoryIsMadePrivate(t *testing.T) {
+	t.Parallel()
+	r := newBusRig(t, busProfile)
+	state := filepath.Join(r.home, "director-state")
+	if err := os.Mkdir(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(state, 0o755); err != nil { // the process umask may have narrowed the mkdir
+		t.Fatal(err)
+	}
+	if _, _, _, fail := r.wrapBus(t); fail != nil {
+		t.Fatal(fail.msg)
+	}
+	if info, err := os.Stat(state); err != nil || info.Mode().Perm() != 0o700 {
+		t.Errorf("state directory mode = %v, %v, want 0700", info, err)
+	}
+}
+
+// A state directory that is a link is refused, not followed.
+func TestSandboxShimStateDirectoryThatIsALinkIsRefused(t *testing.T) {
+	t.Parallel()
+	r := newBusRig(t, busProfile)
+	if err := os.Symlink(t.TempDir(), filepath.Join(r.home, "director-state")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, fail := r.wrapBus(t); fail == nil || fail.reason != RefusalSandboxHarness {
+		t.Fatalf("fail = %+v, want a refusal with reason %q", fail, RefusalSandboxHarness)
+	}
+}
