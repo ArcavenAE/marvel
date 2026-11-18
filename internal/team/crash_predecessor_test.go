@@ -68,11 +68,12 @@ func TestCrashRepairReplacementNamesItsPredecessor(t *testing.T) {
 		t.Errorf("predecessor = %q, want the workspace/session key %q", got[0], crashWS+"/ops-writer-g1-0")
 	}
 
-	// Two crashed seats come back in index order, so the first replacement
-	// takes the lower index whichever order the store lists them in.
+	// Two crashed seats come back in numeric index order, so the first
+	// replacement takes the lower index whichever order the store lists them
+	// in: by key, "g1-10" sorts before "g1-2".
 	store2, ctrl2, team2 := crashEnv(t, 3)
-	second := crashRow(t, store2, "ops-writer-g1-2", 1, api.SessionCrashed, "")
-	first := crashRow(t, store2, "ops-writer-g1-0", 1, api.SessionCrashed, "")
+	second := crashRow(t, store2, "ops-writer-g1-10", 1, api.SessionCrashed, "")
+	first := crashRow(t, store2, "ops-writer-g1-2", 1, api.SessionCrashed, "")
 	wantPredecessors(t, ctrl2.crashedPredecessors(team2, "writer", team2.Generation), []string{first, second}, "two crashed seats")
 }
 

@@ -1,8 +1,9 @@
 package team
 
 import (
-	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/arcavenae/marvel/internal/api"
 )
@@ -23,7 +24,6 @@ func (c *Controller) crashedPredecessors(t *api.Team, role string, generation in
 			named[s.Predecessor] = true
 		}
 	}
-	prefix := fmt.Sprintf("%s-%s-g%d-", t.Name, role, generation)
 	type crashed struct {
 		key   string
 		index int
@@ -33,8 +33,9 @@ func (c *Controller) crashedPredecessors(t *api.Team, role string, generation in
 		if s.State != api.SessionCrashed || s.Generation != generation || named[s.Key()] {
 			continue
 		}
-		var idx int
-		if _, err := fmt.Sscanf(s.Name, prefix+"%d", &idx); err != nil {
+		// A session name ends in its index: <team>-<role>-g<generation>-<index>.
+		idx, err := strconv.Atoi(s.Name[strings.LastIndex(s.Name, "-")+1:])
+		if err != nil {
 			continue
 		}
 		found = append(found, crashed{key: s.Key(), index: idx})
