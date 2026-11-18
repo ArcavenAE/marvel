@@ -1358,7 +1358,11 @@ rows of the clusters that gave rows, each with a cluster field. The exit code is
 the table's. Nothing is replaced for display: a name holding control or bidi
 characters, which the table draws as U+FFFD, appears as the daemon sent it, so -o output is raw: a
 terminal may act on such characters, and piping it through cat -v shows them.
-Secret-looking Env values show as (redacted), as in the team document.`,
+Secret-looking Env values show as (redacted), as in the team document.
+
+With -w, get sessions is a live view. j and k, or the down and up arrow keys, move
+the cursor; Enter shows the attach plan for the selected session on the status line
+and runs nothing. A letter key sorts by a column, ? lists every key, q quits.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			// The value of a bare -w is split off once, here, and RunE reads
 			// the result: a second split would see the interval already moved
@@ -3800,7 +3804,7 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 		fmt.Fprintf(&buf, "    o  output rate\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "  STATE \"failed (saturated)\" or \"failed (frozen)\" means the role will\n")
-		fmt.Fprintf(&buf, "  spawn no replacement — saturated hit max_restarts, frozen is\n")
+		fmt.Fprintf(&buf, "  spawn no replacement. Saturated hit max_restarts; frozen is\n")
 		fmt.Fprintf(&buf, "  restart_policy=never. Plain \"failed\" is being replaced. Clear a\n")
 		fmt.Fprintf(&buf, "  saturation freeze with `marvel reset-health`.\n")
 		fmt.Fprintf(&buf, "  \"succeeded (exit 0)\" is a headless run that finished; it holds its\n")
@@ -3815,6 +3819,10 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 		fmt.Fprintf(&buf, "  shown no work; it also reads for a seat waiting at a dialog marvel has no\n")
 		fmt.Fprintf(&buf, "  pattern for. It shows only when marvel has an activity channel for the\n")
 		fmt.Fprintf(&buf, "  seat and has stored no harness verdict.\n")
+		fmt.Fprintf(&buf, "\n")
+		fmt.Fprintf(&buf, "  Navigation:\n")
+		fmt.Fprintf(&buf, "    j  or down arrow   cursor down      k  or up arrow   cursor up\n")
+		fmt.Fprintf(&buf, "    Enter              show the attach plan for the selected session\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "    ?  toggle help    q  quit\n")
 		fmt.Fprintf(&buf, "\n")

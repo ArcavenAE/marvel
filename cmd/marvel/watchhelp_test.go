@@ -41,12 +41,34 @@ func TestHelpOverlayListsCursorKeys(t *testing.T) {
 	if len(linesHolding(frame, "Navigation")) == 0 {
 		t.Errorf("the overlay has no Navigation block:\n%s", frame)
 	}
-	if len(linesHolding(frame, "j", "down arrow")) == 0 {
-		t.Errorf("no line names j and the down arrow:\n%s", frame)
+	if len(linesWithTokens(frame, "j", "down", "arrow")) == 0 {
+		t.Errorf("no line names the key j and the down arrow:\n%s", frame)
 	}
-	if len(linesHolding(frame, "k", "up arrow")) == 0 {
-		t.Errorf("no line names k and the up arrow:\n%s", frame)
+	if len(linesWithTokens(frame, "k", "up", "arrow")) == 0 {
+		t.Errorf("no line names the key k and the up arrow:\n%s", frame)
 	}
+}
+
+// linesWithTokens returns the lines that hold every want as a whole
+// whitespace-separated word, so "j" is the key and not a letter inside a word.
+func linesWithTokens(text string, want ...string) []string {
+	var out []string
+	for _, l := range strings.Split(text, "\n") {
+		have := map[string]bool{}
+		for _, w := range strings.Fields(l) {
+			have[w] = true
+		}
+		ok := true
+		for _, w := range want {
+			if !have[w] {
+				ok = false
+			}
+		}
+		if ok {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func TestHelpOverlayTellsWhatEnterDoes(t *testing.T) {
@@ -86,10 +108,13 @@ func TestUserGuideWatchModeNamesTheRightKeys(t *testing.T) {
 	if j := strings.Index(section[len("### Watch mode"):], "\n### "); j >= 0 {
 		section = section[:len("### Watch mode")+j]
 	}
-	for _, want := range []string{"Enter", "arrow", "`?`"} {
+	for _, want := range []string{"Enter", "`?`"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Watch mode section does not mention %q:\n%s", want, section)
 		}
+	}
+	if !strings.Contains(section, "arrow keys") {
+		t.Errorf("Watch mode section does not mention the arrow keys:\n%s", section)
 	}
 	if strings.Contains(section, "`h` for help") {
 		t.Errorf("Watch mode section still says h opens help; ? does, h sorts by health:\n%s", section)
