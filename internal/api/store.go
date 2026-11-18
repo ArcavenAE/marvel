@@ -74,6 +74,9 @@ type Store struct {
 	// OpenBolt; cleared by CloseBolt. See bolt.go for the WAL discipline.
 	bolt     *bolt.DB
 	boltPath string
+	// spend tracks when each session's stream spend was last written, so a write
+	// happens at most every SpendPersistInterval (spend_persist.go, marvel#777).
+	spend spendPersist
 	// resumeHook is called after each resume journal entry is written
 	// (resume_journal.go). Set by the daemon; nil in tests that do not mirror.
 	resumeHook func()
@@ -514,6 +517,7 @@ func (s *Store) DeleteSession(key string) error {
 		return err
 	}
 	delete(s.sessions, key)
+	s.forgetSpendLocked(key)
 	// A deleted seat's readiness goes with it: nothing is left to route to.
 	return s.deleteSeatDutiesLocked(key)
 }
@@ -1198,7 +1202,10 @@ func (s *Store) UpdateSessionContext(key string, c SessionContext) {
 // not the occupancy fields, not ContextSource and not ContextAt, which is the
 // activity signal the watchdog reads, so whether a running-total turn counts as
 // activity stays a separate decision. A missing session is ignored and nothing
-// is persisted, as with UpdateSessionContext.
+// is persisted for it. For a present session the spend is written to the bolt
+// file the first time it is updated in this process and then at most every
+// SpendPersistInterval; the spend held between writes goes out at Checkpoint
+// (marvel#777). UpdateSessionContext still does not persist.
 func (s *Store) UpdateSessionSpend(key string, sp SessionSpend) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1215,6 +1222,7 @@ func (s *Store) UpdateSessionSpend(key string, sp SessionSpend) {
 		t := *sp.Tail
 		sess.SpendTail = &t
 	}
+	s.persistSpendLocked(key, sess)
 }
 
 // copyInt returns a pointer to a copy of *p, or nil.
