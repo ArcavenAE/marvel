@@ -115,7 +115,7 @@ Listed so the doc stands alone. None is filed until D8 is ruled.
 | T10 | the container image: opencode 1.18.15, plugin pinned and seeded, egress closed except the named route, egress log | T2, T1 |
 | T11 | `describe` shows the verified permission and the auto-reject count | T4v, T7, K2 |
 | T12 | capture the parked corporate opencode reviewer's prompt verbatim, before it is answered by hand | none |
-| T13 | the recorded write run (positive and negative trials) and its finding | T2, T10, T15, T3a, T4e, T8, T1, D3 |
+| T13 | the recorded write run (positive and negative trials) and its finding. A host run may use `examples/sandbox/opencode-local.sb` (section 7a) | T2, T10, T15, T3a, T4e, T8, T1, D3 |
 | T15 | the container wrapper for a marvel seat. First check: does apply-time `LookPath` accept a multi-word command? If not, use a wrapper script on PATH | T10, T3a |
 
 seat-bootstrap K3 (the opencode park patterns) gains an edge on T12.
@@ -165,6 +165,7 @@ Recorded 2026-10-15. The operator's words are quoted where they were relayed.
 What follows from ruling 3, without a further ruling:
 
 - T13 no longer waits on T10 (the image) or T15 (the wrapper) for the first run. Both stay as the work that must land before a run against a real repository or with a provider key.
+- A host run may use `examples/sandbox/opencode-local.sb` as the role's `sandbox_profile`. It adds the exec of the director shim to the goose profile through a sixth `-D` parameter, `DIRECTOR_MCP_BIN`, which marvel fills only when the profile names it (resolved from `director-mcp` on PATH, symlinks resolved) and refuses the launch when the profile names it and the binary is missing. The shim is admitted to exec and cannot reach the bus or its state under that profile, so T13 does not depend on the shim working. Writes stay inside the seat's trees and `/dev`, and the network is the local model server only.
 - On the host, these parts of section 5 have no container behind them:
   - The rules in the permission block are enforced inside opencode's own process. A write outside the throwaway folder is stopped by those rules and by nothing else.
   - The negative trial's canary dir is a host directory outside the throwaway folder, read by the same lstat walk. A write to any other host path is outside what the checker sees.
