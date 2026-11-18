@@ -98,3 +98,7 @@ func (s *Store) forgetSpendLocked(key string) {
 	delete(s.spend.written, key)
 	delete(s.spend.dirty, key)
 }
+
+// FlushDueSpend writes each session whose spend the file does not hold and whose
+// interval has passed. Red stub for marvel#777 round 2: it writes nothing yet.
+func (s *Store) FlushDueSpend() {}

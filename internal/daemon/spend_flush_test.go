@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -89,5 +90,68 @@ func TestReexecWritesTheHeldSpendBeforeTheExec(t *testing.T) {
 	}
 	if got != 2000 {
 		t.Errorf("SpendOut in the file at exec time = %d, want 2000 (the held update)", got)
+	}
+}
+
+// marvel#777 round 2: the daemon tick writes a held spend whose interval has
+// passed, with no later update and no shutdown. flushDueSpend is the pass and
+// RunSpendFlush the loop that calls it.
+func TestFlushDueSpendWritesAQuietSeatsHeldSpend(t *testing.T) {
+	skipIfNoTmux(t)
+	boltPath := filepath.Join(t.TempDir(), "marvel.bolt")
+	d, err := NewWithOptions(Options{StateBolt: boltPath})
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	d.store.SetSpendClock(func() time.Time { return now })
+	sess := &api.Session{Name: "agent-0", Workspace: "ws", Team: "team", Role: "worker", State: api.SessionRunning, PaneID: "%1"}
+	if err := d.store.CreateSession(sess); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	first, second := 1000, 2000
+	d.store.UpdateSessionSpend(sess.Key(), api.SessionSpend{Out: &first})
+	now = now.Add(time.Minute)
+	d.store.UpdateSessionSpend(sess.Key(), api.SessionSpend{Out: &second})
+	now = now.Add(api.SpendPersistInterval)
+	d.flushDueSpend(now)
+	if err := d.store.CloseBolt(); err != nil {
+		t.Fatalf("CloseBolt: %v", err)
+	}
+	if got := spendInFile(t, boltPath, sess.Key()); got != 2000 {
+		t.Errorf("SpendOut in the file after the spend pass = %d, want 2000 (held update, interval passed, no later update)", got)
+	}
+}
+
+// RunSpendFlush calls the pass on its tick: a 1ms tick for two seconds with a
+// held spend past its interval, and the file holds the held value.
+func TestRunSpendFlushWritesOnItsTick(t *testing.T) {
+	skipIfNoTmux(t)
+	boltPath := filepath.Join(t.TempDir(), "marvel.bolt")
+	d, err := NewWithOptions(Options{StateBolt: boltPath})
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	d.store.SetSpendClock(func() time.Time { return now })
+	sess := &api.Session{Name: "agent-0", Workspace: "ws", Team: "team", Role: "worker", State: api.SessionRunning, PaneID: "%1"}
+	if err := d.store.CreateSession(sess); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	first, second := 1000, 2000
+	d.store.UpdateSessionSpend(sess.Key(), api.SessionSpend{Out: &first})
+	d.store.UpdateSessionSpend(sess.Key(), api.SessionSpend{Out: &second})
+	now = now.Add(api.SpendPersistInterval)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); d.RunSpendFlush(ctx, time.Millisecond) }()
+	time.Sleep(2 * time.Second)
+	cancel()
+	<-done
+	if err := d.store.CloseBolt(); err != nil {
+		t.Fatalf("CloseBolt: %v", err)
+	}
+	if got := spendInFile(t, boltPath, sess.Key()); got != 2000 {
+		t.Errorf("SpendOut in the file after the loop ran for 2s at a 1ms tick = %d, want 2000", got)
 	}
 }
