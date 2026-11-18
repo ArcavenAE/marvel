@@ -91,8 +91,11 @@ content: |
   Re-read at marvel main df7c79c7: `cost` is still a column in
   `cmd/marvel/columns.go:71` and an opt-in column, and
   `docs/design/get-sessions-output.md` still describes COST (line 223). The
-  text above is left as written; the five OPEN items are answered by that
-  build, as the harvest says.
+  text above is left as written. Its sentence "The five OPEN items above are
+  answered" overstates: items 1, 2 and 4 are answered by that build (the
+  sources, `-` for no report, opt-in). Item 3 is answered in part, a running
+  total, with the team rollup left to #601. Item 5 (whether the figure survives
+  a bolt load) is not stated in those lines and stays open as written.
 
 edges:
   - target: question-marvel-otel-architecture
