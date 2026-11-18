@@ -147,6 +147,10 @@ func (ws *watchSort) enter() {
 		return
 	}
 	line := quoteArgv(plan.Argv)
+	if plan.Exec && ws.term != nil {
+		p := plan
+		ws.pending, ws.pendingLabel = &p, label
+	}
 	switch {
 	case plan.Exec:
 		ws.status = "plan: " + line

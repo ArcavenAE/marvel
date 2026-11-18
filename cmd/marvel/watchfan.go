@@ -215,6 +215,14 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 				trace(fanEvent{Kind: "key", Applied: true})
 				return
 			}
+			if ws.wantRefresh {
+				// Back from a child: poll every cluster again, so the rows
+				// that replace "refreshing..." were read after the return.
+				ws.wantRefresh = false
+				for _, s := range states {
+					start(s)
+				}
+			}
 			if redraw {
 				draw()
 			}
@@ -236,6 +244,7 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 					stopTimers(s)
 				}
 				s.apply(r.f, cfg.now())
+				ws.refreshing = false
 				if !ws.showHelp {
 					draw()
 				}
@@ -299,7 +308,7 @@ func (s *fanState) fail(rec clusterRecord) {
 // status line for each cluster, then one table of the rows of every cluster
 // that gave any.
 func renderFanFrame(ws *watchSort, cfg fanWatchConfig, states []*fanState, now time.Time) string {
-	if ws.showHelp {
+	if ws.showHelp || ws.refreshing {
 		return renderWatchFrame(ws, cfg.interval, now)
 	}
 	var buf bytes.Buffer
@@ -502,10 +511,11 @@ func runFanWatch(names []string, columns string, noTrunc bool, interval time.Dur
 	if err != nil {
 		return err
 	}
-	return withWatchTerminal(interval, func(keys <-chan byte, ticks <-chan time.Time, out func(string)) {
+	return withWatchTerminal(interval, func(keys <-chan byte, ticks <-chan time.Time, out func(string), hand terminalHandoff) {
 		ws := newWatchState(cols)
 		ws.explicit, ws.noTrunc = explicit, noTrunc
 		ws.heightFn = terminalHeight
+		ws.openInPlace(hand)
 		cfg := newFanWatchConfig(targets, params, interval)
 		cfg.out = out
 		fanWatchLoop(ws, cfg, keys, ticks)

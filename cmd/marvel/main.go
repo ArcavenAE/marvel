@@ -3314,9 +3314,16 @@ type watchSort struct {
 	// plan. The field is here so a test can fail on any call.
 	exec func(argv []string) error
 	// term hands the terminal to a child that runs in place, and takes it
-	// back. Nil means there is no terminal to hand over (a test, or a plan
-	// that runs as a short child).
+	// back. Nil means Enter only shows the plan and opens nothing: the view
+	// has no terminal of its own to hand over (a test of the cursor).
 	term terminalHandoff
+	// pending is the plan Enter just resolved and may open; pendingLabel names
+	// its session. refreshing is set from the return of a child until a fresh
+	// fetch answers, and wantRefresh asks the loop for that fetch.
+	pending      *attachPlan
+	pendingLabel string
+	refreshing   bool
+	wantRefresh  bool
 	// heightFn, when set, reads the screen height for each frame, so a resize
 	// shows on the next draw; height is used when it is nil.
 	heightFn func() int
@@ -3358,7 +3365,7 @@ func fetchWatchData(wantHeader, composer bool) watchData {
 // apply takes a finished fetch into the view. A failed fetch keeps the last
 // good sessions on screen.
 func (ws *watchSort) apply(d watchData) {
-	ws.late, ws.fetched = false, true
+	ws.late, ws.fetched, ws.refreshing = false, true, false
 	ws.header = d.header
 	if d.err != nil {
 		ws.disconnected = true
@@ -3797,6 +3804,15 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 	fmt.Fprintf(&buf, "marvel get sessions    %s    (every %v)\n",
 		now.Format("15:04:05"), interval)
 
+	if ws.refreshing && !ws.showHelp {
+		// Back from a child: no rows until a fresh fetch answers.
+		fmt.Fprintf(&buf, "\nrefreshing...\n")
+		if ws.status != "" {
+			fmt.Fprintf(&buf, "%s\n", ws.status)
+		}
+		return buf.String()
+	}
+
 	if ws.showHelp {
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "  Sort keys (toggle asc/desc):\n")
@@ -3907,7 +3923,7 @@ func newWatchScreen(cols []sessionColumn, explicit, noTrunc bool) *watchSort {
 // withWatchTerminal runs a watch view on the terminal: raw mode, a goroutine
 // that reads keys, and a ticker at the interval. It refuses when stdin is not
 // a terminal.
-func withWatchTerminal(interval time.Duration, run func(keys <-chan byte, ticks <-chan time.Time, out func(string))) error {
+func withWatchTerminal(interval time.Duration, run func(keys <-chan byte, ticks <-chan time.Time, out func(string), hand terminalHandoff)) error {
 	fd := int(os.Stdin.Fd())
 	if err := requireTerminal(fd); err != nil {
 		return err
@@ -3933,18 +3949,20 @@ func withWatchTerminal(interval time.Duration, run func(keys <-chan byte, ticks 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	hand := &ttyHandoff{fd: fd, old: oldState, reader: reader}
 	run(keys, ticker.C, func(frame string) {
 		// Raw mode needs \r\n instead of \n.
 		fmt.Print("\033[2J\033[H" + strings.ReplaceAll(frame, "\n", "\r\n"))
-	})
+	}, hand)
 	return nil
 }
 
 func watchSessionsLoop(interval time.Duration, cols []sessionColumn, explicit, noTrunc bool) error {
-	return withWatchTerminal(interval, func(keys <-chan byte, ticks <-chan time.Time, out func(string)) {
+	return withWatchTerminal(interval, func(keys <-chan byte, ticks <-chan time.Time, out func(string), hand terminalHandoff) {
 		ws := newWatchScreen(cols, explicit, noTrunc)
 		ws.heightFn = terminalHeight
 		ws.target = watchTargetFor(ws)
+		ws.openInPlace(hand)
 		watchLoop(ws, watchLoopConfig{
 			interval: interval,
 			deadline: watchFetchDeadline,
