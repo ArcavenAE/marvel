@@ -191,3 +191,29 @@ func TestRecreatedKeyInsideTheIntervalIsWrittenAtOnce(t *testing.T) {
 		t.Errorf("SpendOut after a restart = %d, want 3000 (a key re-created a minute after the old write is a first write)", got)
 	}
 }
+
+// A quiet timer pass must not move the write time. Write at 0, a held update at
+// 1m, a timer pass at 15m writes it, a quiet pass at 30m, then an update at 40m
+// is 25m after the last write and is written at once. If a pass kept a session's
+// held mark after its write succeeded, the quiet pass at 30m would find an
+// unchanged record, count it as written, and push the write time to 30m, so the
+// update at 40m would be held. Passes on the real code; fails under the mutant
+// that does not clear the held mark after a successful write.
+func TestQuietTimerPassDoesNotMoveTheWriteTime(t *testing.T) {
+	s, clk, _, keys := spendStore(t, 1)
+	s.UpdateSessionSpend(keys[0], spendOf(1000))
+	clk.advance(time.Minute)
+	s.UpdateSessionSpend(keys[0], spendOf(2000))
+	clk.advance(SpendPersistInterval - time.Minute)
+	s.FlushDueSpend()
+	if got := fileSpend(t, s, keys[0]); got != 2000 {
+		t.Fatalf("SpendOut in the file after the timer pass at 15m = %d, want 2000", got)
+	}
+	clk.advance(SpendPersistInterval)
+	s.FlushDueSpend()
+	clk.advance(10 * time.Minute)
+	s.UpdateSessionSpend(keys[0], spendOf(3000))
+	if got := fileSpend(t, s, keys[0]); got != 3000 {
+		t.Errorf("SpendOut in the file after an update 25m after the last write = %d, want 3000 (a quiet pass at 30m must not move the write time)", got)
+	}
+}
