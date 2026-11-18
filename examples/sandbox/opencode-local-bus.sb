@@ -20,7 +20,8 @@
 ; the launch when the profile names one and it cannot be filled: director-mcp
 ; is not on PATH, NATS_URL is not a loopback URL with a port, or the password
 ; file is not a regular file inside marvel's private token directory. A
-; parameter named only in a comment does not count.
+; parameter named only in a semicolon comment does not count. Other comment
+; forms are not read as comments, so a name inside one counts as named.
 ; SBPL applies the last matching rule, so a deny must come before the allows
 ; that carve a path back out of it.
 ;
