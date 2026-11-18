@@ -27,6 +27,7 @@ func TestHandoffCompleteRefusesMarkerOnlyFile(t *testing.T) {
 		{"spaces tabs and CRLF above the marker", "  \t\r\n\r\n" + marker + "\r\n", false},
 		{"one short line above the marker", "x\n" + marker + "\n", true},
 		{"a line, blank lines, then the marker", "state: done\n\n\n" + marker + "\n", true},
+		{"padded content above the marker", "  x  \n" + marker + "\n", true},
 		{"a line above and CRLF line ends", "state: done\r\n" + marker + "\r\n", true},
 		{"the marker with space around it", "state: done\n  " + marker + "  \n", true},
 		{"content but no marker", "state: done\n", false},

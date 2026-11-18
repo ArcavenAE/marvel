@@ -487,7 +487,7 @@ func handoffPath(template string, sess api.Session) (string, error) {
 }
 
 // handoffComplete reports whether the file at path is a regular file whose
-// last non-empty line is marker. The path is written by the seat, and this
+// last non-empty line is marker, with at least one non-blank line above it. The path is written by the seat, and this
 // runs in a background read off the controller lock (marvel#444), but it must
 // not block: a FIFO would hold a plain open forever and wedge that read
 // (review 5392253372). So the path must be a
@@ -529,10 +529,17 @@ func handoffCompleteSince(path, marker string, notBefore time.Time) bool {
 		return false
 	}
 	tail = bytes.TrimRight(tail, " \t\r\n")
-	if i := bytes.LastIndexByte(tail, '\n'); i >= 0 {
-		tail = tail[i+1:]
+	i := bytes.LastIndexByte(tail, '\n')
+	if strings.TrimSpace(string(tail[i+1:])) != marker {
+		return false
 	}
-	return strings.TrimSpace(string(tail)) == marker
+	// A file holding only the marker, or the marker behind blank lines, is a
+	// template copied and left unfilled, not a handoff (marvel#612). One non-blank
+	// line above the marker is enough, with no minimum length: the rule the tool
+	// path already applies. Only the window is searched, so a file with more than
+	// maxHandoffTail bytes of blank lines between its content and the marker reads
+	// as marker-only and is refused, which fails closed.
+	return i >= 0 && len(bytes.TrimSpace(tail[:i])) > 0
 }
 
 // handoffProbes runs the marker read off the controller lock (marvel#444).
