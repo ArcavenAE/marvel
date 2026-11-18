@@ -191,7 +191,7 @@ func TestInplaceHandoffOrder(t *testing.T) {
 	r := startEnterRig(t, rec, func(argv []string) error { rec.ran(argv); return nil }, nil)
 	r.pressEnter()
 	got := rec.waitUnparked(t)
-	want := []string{"park", "restore", "clear", "exec tmux -L mvl-t attach -t '%5'", "raw", "unpark"}
+	want := []string{"park", "restore", "clear", "exec tmux -L mvl-t attach -t %5", "raw", "unpark"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("hand-off order:\n got %q\nwant %q", got, want)
 	}
@@ -203,7 +203,7 @@ func TestSwitchClientIsAShortChildWithNoHandoff(t *testing.T) {
 	r := startEnterRig(t, rec, func(argv []string) error { rec.ran(argv); return nil }, nil)
 	r.pressEnter()
 	got := rec.waitRan(t)
-	want := []string{"exec tmux -L mvl-t switch-client -t '%5'"}
+	want := []string{"exec tmux -L mvl-t switch-client -t %5"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("a switch-client should run alone, with the reader and the terminal untouched:\n got %q\nwant %q", got, want)
 	}
