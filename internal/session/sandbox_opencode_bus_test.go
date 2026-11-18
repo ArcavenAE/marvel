@@ -427,3 +427,29 @@ func TestSandboxShimStateDirectoryThatIsALinkIsRefused(t *testing.T) {
 		t.Fatalf("fail = %+v, want a refusal with reason %q", fail, RefusalSandboxHarness)
 	}
 }
+
+// The profile denies four other local service ports after the bus allow, and the
+// last match wins, so a NATS_URL on one of them would be allowed and then
+// cancelled. The launch refuses those ports; the list is the profile's own.
+func TestSandboxBusPortOnAnotherServicesPortIsRefused(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("../../examples/sandbox/opencode-local-bus.sb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied := regexp.MustCompile(`\(deny network-outbound \(remote ip "localhost:(\d+)"\)\)`).FindAllStringSubmatch(string(raw), -1)
+	if len(denied) < 4 {
+		t.Fatalf("the profile denies %d ports, want at least four", len(denied))
+	}
+	for _, m := range denied {
+		port := m[1]
+		t.Run(port, func(t *testing.T) {
+			r := newBusRig(t, busProfile)
+			r.env["NATS_URL"] = "nats://127.0.0.1:" + port
+			_, _, _, fail := r.wrapBus(t)
+			if fail == nil || fail.reason != RefusalSandboxHarness {
+				t.Fatalf("fail = %+v, want a refusal with reason %q: the profile denies that port after the allow", fail, RefusalSandboxHarness)
+			}
+		})
+	}
+}
