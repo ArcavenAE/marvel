@@ -199,9 +199,10 @@ func sbplFormAt(code string, i int) string {
 		c := code[j]
 		switch {
 		case inString:
-			if c == '\\' {
+			switch c {
+			case '\\':
 				j++
-			} else if c == '"' {
+			case '"':
 				inString = false
 			}
 		case c == '"':
