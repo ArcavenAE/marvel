@@ -53,6 +53,9 @@ func crashRow(t *testing.T, store *api.Store, name string, gen int64, state api.
 
 func wantPredecessors(t *testing.T, got, want []string, when string) {
 	t.Helper()
+	if len(got) == 0 && len(want) == 0 {
+		return
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("%s: predecessors = %v, want %v", when, got, want)
 	}
@@ -200,5 +203,112 @@ func TestWakeNamesTheHibernatedSeatNotACrashedMarker(t *testing.T) {
 	}
 	if len(live) != 1 || live[0].Predecessor != hibernated {
 		t.Fatalf("supervisor seats = %+v, want one whose predecessor is %s, not the crashed marker %s", live, hibernated, crashed.Key())
+	}
+}
+
+// The Crashed rows are cleared in the tick that reads them, but a replacement
+// may not be created in that tick: a view build defers it, Create refuses it,
+// or plan.Spawn is smaller than the crashed count. The keys are kept until a
+// created seat takes them (review of marvel#1493, Medium 1).
+func TestCrashPredecessorsSurviveTheClearUntilASeatTakesThem(t *testing.T) {
+	store, ctrl, team := crashEnv(t, 3)
+	k0 := crashRow(t, store, "ops-writer-g1-0", 1, api.SessionCrashed, "")
+	k2 := crashRow(t, store, "ops-writer-g1-2", 1, api.SessionCrashed, "")
+	clear := func() {
+		for _, s := range store.ListSessionsByTeamRole(crashWS, "ops", "writer") {
+			if s.State == api.SessionCrashed {
+				if err := store.DeleteSession(s.Key()); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+
+	// Tick 1 reads both, then the rows are cleared, and nothing is created.
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), []string{k0, k2}, "tick 1")
+	clear()
+	if rows := store.ListSessionsByTeamRole(crashWS, "ops", "writer"); len(rows) != 0 {
+		t.Fatalf("setup: %d rows left after the clear", len(rows))
+	}
+	// Tick 2 finds no Crashed row and still has both keys.
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), []string{k0, k2}, "tick 2, rows gone")
+
+	// A seat is created with the first key: it is taken, the second stays.
+	crashRow(t, store, "ops-writer-g1-3", 1, api.SessionRunning, k0)
+	ctrl.crashPredecessorTaken(team, "writer", team.Generation, k0)
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), []string{k2}, "after the first is taken")
+
+	// A key a live seat names is spent even if nobody reported it taken.
+	crashRow(t, store, "ops-writer-g1-4", 1, api.SessionRunning, k2)
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), nil, "after the second is named by a live seat")
+
+	// A later crash adds its key to the pending list in index order.
+	k5 := crashRow(t, store, "ops-writer-g1-5", 1, api.SessionCrashed, "")
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), []string{k5}, "a new crash")
+}
+
+// A pending key belongs to one generation: after a shift the new generation's
+// spawns never take a seat of the old one.
+func TestCrashPredecessorsStayWithTheirGeneration(t *testing.T) {
+	store, ctrl, team := crashEnv(t, 1)
+	k := crashRow(t, store, "ops-writer-g1-0", 1, api.SessionCrashed, "")
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", 1), []string{k}, "generation 1")
+	if got := ctrl.pendingCrashPredecessors(team, "writer", 2); len(got) != 0 {
+		t.Errorf("generation 2 predecessors = %v, want none", got)
+	}
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", 1), []string{k}, "generation 1 again")
+}
+
+// The whole path for a role with a view: the first Prepare of a seat's view
+// starts the build and returns false, so the replacement is not created in the
+// tick that clears the crashed row. The seat created on a later tick still
+// names the crashed one (review of marvel#1493, Medium 1).
+func TestCrashRepairDeferredByAViewBuildStillNamesTheSeat(t *testing.T) {
+	store, ctrl, _, _ := viewSpawnRig(t, spawnGit{}, 10*time.Second)
+	clock := newTestClock(time.Date(2026, 4, 18, 0, 0, 0, 0, time.UTC))
+	ctrl.now = clock.Now
+
+	deadline := time.Now().Add(10 * time.Second)
+	for len(teamSessions(store, "slow")) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the seat with a view never spawned")
+		}
+		ctrl.ReconcileOnce()
+		time.Sleep(50 * time.Millisecond)
+	}
+	first := teamSessions(store, "slow")[0]
+	killPaneAndWait(t, first.PaneID)
+	ctrl.ReconcileOnce() // reap: the row stays as a Crashed marker
+	clock.Advance(90 * time.Second)
+
+	var deferred bool
+	var got []api.Session
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		ctrl.ReconcileOnce()
+		got = nil
+		for _, s := range teamSessions(store, "slow") {
+			if s.State.CountsAsAlive() {
+				got = append(got, s)
+			}
+		}
+		if len(got) > 0 {
+			break
+		}
+		deferred = true
+		if time.Now().After(deadline) {
+			t.Fatal("the replacement never spawned")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !deferred {
+		t.Fatal("setup: the replacement was created in the first tick, so the view build did not defer it")
+	}
+	if len(got) != 1 || got[0].Predecessor != first.Key() {
+		names := make([]string, 0, len(got))
+		for _, s := range got {
+			names = append(names, s.Key()+" (predecessor "+s.Predecessor+")")
+		}
+		t.Errorf("replacements = %v, want one seat whose predecessor is the crashed %q", names, first.Key())
 	}
 }

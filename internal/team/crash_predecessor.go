@@ -47,3 +47,10 @@ func (c *Controller) crashedPredecessors(t *api.Team, role string, generation in
 	}
 	return keys
 }
+
+// pendingCrashPredecessors and crashPredecessorTaken are red-phase stubs.
+func (c *Controller) pendingCrashPredecessors(t *api.Team, role string, generation int64) []string {
+	return c.crashedPredecessors(t, role, generation)
+}
+
+func (c *Controller) crashPredecessorTaken(t *api.Team, role string, generation int64, key string) {}
