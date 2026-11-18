@@ -267,11 +267,15 @@ type readerRig struct {
 // readerTerm hands the real reader over and back, and records the rest.
 type readerTerm struct {
 	*handoffRec
-	rd *keyReader
+	rd        *keyReader
+	parkDelay time.Duration
 }
 
 func (h *readerTerm) Park() {
 	h.add("park")
+	// A pause that comes late, as it does when the loop is busy, lets the
+	// reader and the parser take the keys typed behind Enter first.
+	time.Sleep(h.parkDelay)
 	h.rd.Pause()
 }
 
@@ -377,6 +381,7 @@ func TestAByteTypedWhileParkedIsNotHeldByTheParser(t *testing.T) {
 	// held when Enter was handled cannot be put back on the terminal, so the
 	// view drops it. What is checked is that it does not surface in the watch
 	// after the reader resumes.
+	g.rec.parkDelay = 100 * time.Millisecond
 	child := func([]string) error {
 		g.start <- struct{}{}
 		time.Sleep(200 * time.Millisecond)
