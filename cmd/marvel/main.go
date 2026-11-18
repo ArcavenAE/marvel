@@ -1361,8 +1361,9 @@ terminal may act on such characters, and piping it through cat -v shows them.
 Secret-looking Env values show as (redacted), as in the team document.
 
 With -w, get sessions is a live view. j and k, or the down and up arrow keys, move
-the cursor; Enter shows the attach plan for the selected session on the status line
-and runs nothing. The column letters listed under ? sort, ? lists every key, q quits.`,
+the cursor. Enter opens the selected session; on a remote cluster's row it
+prints the attach command and runs nothing. The column letters listed under ? sort,
+? lists every key, q quits.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			// The value of a bare -w is split off once, here, and RunE reads
 			// the result: a second split would see the interval already moved
@@ -3845,7 +3846,7 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "  Navigation:\n")
 		fmt.Fprintf(&buf, "    j  or down arrow   cursor down      k  or up arrow   cursor up\n")
-		fmt.Fprintf(&buf, "    Enter              show the attach plan for the selected session\n")
+		fmt.Fprintf(&buf, "    Enter              open the selected session (a remote cluster's row prints the command)\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "    ?  toggle help    q  quit\n")
 		fmt.Fprintf(&buf, "\n")
