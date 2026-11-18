@@ -8,15 +8,13 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 )
 
-// Back from an in-place child, the watch across clusters polls every cluster
-// again. A fetch that began before the child answers after it, and its rows
-// were read before the return, so they must not replace "refreshing...", and
-// that answer must not clear it. The single-cluster loop drops such a fetch
-// (staleInflight); this is the same rule for each cluster.
-func TestFanReturnDropsAFetchStartedBeforeTheChild(t *testing.T) {
+// fanReturnRig is a two-cluster watch with a terminal and a child that
+// succeeds at once; Enter on a row of b opens it.
+func fanReturnRig(t *testing.T, timeout time.Duration) (*fanRig, *handoffRec) {
+	t.Helper()
 	t.Setenv("TMUX", "")
 	rec := newHandoffRec()
-	r := newFanRigPrep(t, 200, 0, time.Hour, time.Hour,
+	r := newFanRigPrep(t, 200, 0, time.Hour, timeout,
 		[]fanWatchCluster{{name: "a"}, {name: "b"}},
 		func(ws *watchSort) {
 			ws.term = rec
@@ -28,6 +26,16 @@ func TestFanReturnDropsAFetchStartedBeforeTheChild(t *testing.T) {
 			}
 			cfg.statusBudget = time.Second
 		})
+	return r, rec
+}
+
+// Back from an in-place child, the watch across clusters polls every cluster
+// again. A fetch that began before the child answers after it, and its rows
+// were read before the return, so they must not replace "refreshing...", and
+// that answer must not clear it. The single-cluster loop drops such a fetch
+// (staleInflight); this is the same rule for each cluster.
+func TestFanReturnDropsAFetchStartedBeforeTheChild(t *testing.T) {
+	r, rec := fanReturnRig(t, time.Hour)
 	r.waitStarted("a", 1)
 	r.waitStarted("b", 1)
 
@@ -66,5 +74,33 @@ func TestFanReturnDropsAFetchStartedBeforeTheChild(t *testing.T) {
 	}
 	if strings.Contains(f, "a-before") {
 		t.Errorf("rows read before the child are on screen:\n%s", f)
+	}
+}
+
+// A fetch that began before the child can also run out of time instead of
+// answering. Its slot is freed, and the poll after the return starts at once,
+// as in the single-cluster loop, without waiting for a tick; its answer is
+// the fresh one that clears "refreshing...".
+func TestFanReturnPollsAgainWhenTheStaleFetchTimesOut(t *testing.T) {
+	r, rec := fanReturnRig(t, 500*time.Millisecond)
+	r.waitStarted("a", 1)
+	r.waitStarted("b", 1)
+	r.gate(fanKey{"b", 1}) <- fanFetch{
+		rec:  clusterRecord{Cluster: "b", Outcome: outcomeAnswered, Cause: "1 sessions"},
+		rows: []api.Session{{Workspace: "w", Name: "b-before", PaneID: "%5"}},
+	}
+	r.frame("b's row", contains("b-before"))
+	r.keys <- 'j'
+	r.keys <- 13
+	rec.waitUnparked(t)
+	r.waitStarted("b", 2)
+
+	r.waitEvent("a's timer", func(e fanEvent) bool { return e.Kind == "timeout" && e.Cluster == "a" && e.Seq == 1 && e.Applied })
+	// No tick is sent: the poll after the return must not wait for one.
+	r.waitStarted("a", 2)
+	r.answer("a", 2, "a-after")
+	f := r.frame("a's fresh row", contains("a-after"))
+	if strings.Contains(f, "refreshing...") {
+		t.Errorf("refreshing... stayed after a post-return fetch answered:\n%s", f)
 	}
 }
