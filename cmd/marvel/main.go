@@ -3313,6 +3313,10 @@ type watchSort struct {
 	// exec runs a plan's argv. Slice 1 never calls it: Enter only shows the
 	// plan. The field is here so a test can fail on any call.
 	exec func(argv []string) error
+	// term hands the terminal to a child that runs in place, and takes it
+	// back. Nil means there is no terminal to hand over (a test, or a plan
+	// that runs as a short child).
+	term terminalHandoff
 	// heightFn, when set, reads the screen height for each frame, so a resize
 	// shows on the next draw; height is used when it is nil.
 	heightFn func() int
