@@ -109,6 +109,7 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 	done := make(chan struct{})
 	defer close(done)
 	keys = parseKeys(keys, escWait, done)
+	ws.drainKeys = drainKeysFrom(keys)
 	states := make([]*fanState, len(cfg.clusters))
 	byName := map[string]*fanState{}
 	for i, c := range cfg.clusters {

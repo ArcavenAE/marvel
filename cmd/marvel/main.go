@@ -3322,8 +3322,11 @@ type watchSort struct {
 	// fetch answers, and wantRefresh asks the loop for that fetch.
 	pending      *attachPlan
 	pendingLabel string
-	refreshing   bool
-	wantRefresh  bool
+	// drainKeys discards the keys the loop's parser still holds. The loop sets
+	// it; openPending calls it with the reader parked.
+	drainKeys   func()
+	refreshing  bool
+	wantRefresh bool
 	// heightFn, when set, reads the screen height for each frame, so a resize
 	// shows on the next draw; height is used when it is nil.
 	heightFn func() int

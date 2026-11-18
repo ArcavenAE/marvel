@@ -17,7 +17,9 @@ const keyESC = 0x1b
 // keys) is dropped whole rather than leaking its tail as keys. The goroutine
 // ends when done closes.
 func parseKeys(in <-chan byte, wait time.Duration, done <-chan struct{}) <-chan byte {
-	out := make(chan byte, 1)
+	// Unbuffered: a buffer would let the parser hold a second key that belongs
+	// to a child the view hands the terminal to.
+	out := make(chan byte)
 	go func() {
 		send := func(bs ...byte) bool {
 			for _, b := range bs {

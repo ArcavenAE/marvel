@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -35,6 +36,22 @@ func isShortChild(argv []string) bool {
 	return false
 }
 
+// drainKeysFrom returns a function that receives and discards the keys the
+// parser is holding for the loop, until none arrives within a short wait. The
+// parser goroutine blocks sending a key nobody takes, so a key it holds is
+// received at once.
+func drainKeysFrom(keys <-chan byte) func() {
+	return func() {
+		for {
+			select {
+			case <-keys:
+			case <-time.After(20 * time.Millisecond):
+				return
+			}
+		}
+	}
+}
+
 // openPending runs the plan Enter resolved. A short child runs as it is. An
 // in-place child gets the terminal: the reader is parked, the cooked mode and
 // a clear screen are put back, the child runs, and the raw mode and the reader
@@ -59,6 +76,15 @@ func (ws *watchSort) openPending() {
 		return
 	}
 	ws.term.Park()
+	// A key typed behind the Enter may already sit in the reader or the parser.
+	// It belongs to the child and cannot be put back on the terminal, so the
+	// view drops it, and it does not surface after the child.
+	if f, ok := ws.term.(interface{ Flush() }); ok {
+		f.Flush()
+	}
+	if ws.drainKeys != nil {
+		ws.drainKeys()
+	}
 	err := ws.term.Restore()
 	if err == nil {
 		ws.term.Clear()
@@ -118,6 +144,7 @@ type ttyHandoff struct {
 	reader *keyReader
 }
 
+func (h *ttyHandoff) Flush()         { h.reader.Flush() }
 func (h *ttyHandoff) Park()          { h.reader.Pause() }
 func (h *ttyHandoff) Unpark()        { h.reader.Resume() }
 func (h *ttyHandoff) Restore() error { return term.Restore(h.fd, h.old) }

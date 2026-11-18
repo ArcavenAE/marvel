@@ -81,6 +81,7 @@ func watchLoop(ws *watchSort, cfg watchLoopConfig, keys <-chan byte, ticks <-cha
 	done := make(chan struct{})
 	defer close(done)
 	keys = parseKeys(keys, escWait, done)
+	ws.drainKeys = drainKeysFrom(keys)
 	var (
 		results  = make(chan watchData, 1)
 		inflight bool
