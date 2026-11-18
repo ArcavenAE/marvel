@@ -1018,8 +1018,8 @@ func TestHandoffNoticeNamesWindow(t *testing.T) {
 		window time.Duration
 		want   string
 	}{
-		{"default", 0, "; you have 5m0s"},
-		{"declared", 25 * time.Minute, "; you have 25m0s"},
+		{"default", 0, "; you have 5m0s. "},
+		{"declared", 25 * time.Minute, "; you have 25m0s. "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			role := nestedHandoffRole(t.TempDir())
@@ -1029,8 +1029,8 @@ func TestHandoffNoticeNamesWindow(t *testing.T) {
 
 			f.evaluate()
 
-			if len(f.notices) != 1 || !strings.HasSuffix(f.notices[0], tc.want) {
-				t.Fatalf("notices = %q, want one ending %q", f.notices, tc.want)
+			if len(f.notices) != 1 || !strings.Contains(f.notices[0], tc.want) {
+				t.Fatalf("notices = %q, want one holding %q", f.notices, tc.want)
 			}
 			if !strings.Contains(f.notices[0], `ending with the line "END HANDOFF"`) {
 				t.Fatalf("notice = %q, want the marker still named", f.notices[0])

@@ -149,7 +149,7 @@ func TestRetireKillsOneTickAfterTheMarker(t *testing.T) {
 	f.retire(sess)
 
 	path, _ := api.ExpandHandoffPath(role.Shift.Handoff, sess.Name)
-	want := "retire: this seat is being removed; write your handoff now to " + path + ", ending with the line \"" + putMarker + "\"; you have 5m0s"
+	want := "retire: this seat is being removed; write your handoff now to " + path + ", ending with the line \"" + putMarker + "\"; you have 5m0s. " + exactPathClause + " " + markerAloneClause
 	if len(f.notices) != 1 || !strings.HasSuffix(f.notices[0], want) {
 		t.Fatalf("notices = %q, want one ending %q", f.notices, want)
 	}

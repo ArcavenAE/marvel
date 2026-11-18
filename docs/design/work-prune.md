@@ -333,11 +333,11 @@ At each covered call site (section 2), `Delete` is replaced by `Retire`.
 headless seat is left alone by operator ruling 2026-10-28, section 6.2):
 
 ```
-retire: this seat is being removed; write your handoff now to <path>, ending with the line "<marker>"; you have <window>
+retire: this seat is being removed; write your handoff now to <path>, ending with the line "<marker>"; you have <window>. Use this exact path; do not shorten or re-derive it from your seat name. A file holding only that line is not a handoff: write the handoff above it.
 ```
 
 The tail from "write your handoff now" is byte-identical to the shift
-notices (`shift_handoff.go:26-32`), so a seat that recognises the shift ask
+notices (`shift_handoff.go`, the clauses of marvel#955 included), so a seat that recognises the shift ask
 recognises this one. The request is stored on the team, keyed by session,
 beside `ShiftRequests`, so a daemon restart inside the window resumes it.
 

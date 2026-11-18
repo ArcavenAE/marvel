@@ -157,7 +157,12 @@ write. The default conforms to the contract:
    to the seat (`shift: max age reached; write your handoff now`) and records
    `shift.handoff-requested` with the time. A role that declares a handoff
    gets the path, the marker and the window in the notice: `... write your
-   handoff now to <path>, ending with the line "<marker>"; you have <window>`.
+   handoff now to <path>, ending with the line "<marker>"; you have <window>.
+   Use this exact path; do not shorten or re-derive it from your seat name. A
+   file holding only that line is not a handoff: write the handoff above it.`
+   The notice is the one channel every runtime shares, so it carries both
+   clauses (marvel#955). A seat that hands off by tool is sent no path and
+   no clauses.
    Before it sends the notice marvel creates the path's directory (mode 0700;
    an existing directory keeps its mode), because `{session}` carries the
    generation and each successor's directory is new. A failure to create it
@@ -207,9 +212,10 @@ asked for its handoff on the same request path as max age, and replaced only on
 the marker:
 
 - The notice reads "shift: context nearly full; write your handoff now to
-  <path>, ending with the line <marker>; you have <window>". Everything from
-  "write your handoff now" on is byte-identical to the max-age notice, so a
-  recognizer keyed on that clause matches both. The inject origin is
+  <path>, ending with the line <marker>; you have <window>", then the same two
+  clauses as the max-age notice. Everything from "write your handoff now" on
+  is byte-identical to the max-age notice, so a recognizer keyed on that clause
+  matches both. The inject origin is
   `context-pressure`, so the record reads `injector=marvel:context-pressure`.
 - The marker starts the shift (`cause=context-pressure`), carrying the request
   to the successor as for max age (item 4).

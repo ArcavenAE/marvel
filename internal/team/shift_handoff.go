@@ -27,6 +27,12 @@ import (
 // handoffNotice is what a seat past its max age is sent.
 const handoffNotice = "shift: max age reached; write your handoff now"
 
+// The clauses every file-path handoff notice ends with.
+const (
+	handoffExactPathClause   = "Use this exact path; do not shorten or re-derive it from your seat name."
+	handoffMarkerAloneClause = "A file holding only that line is not a handoff: write the handoff above it."
+)
+
 // pressureNotice is what a seat near the end of its context window is sent.
 // Everything from "write your handoff now" on is byte-identical to the max-age
 // notice, so a recognizer keyed on that clause matches both.
@@ -192,7 +198,10 @@ func prepareHandoffNotice(lead, template, marker string, window time.Duration, v
 		// The seat cannot write the file; marvel does, on its submit_handoff.
 		prep.text = toolNotice(lead, window)
 	} else {
-		prep.text += fmt.Sprintf(" to %s, ending with the line %q; you have %s", path, marker, window)
+		// The two clauses follow the window on the same line. The notice is the one
+		// channel every runtime shares, and a seat that re-derived the path, or
+		// wrote only the marker, handed off nothing (marvel#955).
+		prep.text += fmt.Sprintf(" to %s, ending with the line %q; you have %s. %s %s", path, marker, window, handoffExactPathClause, handoffMarkerAloneClause)
 	}
 	// {session} carries the generation, so each successor's handoff
 	// directory is new and nothing else would create it (marvel#608).
