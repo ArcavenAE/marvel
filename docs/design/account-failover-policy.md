@@ -1,6 +1,6 @@
 # Account failover: a written policy that moves a team to another account, and back
 
-Design only. Arcaven architect seat, 2026-11-18, ask I-565 (director 01M7R3TK5J, to the arcaven supervisor). Status: draft for the operator. Nothing here is built, and no ticket is filed.
+Design only. Arcaven architect seat, 2026-11-18. Status: draft for the operator. Nothing here is built, and no ticket is filed.
 
 ## Why
 
@@ -8,9 +8,11 @@ When an account nears its seven-day limit today, a person reads a statusline and
 
 The operator, verbatim: "I think this should be a configurable option for marvel to automatically switch, and it should be flexible so that failover between accounts can be written as policy in some way, with automatic failover and also policy definiton on failback automated or alerting or none".
 
-What that rules (director, relayed by the supervisor): a user's own written failover policy is the ratification SOUL section 8 asks for, so marvel may act automatically where the policy says so. It is opt-in. With no policy, nothing changes.
+What is ruled: the operator's own written policy is the ratification SOUL section 8 asks for. Failover may act automatically when a user's policy says so. It is opt-in, and with no policy, nothing changes.
 
-The thresholds come from a study of team moves between an Ultra account and an Enterprise login (ask I-563, 2026-11-18: a replay of twelve days of hourly spend on one account, checked against the first real readings), and from the move runbook written beside it (ask I-562). Both are kept outside this repository. The study's stage 1 and stage 2 become this policy's `dry-run` and `enabled` modes.
+The thresholds come from a study of team moves between an Ultra account and an Enterprise login (2026-11-18: a replay of twelve days of hourly spend on one account, checked against the first real readings), and from a move runbook written beside it. Both are kept outside this repository. The study's stage 1 and stage 2 become this policy's `dry-run` and `enabled` modes.
+
+Guidance for leaving `dry-run`, not a rule: the study set a bar of at least three proposed moves, carried out by hand, with no lost mail and no team held over 3 hours, before acting without a person. `marvel get failovers` could show a count of clean dry-run proposals to help a user judge it.
 
 ## 1. What marvel has today, checked on origin/main cf01437f
 
@@ -21,7 +23,7 @@ The thresholds come from a study of team moves between an Ultra account and an E
 | A time series of readings is kept, in memory, for 8 days, behind the `account.series` and `account.delta` RPCs (#1380) | `internal/api/account_series.go`; `internal/daemon/daemon.go` case list | Half of MR1 is built. Not on disk, gone on a daemon restart, and no CLI verb reads it. |
 | The account key is (harness, backend, credential source, config home) | `AccountKeyOf` | A policy account can be resolved to the same key the readings use. |
 | Which login a claude role runs on is one env value, `CLAUDE_CONFIG_DIR` | `ClaudeConfigDirEnv`; a diff of a live team's manifest against its stand-by mirror's | The two manifests differ in three things: the team name, that env key on every role, and replicas 0 on two roles. The account is one key, not a second team. |
-| `marvel scale` writes the stored team, so a reconcile keeps it; a later `marvel apply` of the manifest resets it | `handleScale`, `internal/daemon/daemon.go:2146-2200` | A team scaled down by failover comes back up on the next apply unless something holds it. |
+| `marvel scale` writes the stored team, so a reconcile keeps it; a later `marvel apply` of the manifest resets it | `handleScale`, `internal/daemon/daemon.go:2140-2225` | A team scaled down by failover comes back up on the next apply unless something holds it. |
 | A rolling shift asks each role for its handoff and waits for the marker; a missing marker stops the shift and emits `team.shift-handoff-missing` | `marvel shift --help`; event kinds `team.shift-*` | The safe cut point already exists. |
 | The declared pause of `usage-limit-pause.md` section 4 is not built | `marvel get pauses`: `unknown resource type: pauses` | Failover cannot lean on a pause record. |
 | The manifest key `policies` is taken: it projects harness settings | `ManifestPolicy`, `internal/api/manifest.go:64` | The new section needs its own name. |
@@ -89,7 +91,7 @@ The defaults are the study's rule: 90%, reset more than 12h away, back at the re
 
 **`swap-team`.** Two teams, as the runbook runs them: the primary team is wound down and scaled to 0, a mirror team is scaled up. It is kept for a mirror that must differ in more than its login (another host, another runtime, another cast). The policy names the mirror: `action: swap-team` with `mirror: alpha-ent`, and per-account `env_on_move` overlays (section 7).
 
-Why `relogin` is the default: the three problems the runbook needs extra work for come from there being two teams. Mail named for the ultra seat is dropped by the mirror (director ticket A), a returning seat replays mail the mirror already handled (director ticket B), and the mirror posts under another identity (the study's ticket ID1). In `relogin` there is one line of seats, so none of the three arises. It also needs no stand-by seats idling on the other account.
+Why `relogin` is the default: the three problems the runbook needs extra work for come from there being two teams. Mail named for the ultra seat is dropped by the mirror unless a stand-in seat answers mail named for the seat it replaces; a returning seat replays mail the mirror already handled unless it starts at the stream head; and the mirror posts under another identity. In `relogin` there is one line of seats, so none of the three arises. It also needs no stand-by seats idling on the other account.
 
 What `relogin` does not remove: the config directory carries the harness's settings, plugins and MCP servers as well as the login. A role moved to another `CLAUDE_CONFIG_DIR` runs with that directory's settings. The same is true of a mirror team, so it is not a reason to prefer `swap-team`, but it is a check for the user: keep the two directories' settings aligned.
 
@@ -146,7 +148,7 @@ Events in the daemon's ring, so `marvel events` and anything that follows it see
 
 `cooldown` and the fault checks apply to failback as to failover. `when: reset` is safe on a missing reading, because the recorded reset does not move; it is the default for that reason. A failback never starts inside `cooldown` of the failover, so a reading taken just after a move cannot bounce the team back.
 
-## 7. Director: where tickets A and B fit, and the no-director case
+## 7. Director: the stand-in seat, the returning seat, and the no-director case
 
 marvel knows nothing of director. Where a move needs a seat to be told something at spawn, the policy carries it as an env overlay, `env_on_move`, set per account in the policy and applied only to seats spawned by the move:
 
@@ -154,12 +156,12 @@ marvel knows nothing of director. Where a move needs a seat to be told something
   action: swap-team
   mirror: alpha-ent
   env_on_move:
-    enterprise: { DIRECTOR_STANDS_IN_FOR: alpha }   # ticket A
-    ultra-a: { DIRECTOR_RETURN_FROM: alpha-ent }    # ticket B
+    enterprise: { DIRECTOR_STANDS_IN_FOR: alpha }   # stand-in seat
+    ultra-a: { DIRECTOR_RETURN_FROM: alpha-ent }    # returning seat
 ```
 
-- **Ticket A** (a mirror seat answers mail named for the ultra seat it stands in for): set on the mirror's seats at failover, cleared by the failback, which spawns without it.
-- **Ticket B** (a returning seat starts at the stream head and reads the mirror's handoff): set on the primary's seats at failback only.
+- **Stand-in seat** (a mirror seat answers mail named for the ultra seat it stands in for): set on the mirror's seats at failover, cleared by the failback, which spawns without it.
+- **Returning seat** (a returning seat starts at the stream head and reads the mirror's handoff): set on the primary's seats at failback only.
 - **`relogin` needs neither**, for the reasons in section 3.
 - **No director:** the overlay is absent or names variables nothing reads. marvel still moves the seats, writes the records, and emits the events. Mail continuity across a `swap-team` is then not marvel's to give, and the docs say so; `relogin` keeps it without director.
 

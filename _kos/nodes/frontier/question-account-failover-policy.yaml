@@ -8,7 +8,7 @@ tags:
   - usage-limits
   - policy
 content: |
-  The operator asked (2026-11-18, ask I-565) for "a configurable option for
+  The operator asked (2026-11-18) for "a configurable option for
   marvel to automatically switch", with failover written as policy and
   failback "automated or alerting or none". The user's own written policy is
   the ratification for the automatic act; with no policy nothing changes.
