@@ -1,11 +1,13 @@
 package team
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/events"
 )
 
 // Crash repair names the seat it replaces (marvel#541, marvel#1402). The
@@ -153,5 +155,50 @@ func TestCrashRepairSpawnCarriesThePredecessor(t *testing.T) {
 	}
 	if got[0].Predecessor != first[0].Key() {
 		t.Errorf("replacement predecessor = %q, want the crashed seat %q", got[0].Predecessor, first[0].Key())
+	}
+}
+
+// TestWakeNamesTheHibernatedSeatNotACrashedMarker: hibernate leaves a Crashed
+// marker where it finds one, so a wake can meet both a hibernated seat and a
+// crashed one for the same role. The wake's predecessor is the hibernated seat,
+// whose handoff the wake exists to resume; the crash lookup fills in only where
+// the wake names none.
+func TestWakeNamesTheHibernatedSeatNotACrashedMarker(t *testing.T) {
+	store, ctrl, cleanup := setupWithBolt(t, filepath.Join(t.TempDir(), "marvel.db"))
+	t.Cleanup(cleanup)
+	f := &wakeFixture{t: t, store: store, ctrl: ctrl, clock: newTestClock(listEpoch), ring: events.NewRing(0), ws: "test-wake-vs-crash"}
+	ctrl.now = f.clock.Now
+	ctrl.Events = f.ring
+	createTeamFixture(t, store, f.ws, "squad", wakeRoles())
+	hibernated := f.ws + "/squad-supervisor-before"
+	if err := store.UpdateTeam(f.ws+"/squad", func(live *api.Team) error {
+		live.ConvergencePosture = api.PostureHold
+		live.Hibernate = &api.HibernateMark{State: api.HibernateHibernated, Since: f.clock.Now(), Mode: api.HibernateModeHandoff, Seats: []string{hibernated}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordResume(api.ResumeEntry{Session: hibernated, Workspace: f.ws, Team: "squad", Role: "supervisor", LaunchedAt: listEpoch.Add(-2 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	crashed := api.Session{
+		Name: "squad-supervisor-g1-7", Workspace: f.ws, Team: "squad", Role: "supervisor",
+		Generation: 1, State: api.SessionCrashed, CreatedAt: listEpoch.Add(-3 * time.Hour),
+	}
+	if err := store.CreateSession(&crashed); err != nil {
+		t.Fatal(err)
+	}
+
+	f.wake()
+	f.ctrl.ReconcileOnce()
+
+	var live []api.Session
+	for _, s := range store.ListSessionsByTeamRole(f.ws, "squad", "supervisor") {
+		if s.State.CountsAsAlive() {
+			live = append(live, s)
+		}
+	}
+	if len(live) != 1 || live[0].Predecessor != hibernated {
+		t.Fatalf("supervisor seats = %+v, want one whose predecessor is %s, not the crashed marker %s", live, hibernated, crashed.Key())
 	}
 }
