@@ -245,8 +245,8 @@ func TestCrashPredecessorsSurviveTheClearUntilASeatTakesThem(t *testing.T) {
 	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), nil, "after the second is named by a live seat")
 
 	// A later crash adds its key to the pending list in index order.
-	k5 := crashRow(t, store, "ops-writer-g1-5", 1, api.SessionCrashed, "")
-	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), []string{k5}, "a new crash")
+	k10 := crashRow(t, store, "ops-writer-g1-10", 1, api.SessionCrashed, "")
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), []string{k10}, "a new crash")
 }
 
 // A pending key belongs to one generation: after a shift the new generation's
@@ -469,4 +469,16 @@ func TestCrashRepairRefusedCreateKeepsTheKey(t *testing.T) {
 	if len(got) != 1 || got[0].Predecessor != seats[0].Key() {
 		t.Errorf("replacement after the refusal = %+v, want one seat naming %q", got, seats[0].Key())
 	}
+}
+
+// Keys kept from an earlier tick and keys read now come back in one index order.
+func TestCrashPredecessorsKeepIndexOrderAcrossTicks(t *testing.T) {
+	store, ctrl, team := crashEnv(t, 3)
+	k10 := crashRow(t, store, "ops-writer-g1-10", 1, api.SessionCrashed, "")
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), []string{k10}, "tick 1")
+	if err := store.DeleteSession(k10); err != nil {
+		t.Fatal(err)
+	}
+	k2 := crashRow(t, store, "ops-writer-g1-2", 1, api.SessionCrashed, "")
+	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), []string{k2, k10}, "tick 2, an older crash with a higher index")
 }
