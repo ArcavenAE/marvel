@@ -164,6 +164,60 @@ func sbplDeniedPorts(code string) []int {
 	return ports
 }
 
+// sbplBusPortDenyProblem reports a network deny in the staged code that the
+// launch cannot read as one localhost port and that comes after the last use of
+// the bus parameter. The last matching rule wins, so such a deny (a wildcard
+// port, a bare network deny, a deny with more than one filter) would cancel the
+// bus allow at run time; the launch refuses the profile and quotes the deny.
+// A deny before the allow is overridden by it, and a deny of another operation
+// is not an outbound deny. It returns "" when there is none.
+func sbplBusPortDenyProblem(code string) string {
+	use := strings.LastIndex(code, `"`+sandboxBusPortParam+`"`)
+	if use < 0 {
+		return ""
+	}
+	rest := code[use:]
+	for _, loc := range sbplNetworkDenyRE.FindAllStringIndex(rest, -1) {
+		form := sbplFormAt(rest, loc[0])
+		if sbplDenyPortRE.FindString(form) == form {
+			continue
+		}
+		return strings.Join(strings.Fields(form), " ")
+	}
+	return ""
+}
+
+// sbplNetworkDenyRE finds the start of a deny of outbound network: the
+// operations network-outbound and network*, with a form that follows or ends.
+var sbplNetworkDenyRE = regexp.MustCompile(`\(\s*deny\s+network(?:-outbound|\*)(?:[\s)])`)
+
+// sbplFormAt returns the balanced parenthesised form that starts at code[i].
+func sbplFormAt(code string, i int) string {
+	depth := 0
+	inString := false
+	for j := i; j < len(code); j++ {
+		c := code[j]
+		switch {
+		case inString:
+			if c == '\\' {
+				j++
+			} else if c == '"' {
+				inString = false
+			}
+		case c == '"':
+			inString = true
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+			if depth == 0 {
+				return code[i : j+1]
+			}
+		}
+	}
+	return code[i:]
+}
+
 // openPrivateDir opens path as a directory without following a link at its last
 // element, so a link swapped in after the directory was made is refused and
 // never reaches a chmod through the path.
@@ -501,6 +555,9 @@ func (m *Manager) wrapInSandbox(sess *api.Session, plan *launchPlan) *sandboxFai
 		plan.env[sandboxStateEnv] = state
 	}
 	if sbplNames(sb.code, sandboxBusPortParam) {
+		if deny := sbplBusPortDenyProblem(sb.code); deny != "" {
+			return f(RefusalSandboxHarness, "its profile names %s and holds a network deny after it that the launch cannot read as one localhost port, which would cancel the bus rule (write it as (deny network-outbound (remote ip \"localhost:N\"))): %s", sandboxBusPortParam, deny)
+		}
 		port, err := loopbackPort(plan.env["NATS_URL"], sbplDeniedPorts(sb.code))
 		if err != nil {
 			return f(RefusalSandboxHarness, "its profile names %s and NATS_URL %v", sandboxBusPortParam, err)
