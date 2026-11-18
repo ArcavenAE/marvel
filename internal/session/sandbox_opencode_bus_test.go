@@ -444,12 +444,101 @@ func TestSandboxBusPortOnAnotherServicesPortIsRefused(t *testing.T) {
 	for _, m := range denied {
 		port := m[1]
 		t.Run(port, func(t *testing.T) {
-			r := newBusRig(t, busProfile)
+			r := newBusRig(t, string(raw)) // the example profile itself: its belts are what is refused
 			r.env["NATS_URL"] = "nats://127.0.0.1:" + port
 			_, _, _, fail := r.wrapBus(t)
 			if fail == nil || fail.reason != RefusalSandboxHarness {
 				t.Fatalf("fail = %+v, want a refusal with reason %q: the profile denies that port after the allow", fail, RefusalSandboxHarness)
 			}
 		})
+	}
+}
+
+// The shim's state directory is opened by handle and without following a link,
+// so a link swapped in between the check and the chmod is never chmodded
+// (#1497 review, Low 1). The swap has no seam in the launch to hold it open, so
+// the tests pin the property the fix gives: the open itself refuses a link and a
+// file, and a chmod through the handle reaches the directory that was opened.
+func TestOpenPrivateDirChmodsThroughTheHandle(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := openPrivateDir(dir)
+	if err != nil {
+		t.Fatalf("openPrivateDir = %v, want a handle on the directory", err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := f.Chmod(0o700); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
+		t.Errorf("directory mode = %v, %v, want 0700 after a chmod through the handle", info, err)
+	}
+}
+
+func TestOpenPrivateDirRefusesALinkAndAFile(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(base, "file")
+	writeFile(t, file, "x", 0o600)
+	for name, path := range map[string]string{"a link to a directory": link, "a regular file": file} {
+		f, err := openPrivateDir(path)
+		if err == nil {
+			_ = f.Close()
+			t.Errorf("openPrivateDir(%s) succeeded, want a refusal", name)
+		}
+	}
+}
+
+// The ports the launch refuses are the ones the staged profile denies after its
+// allow, not a fixed list (#1497 review, Low 3): a profile with other belts has
+// other refused ports.
+func TestSandboxBusPortRefusalFollowsTheStagedProfilesDenies(t *testing.T) {
+	t.Parallel()
+	custom := busProfile +
+		"(deny network-outbound (remote ip \"localhost:9001\"))\n" +
+		"(deny network-outbound (remote ip \"localhost:9002\"))\n" +
+		"; (deny network-outbound (remote ip \"localhost:9003\")) is a comment\n"
+	for port, refused := range map[string]bool{"9001": true, "9002": true, "9003": false, "4242": false, "4333": false} {
+		t.Run(port, func(t *testing.T) {
+			r := newBusRig(t, custom)
+			r.env["NATS_URL"] = "nats://127.0.0.1:" + port
+			_, values, _, fail := r.wrapBus(t)
+			switch {
+			case refused && (fail == nil || fail.reason != RefusalSandboxHarness):
+				t.Fatalf("fail = %+v, want a refusal: the profile denies localhost:%s", fail, port)
+			case !refused && fail != nil:
+				t.Fatalf("refused: %s", fail.msg)
+			case !refused && values["BUS_PORT"] != port:
+				t.Errorf("BUS_PORT = %q, want %q", values["BUS_PORT"], port)
+			}
+		})
+	}
+}
+
+// A parameter form written with no space before the quote is still the form
+// (#1497 review, Low 2): the reader ends a symbol at the quote.
+func TestSandboxProfileNamesAParameterWithNoSpaceBeforeTheQuote(t *testing.T) {
+	t.Parallel()
+	r := newBusRig(t, "(version 1)\n(deny default)\n(allow process-exec (literal (param\"DIRECTOR_MCP_BIN\")))\n")
+	names, _, _, fail := r.wrapBus(t)
+	if fail != nil {
+		t.Fatal(fail.msg)
+	}
+	if !strings.Contains(strings.Join(names, ","), "DIRECTOR_MCP_BIN") {
+		t.Errorf("-D parameters = %v, want DIRECTOR_MCP_BIN", names)
 	}
 }

@@ -150,6 +150,13 @@ func sbplNames(code, param string) bool {
 	return regexp.MustCompile(`\(\s*param\s+"` + regexp.QuoteMeta(param) + `"\s*\)`).MatchString(code)
 }
 
+// openPrivateDir opens path as a directory without following a link at its last
+// element, so a link swapped in after the directory was made is refused and
+// never reaches a chmod through the path.
+func openPrivateDir(path string) (*os.File, error) {
+	return nil, errors.New("not implemented")
+}
+
 // sandboxPlan is what site 2 staged for one launch.
 type sandboxPlan struct {
 	launch   sandboxLaunch
