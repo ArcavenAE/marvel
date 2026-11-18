@@ -3,6 +3,7 @@ package team
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -31,6 +32,11 @@ func TestHandoffCompleteRefusesMarkerOnlyFile(t *testing.T) {
 		{"a line above and CRLF line ends", "state: done\r\n" + marker + "\r\n", true},
 		{"the marker with space around it", "state: done\n  " + marker + "  \n", true},
 		{"content but no marker", "state: done\n", false},
+		// The read is bounded to the file's last maxHandoffTail (4096) bytes, so
+		// only the window is searched for a line above the marker: past it,
+		// blank lines hide the content and the file reads as marker-only.
+		{"content, 4097 newlines, then the marker", "x" + strings.Repeat("\n", 4097) + marker + "\n", false},
+		{"content, 4000 newlines, then the marker", "x" + strings.Repeat("\n", 4000) + marker + "\n", true},
 		{"content then something after the marker", "state: done\n" + marker + "\nmore\n", false},
 	}
 	for _, tc := range cases {
