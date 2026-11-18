@@ -87,7 +87,10 @@ type fanState struct {
 	inflight bool
 	seq      uint64 // the last fetch started
 	applied  uint64 // the highest fetch applied, by result or by timeout
-	timers   []*time.Timer
+	// staleUpTo is the last fetch that began before a child ran in place. Its
+	// answer was read before the return, so it is dropped, not applied.
+	staleUpTo uint64
+	timers    []*time.Timer
 }
 
 type fanResult struct {
@@ -221,6 +224,11 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 				// that replace "refreshing..." were read after the return.
 				ws.wantRefresh = false
 				for _, s := range states {
+					// A fetch already running began before the return, so its
+					// answer is dropped and a new one starts when it ends.
+					if s.inflight {
+						s.staleUpTo = s.seq
+					}
 					start(s)
 				}
 			}
@@ -237,6 +245,21 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 			trace(fanEvent{Kind: "tick", Applied: true})
 		case r := <-results:
 			s := byName[r.cluster]
+			if r.seq <= s.staleUpTo {
+				// Read before the child ran. It frees the cluster's slot if it
+				// still holds it, and the poll after the return starts. It does
+				// not replace "refreshing..." and does not clear it.
+				if r.seq > s.applied {
+					s.applied = r.seq
+				}
+				if r.seq == s.seq && s.inflight {
+					s.inflight, s.late = false, false
+					stopTimers(s)
+					start(s)
+				}
+				trace(fanEvent{Kind: "result", Cluster: r.cluster, Seq: r.seq, Applied: false})
+				continue
+			}
 			applied := r.seq > s.applied
 			if applied {
 				s.applied = r.seq
