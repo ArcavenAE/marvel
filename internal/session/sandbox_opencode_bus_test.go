@@ -1,0 +1,379 @@
+package session
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// The opencode bus profile (examples/sandbox/opencode-local-bus.sb, rurrg-1
+// part B) is opencode-local.sb plus three widenings the operator ruled: the bus
+// port on localhost, a read of the seat's bus password file, and the director
+// shim's state directory inside the seat's own tree. marvel fills BUS_PORT and
+// BUS_PASS_FILE only for a profile that names them, and sets DIRECTOR_STATE only
+// for a profile that names the shim. Tests use scratch paths only.
+
+func TestOpenCodeLocalBusProfileOrderAndContent(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("../../examples/sandbox/opencode-local-bus.sb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	idx := func(s string) int { return strings.Index(text, s) }
+	denyHome := idx(`(deny file-read* (subpath (param "REALHOME")))`)
+	passRead := idx(`(allow file-read* (literal (param "BUS_PASS_FILE")))`)
+	busAllow := idx(`(allow network-outbound (remote ip (string-append "localhost:" (param "BUS_PORT"))))`)
+	model := idx(`(allow network-outbound (remote ip "localhost:11434"))`)
+	for name, i := range map[string]int{"deny home": denyHome, "pass file read": passRead, "bus port allow": busAllow, "model port": model} {
+		if i < 0 {
+			t.Errorf("the profile lacks its %s rule", name)
+		}
+	}
+	if denyHome < 0 || passRead < 0 || busAllow < 0 || model < 0 {
+		return
+	}
+	if denyHome > passRead {
+		t.Error("the REALHOME deny must come before the pass file read it carves out")
+	}
+	for _, port := range []string{"4242", "7422", "7442", "3307"} {
+		deny := idx(`(deny network-outbound (remote ip "localhost:` + port + `"))`)
+		if deny < 0 {
+			t.Errorf("the profile does not deny localhost:%s", port)
+		} else if deny < busAllow {
+			t.Errorf("the localhost:%s deny must come after the bus port allow", port)
+		}
+	}
+	if strings.Contains(text, `"localhost:4222"`) {
+		t.Error("a literal localhost:4222 rule would cancel or pre-empt the bus port the launch names")
+	}
+
+	// Exec: one rule, exactly the three binaries.
+	execRules := regexp.MustCompile(`(?m)^\(allow process-exec[^\n]*$`).FindAllString(text, -1)
+	if len(execRules) != 1 {
+		t.Fatalf("%d process-exec rules, want one: %q", len(execRules), execRules)
+	}
+	var execParams []string
+	for _, m := range regexp.MustCompile(`\(literal \(param "([A-Z_]+)"\)\)`).FindAllStringSubmatch(execRules[0], -1) {
+		execParams = append(execParams, m[1])
+	}
+	sort.Strings(execParams)
+	if strings.Join(execParams, ",") != "DIRECTOR_MCP_BIN,HARNESS_BIN,MARVEL_BIN" {
+		t.Errorf("the exec rule admits %v, want exactly the harness, marvel and the shim", execParams)
+	}
+	// Writes: one rule, the seat's trees and /dev; the state directory is inside them.
+	writes := regexp.MustCompile(`(?m)^\(allow file-write\*[^\n]*$`).FindAllString(text, -1)
+	if len(writes) != 1 || writes[0] != `(allow file-write* (subpath (param "SESSION_DIR")) (subpath (param "WORKDIR")) (subpath "/dev"))` {
+		t.Errorf("write rules = %q, want the one for the seat's trees and /dev", writes)
+	}
+	// Network: the model server and the bus port, and nothing else allowed.
+	if n := strings.Count(text, "(allow network-outbound"); n != 2 {
+		t.Errorf("%d network-outbound allows, want two (the model server and the bus port)", n)
+	}
+	for _, bad := range []string{"/Users/", "/home/", ".com", ".local", ".net"} {
+		if strings.Contains(text, bad) {
+			t.Errorf("the profile names a host or a user path (%s)", bad)
+		}
+	}
+	// The header names each widening and what a process inside can now do.
+	header := text
+	if i := strings.Index(text, "(deny default)"); i > 0 {
+		header = text[:i]
+	}
+	for _, want := range []string{
+		"BUS_PORT", "BUS_PASS_FILE", "DIRECTOR_STATE",
+		"can read the team bus password", "reach the bus on that port",
+	} {
+		if !strings.Contains(header, want) {
+			t.Errorf("the header does not say %q", want)
+		}
+	}
+}
+
+// busRig is a sandbox rig with a private token directory, a bus password file in
+// it, a director-mcp the lookup finds, and a launch environment that names the
+// bus. Every path is scratch.
+type busRig struct {
+	*sandboxRig
+	passFile string
+	env      map[string]string
+}
+
+func newBusRig(t *testing.T, profileText string) *busRig {
+	t.Helper()
+	r, shim := shimRig(t, profileText)
+	tokens, _ := filepath.EvalSymlinks(t.TempDir())
+	if err := os.Chmod(tokens, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r.mgr.TokenDir = tokens
+	pass := filepath.Join(tokens, "seat.pass")
+	writeFile(t, pass, "scratch-not-a-password\n", 0o600)
+	r.mgr.LookPath = func(name string) (string, error) {
+		if name == "director-mcp" {
+			return shim, nil
+		}
+		return "", errors.New("not found")
+	}
+	return &busRig{sandboxRig: r, passFile: pass, env: map[string]string{
+		"NATS_URL":                "nats://127.0.0.1:4333",
+		"DIRECTOR_NATS_USER":      "squad",
+		"DIRECTOR_NATS_PASS_FILE": pass,
+	}}
+}
+
+const busProfile = "(version 1)\n(deny default)\n" +
+	"(allow process-exec (literal (param \"DIRECTOR_MCP_BIN\")))\n" +
+	"(allow file-read* (literal (param \"BUS_PASS_FILE\")))\n" +
+	"(allow network-outbound (remote ip (string-append \"localhost:\" (param \"BUS_PORT\"))))\n"
+
+// wrapBus plans and wraps the seat with the rig's environment, and returns the
+// -D parameters, the environment after the wrap, and the wrap's failure.
+func (r *busRig) wrapBus(t *testing.T) (names []string, values map[string]string, env map[string]string, fail *sandboxFailure) {
+	t.Helper()
+	sess := r.session()
+	plan := r.mgr.planLaunch(sess)
+	if plan.sandbox == nil {
+		t.Fatalf("plan = %+v", plan)
+	}
+	plan.command = "'/m/marvel' 'x'"
+	plan.env = map[string]string{}
+	for k, v := range r.env {
+		plan.env[k] = v
+	}
+	fail = r.mgr.wrapInSandbox(sess, &plan)
+	values = map[string]string{}
+	for _, m := range sandboxDParam.FindAllStringSubmatch(plan.command, -1) {
+		names = append(names, m[1])
+		values[m[1]] = m[2]
+	}
+	return names, values, plan.env, fail
+}
+
+// A profile that names the bus parameters and the shim gets them as -D
+// parameters and the shim's state directory, inside the seat's own tree.
+func TestSandboxProfileNamingTheBusGetsItsParametersAndState(t *testing.T) {
+	t.Parallel()
+	r := newBusRig(t, busProfile)
+	names, values, env, fail := r.wrapBus(t)
+	if fail != nil {
+		t.Fatal(fail.msg)
+	}
+	want := "BUS_PASS_FILE,BUS_PORT,DIRECTOR_MCP_BIN,HARNESS_BIN,MARVEL_BIN,REALHOME,SESSION_DIR,WORKDIR"
+	if strings.Join(names, ",") != want {
+		t.Fatalf("-D parameters = %v, want %s", names, want)
+	}
+	if values["BUS_PORT"] != "4333" || values["BUS_PASS_FILE"] != r.passFile {
+		t.Errorf("BUS_PORT = %q, BUS_PASS_FILE = %q, want 4333 and %q", values["BUS_PORT"], values["BUS_PASS_FILE"], r.passFile)
+	}
+	state := filepath.Join(r.home, "director-state")
+	if env["DIRECTOR_STATE"] != state {
+		t.Errorf("DIRECTOR_STATE = %q, want %q", env["DIRECTOR_STATE"], state)
+	}
+	if info, err := os.Stat(state); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Errorf("state directory %s: %v, %v, want a 0700 directory", state, info, err)
+	}
+}
+
+// A role's own DIRECTOR_STATE does not survive a profile that names the shim.
+func TestSandboxProfileNamingTheShimOverwritesARoleDirectorState(t *testing.T) {
+	t.Parallel()
+	r := newBusRig(t, busProfile)
+	r.env["DIRECTOR_STATE"] = "/somewhere/else"
+	_, _, env, fail := r.wrapBus(t)
+	if fail != nil {
+		t.Fatal(fail.msg)
+	}
+	if want := filepath.Join(r.home, "director-state"); env["DIRECTOR_STATE"] != want {
+		t.Errorf("DIRECTOR_STATE = %q, want %q", env["DIRECTOR_STATE"], want)
+	}
+}
+
+// Control: a profile that names none of them keeps the five parameters, leaves
+// the environment alone, makes no state directory and never looks at the bus.
+func TestSandboxProfileNamingNoBusKeepsTheFiveParametersAndEnv(t *testing.T) {
+	t.Parallel()
+	r := newBusRig(t, "(version 1)\n(deny default)\n")
+	r.env["DIRECTOR_STATE"] = "/somewhere/else"
+	r.env["NATS_URL"] = "nats://203.0.113.9:4222" // not loopback: would be refused if it were read
+	names, _, env, fail := r.wrapBus(t)
+	if fail != nil {
+		t.Fatal(fail.msg)
+	}
+	if strings.Join(names, ",") != "HARNESS_BIN,MARVEL_BIN,REALHOME,SESSION_DIR,WORKDIR" {
+		t.Errorf("-D parameters = %v, want the five", names)
+	}
+	if env["DIRECTOR_STATE"] != "/somewhere/else" {
+		t.Errorf("DIRECTOR_STATE = %q, want the role's value left alone", env["DIRECTOR_STATE"])
+	}
+	if _, err := os.Stat(filepath.Join(r.home, "director-state")); err == nil {
+		t.Error("a state directory was made for a profile that does not name the shim")
+	}
+}
+
+// The bus port is read from NATS_URL, and the launch is refused unless it names
+// a loopback host and a port.
+func TestSandboxBusPortIsReadFromNatsURLAndRefusedWhenUnsafe(t *testing.T) {
+	t.Parallel()
+	for url, want := range map[string]string{
+		"nats://127.0.0.1:4333": "4333",
+		"nats://localhost:4222": "4222",
+		"nats://[::1]:7000":     "7000",
+		"tls://127.0.0.1:65535": "65535",
+	} {
+		t.Run("accepts "+url, func(t *testing.T) {
+			r := newBusRig(t, busProfile)
+			r.env["NATS_URL"] = url
+			_, values, _, fail := r.wrapBus(t)
+			if fail != nil {
+				t.Fatalf("refused: %s", fail.msg)
+			}
+			if values["BUS_PORT"] != want {
+				t.Errorf("BUS_PORT = %q, want %q", values["BUS_PORT"], want)
+			}
+		})
+	}
+	for name, url := range map[string]string{
+		"missing":       "",
+		"remote ip":     "nats://10.0.0.5:4222",
+		"remote name":   "nats://bus.example.invalid:4222",
+		"no port":       "nats://127.0.0.1",
+		"port zero":     "nats://127.0.0.1:0",
+		"port too big":  "nats://127.0.0.1:65536",
+		"port not num":  "nats://127.0.0.1:abc",
+		"not a url":     "127.0.0.1 4222",
+		"userinfo host": "nats://127.0.0.1:4222@203.0.113.9:4222",
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			r := newBusRig(t, busProfile)
+			if url == "" {
+				delete(r.env, "NATS_URL")
+			} else {
+				r.env["NATS_URL"] = url
+			}
+			_, _, _, fail := r.wrapBus(t)
+			if fail == nil || fail.reason != RefusalSandboxHarness {
+				t.Fatalf("fail = %+v, want a refusal with reason %q", fail, RefusalSandboxHarness)
+			}
+		})
+	}
+}
+
+// The pass file must be an absolute regular file, not a link, inside the
+// private token directory, and a profile that names it without one is refused.
+func TestSandboxBusPassFileIsCheckedAndRefusedWhenUnsafe(t *testing.T) {
+	t.Parallel()
+	mk := func(t *testing.T, r *busRig) map[string]string {
+		outside, _ := filepath.EvalSymlinks(t.TempDir())
+		other := filepath.Join(outside, "other.pass")
+		writeFile(t, other, "scratch\n", 0o600)
+		link := filepath.Join(r.mgr.TokenDir, "link.pass")
+		if err := os.Symlink(r.passFile, link); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(r.mgr.TokenDir, "dir.pass")
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return map[string]string{
+			"relative":        "seat.pass",
+			"missing file":    filepath.Join(r.mgr.TokenDir, "absent.pass"),
+			"a symlink":       link,
+			"a directory":     dir,
+			"outside tokens":  other,
+			"dotdot":          filepath.Join(r.mgr.TokenDir, "..", filepath.Base(r.mgr.TokenDir), "seat.pass"),
+			"not set (empty)": "",
+		}
+	}
+	probe := newBusRig(t, busProfile)
+	for name, path := range mk(t, probe) {
+		t.Run("refuses "+name, func(t *testing.T) {
+			r := newBusRig(t, busProfile)
+			mk(t, r)
+			if path == "" {
+				delete(r.env, "DIRECTOR_NATS_PASS_FILE")
+			} else {
+				r.env["DIRECTOR_NATS_PASS_FILE"] = strings.ReplaceAll(path, probe.mgr.TokenDir, r.mgr.TokenDir)
+			}
+			_, _, _, fail := r.wrapBus(t)
+			if fail == nil || fail.reason != RefusalSandboxHarness {
+				t.Fatalf("fail = %+v, want a refusal with reason %q", fail, RefusalSandboxHarness)
+			}
+		})
+	}
+	t.Run("refuses with no token directory", func(t *testing.T) {
+		r := newBusRig(t, busProfile)
+		r.mgr.TokenDir = ""
+		_, _, _, fail := r.wrapBus(t)
+		if fail == nil || fail.reason != RefusalSandboxHarness {
+			t.Fatalf("fail = %+v, want a refusal with reason %q", fail, RefusalSandboxHarness)
+		}
+	})
+}
+
+// "Names the shim" is decided from the profile's code: a mention in a comment
+// does not count, and the spelling may vary in its whitespace (#1494 review).
+func TestSandboxProfileNamesAParameterOnlyInCode(t *testing.T) {
+	t.Parallel()
+	t.Run("a comment does not name it", func(t *testing.T) {
+		r, _ := shimRig(t, "(version 1)\n; the shim is (param \"DIRECTOR_MCP_BIN\"), exec'd in the next profile\n(deny default)\n")
+		r.mgr.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+		if err := r.mgr.checkSandbox(r.session()); err != nil {
+			t.Fatalf("checkSandbox = %v, want nil: the name is only in a comment", err)
+		}
+		names, _ := wrappedParams(t, r)
+		if strings.Join(names, ",") != "HARNESS_BIN,MARVEL_BIN,REALHOME,SESSION_DIR,WORKDIR" {
+			t.Errorf("-D parameters = %v, want the five", names)
+		}
+	})
+	t.Run("a quoted semicolon is not a comment", func(t *testing.T) {
+		r, shim := shimRig(t, "(version 1)\n(allow file-read* (literal \"/a;b\")) (allow process-exec (literal (param \"DIRECTOR_MCP_BIN\")))\n(deny default)\n")
+		r.mgr.LookPath = func(name string) (string, error) {
+			if name == "director-mcp" {
+				return shim, nil
+			}
+			return "", errors.New("not found")
+		}
+		names, _ := wrappedParams(t, r)
+		if !strings.Contains(strings.Join(names, ","), "DIRECTOR_MCP_BIN") {
+			t.Errorf("-D parameters = %v, want DIRECTOR_MCP_BIN: the semicolon is inside a string", names)
+		}
+	})
+	t.Run("extra whitespace still names it", func(t *testing.T) {
+		r, shim := shimRig(t, "(version 1)\n(deny default)\n(allow process-exec (literal (param   \"DIRECTOR_MCP_BIN\" )))\n")
+		r.mgr.LookPath = func(name string) (string, error) {
+			if name == "director-mcp" {
+				return shim, nil
+			}
+			return "", errors.New("not found")
+		}
+		names, _ := wrappedParams(t, r)
+		if !strings.Contains(strings.Join(names, ","), "DIRECTOR_MCP_BIN") {
+			t.Errorf("-D parameters = %v, want DIRECTOR_MCP_BIN", names)
+		}
+	})
+}
+
+// The decision is made from the copy that was staged, the bytes sandbox-exec
+// reads, not from an earlier read of the source: a profile whose first read
+// named nothing and whose staged copy names the shim, on a host without it, is
+// refused at the wrap and not started with a parameter missing.
+func TestSandboxWrapDecidesFromTheStagedCopy(t *testing.T) {
+	t.Parallel()
+	r, _ := shimRig(t, "(version 1)\n(deny default)\n(allow process-exec (literal (param \"DIRECTOR_MCP_BIN\")))\n")
+	r.mgr.LookPath = func(string) (string, error) { return "", errors.New("not found") }
+	sess := r.session()
+	staged, fail := r.mgr.stageSandboxProfile(sess, &sandboxLaunch{profile: r.profile, harnessBin: r.harness, marvelBin: "/m/marvel"})
+	if fail != nil {
+		t.Fatal(fail.msg)
+	}
+	plan := launchPlan{command: "'/m/marvel' 'x'", env: map[string]string{}, sandbox: staged}
+	got := r.mgr.wrapInSandbox(sess, &plan)
+	if got == nil || got.reason != RefusalSandboxHarness {
+		t.Fatalf("wrap = %+v, want a refusal with reason %q: the staged copy names the shim and none was found", got, RefusalSandboxHarness)
+	}
+}
