@@ -92,6 +92,10 @@ func TestGetSessionsHelpListsWatchKeys(t *testing.T) {
 			t.Errorf("get --help does not say %q", want)
 		}
 	}
+	// j, k and q are keys too and do not sort, so "a letter key sorts" is too broad.
+	if strings.Contains(long, "A letter key sorts") {
+		t.Error("get --help says any letter key sorts; only the column letters under ? do")
+	}
 }
 
 func TestUserGuideWatchModeNamesTheRightKeys(t *testing.T) {
@@ -115,6 +119,15 @@ func TestUserGuideWatchModeNamesTheRightKeys(t *testing.T) {
 	}
 	if !strings.Contains(section, "arrow keys") {
 		t.Errorf("Watch mode section does not mention the arrow keys:\n%s", section)
+	}
+	// r sorts by runtime and R by role (watchloop.go), so the guide names both.
+	for _, want := range []string{"`r` (runtime)", "`R` (role)"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Watch mode section does not list %s:\n%s", want, section)
+		}
+	}
+	if strings.Contains(section, "`r` (role)") {
+		t.Errorf("Watch mode section says r sorts by role; R does:\n%s", section)
 	}
 	if strings.Contains(section, "`h` for help") {
 		t.Errorf("Watch mode section still says h opens help; ? does, h sorts by health:\n%s", section)

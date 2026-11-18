@@ -1362,7 +1362,7 @@ Secret-looking Env values show as (redacted), as in the team document.
 
 With -w, get sessions is a live view. j and k, or the down and up arrow keys, move
 the cursor; Enter shows the attach plan for the selected session on the status line
-and runs nothing. A letter key sorts by a column, ? lists every key, q quits.`,
+and runs nothing. The column letters listed under ? sort, ? lists every key, q quits.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			// The value of a bare -w is split off once, here, and RunE reads
 			// the result: a second split would see the interval already moved
