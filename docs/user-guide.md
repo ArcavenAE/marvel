@@ -731,8 +731,8 @@ marvel get sessions -w
 ```
 
 Live-updating dashboard. Sort by pressing keys: `c` (context %), `p`
-(CPU), `m` (memory), `n` (name), `r` (role), `g` (generation), `t`
-(team). `j` and `k`, or the down and up arrow keys, move the cursor, and
+(CPU), `m` (memory), `n` (name), `r` (runtime), `R` (role), `g`
+(generation), `t` (team). `j` and `k`, or the down and up arrow keys, move the cursor, and
 Enter shows the attach plan for the selected session on the status line
 without running it. Press `?` for the full key list, `q` to quit.
 
