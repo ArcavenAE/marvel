@@ -3,6 +3,7 @@ package team
 import (
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -233,8 +234,8 @@ func TestCrashPredecessorsSurviveTheClearUntilASeatTakesThem(t *testing.T) {
 	// Tick 2 finds no Crashed row and still has both keys.
 	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), []string{k0, k2}, "tick 2, rows gone")
 
-	// A seat is created with the first key: it is taken, the second stays.
-	crashRow(t, store, "ops-writer-g1-3", 1, api.SessionRunning, k0)
+	// A seat is created with the first key and the loop reports it taken: the
+	// key goes, the second stays, whatever becomes of the seat's row afterwards.
 	ctrl.crashPredecessorTaken(team, "writer", team.Generation, k0)
 	wantPredecessors(t, ctrl.pendingCrashPredecessors(team, "writer", team.Generation), []string{k2}, "after the first is taken")
 
@@ -310,5 +311,53 @@ func TestCrashRepairDeferredByAViewBuildStillNamesTheSeat(t *testing.T) {
 			names = append(names, s.Key()+" (predecessor "+s.Predecessor+")")
 		}
 		t.Errorf("replacements = %v, want one seat whose predecessor is the crashed %q", names, first.Key())
+	}
+}
+
+// A wake that names fewer seats than it spawns fills the rest from the crashed
+// markers of the role: the first seat names the hibernated one, the second the
+// crashed one (review of marvel#1493, the wake and crash case).
+func TestWakeFillsTheRemainingSeatsFromCrashedMarkers(t *testing.T) {
+	store, ctrl, cleanup := setupWithBolt(t, filepath.Join(t.TempDir(), "marvel.db"))
+	t.Cleanup(cleanup)
+	f := &wakeFixture{t: t, store: store, ctrl: ctrl, clock: newTestClock(listEpoch), ring: events.NewRing(0), ws: "test-wake-fill"}
+	ctrl.now = f.clock.Now
+	ctrl.Events = f.ring
+	roles := wakeRoles()
+	roles[0].Replicas = 2 // two supervisor seats, one hibernated
+	createTeamFixture(t, store, f.ws, "squad", roles)
+	hibernated := f.ws + "/squad-supervisor-before"
+	if err := store.UpdateTeam(f.ws+"/squad", func(live *api.Team) error {
+		live.ConvergencePosture = api.PostureHold
+		live.Hibernate = &api.HibernateMark{State: api.HibernateHibernated, Since: f.clock.Now(), Mode: api.HibernateModeHandoff, Seats: []string{hibernated}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordResume(api.ResumeEntry{Session: hibernated, Workspace: f.ws, Team: "squad", Role: "supervisor", LaunchedAt: listEpoch.Add(-2 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	crashed := api.Session{
+		Name: "squad-supervisor-g1-7", Workspace: f.ws, Team: "squad", Role: "supervisor",
+		Generation: 1, State: api.SessionCrashed, CreatedAt: listEpoch.Add(-3 * time.Hour),
+	}
+	if err := store.CreateSession(&crashed); err != nil {
+		t.Fatal(err)
+	}
+
+	f.wake()
+	f.ctrl.ReconcileOnce()
+
+	var preds []string
+	for _, s := range store.ListSessionsByTeamRole(f.ws, "squad", "supervisor") {
+		if s.State.CountsAsAlive() {
+			preds = append(preds, s.Predecessor)
+		}
+	}
+	sort.Strings(preds)
+	want := []string{crashed.Key(), hibernated}
+	sort.Strings(want)
+	if !reflect.DeepEqual(preds, want) {
+		t.Errorf("supervisor seats name %v, want the hibernated seat and the crashed marker: %v", preds, want)
 	}
 }

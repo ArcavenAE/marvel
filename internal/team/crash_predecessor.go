@@ -1,6 +1,8 @@
 package team
 
 import (
+	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -9,21 +11,14 @@ import (
 )
 
 // crashedPredecessors returns the keys of the seats of role, in one
-// generation, that crash repair is about to replace, in index order. The spawn
-// loop clears a role's Crashed rows just before it builds the replacements, so
-// this reads them first; a replacement takes one as its predecessor, so its
-// MARVEL_PREDECESSOR names the seat whose handoff, mail and lock it inherits
-// (marvel#541, marvel#1402). A key a live seat already names is spent, as a
-// wake spends it, so a replacement started over several ticks never claims the
-// same seat twice. A Crashed row of another generation or role is left alone.
+// generation, that crash repair is about to replace, in index order. A
+// replacement takes one as its predecessor, so its MARVEL_PREDECESSOR names the
+// seat whose handoff, mail and lock it inherits (marvel#541, marvel#1402). A
+// key a live seat already names is spent, as a wake spends it. A Crashed row of
+// another generation is not named here; ClearCrashedForRole still deletes it.
 func (c *Controller) crashedPredecessors(t *api.Team, role string, generation int64) []string {
 	rows := c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role)
-	named := map[string]bool{}
-	for _, s := range rows {
-		if s.State.CountsAsAlive() && s.Predecessor != "" {
-			named[s.Predecessor] = true
-		}
-	}
+	named := liveNamed(rows)
 	type crashed struct {
 		key   string
 		index int
@@ -33,12 +28,9 @@ func (c *Controller) crashedPredecessors(t *api.Team, role string, generation in
 		if s.State != api.SessionCrashed || s.Generation != generation || named[s.Key()] {
 			continue
 		}
-		// A session name ends in its index: <team>-<role>-g<generation>-<index>.
-		idx, err := strconv.Atoi(s.Name[strings.LastIndex(s.Name, "-")+1:])
-		if err != nil {
-			continue
+		if idx, ok := seatIndex(s.Key()); ok {
+			found = append(found, crashed{key: s.Key(), index: idx})
 		}
-		found = append(found, crashed{key: s.Key(), index: idx})
 	}
 	sort.Slice(found, func(i, j int) bool { return found[i].index < found[j].index })
 	keys := make([]string, 0, len(found))
@@ -48,9 +40,73 @@ func (c *Controller) crashedPredecessors(t *api.Team, role string, generation in
 	return keys
 }
 
-// pendingCrashPredecessors and crashPredecessorTaken are red-phase stubs.
-func (c *Controller) pendingCrashPredecessors(t *api.Team, role string, generation int64) []string {
-	return c.crashedPredecessors(t, role, generation)
+// liveNamed is the set of keys the live seats among rows name as predecessor.
+func liveNamed(rows []api.Session) map[string]bool {
+	named := map[string]bool{}
+	for _, s := range rows {
+		if s.State.CountsAsAlive() && s.Predecessor != "" {
+			named[s.Predecessor] = true
+		}
+	}
+	return named
 }
 
-func (c *Controller) crashPredecessorTaken(t *api.Team, role string, generation int64, key string) {}
+// seatIndex reads the index a session key ends in: <team>-<role>-g<generation>-<index>.
+func seatIndex(key string) (int, bool) {
+	idx, err := strconv.Atoi(key[strings.LastIndex(key, "-")+1:])
+	return idx, err == nil
+}
+
+func crashPendingKey(t *api.Team, role string, generation int64) string {
+	return fmt.Sprintf("%s/%s/g%d", t.Key(), role, generation)
+}
+
+// pendingCrashPredecessors is crashedPredecessors plus the keys an earlier tick
+// read and no created seat has taken yet. The spawn loop clears the Crashed
+// rows in the tick that reads them, but a replacement may not be created in
+// that tick: a view build defers it, Create refuses it, or plan.Spawn is
+// smaller than the crashed count. The keys stay, per role and generation, until
+// crashPredecessorTaken drops one or a live seat names it. The result is in
+// index order.
+func (c *Controller) pendingCrashPredecessors(t *api.Team, role string, generation int64) []string {
+	fresh := c.crashedPredecessors(t, role, generation)
+	spent := liveNamed(c.store.ListSessionsByTeamRole(t.Workspace, t.Name, role))
+	key := crashPendingKey(t, role, generation)
+
+	c.crashMu.Lock()
+	defer c.crashMu.Unlock()
+	var merged []string
+	for _, k := range append(slices.Clone(c.crashPending[key]), fresh...) {
+		if !spent[k] && !slices.Contains(merged, k) {
+			merged = append(merged, k)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		a, _ := seatIndex(merged[i])
+		b, _ := seatIndex(merged[j])
+		return a < b
+	})
+	if len(merged) == 0 {
+		delete(c.crashPending, key)
+		return nil
+	}
+	if c.crashPending == nil {
+		c.crashPending = map[string][]string{}
+	}
+	c.crashPending[key] = merged
+	return slices.Clone(merged)
+}
+
+// crashPredecessorTaken drops key from the pending list once a created seat
+// names it.
+func (c *Controller) crashPredecessorTaken(t *api.Team, role string, generation int64, key string) {
+	pk := crashPendingKey(t, role, generation)
+	c.crashMu.Lock()
+	defer c.crashMu.Unlock()
+	rest := slices.DeleteFunc(slices.Clone(c.crashPending[pk]), func(k string) bool { return k == key })
+	if len(rest) == 0 {
+		delete(c.crashPending, pk)
+		return
+	}
+	c.crashPending[pk] = rest
+}

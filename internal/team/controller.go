@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -133,6 +134,11 @@ type Controller struct {
 	busHolds map[string]bool
 	// exposureHolds latches the roles held for an exposure, once per transition.
 	exposureHolds map[string]bool
+	// crashMu guards crashPending: the keys of the crashed seats a role's
+	// replacements have not yet taken, per role and generation. Memory only: a
+	// daemon restart between the clear and the spawn drops them.
+	crashMu      sync.Mutex
+	crashPending map[string][]string
 
 	// Exposures is where the exposure gate reads what a slot has read. Nil
 	// means the store. A role with no Writes never reads it (marvel#945).
@@ -1519,8 +1525,9 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		// nextIndex computes against live sessions only and `marvel get
 		// sessions` doesn't carry the ghost forward.
 		// The keys of the seats it clears are the replacements' predecessors:
-		// read them first.
-		crashedSeats := c.crashedPredecessors(t, plan.Role, plan.Generation)
+		// read them first, and keep them until a created seat takes them, since
+		// a spawn this tick may be deferred, refused or capped.
+		crashedSeats := c.pendingCrashPredecessors(t, plan.Role, plan.Generation)
 		c.sessMgr.ClearCrashedForRole(t.Workspace, t.Name, plan.Role)
 		// The same goes for a scheduled role's earlier firings: their
 		// finished rows are in the run history, so they go when the next
@@ -1536,10 +1543,13 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 		}
 		// A wake starts each seat as a successor of the seat it replaces, with
 		// MARVEL_PREDECESSOR naming it, as a shift does (design section 6).
-		// A crash repair does the same with the seats it just cleared.
+		// A crash repair does the same with the seats it cleared, for the
+		// replacements a wake does not name.
 		preds := c.wakePredecessors(t, plan.Role)
-		if len(preds) == 0 {
-			preds = crashedSeats
+		for _, k := range crashedSeats {
+			if !slices.Contains(preds, k) {
+				preds = append(preds, k)
+			}
 		}
 		for i := 0; i < plan.Spawn; i++ {
 			name := fmt.Sprintf("%s-%s-g%d-%d", t.Name, plan.Role, plan.Generation, c.nextIndex(t, role, plan.Generation))
@@ -1562,7 +1572,11 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				break
 			}
 			// A refused placement is reported, at a low rate, by the manager.
-			if err := c.sessMgr.Create(sess); err != nil && !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) && !errors.Is(err, session.ErrSettingsFileRefused) {
+			err := c.sessMgr.Create(sess)
+			if err == nil && sess.Predecessor != "" {
+				c.crashPredecessorTaken(t, plan.Role, plan.Generation, sess.Predecessor)
+			}
+			if err != nil && !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) && !errors.Is(err, session.ErrSettingsFileRefused) {
 				log.Printf("reconcile: create session %s: %v", name, err)
 			}
 		}
