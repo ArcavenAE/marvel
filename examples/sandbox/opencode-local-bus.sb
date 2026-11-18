@@ -75,7 +75,10 @@
 
 ; explicit denies, last, as belts over deny default: other local services. The
 ; bus port is not listed, because an explicit deny of it would cancel the allow
-; above.
+; above. Write each belt as a single localhost port, as below: marvel refuses a
+; launch when a network deny after the BUS_PORT rule is a wildcard port, a bare
+; network deny or has more than one filter, since the last match would cancel
+; the bus.
 (deny network-outbound (remote ip "localhost:4242"))
 (deny network-outbound (remote ip "localhost:7422"))
 (deny network-outbound (remote ip "localhost:7442"))
