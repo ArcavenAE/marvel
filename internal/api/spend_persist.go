@@ -54,18 +54,17 @@ func (s *Store) nowLocked() time.Time {
 }
 
 // writeSpendLocked writes the session and, only once the write has succeeded,
-// records its time and clears its held mark. A failed write leaves the spend held
-// and the interval unstarted, so the next update or timer pass tries again. It
-// reports whether the file holds the spend. The caller holds s.mu.
-func (s *Store) writeSpendLocked(key string, sess *Session) bool {
+// records its time and clears its held mark. A failed write is logged and leaves
+// the spend held and the interval unstarted, so the next update or timer pass
+// tries again. The caller holds s.mu.
+func (s *Store) writeSpendLocked(key string, sess *Session) {
 	if err := s.persistPutIfChanged(bucketSessions, key, sess); err != nil {
 		log.Printf("session %s: spend not written: %v", key, err)
 		s.spend.dirty[key] = struct{}{}
-		return false
+		return
 	}
 	s.spend.written[key] = s.nowLocked()
 	delete(s.spend.dirty, key)
-	return true
 }
 
 // persistSpendLocked writes the session now, or marks its spend as held, after

@@ -15,7 +15,8 @@ func (d *Daemon) flushDueSpend(time.Time) {
 // RunSpendFlush runs flushDueSpend on a tick, so a seat that goes quiet after a
 // held spend update still reaches the file within api.SpendPersistInterval plus
 // one tick. A sibling of the reconcile loop and not a step in it, as RunLimits
-// is: a bolt write cannot hold a reconcile pass up.
+// is: it runs on its own schedule, but it shares the store lock with the
+// reconcile pass and every spend update while it writes.
 func (d *Daemon) RunSpendFlush(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
