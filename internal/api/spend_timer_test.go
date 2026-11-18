@@ -148,3 +148,46 @@ func TestFailedTimerWriteLeavesTheSpendHeldAndTheIntervalUnstarted(t *testing.T)
 		t.Errorf("SpendOut after a restart = %d, want 2000 (the failed pass must not start the interval, so the next pass at the same time writes)", got)
 	}
 }
+
+// A failed write on the update path leaves the spend held and the interval
+// unstarted: the next update, with the clock unmoved, is written at once. These
+// two tests pin behavior that already held at 42343f3b, so they were not red;
+// the mutants in the PR body show they bite.
+func TestFailedUpdateWriteLeavesTheIntervalUnstarted(t *testing.T) {
+	s, _, path, keys := spendStore(t, 1)
+	if err := s.bolt.Close(); err != nil {
+		t.Fatalf("close the handle under the store: %v", err)
+	}
+	s.UpdateSessionSpend(keys[0], spendOf(1000))
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("reopen the file: %v", err)
+	}
+	s.bolt = db
+	s.UpdateSessionSpend(keys[0], spendOf(1500))
+	if got := restartedSpend(t, s, path, keys[0]); got != 1500 {
+		t.Errorf("SpendOut after a restart = %d, want 1500 (the first update failed to write, so the next one is still a first write)", got)
+	}
+}
+
+// A key re-created inside the interval gets an immediate first write: the delete
+// drops the old session's write time.
+func TestRecreatedKeyInsideTheIntervalIsWrittenAtOnce(t *testing.T) {
+	s, clk, path, keys := spendStore(t, 1)
+	s.UpdateSessionSpend(keys[0], spendOf(1000))
+	clk.advance(time.Minute)
+	if err := s.DeleteSession(keys[0]); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	again := &Session{Name: "agent-0", Workspace: "ws", Team: "team", Role: "worker", State: SessionRunning, PaneID: "%2"}
+	if err := s.CreateSession(again); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if again.Key() != keys[0] {
+		t.Fatalf("re-created key = %q, want %q", again.Key(), keys[0])
+	}
+	s.UpdateSessionSpend(keys[0], spendOf(3000))
+	if got := restartedSpend(t, s, path, keys[0]); got != 3000 {
+		t.Errorf("SpendOut after a restart = %d, want 3000 (a key re-created a minute after the old write is a first write)", got)
+	}
+}

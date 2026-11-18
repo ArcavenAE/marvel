@@ -41,17 +41,35 @@ func (s *Store) spendDueLocked(key string) bool {
 	if !ok {
 		return true
 	}
-	now := time.Now
+	return s.nowLocked().Sub(last) >= SpendPersistInterval
+}
+
+// nowLocked reads the spend clock, time.Now when none is set. The caller holds
+// s.mu.
+func (s *Store) nowLocked() time.Time {
 	if s.spend.now != nil {
-		now = s.spend.now
+		return s.spend.now()
 	}
-	return now().Sub(last) >= SpendPersistInterval
+	return time.Now()
+}
+
+// writeSpendLocked writes the session and, only once the write has succeeded,
+// records its time and clears its held mark. A failed write leaves the spend held
+// and the interval unstarted, so the next update or timer pass tries again. It
+// reports whether the file holds the spend. The caller holds s.mu.
+func (s *Store) writeSpendLocked(key string, sess *Session) bool {
+	if err := s.persistPutIfChanged(bucketSessions, key, sess); err != nil {
+		log.Printf("session %s: spend not written: %v", key, err)
+		s.spend.dirty[key] = struct{}{}
+		return false
+	}
+	s.spend.written[key] = s.nowLocked()
+	delete(s.spend.dirty, key)
+	return true
 }
 
 // persistSpendLocked writes the session now, or marks its spend as held, after
-// UpdateSessionSpend has stored the values. A failed write leaves the spend held
-// and the interval unstarted, so the next update tries again. The caller holds
-// s.mu.
+// UpdateSessionSpend has stored the values. The caller holds s.mu.
 func (s *Store) persistSpendLocked(key string, sess *Session) {
 	if s.spend.dirty == nil {
 		s.spend.dirty = make(map[string]struct{})
@@ -61,17 +79,27 @@ func (s *Store) persistSpendLocked(key string, sess *Session) {
 		s.spend.dirty[key] = struct{}{}
 		return
 	}
-	if err := s.persistPutIfChanged(bucketSessions, key, sess); err != nil {
-		log.Printf("session %s: spend not written: %v", key, err)
-		s.spend.dirty[key] = struct{}{}
-		return
+	s.writeSpendLocked(key, sess)
+}
+
+// FlushDueSpend writes each session whose spend the file does not hold and whose
+// interval has passed. The daemon calls it on a tick, so a seat that goes quiet
+// after a held update still reaches the file within SpendPersistInterval plus one
+// tick (marvel#777, ruling d1117d-8: save spend on a timer, and always at
+// shutdown and re-exec). A session deleted since its update is dropped.
+func (s *Store) FlushDueSpend() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key := range s.spend.dirty {
+		sess, ok := s.sessions[key]
+		if !ok {
+			delete(s.spend.dirty, key)
+			continue
+		}
+		if s.spendDueLocked(key) {
+			s.writeSpendLocked(key, sess)
+		}
 	}
-	now := time.Now
-	if s.spend.now != nil {
-		now = s.spend.now
-	}
-	s.spend.written[key] = now()
-	delete(s.spend.dirty, key)
 }
 
 // flushSpendLocked writes every session whose spend the file does not hold yet.
@@ -98,7 +126,3 @@ func (s *Store) forgetSpendLocked(key string) {
 	delete(s.spend.written, key)
 	delete(s.spend.dirty, key)
 }
-
-// FlushDueSpend writes each session whose spend the file does not hold and whose
-// interval has passed. Red stub for marvel#777 round 2: it writes nothing yet.
-func (s *Store) FlushDueSpend() {}
