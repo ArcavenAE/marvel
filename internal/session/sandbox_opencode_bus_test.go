@@ -285,7 +285,7 @@ func TestSandboxBusPassFileIsCheckedAndRefusedWhenUnsafe(t *testing.T) {
 			"a symlink":       link,
 			"a directory":     dir,
 			"outside tokens":  other,
-			"dotdot":          filepath.Join(r.mgr.TokenDir, "..", filepath.Base(r.mgr.TokenDir), "seat.pass"),
+			"dotdot":          r.mgr.TokenDir + "/../" + filepath.Base(r.mgr.TokenDir) + "/seat.pass", // filepath.Join would clean it
 			"not set (empty)": "",
 		}
 	}
