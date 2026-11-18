@@ -530,16 +530,18 @@ func TestSandboxBusPortRefusalFollowsTheStagedProfilesDenies(t *testing.T) {
 	}
 }
 
-// A parameter form written with no space before the quote is still the form
-// (#1497 review, Low 2): the reader ends a symbol at the quote.
-func TestSandboxProfileNamesAParameterWithNoSpaceBeforeTheQuote(t *testing.T) {
+// A form written with no space between param and the quote is not the form:
+// sandbox-exec reads param"X" as one unbound symbol and rejects the profile
+// ("unbound variable: param\"BUS_PASS_FILE\"", measured in scratch), so it is
+// never counted as naming the parameter and the profile's own error shows.
+func TestSandboxProfileWithNoSpaceBeforeTheQuoteDoesNotNameTheParameter(t *testing.T) {
 	t.Parallel()
 	r := newBusRig(t, "(version 1)\n(deny default)\n(allow process-exec (literal (param\"DIRECTOR_MCP_BIN\")))\n")
 	names, _, _, fail := r.wrapBus(t)
 	if fail != nil {
 		t.Fatal(fail.msg)
 	}
-	if !strings.Contains(strings.Join(names, ","), "DIRECTOR_MCP_BIN") {
-		t.Errorf("-D parameters = %v, want DIRECTOR_MCP_BIN", names)
+	if strings.Join(names, ",") != "HARNESS_BIN,MARVEL_BIN,REALHOME,SESSION_DIR,WORKDIR" {
+		t.Errorf("-D parameters = %v, want the five", names)
 	}
 }

@@ -141,9 +141,11 @@ func sbplCode(text []byte) string {
 }
 
 // sbplNames reports whether the comment-free code of a profile names the
-// parameter, with any whitespace between the form's parts.
+// parameter, with any whitespace between the form's parts. At least one space
+// follows param: sandbox-exec reads param"X" as one unbound symbol and rejects
+// the profile, so that spelling is never a naming.
 func sbplNames(code, param string) bool {
-	return regexp.MustCompile(`\(\s*param\s*"` + regexp.QuoteMeta(param) + `"\s*\)`).MatchString(code)
+	return regexp.MustCompile(`\(\s*param\s+"` + regexp.QuoteMeta(param) + `"\s*\)`).MatchString(code)
 }
 
 var sbplDenyPortRE = regexp.MustCompile(`\(\s*deny\s+network(?:-outbound|\*)\s+\(\s*remote\s+ip\s+"localhost:(\d+)"\s*\)\s*\)`)
