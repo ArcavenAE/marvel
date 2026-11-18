@@ -632,7 +632,10 @@ func (c *Controller) planHibernatePut(token, text string, t *api.Team, sess api.
 		return plan, fmt.Errorf("%w: %v", ErrHandoffNoPath, err)
 	}
 	plan.teamKey, plan.role, plan.generation, plan.req, plan.hibernate = t.Key(), role.Name, t.Generation, req, true
-	plan.path, plan.body = path, handoffBody(text, role.Shift.HandoffMarker)
+	plan.path = path
+	if plan.body, err = handoffBody(text, role.Shift.HandoffMarker); err != nil {
+		return plan, err
+	}
 	return plan, nil
 }
 

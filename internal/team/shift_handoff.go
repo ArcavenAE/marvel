@@ -539,7 +539,7 @@ func handoffCompleteSince(path, marker string, notBefore time.Time) bool {
 	// path already applies. Only the window is searched, so a file with more than
 	// maxHandoffTail bytes of blank lines between its content and the marker reads
 	// as marker-only and is refused, which fails closed.
-	return i >= 0 && len(bytes.TrimSpace(tail[:i])) > 0
+	return hasContentAboveMarker(tail, i)
 }
 
 // handoffProbes runs the marker read off the controller lock (marvel#444).
@@ -659,4 +659,13 @@ func (c *Controller) emitHoldReleased(t *api.Team, role string, req api.ShiftReq
 		Reason:     reason,
 		Message:    fmt.Sprintf("cause=%s: the handoff request for %s, made %s, no longer holds the role's slot (%s)", req.Cause, req.Session, req.RequestedAt.Format(time.RFC3339), reason),
 	})
+}
+
+// hasContentAboveMarker reports whether text, already trimmed of trailing
+// space, has a non-blank line above its last line, which starts after index i
+// (the last newline, or -1). It is the one rule the completion check and
+// handoff.put share (marvel#612), so a text the put would write is never one
+// the check refuses.
+func hasContentAboveMarker(text []byte, i int) bool {
+	return i >= 0 && len(bytes.TrimSpace(text[:i])) > 0
 }
