@@ -10,18 +10,14 @@ import (
 // The restart wait and a Stop can both be ready when the loop comes back to its
 // select: the loop is inside the driver's Exited call for the crash, the wait's
 // channel already holds its value, and a Stop is blocked sending its request.
-// Go picks one ready case at random, so the test runs the race many times and
-// asserts only what holds whichever case wins:
+// Go picks one ready case at random, so the test runs the race many times. A
+// Stop that is queued when the wait ends must win (the ruling on aae-orc-f5yoz):
 //
 //   - after Stop returns, no child is running;
-//   - a Stop that wins leaves one start and the crash as the only exit;
-//   - a restart that wins is followed by a requested exit that ends it, so a
-//     child that was spawned never outlives the Stop.
+//   - nothing is spawned: one start, and the crash is the only exit.
 //
-// It logs how often each case won. Whether a spawn that the queued Stop then
-// ends is acceptable is an open question (aae-orc-f5yoz); this test does not
-// rule on it.
-func TestStopAndTheRestartWaitReadyTogetherLeaveNoChild(t *testing.T) {
+// It logs how often each case won.
+func TestAQueuedStopWinsOverTheRestartWait(t *testing.T) {
 	const trials = 30
 	var stopWon, restartWon int
 	for i := 0; i < trials; i++ {
@@ -73,12 +69,7 @@ func TestStopAndTheRestartWaitReadyTogetherLeaveNoChild(t *testing.T) {
 			}
 		case 2:
 			restartWon++
-			if starts[1].How != StartRestarted {
-				t.Errorf("trial %d: second start = %+v, want a restart", i, starts[1])
-			}
-			if len(exits) != 2 || exits[0].Requested || !exits[1].Requested {
-				t.Errorf("trial %d: restart won but exits = %+v, want the crash then a requested exit", i, exits)
-			}
+			t.Errorf("trial %d: a child was spawned although a Stop was queued (starts = %+v, exits = %+v)", i, starts[1], exits)
 		default:
 			t.Errorf("trial %d: %d starts, want 1 or 2", i, len(starts))
 		}
