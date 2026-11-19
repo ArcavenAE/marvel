@@ -365,46 +365,55 @@ func (p *Process) loop(parent context.Context) {
 		retry = p.after(wait)
 	}
 
+	// serve answers one request and reports whether it was a Stop, after which
+	// the loop returns.
+	serve := func(r request) (stopped bool) {
+		switch r.kind {
+		case reqSpawn, reqAdopt:
+			if cur != nil {
+				r.reply <- fmt.Errorf("%s: a child is already running (pid %d)", p.spec.Name, cur.info.Child.Pid())
+				return false
+			}
+			// A start during the wait after a crash is left to the guard on
+			// the wait's case: clearing the wait here would cancel the
+			// respawn for good when this start fails.
+			var c *running
+			how := StartSpawned
+			if r.kind == reqAdopt {
+				c, how = adopt(r.child), StartAdopted
+			} else {
+				var err error
+				if c, err = spawn(); err != nil {
+					r.reply <- err
+					return false
+				}
+			}
+			r.reply <- begin(c, StartInfo{How: how, Child: c.info})
+		case reqRestart:
+			retry = nil
+			end(false)
+			c, err := spawn()
+			if err != nil {
+				r.reply <- err
+				return false
+			}
+			r.reply <- begin(c, StartInfo{How: StartRestarted, Reason: r.reason, Child: c.info})
+		case reqStop:
+			retry = nil
+			end(r.keep)
+			r.reply <- nil
+			return true
+		}
+		return false
+	}
+
 	for {
 		select {
 		case <-parentDone:
 			quiet, parentDone, retry, tick = true, nil, nil, nil
 
 		case r := <-p.reqs:
-			switch r.kind {
-			case reqSpawn, reqAdopt:
-				if cur != nil {
-					r.reply <- fmt.Errorf("%s: a child is already running (pid %d)", p.spec.Name, cur.info.Child.Pid())
-					continue
-				}
-				// A start during the wait after a crash is left to the guard on
-				// the wait's case: clearing the wait here would cancel the
-				// respawn for good when this start fails.
-				var c *running
-				how := StartSpawned
-				if r.kind == reqAdopt {
-					c, how = adopt(r.child), StartAdopted
-				} else {
-					var err error
-					if c, err = spawn(); err != nil {
-						r.reply <- err
-						continue
-					}
-				}
-				r.reply <- begin(c, StartInfo{How: how, Child: c.info})
-			case reqRestart:
-				retry = nil
-				end(false)
-				c, err := spawn()
-				if err != nil {
-					r.reply <- err
-					continue
-				}
-				r.reply <- begin(c, StartInfo{How: StartRestarted, Reason: r.reason, Child: c.info})
-			case reqStop:
-				retry = nil
-				end(r.keep)
-				r.reply <- nil
+			if serve(r) {
 				return
 			}
 
@@ -413,6 +422,21 @@ func (p *Process) loop(parent context.Context) {
 
 		case <-retry:
 			retry = nil
+			// A request already queued as the wait ends is served first, so a
+			// Stop that is waiting wins over the respawn instead of racing it
+			// (Go picks a ready case at random), and nothing is spawned for it
+			// to end. Any other request is served by the same code as the
+			// request case, in the order it was queued.
+			for queued := true; queued; {
+				select {
+				case r := <-p.reqs:
+					if serve(r) {
+						return
+					}
+				default:
+					queued = false
+				}
+			}
 			if cur != nil {
 				continue // a Spawn or Adopt during the wait already started a child
 			}
