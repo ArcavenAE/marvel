@@ -181,3 +181,126 @@ func TestSeriesPersistRetentionDefaultsToNinetyDays(t *testing.T) {
 		t.Errorf("an 86-day-old file was removed under the default: %v", err)
 	}
 }
+
+// A crash or a full disk mid-write leaves a last line with no newline. The next
+// append must start a new line, or the two readings fuse into one line that
+// parses as neither.
+func TestSeriesAppendAfterATornLastLineKeepsBothNewReadings(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file string
+		want int
+	}{
+		{"a torn line alone", `{"key":{"harness":"claude"},"sam`, 2},
+		{"a good line then a torn one", `{"key":{"harness":"claude","backend":"default"},"sample":{"cluster":"kinu","account":"x","window":"five_hour","used_percent":3,"at":"2026-11-10T11:00:00Z"}}` + "\n" + `{"key":{"harness":"cl`, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			k := seriesKey()
+			if err := os.WriteFile(filepath.Join(dir, "2026-11-10.jsonl"), []byte(tc.file), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			reset := seriesT0.Add(3 * time.Hour)
+			s := attachedSeries(t, dir, seriesT0)
+			s.Append(k, []AccountWindow{pctWin("five_hour", 10, reset)}, "ws/a", seriesT0)
+			s.Append(k, []AccountWindow{pctWin("five_hour", 20, reset)}, "ws/a", seriesT0.Add(10*time.Minute))
+
+			got := attachedSeries(t, dir, seriesT0.Add(time.Hour)).Samples(k, "five_hour", time.Time{}, time.Time{})
+			if len(got) != tc.want {
+				t.Fatalf("readings after the restart = %d, want %d: %+v", len(got), tc.want, got)
+			}
+		})
+	}
+}
+
+// A reading the memory cache drops in the same call (older than the window
+// before the newest one held) is not a kept reading, so it is not written.
+func TestSeriesDoesNotWriteAReadingTheCacheDropped(t *testing.T) {
+	dir := t.TempDir()
+	k := seriesKey()
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(time.Hour)
+	s := attachedSeries(t, dir, now)
+	s.Append(k, []AccountWindow{pctWin("five_hour", 10, reset)}, "ws/a", now)
+	s.Append(k, []AccountWindow{pctWin("five_hour", 5, reset)}, "ws/a", now.Add(-10*24*time.Hour))
+
+	if got := s.Samples(k, "five_hour", time.Time{}, time.Time{}); len(got) != 1 {
+		t.Fatalf("setup: memory holds %d readings, want 1", len(got))
+	}
+	if _, err := os.Stat(filepath.Join(dir, "2026-11-09.jsonl")); err == nil {
+		t.Fatalf("a day file exists for a reading the cache dropped")
+	}
+}
+
+// A retention shorter than the memory window must not shorten the window: the
+// persisted retention is raised to it, so a restart still reads eight days.
+func TestSeriesRetentionBelowTheMemoryWindowKeepsTheWindow(t *testing.T) {
+	dir := t.TempDir()
+	k := seriesKey()
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(time.Hour)
+	first := attachedSeries(t, dir, now)
+	first.Append(k, []AccountWindow{pctWin("five_hour", 10, reset)}, "ws/a", now.Add(-30*time.Hour))
+
+	second := NewAccountSeries("kinu", DefaultSeriesRetention)
+	if err := second.Attach(dir, time.Hour, now); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if got := second.Samples(k, "five_hour", time.Time{}, time.Time{}); len(got) != 1 {
+		t.Fatalf("readings after a restart with a 1h retention = %d, want 1 (the window floors it)", len(got))
+	}
+}
+
+// A line longer than any scanner buffer is one bad line, not the end of the file.
+func TestSeriesLoadsPastAnOverlongLine(t *testing.T) {
+	dir := t.TempDir()
+	k := seriesKey()
+	good := `{"key":{"harness":"claude","backend":"default"},"sample":{"cluster":"kinu","account":"` + k.String() + `","window":"five_hour","used_percent":7,"at":"2026-11-10T12:00:00Z"}}`
+	second := strings.Replace(good, `"used_percent":7`, `"used_percent":9`, 1)
+	second = strings.Replace(second, "12:00:00Z", "12:30:00Z", 1)
+	body := good + "\n" + strings.Repeat("x", 3<<20) + "\n" + second + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "2026-11-10.jsonl"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := attachedSeries(t, dir, seriesT0).Samples(k, "five_hour", time.Time{}, time.Time{})
+	if len(got) != 2 {
+		t.Fatalf("readings = %d, want the 2 good lines around the overlong one: %+v", len(got), got)
+	}
+}
+
+// Disk I/O does not hold the lock that Samples and Delta take: a write that
+// stalls must not stall a reader.
+func TestSeriesWriteDoesNotBlockAReader(t *testing.T) {
+	dir := t.TempDir()
+	k := seriesKey()
+	s := attachedSeries(t, dir, seriesT0)
+	entered, release := make(chan struct{}), make(chan struct{})
+	s.store.beforeWrite = func() {
+		close(entered)
+		<-release
+	}
+	appended := make(chan struct{})
+	go func() {
+		s.Append(k, []AccountWindow{pctWin("five_hour", 10, seriesT0.Add(time.Hour))}, "ws/a", seriesT0)
+		close(appended)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the write never started")
+	}
+	read := make(chan struct{})
+	go func() {
+		s.Samples(k, "five_hour", time.Time{}, time.Time{})
+		close(read)
+	}()
+	select {
+	case <-read:
+	case <-time.After(2 * time.Second):
+		close(release)
+		<-appended
+		t.Fatal("Samples waited for a stalled write")
+	}
+	close(release)
+	<-appended
+}

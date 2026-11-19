@@ -38,6 +38,9 @@ type seriesStore struct {
 	retention time.Duration
 	pruneDay  string // the UTC day the last prune ran for
 	failed    bool   // the last write failed; log the first failure, not each
+
+	// beforeWrite, when set by a test, runs just before a line is written.
+	beforeWrite func()
 }
 
 // Attach makes the series durable. It creates dir, removes day files whose day
@@ -174,6 +177,9 @@ func (s *AccountSeries) persist(key AccountKey, smp AccountSample) {
 }
 
 func (st *seriesStore) append(at time.Time, b []byte) error {
+	if st.beforeWrite != nil {
+		st.beforeWrite()
+	}
 	name := filepath.Join(st.dir, at.UTC().Format(seriesDayLayout)+seriesDaySuffix)
 	f, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
