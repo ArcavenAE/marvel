@@ -1,0 +1,32 @@
+id: question-account-failover-policy
+type: question
+confidence: frontier
+title: "Can marvel move a team to another account, and back, on a policy the user writes, without acting on a reading it cannot trust or losing work at the cut?"
+tags:
+  - marvel
+  - accounts
+  - usage-limits
+  - policy
+content: |
+  The operator asked (2026-11-18) for "a configurable option for
+  marvel to automatically switch", with failover written as policy and
+  failback "automated or alerting or none". The user's own written policy is
+  the ratification for the automatic act; with no policy nothing changes.
+
+  The design is docs/design/account-failover-policy.md. In short: manifest
+  sections `accounts` and `failovers`; a per-policy `dry-run` or `enabled`
+  mode; a default action `relogin` (same team, the next seat spawns on the
+  other login after a handoff shift) and a `swap-team` action for stand-by
+  mirrors; failback `auto`, `alert` or `none`; never act on a stale or
+  missing reading of a metered account.
+
+  OPEN, and what would close each:
+  - Do on-disk readings (MR1, ticket FO1) and a seatless probe (MP1, FO2)
+    give a reading fresh enough to act on? FO2 first measures whether a
+    headless claude run sends a statusline at all.
+  - Does `relogin` keep mail and identity across the move, as the design
+    argues, once FO6 runs on a real team? Measure lost or doubled mail and
+    the time from cut to the first commit on the new login.
+  - Do the study's thresholds (90%, reset more than 12h away, back at the
+    recorded reset) hold on a week of real readings? Re-check once FO1 has
+    a week on disk.
