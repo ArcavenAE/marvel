@@ -293,6 +293,11 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 						// It began before the child, so the poll after the
 						// return starts now and does not wait for a tick.
 						start(s)
+					} else {
+						// It began after the return, so the no-answer record
+						// is this cluster's answer to the refresh. A fetch from
+						// before the return never clears the flag.
+						ws.refreshing = false
 					}
 				}
 				if !ws.showHelp {
