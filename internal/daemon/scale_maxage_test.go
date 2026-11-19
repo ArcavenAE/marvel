@@ -3,6 +3,8 @@ package daemon
 import (
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // The apply-time refusal of max-age on a role with several replicas (marvel#452)
@@ -55,7 +57,7 @@ func TestScaleRefusesMaxAgeRoleAboveOneReplica(t *testing.T) {
 	if resp := applyManifest(t, d, scaleMaxAgeManifest); resp.Error != "" {
 		t.Fatalf("apply: %s", resp.Error)
 	}
-	resp := d.handleScale(mustMarshal(t, scaleParams{TeamKey: "scalemax/crew", Role: "aged", Replicas: 3}))
+	resp := d.handleScale(mustMarshal(t, daemonrpc.ScaleParams{TeamKey: "scalemax/crew", Role: "aged", Replicas: 3}))
 	if resp.Error == "" || !strings.Contains(resp.Error, "max-age") || !strings.Contains(resp.Error, "replicas > 1") {
 		t.Fatalf("scale to 3: error = %q, want a max-age refusal naming replicas > 1", resp.Error)
 	}
@@ -74,7 +76,7 @@ func TestScaleAllowsMaxAgeRoleToZeroAndOneAndPressureRoleAboveOne(t *testing.T) 
 		role string
 		n    int
 	}{{"aged", 0}, {"aged", 1}, {"pressured", 2}} {
-		if resp := d.handleScale(mustMarshal(t, scaleParams{TeamKey: "scalemax/crew", Role: c.role, Replicas: c.n})); resp.Error != "" {
+		if resp := d.handleScale(mustMarshal(t, daemonrpc.ScaleParams{TeamKey: "scalemax/crew", Role: c.role, Replicas: c.n})); resp.Error != "" {
 			t.Fatalf("scale %s to %d: %s; want it allowed", c.role, c.n, resp.Error)
 		}
 		if got := storedReplicas(t, d, c.role); got != c.n {

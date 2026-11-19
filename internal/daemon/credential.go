@@ -17,26 +17,11 @@ import (
 // only seam (S3); every method here keeps the value out of results, events, and
 // logs.
 
-type credentialPutParams struct {
-	Name     string `json:"name"`
-	Kind     string `json:"kind"`
-	Audience string `json:"audience,omitempty"`
-	Binding  string `json:"binding,omitempty"`
-	// Value is the secret material. It rides the local unix socket or an
-	// SSH-encrypted mrvl:// channel; it is stored in memory, then zeroed here
-	// once the store holds its own copy, and never logged.
-	Value []byte `json:"value"`
-}
-
-type credentialNameParams struct {
-	Name string `json:"name"`
-}
-
 // handleCredentialPut stores a pushed credential and records who pushed it. The
 // caller's key fingerprint becomes the credential's IssuedBy and rides the
 // event; the value never leaves this method except into the store.
 func (d *Daemon) handleCredentialPut(params json.RawMessage, c caller) daemonrpc.Response {
-	var p credentialPutParams
+	var p daemonrpc.CredentialPutParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -85,7 +70,7 @@ func (d *Daemon) handleCredentialPut(params json.RawMessage, c caller) daemonrpc
 // value: reveal is a separate local-socket-only seam (S3). Admin only, since
 // get is outside the credential-push scope set.
 func (d *Daemon) handleCredentialGet(params json.RawMessage) daemonrpc.Response {
-	var p credentialNameParams
+	var p daemonrpc.CredentialNameParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -94,13 +79,6 @@ func (d *Daemon) handleCredentialGet(params json.RawMessage) daemonrpc.Response 
 		return daemonrpc.Response{Error: err.Error()}
 	}
 	return respond(cred)
-}
-
-// credentialRevealResult carries a revealed secret value back to the local
-// caller. Value marshals as base64 (encoding/json's []byte behavior), so it is
-// binary-safe; the CLI decodes it and writes the raw bytes to stdout.
-type credentialRevealResult struct {
-	Value []byte `json:"value"`
 }
 
 // handleCredentialReveal returns a credential's secret value. It is the one
@@ -114,7 +92,7 @@ func (d *Daemon) handleCredentialReveal(params json.RawMessage, c caller) daemon
 	if !d.revealAllowed.Load() {
 		return daemonrpc.Response{Error: errRevealNotEnabled}
 	}
-	var p credentialNameParams
+	var p daemonrpc.CredentialNameParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -123,7 +101,7 @@ func (d *Daemon) handleCredentialReveal(params json.RawMessage, c caller) daemon
 		return daemonrpc.Response{Error: err.Error()}
 	}
 	d.emitCredentialEvent(events.KindCredentialRevealed, p.Name, "", c)
-	return respond(credentialRevealResult{Value: value})
+	return respond(daemonrpc.CredentialRevealResult{Value: value})
 }
 
 // handleCredentialList returns metadata for every credential.
@@ -134,7 +112,7 @@ func (d *Daemon) handleCredentialList() daemonrpc.Response {
 // handleCredentialDelete removes a credential (its value is zeroed by the
 // store) and records who removed it.
 func (d *Daemon) handleCredentialDelete(params json.RawMessage, c caller) daemonrpc.Response {
-	var p credentialNameParams
+	var p daemonrpc.CredentialNameParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}

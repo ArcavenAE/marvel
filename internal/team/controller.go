@@ -1209,33 +1209,33 @@ const (
 // aae-orc-nf0w): the dry-run surface prints it, the hold posture computes it
 // and declines to apply, and the startup report is the plan at boot.
 type RolePlan struct {
-	Workspace  string
-	Team       string
-	Role       string
-	Generation int64
+	Workspace  string `json:"Workspace"`
+	Team       string `json:"Team"`
+	Role       string `json:"Role"`
+	Generation int64  `json:"Generation"`
 	// Desired is the role's declared replica count.
-	Desired int
+	Desired int `json:"Desired"`
 	// Actual is the number of the role's sessions that count as alive now.
-	Actual int
+	Actual int `json:"Actual"`
 	// Action is the convergence verb — a summary of the fields below.
-	Action RoleAction
+	Action RoleAction `json:"Action"`
 	// Spawn is how many new sessions applyRolePlan would create. Zero unless
 	// Action is RoleSpawn.
-	Spawn int
+	Spawn int `json:"Spawn"`
 	// Delete is the exact set of sessions applyRolePlan would remove, in the
 	// order it removes them (newest first). Non-empty only when Action is
 	// RoleScaleDown.
-	Delete []api.Session
+	Delete []api.Session `json:"Delete"`
 	// Hold names why the plan spawns fewer than Desired-Actual sessions, when
 	// it does; HoldNone otherwise.
-	Hold HoldReason
+	Hold HoldReason `json:"Hold"`
 	// HoldDetail is the human-readable reason behind Hold, for a dry-run or
 	// startup report. It is plan metadata only — never emitted as an event, so
 	// it changes no reconcile behavior.
-	HoldDetail string
+	HoldDetail string `json:"HoldDetail"`
 	// Firing is the schedule firing a spawn is stamped with; empty for a
 	// role with no schedule.
-	Firing string
+	Firing string `json:"Firing"`
 
 	// admission is the admission bookkeeping applyRolePlan must perform — clear
 	// a stale hold, or latch and announce a refusal. Computed purely here,

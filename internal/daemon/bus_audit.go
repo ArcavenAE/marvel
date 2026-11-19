@@ -10,11 +10,6 @@ import (
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
-// busAuditParams names the record `marvel bus audit` reads.
-type busAuditParams struct {
-	Seq uint64 `json:"seq"`
-}
-
 // handleBusAudit serves `marvel bus audit`: one record of the managed broker's
 // AGENT_AUDIT stream, by number, read as the broker's admin identity. It
 // returns the sequence, time, subject, four headers and the body, nothing
@@ -23,7 +18,7 @@ func (d *Daemon) handleBusAudit(params json.RawMessage) daemonrpc.Response {
 	if d.bus == nil {
 		return daemonrpc.Response{Error: "no managed bus is configured for this cluster; marvel reads the audit log only where it runs the broker"}
 	}
-	var p busAuditParams
+	var p daemonrpc.BusAuditParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}

@@ -596,7 +596,7 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 	// The same bare-digit refusal as an inject, with no flag to lift it: a text
 	// that starts with a menu digit is not typed into a pane the capture cannot
 	// place.
-	if startsWithMenuDigit(injectParams{Text: text, Literal: true, Enter: true}) {
+	if startsWithMenuDigit(daemonrpc.InjectParams{Text: text, Literal: true, Enter: true}) {
 		if why := bareDigitRefusal(d.driver, sess, composer.ReaderFor(sess.Runtime.Name), d.limitMenu.Menus); why != "" {
 			emitInjectRefused(d.events, sess, why, injector)
 			return fmt.Errorf("%s not sent to %s: %s", noticeNoun(origin), sess.Key(), why)
@@ -605,7 +605,7 @@ func (d *Daemon) notifyHandoff(sess api.Session, text, origin string) error {
 	if err := d.driver.SendKeys(sess.PaneID, text, true, true); err != nil {
 		return err
 	}
-	recordInject(d.events, sess, injectParams{Text: text, Literal: true, Enter: true}, "", injector)
+	recordInject(d.events, sess, daemonrpc.InjectParams{Text: text, Literal: true, Enter: true}, "", injector)
 	return nil
 }
 
@@ -1375,17 +1375,8 @@ func (d *Daemon) dispatchUntimed(req daemonrpc.Request, c caller) daemonrpc.Resp
 	return spec.Handle(d, req.Params, c)
 }
 
-// Logs params — tail of the daemon's in-memory log ring.
-type logsParams struct {
-	N int `json:"n"` // number of lines; 0 or negative = unbounded (whole buffer)
-}
-
-type logsResult struct {
-	Lines []string `json:"lines"`
-}
-
 func (d *Daemon) handleLogs(params json.RawMessage) daemonrpc.Response {
-	var p logsParams
+	var p daemonrpc.LogsParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
@@ -1395,43 +1386,17 @@ func (d *Daemon) handleLogs(params json.RawMessage) daemonrpc.Response {
 		p.N = d.logs.Cap()
 	}
 	lines := d.logs.Tail(p.N)
-	return respond(logsResult{Lines: lines})
-}
-
-// Events params — filtered tail of the daemon's structured event ring.
-type eventsParams struct {
-	N           int    `json:"n"` // number of events; <=0 returns the whole ring
-	Workspace   string `json:"workspace,omitempty"`
-	Team        string `json:"team,omitempty"`
-	Role        string `json:"role,omitempty"`
-	Session     string `json:"session,omitempty"`
-	Kind        string `json:"kind,omitempty"`
-	MinSeverity string `json:"min_severity,omitempty"` // "" or "warning"
-	// SinceSeq returns only events with Seq strictly greater than this
-	// value — the follow-mode resume cursor. Zero means no cursor.
-	SinceSeq uint64 `json:"since_seq,omitempty"`
-}
-
-func (p eventsParams) filter() events.Filter {
-	return events.Filter{
-		Workspace:   p.Workspace,
-		Team:        p.Team,
-		Role:        p.Role,
-		Session:     p.Session,
-		Kind:        events.Kind(p.Kind),
-		MinSeverity: events.Severity(p.MinSeverity),
-		SinceSeq:    p.SinceSeq,
-	}
+	return respond(daemonrpc.LogsResult{Lines: lines})
 }
 
 func (d *Daemon) handleEvents(params json.RawMessage) daemonrpc.Response {
-	var p eventsParams
+	var p daemonrpc.EventsParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 		}
 	}
-	snap := d.events.Snapshot(p.filter(), p.N)
+	snap := d.events.Snapshot(p.Filter(), p.N)
 	return respond(daemonrpc.EventsBatch{Events: snap})
 }
 
@@ -1462,14 +1427,14 @@ func (d *Daemon) stopping() <-chan struct{} {
 // snapshot already covered are skipped by Seq.
 func (d *Daemon) handleEventsWatch(rwc io.ReadWriteCloser, params json.RawMessage) {
 	enc := json.NewEncoder(rwc)
-	var p eventsParams
+	var p daemonrpc.EventsParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			_ = enc.Encode(d.stamp(daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}))
 			return
 		}
 	}
-	f := p.filter()
+	f := p.Filter()
 	w := d.events.Watch(f, 0)
 	defer w.Close()
 
@@ -1532,27 +1497,8 @@ func (d *Daemon) handleEventsWatch(rwc io.ReadWriteCloser, params json.RawMessag
 	}
 }
 
-// Apply params
-type applyParams struct {
-	ManifestData []byte `json:"manifest_data"`
-	// WorkspaceRoot is the absolute root marvel work resolved from the
-	// manifest file's directory. When present it replaces the manifest's own
-	// root, so the manifest bytes are posted untouched
-	// (docs/design/session-working-directory.md, decisions 2 and 3).
-	WorkspaceRoot string `json:"workspace_root,omitempty"`
-	// ManifestSource names where the manifest was applied from,
-	// "<host>:<path>". The apply records it as the claim on every team the
-	// file names; an older client sends none, and those teams take nil claims
-	// (docs/design/work-prune.md section 3).
-	ManifestSource string `json:"manifest_source,omitempty"`
-	// Prune asks the apply to remove the teams this source put there and no
-	// longer names, as the prune set computed after the apply stands
-	// (docs/design/work-prune.md section 5).
-	Prune bool `json:"prune,omitempty"`
-}
-
 func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
-	var p applyParams
+	var p daemonrpc.ApplyParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -1796,15 +1742,8 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	return respond(out)
 }
 
-// Get params
-type getParams struct {
-	ResourceType string `json:"resource_type"`
-	// Composer asks for the COMPOSER column, which reads each seat's pane.
-	Composer bool `json:"composer,omitempty"`
-}
-
 func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
-	var p getParams
+	var p daemonrpc.GetParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -1871,7 +1810,7 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 
 // planResult carries the convergence preview returned by the plan RPC: the
 // RolePlans the next reconcile tick would enact, computed without enacting
-// anything. Named-struct result, like logsResult and eventsResult, so the
+// anything. Named-struct result, like daemonrpc.LogsResult and eventsResult, so the
 // wire shape is self-describing and can gain aggregate fields later without
 // breaking the CLI decode.
 type planResult struct {
@@ -1888,14 +1827,8 @@ func (d *Daemon) handlePlan() daemonrpc.Response {
 	return respond(planResult{Plans: d.teamCtrl.PlanConvergence()})
 }
 
-// Describe params
-type describeParams struct {
-	ResourceType string `json:"resource_type"`
-	Name         string `json:"name"`
-}
-
 func (d *Daemon) handleDescribe(params json.RawMessage) daemonrpc.Response {
-	var p describeParams
+	var p daemonrpc.DescribeParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -1946,14 +1879,8 @@ func (d *Daemon) handleDescribe(params json.RawMessage) daemonrpc.Response {
 	return respond(result)
 }
 
-// Delete params
-type deleteParams struct {
-	ResourceType string `json:"resource_type"`
-	Name         string `json:"name"`
-}
-
 func (d *Daemon) handleDelete(params json.RawMessage) daemonrpc.Response {
-	var p deleteParams
+	var p daemonrpc.DeleteParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -2006,15 +1933,8 @@ func (d *Daemon) handleDelete(params json.RawMessage) daemonrpc.Response {
 	return respond(map[string]string{"status": "deleted"})
 }
 
-// Scale params
-type scaleParams struct {
-	TeamKey  string `json:"team_key"`
-	Role     string `json:"role"`
-	Replicas int    `json:"replicas"`
-}
-
 func (d *Daemon) handleScale(params json.RawMessage) daemonrpc.Response {
-	var p scaleParams
+	var p daemonrpc.ScaleParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -2119,15 +2039,6 @@ func (d *Daemon) handleScale(params json.RawMessage) daemonrpc.Response {
 	return respond(out)
 }
 
-// convergeParams selects which team(s) to move and which way. An empty TeamKey
-// targets every team (the daemon-wide go-line). Hold flips the posture the
-// other way — back to the start line — for a future majordomo or an operator
-// re-arming a team; the CLI exposes only the converge direction.
-type convergeParams struct {
-	TeamKey string `json:"team_key,omitempty"`
-	Hold    bool   `json:"hold,omitempty"`
-}
-
 // convergeRoleReport is one role's line in the converge result: what the
 // reconcile the daemon is about to drive will do for it.
 type convergeRoleReport struct {
@@ -2151,7 +2062,7 @@ type convergeResult struct {
 // control-plane lever is available to a future in-process majordomo; the CLI
 // `marvel converge` is one client of this RPC.
 func (d *Daemon) handleConverge(params json.RawMessage) daemonrpc.Response {
-	var p convergeParams
+	var p daemonrpc.ConvergeParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
@@ -2372,34 +2283,12 @@ func (d *Daemon) emitHeartbeatAuth2(kind events.Kind, cause, sessionKey, message
 	log.Printf("heartbeat %s for %s: %s", kind, sessionKey, message)
 }
 
-// Run params
-type runParams struct {
-	Workspace      string   `json:"workspace"`
-	Team           string   `json:"team"`
-	Role           string   `json:"role"`
-	RuntimeCommand string   `json:"runtime_command"`
-	RuntimeArgs    []string `json:"runtime_args"`
-	Script         string   `json:"script"`
-	// WorkDir is where the session runs, absolute, from marvel run --workdir or
-	// the caller's cwd. WorkDirDefault says the caller did not name it.
-	WorkDir        string `json:"workdir,omitempty"`
-	WorkDirDefault bool   `json:"workdir_default,omitempty"`
-	// Mode is "headless" or empty (interactive). Prompt is the request a
-	// headless run carries. Env is merged over the constructed environment.
-	// Name fixes the session name, so the key is predictable; empty keeps the
-	// clock-derived name.
-	Mode   string            `json:"mode,omitempty"`
-	Prompt string            `json:"prompt,omitempty"`
-	Env    map[string]string `json:"env,omitempty"`
-	Name   string            `json:"name,omitempty"`
-}
-
 // runNamePattern is the shape a --name may take: one path element that cannot
 // read as a flag, so the key stays workspace/name.
 var runNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func (d *Daemon) handleRun(params json.RawMessage) daemonrpc.Response {
-	var p runParams
+	var p daemonrpc.RunParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -2509,17 +2398,8 @@ func (d *Daemon) handleRun(params json.RawMessage) daemonrpc.Response {
 	return respond(out)
 }
 
-// Shift params
-type shiftParams struct {
-	TeamKey string `json:"team_key"`
-	Role    string `json:"role,omitempty"`
-	// NoHandoff shifts without asking the seat for the handoff its role
-	// declares (marvel#1447).
-	NoHandoff bool `json:"no_handoff,omitempty"`
-}
-
 func (d *Daemon) handleShift(params json.RawMessage) daemonrpc.Response {
-	var p shiftParams
+	var p daemonrpc.ShiftParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -2547,13 +2427,6 @@ func (d *Daemon) handleShift(params json.RawMessage) daemonrpc.Response {
 	})
 }
 
-// Reset-health params — clear one role's crash-loop state (RestartCount +
-// backoff) without deleting the team. See aae-orc-fv3h.
-type resetHealthParams struct {
-	TeamKey string `json:"team_key"` // workspace/team
-	Role    string `json:"role"`
-}
-
 // handleResetHealth clears a single role's accumulated restart count and
 // backoff — the operator override for a role that has recovered, and the only
 // route to thaw a saturated or restart_policy=never freeze short of deleting
@@ -2561,7 +2434,7 @@ type resetHealthParams struct {
 // canonical workspace/team, then reconciles so a role no longer held back can
 // spawn its replacement immediately.
 func (d *Daemon) handleResetHealth(params json.RawMessage) daemonrpc.Response {
-	var p resetHealthParams
+	var p daemonrpc.ResetHealthParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -2597,44 +2470,8 @@ func (d *Daemon) handleResetHealth(params json.RawMessage) daemonrpc.Response {
 	})
 }
 
-// Inject params — send keystrokes to a session's pane (executive privilege).
-type injectParams struct {
-	SessionKey string `json:"session_key"`
-	Text       string `json:"text"`
-	Literal    bool   `json:"literal"`
-	Enter      bool   `json:"enter"`
-	// Injector is what the CLI declares about itself: the seat it runs in
-	// and the user. It is a claim, not a proof; the daemon records it beside
-	// the transport it saw itself.
-	Injector Injector `json:"injector,omitempty"`
-	// Verify reads the composer after the keys are sent and reports whether
-	// the effect was seen. Off by default.
-	Verify bool `json:"verify,omitempty"`
-	// Clear discards a staged draft before the text is sent, only where the
-	// harness's composer is known and a clear is safe.
-	Clear bool `json:"clear,omitempty"`
-	// SettleMS is how long verification waits for a redraw. Zero means the
-	// default.
-	SettleMS int `json:"settle_ms,omitempty"`
-	// AllowBareDigit lifts one refusal: text starting with 1, 2 or 3 sent to a claude pane the
-	// capture cannot rule a usage-limit menu out of (marvel#559 part b). It does
-	// not lift the refusal on a menu the matcher finds.
-	AllowBareDigit bool `json:"allow_bare_digit,omitempty"`
-	// Ring marks the inject as a ring: it writes the session's ring claim
-	// before the keys go in and is refused while another ring holds it
-	// (docs/design/marvel-watcher.md, section 11.2). Off by default; an inject
-	// without it ignores the claim.
-	Ring bool `json:"ring,omitempty"`
-}
-
-// Injector is the caller's own account of who it is.
-type Injector struct {
-	Session string `json:"session,omitempty"`
-	User    string `json:"user,omitempty"`
-}
-
 func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) daemonrpc.Response {
-	var p injectParams
+	var p daemonrpc.InjectParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -2720,7 +2557,7 @@ func (d *Daemon) handleInjectAs(params json.RawMessage, c caller) daemonrpc.Resp
 // another ring still holds it. The ringer is the daemon's own account of the
 // caller (injectOrigin, without the flag and override suffixes), a claim and
 // not a proof.
-func (d *Daemon) ringClaim(sess api.Session, c caller, from Injector, now time.Time) error {
+func (d *Daemon) ringClaim(sess api.Session, c caller, from daemonrpc.Injector, now time.Time) error {
 	return d.store.ClaimRing(sess.Key(), injectOrigin(c, from), now)
 }
 
@@ -2737,7 +2574,7 @@ func (d *Daemon) ringSettle(sess api.Session, ringAt time.Time, sendErr error) {
 }
 
 // isDismissKey reports whether an inject is a lone Escape.
-func isDismissKey(p injectParams) bool {
+func isDismissKey(p daemonrpc.InjectParams) bool {
 	return !p.Literal && !p.Enter && p.Text == "Escape"
 }
 
@@ -2800,7 +2637,7 @@ func emitInjectRefused(ring *events.Ring, sess api.Session, why, origin string) 
 }
 
 // refuseInject records the refusal and returns the error.
-func (d *Daemon) refuseInject(sess api.Session, p injectParams, origin, why string) daemonrpc.Response {
+func (d *Daemon) refuseInject(sess api.Session, p daemonrpc.InjectParams, origin, why string) daemonrpc.Response {
 	emitInjectRefused(d.events, sess, why, origin)
 	return daemonrpc.Response{Error: fmt.Sprintf("inject %s: %s", p.SessionKey, why)}
 }
@@ -2867,7 +2704,7 @@ func (d *Daemon) clearKeyFor(sess api.Session, reader composer.Reader, settleMS 
 
 // verifyInject reads the composer after the keys went in and records whether
 // the intended effect was seen.
-func (d *Daemon) verifyInject(sess api.Session, reader composer.Reader, p injectParams, out map[string]string) {
+func (d *Daemon) verifyInject(sess api.Session, reader composer.Reader, p daemonrpc.InjectParams, out map[string]string) {
 	var intent composer.Intent
 	switch {
 	case p.Enter || (!p.Literal && p.Text == "Enter"):
@@ -2896,28 +2733,6 @@ func (d *Daemon) verifyInject(sess api.Session, reader composer.Reader, p inject
 	})
 }
 
-// Capture params — read a session's pane content.
-type captureParams struct {
-	SessionKey string `json:"session_key"`
-	Start      *int   `json:"start,omitempty"`
-	End        *int   `json:"end,omitempty"`
-	// Repaint asks the program in the pane to redraw before the read, by
-	// widening the pane's terminal one column and restoring it. Off by
-	// default: a plain capture is what was last painted.
-	Repaint bool `json:"repaint,omitempty"`
-	// SettleMS is how long the nudge is held, and then how long to wait for the
-	// restore's redraw before reading. Zero means the default.
-	SettleMS int `json:"settle_ms,omitempty"`
-	// Escapes keeps the pane's escape sequences (capture-pane -e), so a reader
-	// can tell dim text from typed text. Off by default: the output is what it
-	// was.
-	Escapes bool `json:"escapes,omitempty"`
-	// Composer returns the composer state the session's reader gives, beside
-	// the content. It types nothing. Like Repaint it nudges the pane's size,
-	// because reading the composer repaints first.
-	Composer bool `json:"composer,omitempty"`
-}
-
 // captureVisibleEnd stands in for an omitted end bound. tmux clamps an
 // over-large -E to the last visible row, which is also tmux's own default
 // end — so a start-only request spans scrollback through the bottom of
@@ -2929,7 +2744,7 @@ const captureVisibleEnd = 100000
 // bounds. Either bound alone triggers a range capture; the missing bound
 // defaults to tmux's own default for that side (-S 0 = top of visible,
 // -E clamped to bottom of visible).
-func captureBounds(p captureParams) (start, end int, ranged bool) {
+func captureBounds(p daemonrpc.CaptureParams) (start, end int, ranged bool) {
 	if p.Start == nil && p.End == nil {
 		return 0, 0, false
 	}
@@ -2944,7 +2759,7 @@ func captureBounds(p captureParams) (start, end int, ranged bool) {
 }
 
 func (d *Daemon) handleCapture(params json.RawMessage) daemonrpc.Response {
-	var p captureParams
+	var p daemonrpc.CaptureParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
@@ -3033,24 +2848,11 @@ func (d *Daemon) handleCapture(params json.RawMessage) daemonrpc.Response {
 	return respond(out)
 }
 
-// Stop params
-type stopParams struct {
-	// Teardown selects agent destruction over detach: delete every
-	// session and kill every workspace tmux session before exiting.
-	// Default (false) detaches: agents keep running and the next
-	// daemon start adopts them.
-	Teardown bool `json:"teardown,omitempty"`
-	// KeepBus leaves a managed nats-server running when the daemon exits,
-	// so the next daemon adopts it and the agents' bus connections hold.
-	// Ignored with Teardown, which ends the bus with everything else.
-	KeepBus bool `json:"keep_bus,omitempty"`
-}
-
 // stopMode decodes the stop params into the shutdown mode. Absent or
 // empty params mean detach; a client that predates the flag must not
 // get a teardown.
 func stopMode(params json.RawMessage) (teardown bool, mode string, err error) {
-	var p stopParams
+	var p daemonrpc.StopParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return false, "", err
@@ -3216,7 +3018,7 @@ func (d *Daemon) handleStop(params json.RawMessage) daemonrpc.Response {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
 	if len(params) > 0 {
-		var p stopParams
+		var p daemonrpc.StopParams
 		_ = json.Unmarshal(params, &p) // stopMode already validated the shape
 		d.keepBus = p.KeepBus
 	}
@@ -3262,7 +3064,7 @@ func revisionLabel(t reexecTarget) string {
 // adopts the new build. exec_path is refused from any caller that is not on the
 // local unix socket, admin keys included.
 func (d *Daemon) handleReexec(params json.RawMessage, c caller) daemonrpc.Response {
-	var p reexecParams
+	var p daemonrpc.ReexecParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
@@ -3541,18 +3343,12 @@ func (d *Daemon) handleBusStatus() daemonrpc.Response {
 	return respond(st)
 }
 
-// backendVerifyParams names one session to verify, or every session when
-// blank.
-type backendVerifyParams struct {
-	Session string `json:"session"`
-}
-
 // handleBackendVerify answers which backend each session is actually on and
 // whether the layers agree (BT7). It runs here rather than in the CLI because
 // the overlay directory is the session manager's own state; see
 // session.Manager.VerifyBackend.
 func (d *Daemon) handleBackendVerify(params json.RawMessage) daemonrpc.Response {
-	var p backendVerifyParams
+	var p daemonrpc.BackendVerifyParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
@@ -3743,7 +3539,7 @@ func (d *Daemon) setLeafAttached(attached bool, reason string) daemonrpc.Respons
 // attested peer block (pid, tty, seat, chain; the resolver in
 // docs/design/handoff-missing-delivery.md layer 2) joins as peer_* keys without
 // renaming these.
-func injectOrigin(c caller, from Injector) string {
+func injectOrigin(c caller, from daemonrpc.Injector) string {
 	transport := "unknown"
 	switch {
 	case c.local:
@@ -3796,7 +3592,7 @@ func cleanDeclared(s string) string {
 // says keystrokes were delivered, and the error answers the caller. A clear key
 // that had already gone out is named in the error, since it is otherwise the one
 // keystroke of the inject with no trace.
-func sendInject(drv keySender, ring *events.Ring, sess api.Session, p injectParams, clearKey, origin string) error {
+func sendInject(drv keySender, ring *events.Ring, sess api.Session, p daemonrpc.InjectParams, clearKey, origin string) error {
 	if clearKey != "" {
 		if err := drv.SendKeys(sess.PaneID, clearKey, false, false); err != nil {
 			return fmt.Errorf("clear: %w", err)
@@ -3817,7 +3613,7 @@ func sendInject(drv keySender, ring *events.Ring, sess api.Session, p injectPara
 // is pasted as is; the key itself for a named key; the Enter key alone when an
 // empty literal text sends only that; and the clear key that went out before
 // the text, if one did. It never records typed text.
-func recordInject(ring *events.Ring, sess api.Session, p injectParams, clearKey, origin string) {
+func recordInject(ring *events.Ring, sess api.Session, p daemonrpc.InjectParams, clearKey, origin string) {
 	what := fmt.Sprintf("%d bytes literal=%v", len(p.Text), p.Literal)
 	switch {
 	case !p.Literal:
@@ -3968,7 +3764,7 @@ func refuseUnadmittedGlobalRoles(m *api.Manifest, b session.BusEnv) error {
 // so is whether it ignores a non-option key before the digit ("x3"), which this
 // does not cover. Digits of other scripts are not mapped: nothing says a menu
 // reads them, and the list of every Unicode digit is not this check's to keep.
-func startsWithMenuDigit(p injectParams) bool {
+func startsWithMenuDigit(p daemonrpc.InjectParams) bool {
 	t := strings.TrimLeftFunc(p.Text, func(r rune) bool { return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) })
 	if t == "" {
 		return false

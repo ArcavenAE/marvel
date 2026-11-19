@@ -12,20 +12,8 @@ import (
 	"github.com/arcavenae/marvel/internal/events"
 )
 
-// exposureVerbParams names one slot and one function, the shape of all three
-// exposure verbs. Paths and Caster belong to add; Reason to void (marvel#945).
-type exposureVerbParams struct {
-	Workspace string   `json:"workspace"`
-	Team      string   `json:"team"`
-	Role      string   `json:"role"`
-	Function  string   `json:"function"`
-	Paths     []string `json:"paths,omitempty"`
-	Caster    string   `json:"caster,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
-}
-
-func decodeExposureParams(params json.RawMessage) (exposureVerbParams, error) {
-	var p exposureVerbParams
+func decodeExposureParams(params json.RawMessage) (daemonrpc.ExposureVerbParams, error) {
+	var p daemonrpc.ExposureVerbParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return p, fmt.Errorf("bad params: %v", err)
 	}
@@ -51,7 +39,7 @@ func callerName(c caller) string {
 
 // emitExposure records an exposure action on the event ring and the log. A void
 // is a warning: it releases a refusal, so it is loud.
-func (d *Daemon) emitExposure(kind events.Kind, sev events.Severity, p exposureVerbParams, msg string) {
+func (d *Daemon) emitExposure(kind events.Kind, sev events.Severity, p daemonrpc.ExposureVerbParams, msg string) {
 	events.Emit(d.events, events.Event{
 		Kind:      kind,
 		Severity:  sev,

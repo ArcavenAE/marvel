@@ -65,7 +65,7 @@ func TestConvergeRPCSpawnsHeldTeam(t *testing.T) {
 		t.Fatalf("held team spawned %d session(s) before converge, want 0", n)
 	}
 
-	params, _ := json.Marshal(convergeParams{TeamKey: "ws/crew"})
+	params, _ := json.Marshal(daemonrpc.ConvergeParams{TeamKey: "ws/crew"})
 	resp := d.dispatch(daemonrpc.Request{Method: "converge", Params: params})
 	if resp.Error != "" {
 		t.Fatalf("converge: %s", resp.Error)

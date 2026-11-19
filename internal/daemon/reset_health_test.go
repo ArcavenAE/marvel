@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // resetHealthManifest is a one-role team with no budget or healthcheck — the
@@ -34,7 +36,7 @@ func TestHandleResetHealth(t *testing.T) {
 
 	// A valid team/role with no accumulated health: succeeds, reports nothing
 	// to clear (cleared=false), never errors.
-	resp := d.handleResetHealth(mustMarshal(t, resetHealthParams{TeamKey: "recover/crew", Role: "worker"}))
+	resp := d.handleResetHealth(mustMarshal(t, daemonrpc.ResetHealthParams{TeamKey: "recover/crew", Role: "worker"}))
 	if resp.Error != "" {
 		t.Fatalf("reset-health on a valid role errored: %s", resp.Error)
 	}
@@ -53,19 +55,19 @@ func TestHandleResetHealth(t *testing.T) {
 	}
 
 	// Unknown role in a known team is refused with a role-scoped message.
-	resp = d.handleResetHealth(mustMarshal(t, resetHealthParams{TeamKey: "recover/crew", Role: "ghost"}))
+	resp = d.handleResetHealth(mustMarshal(t, daemonrpc.ResetHealthParams{TeamKey: "recover/crew", Role: "ghost"}))
 	if resp.Error == "" || !strings.Contains(resp.Error, "role ghost not found") {
 		t.Errorf("unknown-role error = %q, want it to name the missing role", resp.Error)
 	}
 
 	// Unknown team is refused before any role lookup.
-	resp = d.handleResetHealth(mustMarshal(t, resetHealthParams{TeamKey: "recover/absent", Role: "worker"}))
+	resp = d.handleResetHealth(mustMarshal(t, daemonrpc.ResetHealthParams{TeamKey: "recover/absent", Role: "worker"}))
 	if resp.Error == "" || !strings.Contains(resp.Error, "recover/absent") {
 		t.Errorf("unknown-team error = %q, want it to name the missing team", resp.Error)
 	}
 
 	// A missing --role is refused: the verb targets exactly one role.
-	resp = d.handleResetHealth(mustMarshal(t, resetHealthParams{TeamKey: "recover/crew"}))
+	resp = d.handleResetHealth(mustMarshal(t, daemonrpc.ResetHealthParams{TeamKey: "recover/crew"}))
 	if resp.Error == "" || !strings.Contains(resp.Error, "requires --role") {
 		t.Errorf("missing-role error = %q, want it to require --role", resp.Error)
 	}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -162,7 +163,7 @@ func TestSessionTokenNeverLeavesOverGet(t *testing.T) {
 	d := newHandlerDaemon(t)
 	_, token := registerSession(t, d, "agent-0", true)
 
-	resp := d.handleGet(mustMarshal(t, getParams{ResourceType: "sessions"}))
+	resp := d.handleGet(mustMarshal(t, daemonrpc.GetParams{ResourceType: "sessions"}))
 	if resp.Error != "" {
 		t.Fatalf("get sessions: %s", resp.Error)
 	}
@@ -170,7 +171,7 @@ func TestSessionTokenNeverLeavesOverGet(t *testing.T) {
 		t.Fatal("a session's heartbeat token is readable over the get RPC")
 	}
 
-	resp = d.handleDescribe(mustMarshal(t, describeParams{ResourceType: "session", Name: "ws/agent-0"}))
+	resp = d.handleDescribe(mustMarshal(t, daemonrpc.DescribeParams{ResourceType: "session", Name: "ws/agent-0"}))
 	if resp.Error != "" {
 		t.Fatalf("describe session: %s", resp.Error)
 	}

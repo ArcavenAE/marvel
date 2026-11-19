@@ -70,7 +70,7 @@ func TestHandleScaleRefusesOverBudget(t *testing.T) {
 		t.Fatalf("apply: %s", resp.Error)
 	}
 
-	resp := d.handleScale(mustMarshal(t, scaleParams{TeamKey: "fanout/crew", Role: "crew", Replicas: 40}))
+	resp := d.handleScale(mustMarshal(t, daemonrpc.ScaleParams{TeamKey: "fanout/crew", Role: "crew", Replicas: 40}))
 	if resp.Error == "" {
 		t.Fatal("expected an error scaling past the declared ceiling")
 	}
@@ -100,7 +100,7 @@ func TestHandleScaleDownIsNeverRefused(t *testing.T) {
 		t.Fatalf("apply: %s", resp.Error)
 	}
 
-	if resp := d.handleScale(mustMarshal(t, scaleParams{TeamKey: "fanout/crew", Role: "crew", Replicas: 1})); resp.Error != "" {
+	if resp := d.handleScale(mustMarshal(t, daemonrpc.ScaleParams{TeamKey: "fanout/crew", Role: "crew", Replicas: 1})); resp.Error != "" {
 		t.Fatalf("a scale-down was refused: %s", resp.Error)
 	}
 	team, _ := d.store.GetTeam("fanout/crew")
@@ -143,7 +143,7 @@ func TestHandleScaleRefusesADeclarationOverTheCeiling(t *testing.T) {
 		t.Fatalf("live = %d, want 2 (the window this gate covers)", live)
 	}
 
-	resp := d.handleScale(mustMarshal(t, scaleParams{TeamKey: "fanout/crew", Role: "crew", Replicas: 4}))
+	resp := d.handleScale(mustMarshal(t, daemonrpc.ScaleParams{TeamKey: "fanout/crew", Role: "crew", Replicas: 4}))
 	if resp.Error == "" {
 		t.Fatal("expected a scale that declares 4 under a 3-session ceiling to be refused")
 	}
@@ -168,7 +168,7 @@ func TestHandleScaleRefusesADeclarationOverTheCeiling(t *testing.T) {
 	// The same live count still admits a scale that keeps the declaration
 	// under the ceiling, so the new gate refuses declarations rather than
 	// scales.
-	if resp := d.handleScale(mustMarshal(t, scaleParams{TeamKey: "fanout/crew", Role: "crew", Replicas: 2})); resp.Error != "" {
+	if resp := d.handleScale(mustMarshal(t, daemonrpc.ScaleParams{TeamKey: "fanout/crew", Role: "crew", Replicas: 2})); resp.Error != "" {
 		t.Fatalf("a within-ceiling scale was refused: %s", resp.Error)
 	}
 }
@@ -186,7 +186,7 @@ func TestHandleScaleUnknownRoleReportsTheRole(t *testing.T) {
 		t.Fatalf("apply: %s", resp.Error)
 	}
 
-	resp := d.handleScale(mustMarshal(t, scaleParams{TeamKey: "fanout/crew", Role: "crwe", Replicas: 40}))
+	resp := d.handleScale(mustMarshal(t, daemonrpc.ScaleParams{TeamKey: "fanout/crew", Role: "crwe", Replicas: 40}))
 	if resp.Error == "" {
 		t.Fatal("expected an error for an unknown role")
 	}
@@ -328,7 +328,7 @@ func TestHandleRunRespectsATeamBudget(t *testing.T) {
 		t.Fatalf("apply: %s", resp.Error)
 	}
 
-	resp := d.handleRun(mustMarshal(t, runParams{
+	resp := d.handleRun(mustMarshal(t, daemonrpc.RunParams{
 		Workspace: "fanout", Team: "crew", Role: "extra",
 		RuntimeCommand: "sleep", RuntimeArgs: []string{"300"},
 	}))
@@ -346,7 +346,7 @@ func TestHandleRunRespectsATeamBudget(t *testing.T) {
 
 	// The default ad-hoc team has no Team record, so it declares no budget
 	// and behaves exactly as it did before admission existed.
-	resp = d.handleRun(mustMarshal(t, runParams{
+	resp = d.handleRun(mustMarshal(t, daemonrpc.RunParams{
 		RuntimeCommand: "sleep", RuntimeArgs: []string{"300"},
 	}))
 	if resp.Error != "" {
@@ -378,7 +378,7 @@ teams:
 		t.Fatalf("apply plain: %s", resp.Error)
 	}
 
-	resp := d.handleGet(mustMarshal(t, getParams{ResourceType: "budgets"}))
+	resp := d.handleGet(mustMarshal(t, daemonrpc.GetParams{ResourceType: "budgets"}))
 	if resp.Error != "" {
 		t.Fatalf("get budgets: %s", resp.Error)
 	}
@@ -424,7 +424,7 @@ teams:
 	}
 	d.teamCtrl.ReconcileOnce()
 
-	resp = d.handleGet(mustMarshal(t, getParams{ResourceType: "budgets"}))
+	resp = d.handleGet(mustMarshal(t, daemonrpc.GetParams{ResourceType: "budgets"}))
 	if resp.Error != "" {
 		t.Fatalf("get budgets: %s", resp.Error)
 	}

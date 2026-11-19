@@ -26,6 +26,7 @@ var restructurePackages = []string{
 	"internal/bus",
 	"internal/workload",
 	"internal/backoff",
+	"internal/team",
 }
 
 // extraMacOSPackages are packages outside the restructure plan that the same

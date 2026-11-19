@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
 // recordedInject runs recordInject on a scratch ring and returns the message it
 // emitted.
-func recordedInject(t *testing.T, p injectParams, clearKey string) string {
+func recordedInject(t *testing.T, p daemonrpc.InjectParams, clearKey string) string {
 	t.Helper()
 	ring := events.NewRing(8)
 	sess := api.Session{Name: "squad-worker-g1-0", Workspace: "ws", Team: "squad", Role: "worker"}
@@ -29,56 +30,56 @@ func recordedInject(t *testing.T, p injectParams, clearKey string) string {
 func TestRecordInjectCountsWhatWasSent(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		p        injectParams
+		p        daemonrpc.InjectParams
 		clearKey string
 		want     []string
 		absent   []string
 	}{
 		{
 			"text and enter",
-			injectParams{Text: "hunter2-do-not-log", Literal: true, Enter: true},
+			daemonrpc.InjectParams{Text: "hunter2-do-not-log", Literal: true, Enter: true},
 			"",
 			[]string{"18 bytes literal=true", "enter=true"},
 			[]string{"key Enter", "clear=", "hunter2"},
 		},
 		{
 			"text without enter",
-			injectParams{Text: "abc", Literal: true},
+			daemonrpc.InjectParams{Text: "abc", Literal: true},
 			"",
 			[]string{"3 bytes literal=true", "enter=false"},
 			[]string{"key Enter"},
 		},
 		{
 			"empty text with enter is one key",
-			injectParams{Literal: true, Enter: true},
+			daemonrpc.InjectParams{Literal: true, Enter: true},
 			"",
 			[]string{"key Enter", "enter=true"},
 			[]string{"0 bytes"},
 		},
 		{
 			"empty text without enter sent nothing",
-			injectParams{Literal: true},
+			daemonrpc.InjectParams{Literal: true},
 			"",
 			[]string{"0 bytes literal=true", "enter=false"},
 			[]string{"key Enter"},
 		},
 		{
 			"named key",
-			injectParams{Text: "Escape"},
+			daemonrpc.InjectParams{Text: "Escape"},
 			"",
 			[]string{"key Escape", "enter=false"},
 			[]string{"bytes", "clear="},
 		},
 		{
 			"clear key then text",
-			injectParams{Text: "hello", Literal: true, Enter: true},
+			daemonrpc.InjectParams{Text: "hello", Literal: true, Enter: true},
 			"C-u",
 			[]string{"5 bytes literal=true", "enter=true", "clear=C-u"},
 			nil,
 		},
 		{
 			"clear key then empty enter",
-			injectParams{Literal: true, Enter: true},
+			daemonrpc.InjectParams{Literal: true, Enter: true},
 			"C-u",
 			[]string{"key Enter", "clear=C-u"},
 			[]string{"0 bytes"},
@@ -103,7 +104,7 @@ func TestRecordInjectCountsWhatWasSent(t *testing.T) {
 func TestInjectEmptyTextWithEnterRecordsTheKey(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := liveSession(t, d)
-	resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "", true, true, Injector{}), localCaller())
+	resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "", true, true, daemonrpc.Injector{}), localCaller())
 	if resp.Error != "" {
 		t.Fatalf("inject: %s", resp.Error)
 	}

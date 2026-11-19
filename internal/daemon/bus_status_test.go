@@ -109,7 +109,7 @@ func TestBusLeafToggleReusesTheCredentialPushGate(t *testing.T) {
 }
 
 func TestStopParamsCarryKeepBus(t *testing.T) {
-	var p stopParams
+	var p daemonrpc.StopParams
 	if err := json.Unmarshal([]byte(`{"keep_bus":true}`), &p); err != nil {
 		t.Fatal(err)
 	}

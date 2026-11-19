@@ -197,30 +197,6 @@ func (d *Daemon) clusterSuspended() bool {
 	return d.suspendHeld.Load() || d.suspendRec.Load() != nil
 }
 
-// suspendParams is what the CLI sends with suspend: its own pid, so the
-// collector leaves it and its ancestors out.
-type suspendParams struct {
-	CLIPid int `json:"cli_pid"`
-}
-
-// suspendResult is the answer to a suspend that held.
-type suspendResult struct {
-	Suspended bool  `json:"suspended"`
-	Seats     int   `json:"seats"`
-	Gone      []int `json:"gone,omitempty"`
-}
-
-// resumeResult is the answer to a resume that sent every SIGCONT. Gone are
-// recorded pids whose process had exited or been replaced; StillStopped are
-// pids that read stopped after their SIGCONT. Either makes the CLI exit
-// partial, and neither keeps the record (design section 6: a seat that fails
-// after resume is reported, never restarted).
-type resumeResult struct {
-	Resumed      bool  `json:"resumed"`
-	Gone         []int `json:"gone,omitempty"`
-	StillStopped []int `json:"still_stopped,omitempty"`
-}
-
 func (d *Daemon) suspendClock() time.Time {
 	if d.suspendNow != nil {
 		return d.suspendNow().UTC()
@@ -280,7 +256,7 @@ func (d *Daemon) sessionPanePids() []int {
 // stops. A failure before the record is saved, or a rollback, drops the hold
 // again and leaves nothing frozen.
 func (d *Daemon) handleSuspend(params json.RawMessage) daemonrpc.Response {
-	var p suspendParams
+	var p daemonrpc.SuspendParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return daemonrpc.Response{Error: fmt.Sprintf("suspend: bad params: %v", err)}
@@ -329,7 +305,7 @@ func (d *Daemon) handleSuspend(params json.RawMessage) daemonrpc.Response {
 	if err != nil {
 		return daemonrpc.Response{Error: err.Error()}
 	}
-	return respond(suspendResult{Suspended: true, Seats: len(rec.Seats), Gone: res.Gone})
+	return respond(daemonrpc.SuspendResult{Suspended: true, Seats: len(rec.Seats), Gone: res.Gone})
 }
 
 // handleResume sends SIGCONT to the recorded processes and ends the hold. The
@@ -377,7 +353,7 @@ func (d *Daemon) handleResume() daemonrpc.Response {
 			}
 		}()
 	}
-	return respond(resumeResult{Resumed: true, Gone: res.Gone, StillStopped: res.StillStopped})
+	return respond(daemonrpc.ResumeResult{Resumed: true, Gone: res.Gone, StillStopped: res.StillStopped})
 }
 
 // applyPause moves every timer a pause would otherwise trip, by the length of

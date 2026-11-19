@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 func describeTeam(t *testing.T, d *Daemon, key string) map[string]any {
 	t.Helper()
-	resp := d.handleDescribe(mustMarshal(t, describeParams{ResourceType: "team", Name: key}))
+	resp := d.handleDescribe(mustMarshal(t, daemonrpc.DescribeParams{ResourceType: "team", Name: key}))
 	if resp.Error != "" {
 		t.Fatalf("describe team %s: %s", key, resp.Error)
 	}

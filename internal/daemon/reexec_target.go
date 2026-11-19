@@ -13,14 +13,6 @@ import (
 	"github.com/arcavenae/marvel/internal/buildversion"
 )
 
-// reexecParams is what `reexec` may carry. ExecPath names the binary to exec
-// instead of the daemon's own path, which is how an upgrade under an install
-// that keeps each version in its own directory (mise) reaches the new build:
-// the client that was just installed names itself (marvel#592).
-type reexecParams struct {
-	ExecPath string `json:"exec_path,omitempty"`
-}
-
 // marvelModule is the main module a marvel binary records. A binary built from
 // anything else is refused.
 const marvelModule = "github.com/arcavenae/marvel"

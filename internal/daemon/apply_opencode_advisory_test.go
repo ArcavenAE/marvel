@@ -68,7 +68,7 @@ name = "` + team + `"
 		if err != nil || resp.Error != "" {
 			t.Fatalf("logs: err=%v resp.Error=%q", err, resp.Error)
 		}
-		var result logsResult
+		var result daemonrpc.LogsResult
 		if err := json.Unmarshal(resp.Result, &result); err != nil {
 			t.Fatalf("unmarshal logs: %v", err)
 		}
