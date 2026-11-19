@@ -4,9 +4,9 @@ Preview the convergence delta per team without spawning (dry run)
 
 ### Synopsis
 
-Print the plan the next reconcile tick would enact — desired vs alive
+Print the plan the next reconcile tick would enact: desired vs alive
 replica counts, sessions that would spawn, sessions that would scale down, and
-any hold (crash-loop backoff or admission refusal) — computed without applying
+any hold (crash-loop backoff or admission refusal), computed without applying
 it. No session is spawned or deleted, so this is a spawn-free way to inspect
 what the daemon is about to do.
 

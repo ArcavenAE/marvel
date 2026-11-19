@@ -6,7 +6,7 @@ Print the daemon's recent log lines (over mrvl:// if --cluster is set)
 
 Fetch the daemon's in-memory log ring and print the most recent N lines.
 
-The ring is populated by every 'log.Printf' the daemon emits — RPC
+The ring is populated by every 'log.Printf' the daemon emits: RPC
 dispatch, session creation, health-check decisions, shifts, auth
 events. Lines survive as long as the daemon process does; the ring
 is bounded so memory stays flat.

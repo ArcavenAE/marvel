@@ -10,7 +10,7 @@ Without flags, captures the visible area. -S with a negative value reaches
 into scrollback; an omitted -E defaults to the bottom of the visible area.
 
 Full-screen TUI harnesses (interactive claude and friends) run on the tmux
-alternate screen, which has no scrollback — captures of those sessions cap
+alternate screen, which has no scrollback, so captures of those sessions cap
 at the visible screen regardless of -S.
 
 A capture is what the program last painted, not necessarily what is on its
