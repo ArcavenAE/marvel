@@ -191,6 +191,29 @@ The flag wins when set; otherwise `MARVEL_SHIFT_TIMEOUT` is parsed; unset keeps
 the 10-minute default. A short value is also how you demonstrate the timeout
 without a 10-minute wait (see the Act 1d beat in `docs/demo.md`).
 
+### Quota readings across a restart
+
+The daemon keeps the account quota readings it receives (the series behind
+`account.series` and `account.delta`) in memory for eight days, and also appends
+each one to a day file under `state/account-series/` in the marvel home, one
+`YYYY-MM-DD.jsonl` per UTC day, mode 0600. On start it reads the last eight days
+back, so a restart no longer empties the series. A line that cannot be read is
+skipped and logged. Day files whose day ended more than the retention ago are
+removed at start and when a new day's first reading arrives.
+
+The retention defaults to 90 days. Set it with `--account-series-retention` (a Go
+duration) or the `MARVEL_ACCOUNT_SERIES_RETENTION` environment variable; the flag
+wins when set, and unset keeps 90 days. A retention under eight days is raised to
+eight, the length of the memory window, so a short setting cannot shorten what a
+restart reads back. A negative value is refused at start:
+
+```bash
+marvel daemon --account-series-retention 720h   # keep 30 days of day files
+```
+
+If the directory cannot be made or written, the daemon logs it and keeps
+answering from memory.
+
 ### Detach vs teardown
 
 `marvel stop`, SIGINT, and SIGTERM all *detach*: the daemon
