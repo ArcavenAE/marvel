@@ -27,6 +27,7 @@ var restructurePackages = []string{
 	"internal/workload",
 	"internal/backoff",
 	"internal/team",
+	"internal/session",
 	"internal/tmux/tmuxtest",
 	"internal/tmux/tmuxtest/fake",
 }

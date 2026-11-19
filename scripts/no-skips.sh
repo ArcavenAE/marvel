@@ -36,12 +36,29 @@ command -v jq >/dev/null || { echo "no-skips: jq is required" >&2; exit 2; }
 # Validate the whole stream first, so a parse error is exit 2, not a count.
 jq -e . "$json" >/dev/null 2>&1 || { echo "no-skips: $json is not go test -json output" >&2; exit 2; }
 
+# Tests a package skips by design are named in no-skips.allow beside this
+# script, one "<import path> <TestName>" per line, exact names and no wildcard
+# (aae-orc-1wz40). A skip on that list is not a failure; any other skip is. A
+# listed test that did not skip is reported, so the list cannot go stale unseen,
+# but that report does not fail the run.
+allow_file="$(dirname "${BASH_SOURCE[0]}")/no-skips.allow"
+allowed='[]'
+if [[ -r "$allow_file" ]]; then
+  allowed="$(jq -Rn '[inputs | gsub("^\\s+|\\s+$"; "") | select(length > 0 and (startswith("#") | not)) | gsub("\\s+"; " ")]' < "$allow_file")"
+fi
+
 # Build events carry ImportPath, not Package, so a missing Package reads as "".
 mine='select((.Package // "") as $q | $q == $p or ($q | startswith($p + "/")))'
 rc=0
 for pkg in "$@"; do
   bad=0
-  skipped="$(jq -r --arg p "$pkg" "$mine | select(.Action == \"skip\") | \"\(.Package) \(.Test // \"(no test files)\")\"" "$json")"
+  skipped="$(jq -r --arg p "$pkg" --argjson allowed "$allowed" "$mine | select(.Action == \"skip\") | select(((.Package // \"\") + \" \" + (.Test // \"\")) as \$k | (\$allowed | index(\$k)) | not) | \"\(.Package) \(.Test // \"(no test files)\")\"" "$json")"
+  # A listed test for this package that never skipped in this run.
+  idle="$(jq -rn --arg p "$pkg" --argjson allowed "$allowed" --slurpfile ev "$json" '$allowed[] | select(startswith($p + " ")) | . as $k | select(([$ev[] | select(.Action == "skip") | (.Package // "") + " " + (.Test // "")] | index($k)) | not) | ltrimstr($p + " ")')"
+  if [[ -n "$idle" ]]; then
+    echo "no-skips: tests on the allow list for $pkg that did not skip in this run (the list may be stale):" >&2
+    printf '%s\n' "$idle" | sed 's/^/  /' >&2
+  fi
   failed="$(jq -r --arg p "$pkg" "$mine | select(.Action == \"fail\") | \"\(.Package) \(.Test // (if .FailedBuild then \"(failed to build)\" else \"(package failed)\" end))\"" "$json")"
   passed="$(jq -r --arg p "$pkg" "$mine | select(.Action == \"pass\" and .Test != null) | .Test" "$json")"
   # Every package with an event needs its own package-level pass, fail or
