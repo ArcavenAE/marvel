@@ -1,0 +1,11 @@
+{
+  "workspace": "workspace",
+  "team": "team",
+  "role": "role",
+  "function": "function",
+  "paths": [
+    "paths"
+  ],
+  "caster": "caster",
+  "reason": "reason"
+}

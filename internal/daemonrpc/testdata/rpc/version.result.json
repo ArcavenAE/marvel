@@ -1,0 +1,9 @@
+{
+  "version": "version",
+  "channel": "channel",
+  "commit": "commit",
+  "revision": "revision",
+  "dirty": true,
+  "started_at": "2026-01-02T03:04:05Z",
+  "pid": 7
+}

@@ -1,0 +1,15 @@
+{
+  "teams": [
+    "teams"
+  ],
+  "all": true,
+  "backend": [
+    "backend"
+  ],
+  "except_backend": [
+    "except_backend"
+  ],
+  "end": "end",
+  "dry_run": true,
+  "status": true
+}

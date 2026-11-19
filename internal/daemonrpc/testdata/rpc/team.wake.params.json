@@ -1,0 +1,12 @@
+{
+  "teams": [
+    "teams"
+  ],
+  "all": true,
+  "skip_checks": [
+    "skip_checks"
+  ],
+  "order": [
+    "order"
+  ]
+}

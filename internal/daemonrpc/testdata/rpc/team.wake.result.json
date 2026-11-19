@@ -1,0 +1,29 @@
+{
+  "checks": [
+    {
+      "name": "name",
+      "result": "result",
+      "detail": "detail",
+      "skipped": true
+    }
+  ],
+  "teams": [
+    {
+      "team": "team",
+      "state": "state",
+      "since": "since",
+      "actor": "actor",
+      "roles": [
+        "roles"
+      ],
+      "running": 7,
+      "pending": [
+        "pending"
+      ],
+      "reported": [
+        "reported"
+      ],
+      "done": true
+    }
+  ]
+}

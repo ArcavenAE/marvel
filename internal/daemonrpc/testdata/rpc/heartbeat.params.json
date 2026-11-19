@@ -1,0 +1,12 @@
+{
+  "session_key": "session_key",
+  "session_token": "session_token",
+  "context_percent": 1.5,
+  "model": "model",
+  "context_tokens": 7,
+  "context_window": 7,
+  "cost_total_usd": 1.5,
+  "api_duration_ms": 7,
+  "output_tokens": 7,
+  "harness_version": "harness_version"
+}

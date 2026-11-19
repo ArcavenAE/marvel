@@ -1,0 +1,15 @@
+{
+  "session_key": "session_key",
+  "text": "text",
+  "literal": true,
+  "enter": true,
+  "injector": {
+    "session": "session",
+    "user": "user"
+  },
+  "verify": true,
+  "clear": true,
+  "settle_ms": 7,
+  "allow_bare_digit": true,
+  "ring": true
+}

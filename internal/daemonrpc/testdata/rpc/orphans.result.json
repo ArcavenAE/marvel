@@ -1,0 +1,13 @@
+{
+  "orphans": [
+    {
+      "session_key": "session_key",
+      "workspace": "workspace",
+      "team": "team",
+      "role": "role",
+      "first_seen": "2026-01-02T03:04:05Z",
+      "last_seen": "2026-01-02T03:04:05Z",
+      "count": 7
+    }
+  ]
+}
