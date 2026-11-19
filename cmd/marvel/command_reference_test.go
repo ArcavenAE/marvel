@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -167,6 +168,32 @@ func TestCommittedCommandReferenceMatchesTheTree(t *testing.T) {
 	for _, name := range names {
 		if !seen[name] {
 			t.Errorf("docs/reference/%s is missing; run: go test ./cmd/marvel -run TestCommittedCommandReferenceMatchesTheTree -update-reference", name)
+		}
+	}
+}
+
+// TestCommandReferenceIgnoresMarvelHome: the daemon flags default to paths
+// under $MARVEL_HOME when it is set, so a reference generated with it set must
+// still read ~/.marvel and carry no machine path.
+func TestCommandReferenceIgnoresMarvelHome(t *testing.T) {
+	t.Setenv(paths.HomeEnv, "")
+	unset := commandReference(newRootCmd())
+	if len(unset) == 0 {
+		t.Fatal("commandReference returned no pages for the marvel command tree")
+	}
+
+	root := filepath.Join(t.TempDir(), "mh")
+	t.Setenv(paths.HomeEnv, root)
+	set := commandReference(newRootCmd())
+	if len(set) != len(unset) {
+		t.Fatalf("MARVEL_HOME changed the page count from %d to %d", len(unset), len(set))
+	}
+	for name, page := range set {
+		if strings.Contains(page, root) {
+			t.Errorf("page %s carries the MARVEL_HOME path %s", name, root)
+		}
+		if page != unset[name] {
+			t.Errorf("page %s differs when MARVEL_HOME is set; the committed reference must not depend on it", name)
 		}
 	}
 }

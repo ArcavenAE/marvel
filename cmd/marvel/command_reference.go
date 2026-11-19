@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -36,24 +37,39 @@ func commandReference(root *cobra.Command) map[string]string {
 	return pages
 }
 
-// normalizeHome writes the running user's home directory as "~". Some flag
-// defaults are computed from the home directory (the daemon socket, log and
-// pidfile paths), so the raw text would carry the generating machine's path,
-// or a test's random scratch home, and the committed reference would differ on
-// every host. The symlink-resolved form is replaced too, since a temp
-// directory can be reached by two spellings on macOS.
+// normalizeHome writes the generating process's marvel home as "~/.marvel" and
+// the running user's home directory as "~". Some flag defaults are computed
+// from the marvel home (the daemon socket, log and pidfile paths), which is
+// $MARVEL_HOME when that is set and $HOME/.marvel otherwise, so the raw text
+// would carry the generating machine's path, or a test's random scratch home,
+// and the committed reference would differ on every host. The marvel home is
+// replaced first, since it can sit outside the user's home. The
+// symlink-resolved form of each is replaced too, since a temp directory can be
+// reached by two spellings on macOS.
 func normalizeHome(s string) string {
-	home, err := os.UserHomeDir()
-	if err != nil || len(home) < 2 {
+	if layout, err := paths.Default(); err == nil {
+		s = replaceRoot(s, layout.Home, "~/.marvel")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		s = replaceRoot(s, home, "~")
+	}
+	return s
+}
+
+// replaceRoot replaces root, and its symlink-resolved spelling, with to,
+// longest spelling first. A root shorter than two bytes is left alone, so an
+// empty path or "/" cannot rewrite the whole text.
+func replaceRoot(s, root, to string) string {
+	if len(root) < 2 {
 		return s
 	}
-	forms := []string{home}
-	if real, err := filepath.EvalSymlinks(home); err == nil && real != home {
+	forms := []string{root}
+	if real, err := filepath.EvalSymlinks(root); err == nil && real != root {
 		forms = append(forms, real)
 	}
 	sort.Slice(forms, func(i, j int) bool { return len(forms[i]) > len(forms[j]) })
 	for _, f := range forms {
-		s = strings.ReplaceAll(s, f, "~")
+		s = strings.ReplaceAll(s, f, to)
 	}
 	return s
 }
