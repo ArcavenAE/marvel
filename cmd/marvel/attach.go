@@ -318,9 +318,7 @@ opened (measured on tmux 3.7b):
   - Inside any other tmux server: the session is in a new window of that server,
     and Ctrl-B goes to your own tmux. Ctrl-B p moves to the previous window and
     leaves the session attached. Ctrl-B Ctrl-B d detaches the session and closes
-    its window. Ctrl-B d detaches your own tmux, not the session.
-  - A remote desk: the printed ssh command runs tmux on the other host, and
-    that host's prefix applies; Ctrl-B d is its default.`,
+    its window. Ctrl-B d detaches your own tmux, not the session.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAttach(cmd.OutOrStdout(), args[0], printOnly, processAttachEnv())

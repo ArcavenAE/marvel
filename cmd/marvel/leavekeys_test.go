@@ -38,12 +38,11 @@ func TestGetSessionsHelpTellsHowToLeaveASession(t *testing.T) {
 func TestAttachHelpTellsHowToLeaveEachPath(t *testing.T) {
 	mustContain(t, "attach --help", attachCmd().Long,
 		"exit or Ctrl-D", "stops the agent",
-		"Ctrl-B d",           // outside tmux, and the watch's in-place Enter
-		"Ctrl-B L",           // inside marvel's own tmux: back to the watch
-		"does not return",    // ... where Ctrl-B d detaches the whole client
-		"Ctrl-B Ctrl-B d",    // inside another tmux: the keys that reach the inner session
-		"Ctrl-B p",           // ... and the way back to the previous window
-		"that host's prefix", // a remote desk runs tmux on the other host
+		"Ctrl-B d",        // outside tmux, and the watch's in-place Enter
+		"Ctrl-B L",        // inside marvel's own tmux: back to the watch
+		"does not return", // ... where Ctrl-B d detaches the whole client
+		"Ctrl-B Ctrl-B d", // inside another tmux: the keys that reach the inner session
+		"Ctrl-B p",        // ... and the way back to the previous window
 	)
 }
 
