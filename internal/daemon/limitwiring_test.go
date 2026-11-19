@@ -552,12 +552,15 @@ func keysOf(m map[string]bool) []string {
 func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 	t.Parallel()
 	want := map[string]map[string]int{
-		"handleInjectAs": {"*Daemon.dispatchUntimed": 1},
+		// The handler is named once, in the method table filled by init
+		// (methods.go), and the table is read by dispatchUntimed.
+		"handleInjectAs": {"init": 1},
 		// The helper that presses the inject's keys. Its body is pinned by the
 		// key-press inventory; this pins who may call it, since it takes the
 		// driver as a value and a second caller would type into a pane.
 		"sendInject": {"*Daemon.handleInjectAs": 1},
-		// dispatchAs times the call and hands it to dispatchUntimed, the switch.
+		// dispatchAs times the call and hands it to dispatchUntimed, which looks the
+		// method up in the table.
 		"dispatchUntimed": {"*Daemon.dispatchAs": 1},
 		"dispatchAs":      {"*Daemon.handleRWCAs": 1, "*Daemon.dispatch": 1},
 		"dispatch":        {},

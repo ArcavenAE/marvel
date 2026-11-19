@@ -44,26 +44,8 @@ func ParseScope(s string) (Scope, error) {
 	}
 }
 
-// credentialPushMethods is the exact set a credential-push key may call.
-// Naming the set here rather than on the handlers keeps the authorization
-// policy in one place. The credential.* handlers land in a later seam
-// (aae-orc-gdum6); calling one before it exists fails as an unknown method,
-// never as an authorization bypass. credential.get is deliberately absent: a
-// pushing key never reads a value back (reveal is local-socket only, S3).
-//
-// bus.leaf.connect and bus.leaf.disconnect reuse this exact gate rather than
-// growing a new scope: the leaf toggle is an operational sibling of the
-// enrollment a credential-push key already performs, and a dedicated grant
-// waits on the principal model (aae-orc-bs3x). They are the leaf lifecycle's
-// operational verbs, not credential reads, so they converge on the operator or
-// supervisor principal when bs3x lands (aae-orc-ct0l4).
-var credentialPushMethods = map[string]bool{
-	"credential.put":      true,
-	"credential.list":     true,
-	"credential.delete":   true,
-	"bus.leaf.connect":    true,
-	"bus.leaf.disconnect": true,
-}
+// The set a credential-push key may call, and the set only the local socket may
+// call, are columns of methodTable (methods.go): CredentialPush and LocalOnly.
 
 // methodAllowedForScope reports whether a caller with the given scope may call
 // method. Admin may call anything; credential-push is confined to its set; an
@@ -112,33 +94,6 @@ func localCaller() caller { return caller{scope: ScopeAdmin, local: true} }
 // the set here, beside credentialPushMethods, keeps the authorization policy
 // in one place. credential.reveal returns a secret value, so it is confined to
 // the operator at the daemon's own socket (brief 9 S3).
-var localOnlyMethods = map[string]bool{
-	"credential.reveal": true,
-	// exposure.void releases a refusal, so it is served only on the daemon's own
-	// socket and never through the tunnel (marvel#945). That checks where the
-	// caller is, not who: every seat on the host holds that socket, so today any
-	// local seat can void. Limiting it to the operator needs a principal check
-	// that does not exist yet.
-	"exposure.void": true,
-	// broker.token returns a bearer token, so like a revealed credential it
-	// never leaves through the mrvl:// tunnel.
-	"broker.token": true,
-	// handoff.put writes a file on the daemon host on a seat's behalf. The
-	// heartbeat token alone decides whose handoff it is, and every seat holds
-	// the local socket, so this is the narrowest grant: not the tunnel, and not
-	// a credential-push key (docs/design/read-only-seat-handoff.md, section 2).
-	"handoff.put": true,
-	// suspend and resume freeze and resume the whole fleet. Until the suspend
-	// scope exists (docs/design/fleet-suspend-resume.md section 6), neither is
-	// served through the tunnel.
-	"suspend": true,
-	"resume":  true,
-	// team.hibernate and team.wake are local only until the suspend scope
-	// exists, like suspend and resume (docs/design/fleet-hibernate.md section
-	// 10 holds the remote-scope decision).
-	"team.hibernate": true,
-	"team.wake":      true,
-}
 
 // methodRequiresLocal reports whether method may be called only from the local
 // unix socket.
