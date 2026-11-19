@@ -12,7 +12,7 @@ func TestRingStampsTheTaskOfTheEventsSession(t *testing.T) {
 	r := NewRing(8)
 	r.SetTaskResolver(func(session string) string {
 		if session == "w/a" {
-			return "I-633"
+			return "I-100"
 		}
 		return ""
 	})
@@ -21,7 +21,7 @@ func TestRingStampsTheTaskOfTheEventsSession(t *testing.T) {
 	Emit(r, Event{Kind: KindSessionDeleted, Session: "w/a", Task: "kept"})
 	Emit(r, Event{Kind: KindPlacementLegacyStamped})
 	got := r.Snapshot(Filter{}, 0)
-	want := []string{"I-633", "", "kept", ""}
+	want := []string{"I-100", "", "kept", ""}
 	if len(got) != len(want) {
 		t.Fatalf("%d events, want %d", len(got), len(want))
 	}

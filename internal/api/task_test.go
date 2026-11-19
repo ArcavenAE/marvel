@@ -10,7 +10,7 @@ import (
 // session works on. It is the fleet's form of the A2A attribute a2a.task.id.
 
 func TestValidTask(t *testing.T) {
-	for _, ok := range []string{"aae-orc-p0xrm", "I-633", "a2a:task/1", "x", strings.Repeat("a", 128)} {
+	for _, ok := range []string{"aae-orc-p0xrm", "I-100", "a2a:task/1", "x", strings.Repeat("a", 128)} {
 		if !ValidTask(ok) {
 			t.Errorf("ValidTask(%q) = false, want true", ok)
 		}
@@ -48,12 +48,12 @@ func TestTaskIsARoleKeyCarriedToTheAppliedRole(t *testing.T) {
 			t.Errorf("applied %s: Task = %q, want %q", name, got, tc.want)
 		}
 	}
-	y := "workspace:\n  name: aae\nteams:\n  - name: squad\n    roles:\n      - name: w\n        replicas: 1\n        task: I-633\n        runtime:\n          command: pi\n"
+	y := "workspace:\n  name: aae\nteams:\n  - name: squad\n    roles:\n      - name: w\n        replicas: 1\n        task: I-100\n        runtime:\n          command: pi\n"
 	m, err := ParseManifestBytes([]byte(y))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := m.Teams[0].Roles[0].Task; got != "I-633" {
+	if got := m.Teams[0].Roles[0].Task; got != "I-100" {
 		t.Errorf("yaml: task = %q", got)
 	}
 }
@@ -78,14 +78,14 @@ func TestManifestRefusesATaskThatIsNotAKey(t *testing.T) {
 // session with no task.
 func TestStoreTaskOfFollowsTheSession(t *testing.T) {
 	s := NewStore()
-	if err := s.CreateSession(&Session{Name: "a", Workspace: "w", Team: "t", Role: "r", Task: "I-633"}); err != nil {
+	if err := s.CreateSession(&Session{Name: "a", Workspace: "w", Team: "t", Role: "r", Task: "I-100"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.CreateSession(&Session{Name: "b", Workspace: "w", Team: "t", Role: "r"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.TaskOf("w/a"); got != "I-633" {
-		t.Errorf("TaskOf(w/a) = %q, want I-633", got)
+	if got := s.TaskOf("w/a"); got != "I-100" {
+		t.Errorf("TaskOf(w/a) = %q, want I-100", got)
 	}
 	if got := s.TaskOf("w/b"); got != "" {
 		t.Errorf("TaskOf(w/b) = %q, want none", got)
@@ -106,7 +106,7 @@ func TestTaskSurvivesAReopenOfTheStore(t *testing.T) {
 	if err := s1.OpenBolt(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := s1.CreateSession(&Session{Name: "a", Workspace: "w", Team: "t", Role: "r", Task: "I-633"}); err != nil {
+	if err := s1.CreateSession(&Session{Name: "a", Workspace: "w", Team: "t", Role: "r", Task: "I-100"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s1.CloseBolt(); err != nil {
@@ -121,10 +121,10 @@ func TestTaskSurvivesAReopenOfTheStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Task != "I-633" {
-		t.Errorf("reopened Session.Task = %q, want I-633", got.Task)
+	if got.Task != "I-100" {
+		t.Errorf("reopened Session.Task = %q, want I-100", got.Task)
 	}
-	if idx := s2.TaskOf("w/a"); idx != "I-633" {
-		t.Errorf("reopened TaskOf = %q, want I-633", idx)
+	if idx := s2.TaskOf("w/a"); idx != "I-100" {
+		t.Errorf("reopened TaskOf = %q, want I-100", idx)
 	}
 }

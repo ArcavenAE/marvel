@@ -727,7 +727,7 @@ choice. opencode, crush and the generic adapter are not stamped.
 ### Task key
 
 A session can carry a task key: the id of the bd ticket or the ask it works
-on, such as `aae-orc-p0xrm` or `I-633`. It is the fleet's form of the A2A
+on, such as `aae-orc-p0xrm` or `I-100`. It is the fleet's form of the A2A
 attribute `a2a.task.id`. The key is optional, one to 128 characters with no
 spaces, and it is set when the session is created and does not change.
 
@@ -742,7 +742,7 @@ task = "aae-orc-p0xrm"
 or on a one-off session:
 
 ```bash
-marvel run --task I-633 claude
+marvel run --task I-100 claude
 ```
 
 `marvel get sessions -o json` shows it as `task` on each session that has one,

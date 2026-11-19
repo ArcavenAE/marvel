@@ -26,15 +26,15 @@ func TestRunHasATaskFlag(t *testing.T) {
 func TestEventsPrintsTheTaskOfAnEvent(t *testing.T) {
 	var b strings.Builder
 	printEventBatch(&b, []events.Event{
-		{Kind: events.KindSessionCreated, Session: "w/a", Task: "I-633", Message: "session created"},
+		{Kind: events.KindSessionCreated, Session: "w/a", Task: "I-100", Message: "session created"},
 		{Kind: events.KindSessionCreated, Session: "w/b", Message: "session created"},
 	}, false)
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("%d lines, want 2:\n%s", len(lines), b.String())
 	}
-	if !strings.HasSuffix(strings.TrimRight(lines[0], " "), "session created [task I-633]") {
-		t.Errorf("tasked row = %q, want it to end with [task I-633]", lines[0])
+	if !strings.HasSuffix(strings.TrimRight(lines[0], " "), "session created [task I-100]") {
+		t.Errorf("tasked row = %q, want it to end with [task I-100]", lines[0])
 	}
 	if strings.Contains(lines[1], "task") {
 		t.Errorf("untasked row = %q, want no task", lines[1])
