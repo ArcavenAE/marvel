@@ -42,8 +42,8 @@
 # Notes:
 #   - Each -p role is headless with a prompt; that is what makes the harness
 #     produce a parseable one-shot stream. It exits when the turn completes.
-#   - The -t role stays alive; attach to its pane (DESK column) to drive it
-#     by hand.
+#   - The -t role stays alive; attach to its pane (DESK column, opt-in:
+#     marvel get sessions --columns name,desk) to drive it by hand.
 #   - codex takes sandbox/approval flags via runtime.args; opencode takes
 #     --model and --auto via runtime.args. Neither is injected by marvel,
 #     so autonomous tool use is an explicit operator choice.
