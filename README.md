@@ -193,7 +193,7 @@ marvel events                                        # recent session/team state
 # Lifecycle
 marvel scale <ws/team> --role <r> --replicas N       # scale a role
 marvel shift <ws/team> [--role <r>]                  # rolling shift
-marvel run <cmd> [args...] --role <r>                # one-off session
+marvel run <cmd> [args...] --role <r> [--task <id>]  # one-off session, optionally tagged with the bd ticket or ask it works on
 marvel kill <session-key>                            # kill a session (alias: delete session)
 marvel delete <resource> <key>                       # delete a session, team, or workspace
 

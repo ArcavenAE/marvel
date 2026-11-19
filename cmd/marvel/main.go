@@ -823,6 +823,11 @@ func printEventBatch(w io.Writer, evs []events.Event, header bool) {
 		if ev.Actor != "" {
 			msg = fmt.Sprintf("%s [by %s]", msg, ev.Actor)
 		}
+		// The task rides in the message for the same reason: a column would
+		// push MESSAGE right on every row, and few sessions carry one.
+		if ev.Task != "" {
+			msg = fmt.Sprintf("%s [task %s]", msg, ev.Task)
+		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			ev.Timestamp.Format("15:04:05"), drawn(sev), drawn(string(ev.Kind)), drawn(sessRef), drawn(msg))
 	}
@@ -2001,7 +2006,7 @@ func convergeCmd() *cobra.Command {
 
 func runCmd() *cobra.Command {
 	var workspace, team, role, script, workdir string
-	var mode, promptFile, name string
+	var mode, promptFile, name, task string
 	var envs []string
 	var experimental bool
 	cmd := &cobra.Command{
@@ -2045,6 +2050,7 @@ func runCmd() *cobra.Command {
 				"prompt":          prompt,
 				"env":             envMap,
 				"name":            name,
+				"task":            task,
 			})
 			resp, err := send(daemonrpc.Request{
 				Method: "run",
@@ -2069,6 +2075,7 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&promptFile, "prompt-file", "", "file holding the prompt a headless run carries (experimental)")
 	cmd.Flags().StringArrayVar(&envs, "env", nil, "KEY=VALUE for the session environment, repeatable (experimental)")
 	cmd.Flags().StringVar(&name, "name", "", "session name, so the key is workspace/name; a reused name is refused (experimental)")
+	cmd.Flags().StringVar(&task, "task", "", "the bd ticket or ask the session works on (its id, no spaces, up to 128 characters); the fleet's form of a2a.task.id, shown in get sessions -o json and carried in the session's events")
 	cmd.Flags().BoolVar(&experimental, "experimental", false, "allow the experimental flags above")
 	return cmd
 }

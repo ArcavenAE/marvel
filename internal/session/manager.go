@@ -2346,6 +2346,7 @@ func (m *Manager) dropSession(sess api.Session, message string) error {
 		Team:      sess.Team,
 		Role:      sess.Role,
 		Session:   key,
+		Task:      sess.Task,
 		Message:   message,
 	})
 	return nil

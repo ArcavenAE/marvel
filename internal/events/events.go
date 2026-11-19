@@ -12,6 +12,7 @@ package events
 import (
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -807,6 +808,8 @@ type Ring struct {
 	// offers to every watch under the same lock that assigned the Seq,
 	// and a Close removes the watch before its channel closes.
 	watches []*Watch
+	// taskOf stamps Event.Task; see SetTaskResolver.
+	taskOf atomic.Pointer[func(string) string]
 }
 
 // DefaultCapacity is the ring size used when NewRing is called with
@@ -831,6 +834,14 @@ func NewRing(capacity int) *Ring {
 // Emit satisfies Emitter. Appends to the tail, overwriting the head
 // when full.
 func (r *Ring) Emit(ev Event) {
+	// The stamp is read before the ring's lock, so the lookup never runs under
+	// it. An event that names a task already keeps it: the deleting event of a
+	// session sets its own, since the session is gone from the index by then.
+	if ev.Task == "" && ev.Session != "" {
+		if fn := r.taskOf.Load(); fn != nil {
+			ev.Task = (*fn)(ev.Session)
+		}
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if ev.Timestamp.IsZero() {
@@ -1085,6 +1096,16 @@ func (w *Watch) Close() {
 	close(w.ch)
 }
 
-// SetTaskResolver gives the ring the lookup Emit uses to stamp Event.Task. It
-// is a stub until the stamp is built.
-func (r *Ring) SetTaskResolver(fn func(session string) string) {}
+// SetTaskResolver gives the ring the lookup Emit uses to stamp Event.Task from
+// an event's session key. The resolver runs in Emit, before the ring's own lock
+// is taken and often inside a caller's lock, so it must not block or take a
+// lock a caller of Emit can hold: the store's TaskOf reads a lock-free index
+// for that reason. A nil fn stops the stamping. Safe to call while events are
+// being emitted.
+func (r *Ring) SetTaskResolver(fn func(session string) string) {
+	if fn == nil {
+		r.taskOf.Store(nil)
+		return
+	}
+	r.taskOf.Store(&fn)
+}

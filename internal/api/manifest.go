@@ -551,6 +551,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			if r.SandboxProfile != "" && !ValidSandboxProfile(r.SandboxProfile) {
 				return nil, fmt.Errorf("parse manifest: team %q role %q: sandbox_profile %q is not a clean absolute path", t.Name, r.Name, r.SandboxProfile)
 			}
+			if r.Task != "" && !ValidTask(r.Task) {
+				return nil, fmt.Errorf("parse manifest: team %q role %q: task %q is not a task key (1 to %d graphic characters, no spaces)", t.Name, r.Name, r.Task, maxTaskLen)
+			}
 			if r.Policy != "" && !policyNames[r.Policy] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
 			}
@@ -1204,6 +1207,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
 				ContainerImage:       mr.ContainerImage,
 				SandboxProfile:       mr.SandboxProfile,
+				Task:                 mr.Task,
 				SettingsSources:      mr.SettingsSources,
 				Writes:               normalizeWrites(mr.Writes),
 			}
