@@ -114,7 +114,7 @@ Marvel injects this as `--permission-mode` at launch time. Workers get
 
 **Valid permission modes.** `permissions` must be one of Claude Code's
 `--permission-mode` values, or empty. Marvel rejects anything else at
-`marvel apply` time (a typo like `pln` no longer produces a pane that
+`marvel work` time (a typo like `pln` no longer produces a pane that
 exits immediately). The canonical set:
 
 | Mode | Meaning |
@@ -253,7 +253,7 @@ owns its own command line, so marvel exports the composed text as
 does either today; a codex or opencode successor gets no first message.
 
 `apply` refuses nothing on this. The daemon writes an advisory to its log, not
-to the output of `marvel apply`, for each of these:
+to the output of `marvel work`, for each of these:
 
 - an interactive role declares `runtime.prompt` on a harness that cannot take
   it as a first message yet (only claude does), so the prompt is not delivered;

@@ -54,7 +54,7 @@ var deskArg = regexp.MustCompile(`^%?([0-9]+)$`)
 func planAttach(desk string, sessions []api.Session, tgt attachTarget, tmuxEnv string, printOnly bool) (attachPlan, error) {
 	m := deskArg.FindStringSubmatch(desk)
 	if m == nil {
-		return attachPlan{}, fmt.Errorf("desk %q is not a desk number: pass the DESK column of `marvel get sessions`, for example 23", desk)
+		return attachPlan{}, fmt.Errorf("desk %q is not a desk number: pass the DESK column of `marvel get sessions --columns desk`, for example 23", desk)
 	}
 	desk = m[1]
 
@@ -276,7 +276,7 @@ func attachCmd() *cobra.Command {
 The argument is one of three forms, resolved on the selected cluster
 (--cluster) only:
 
-  - a desk, the DESK column of ` + "`marvel get sessions`" + `, with or without a leading
+  - a desk, the DESK column of ` + "`marvel get sessions --columns desk`" + ` (opt-in), with or without a leading
     percent sign (23 or %23);
   - a session key, workspace/name, matched exactly;
   - a bare session name, accepted only when exactly one session on the cluster

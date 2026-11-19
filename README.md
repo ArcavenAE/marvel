@@ -187,6 +187,8 @@ marvel get sessions                                  # list sessions (-w for wat
 marvel get teams                                     # list teams and roles
 marvel get workspaces                                # list workspaces
 marvel get endpoints                                 # list endpoints
+marvel get credentials                               # list declared credentials
+marvel get budgets                                   # show where each team stands against its declared budgets
 marvel describe session <key>                        # session details
 marvel events                                        # recent session/team state-transition events (incl. agent.* for observed runtimes)
 
