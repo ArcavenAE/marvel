@@ -646,8 +646,9 @@ live-state reaches in the last row of the table below, and nothing else.
 ruled option (ii) ("go with ii"): the adopted-child check in
 `supervisor_identity_test.go` reads the live child from the `Process` state
 (`s.snapshot().Child`) where it read a field on the supervisor, and every other
-assertion in the supervisor tests stayed as it was. The `s.pid` reach in
-`proctable_test.go` was gone by then. The count and the table below are the
+assertion in the supervisor tests stayed as it was. The `s.pid` match at
+`proctable_test.go:142` is a `sentSignal` field, not the supervisor's, so it
+needed no edit. The count and the table below are the
 plan's, kept as the record of what was ruled.
 
 Counted at `76a7db9`
