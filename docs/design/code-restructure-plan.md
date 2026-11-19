@@ -2,7 +2,7 @@ Closed 2026-10-25: pointers closed (rule d adopted)
 
 # Code restructure plan: two package moves and a sequencing rule
 
-- **Status:** Implemented 2026-10-16 to 2026-10-22. The text below is the plan as it
+- **Status:** Implemented 2026-10-15 to 2026-10-22. The text below is the plan as it
   was ruled (proposal 2026-10-10, revision 6 of 2026-10-16); where the built shape
   differs, section 5 says so.
   - Move 1 (the client into `internal/daemonrpc`): #908, #909 and #987.
@@ -642,14 +642,22 @@ same package, in a separate commit inside that PR. Never as a sweep.
 supervisors tests, allow the five edits". The grant covers the five
 live-state reaches in the last row of the table below, and nothing else.
 
-**As built.** The split needed two lines, not five. On 2026-10-14 the operator
-ruled option (ii) ("go with ii"): the adopted-child check in
-`supervisor_identity_test.go` reads the live child from the `Process` state
-(`s.snapshot().Child`) where it read a field on the supervisor, and every other
-assertion in the supervisor tests stayed as it was. The `s.pid` match at
-`proctable_test.go:142` is a `sentSignal` field, not the supervisor's, so it
-needed no edit. The count and the table below are the
-plan's, kept as the record of what was ruled.
+**As built.** In the tests the plan counted, the split needed two lines, not
+five. On 2026-10-14 the operator ruled option (ii) ("go with ii"): the
+adopted-child check in `supervisor_identity_test.go` reads the live child from
+the `Process` state (`s.snapshot().Child`) where it read a field on the
+supervisor. The `s.pid` match at `proctable_test.go:142` is a `sentSignal`
+field, not the supervisor's, so it needed no edit.
+
+Two test files that arrived after the plan's count at `76a7db9` (#885, #915)
+were also re-pointed by #1013, in their setup only: `supervisor_lifecycle_test.go`
+(lines 119 and 172) seeds `Pid`, `BackoffUntil` and `Restarts` through
+`workload.SeedStateForTest` in place of writing `s.pid`, `s.backoffTill` and
+`s.restarts`, and `supervisor_crash_path_test.go` (line 391) calls
+`s.process().Stop(false)` in place of setting `s.stopping`. The operator's
+2026-10-22 ruling, as recorded on the ticket, is that "the 10-10 grant already
+covers 2c's re-points". No assertion in those files changed. The count and the
+table below are the plan's, kept as the record of what was ruled.
 
 Counted at `76a7db9`
 (`grep -oE '\bs\.<field>\b' internal/bus/*_test.go`), sorted by what each
