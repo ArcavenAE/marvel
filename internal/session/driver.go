@@ -14,7 +14,7 @@ import (
 // It also hands the driver to the runtime's tmux instance, which asks for a
 // runtime.PaneController (NewPaneAt, KillPane, SendKeys, CapturePane), so the
 // interface embeds it and carries twelve methods in all: the eight listed and
-// the controller's four, with KillPane counted once.
+// the controller's four (NewPaneAt, KillPane, SendKeys, CapturePane).
 type TmuxDriver interface {
 	ListSessions() ([]string, error)
 	NewSession(name string) error
