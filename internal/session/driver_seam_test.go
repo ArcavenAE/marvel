@@ -5,6 +5,8 @@ import (
 	"go/parser"
 	"go/token"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/tmux/tmuxtest/fake"
 )
 
 // The manager depends on the TmuxDriver interface, not on *tmux.Driver, so a
@@ -68,3 +70,6 @@ func exprString(e ast.Expr) string {
 	}
 	return "?"
 }
+
+// The in-memory fake satisfies the interface, so the manager can run on it.
+var _ TmuxDriver = (*fake.Driver)(nil)
