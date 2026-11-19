@@ -2,7 +2,7 @@
 
 - **Status:** idea (pre-hypothesis, no commitment). A design for it exists as a recommendation; nothing is built and no verb is chosen.
 - **Date:** 2026-11-19
-- **Origin:** operator ask I-638, carried by commission. The operator asked, verbatim: "kos idea marvel we have marvel get budgets but where is the marvel get schedule(s) and so forth? what else are we missing? route to 4ptdd for analysis and to flesh out what we're missing and how to design it"
+- **Origin:** the operator's request, carried by commission. The operator asked, verbatim: "kos idea marvel we have marvel get budgets but where is the marvel get schedule(s) and so forth? what else are we missing? route to 4ptdd for analysis and to flesh out what we're missing and how to design it"
 - **Subject:** marvel (the `get`, `describe` and `-w` read surface). Filed in the marvel graph per the subject test.
 - **Related:** [[get-views-connection-and-service-context]] (decorating the `get` views; the same surface), [[multicluster-view]] (reading several clusters at once, which this idea leaves to a ruling), [[token-rate-column-and-configurable-columns]] (the configurable-columns substrate a new table rides). docs/design/cli-read-back-and-run-parity.md (an earlier ranked gap list, checked at e056128), docs/design/scheduled-runs.md (the schedule design and its describe team block), and the frontier node question-multicluster-view.
 
@@ -20,7 +20,7 @@ The operator can list budgets but not schedules, and wants to know what else the
 
 ## The design, in short
 
-A 4ptdd party of four (a fleet operator, an architect, a CLI designer and a distributed-systems seat) worked it over three rounds and a forced vote. The recommendation, for the operator to rule on:
+A four-seat party (a fleet operator, an architect, a CLI designer and a distributed-systems seat) worked it over three rounds and a forced vote. The recommendation, for the operator to rule on:
 
 1. One kind table that drives both `get` switches, the help and the unknown-kind error, so help never names a kind the CLI cannot print.
 2. `get schedules`, one row per declared scheduled role: WORKSPACE, TEAM, ROLE, CRON, TZ, STATE, NEXT-FIRE, LAST-RUN, OUTCOME, LAST-OK, STALE. NEXT-FIRE is the jittered fire time. STATE is a closed list: `starting`, `paused`, `suspended`, `frozen`, `retrying`, `firing`, `late`, `waiting`, `pending`. Firings are rows inside a schedule, not a kind of their own.
@@ -31,7 +31,7 @@ A 4ptdd party of four (a fleet operator, an architect, a CLI designer and a dist
 
 No read is proposed for kinds with no code (packs, leases, casts), in line with ADR-003's caution against building every kind at once.
 
-The design record (inventory with file:line per cell, the party record, a ticket plan with red tests, and two decision cards) is filed under operator ask I-638, dated 2026-11-19.
+The design record (inventory with file:line per cell, the party record, a ticket plan with red tests, and two decision cards) is kept with the operator's decision records, dated 2026-11-19.
 
 ## Open questions
 
