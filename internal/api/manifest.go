@@ -157,6 +157,9 @@ type ManifestRole struct {
 	// WorkDir is where this role's sessions run. Relative values resolve
 	// against workspace.root only.
 	WorkDir string `toml:"workdir,omitempty" yaml:"workdir,omitempty"`
+	// Task is the task key (a bd id or an ask id) this role's sessions carry,
+	// copied onto each at spawn. Optional; see Session.Task.
+	Task string `toml:"task,omitempty" yaml:"task,omitempty"`
 	// ContainerImage is the image this role's seats run in when the workspace's
 	// placement resolves to container. Required then: a container seat with no
 	// image is refused, never given a default.

@@ -728,6 +728,9 @@ type Event struct {
 	Team      string    `json:"team,omitempty"`
 	Role      string    `json:"role,omitempty"`
 	Session   string    `json:"session,omitempty"`
+	// Task is the task key of the event's session (Session.Task), stamped by
+	// the ring in Emit when the event names a session and sets none itself.
+	Task string `json:"task,omitempty"`
 	// Actor names the daemon process that took the action, as
 	// "pid=N socket=PATH". Empty on events whose actor is unambiguous.
 	//
@@ -1081,3 +1084,7 @@ func (w *Watch) Close() {
 	r.mu.Unlock()
 	close(w.ch)
 }
+
+// SetTaskResolver gives the ring the lookup Emit uses to stamp Event.Task. It
+// is a stub until the stamp is built.
+func (r *Ring) SetTaskResolver(fn func(session string) string) {}

@@ -297,7 +297,11 @@ type Session struct {
 	// WorkDir is the directory the session was placed in, copied from the
 	// role at spawn (marvel#255 build item 2). Empty on a session spawned
 	// before placement existed.
-	WorkDir   string `toml:"workdir,omitempty"`
+	WorkDir string `toml:"workdir,omitempty"`
+	// Task is the task key the session works on: a bd id or an ask id, set at
+	// cast and never changed. It is the fleet's form of the A2A attribute
+	// a2a.task.id. Empty means the session carries none.
+	Task      string `json:"task,omitempty" toml:"task,omitempty"`
 	Name      string `toml:"name"`
 	Workspace string `toml:"workspace"`
 	// Cluster names the cluster a row was read from. The client sets it when
@@ -821,6 +825,9 @@ type Role struct {
 	// WorkDir is where this role's sessions run; empty means the team's
 	// workdir, then the workspace root. Absolute once applied.
 	WorkDir string `toml:"workdir,omitempty"`
+	// Task is the task key copied onto each session of this role at spawn (see
+	// Session.Task). Empty means none.
+	Task string `toml:"task,omitempty"`
 	// ContainerImage is the image a seat of this role runs in when its placement
 	// resolves to container. Empty means none: such a seat is refused, and no
 	// default image is ever substituted.
