@@ -338,6 +338,15 @@ type Options struct {
 	// timeout without a 10-minute wait) via the daemon's --shift-timeout
 	// flag or MARVEL_SHIFT_TIMEOUT. See aae-orc-sape / ArcavenAE/marvel#88.
 	ShiftTimeout time.Duration
+	// AccountSeriesDir, when non-empty, is the directory the account series
+	// keeps its day files in (one JSONL file per UTC day). The daemon reads the
+	// last eight days back when it starts, so quota readings survive a restart.
+	// Empty keeps the series in memory only, as tests that build a daemon
+	// directly do. The CLI sets it to <home>/state/account-series.
+	AccountSeriesDir string
+	// AccountSeriesRetention is how long a day file is kept. Zero or less means
+	// api.DefaultPersistRetention, 90 days.
+	AccountSeriesRetention time.Duration
 	// Reclaim makes the startup reconcile pass destroy marvel-* tmux
 	// state this daemon does not own, rather than leaving it running and
 	// reporting it. The zero value is the ratified default (leave alone).
@@ -535,6 +544,13 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		leafLossCause: leafLossCause,
 		rootLockPath:  opts.RootLock,
 		afterRootLock: opts.AfterRootLock,
+	}
+	if opts.AccountSeriesDir != "" {
+		// Readings that cannot be kept are not worth refusing to start over: the
+		// series still answers from memory.
+		if err := d.accountSeries.Attach(opts.AccountSeriesDir, opts.AccountSeriesRetention, time.Now()); err != nil {
+			log.Printf("warning: account series not persisted: %v", err)
+		}
 	}
 	teamCtrl.Suspended = d.clusterSuspended
 	driver.SetSuspendGate(d.clusterSuspended)

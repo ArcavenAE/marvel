@@ -340,6 +340,27 @@ func resolveShiftTimeout(flagVal time.Duration, flagChanged bool, env string) (t
 	return d, nil
 }
 
+// accountSeriesRetentionEnv seeds how long the daemon keeps its day files of
+// quota readings when --account-series-retention is not passed.
+const accountSeriesRetentionEnv = "MARVEL_ACCOUNT_SERIES_RETENTION"
+
+// resolveAccountSeriesRetention picks the retention for the account series
+// day files: the flag when the operator set it, else the environment variable
+// parsed as a Go duration, else zero, which the daemon reads as 90 days.
+func resolveAccountSeriesRetention(flagVal time.Duration, flagChanged bool, env string) (time.Duration, error) {
+	if flagChanged {
+		return flagVal, nil
+	}
+	if env == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(env)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", accountSeriesRetentionEnv, env, err)
+	}
+	return d, nil
+}
+
 func daemonCmd() *cobra.Command {
 	var mrvlAddr string
 	var listenSocket string
@@ -350,6 +371,7 @@ func daemonCmd() *cobra.Command {
 	var logMaxTotalMiB int
 	var stateBoltPath string
 	var shiftTimeout time.Duration
+	var accountSeriesRetention time.Duration
 	var reclaim bool
 
 	layout, _ := paths.Default()
@@ -425,6 +447,16 @@ Examples:
 			// the resolved layout and nothing else: no flag moves it, because
 			// moving it would let two daemons share a root. It sits in run/,
 			// which must exist before the daemon opens the lock file there.
+			seriesRetention, err := resolveAccountSeriesRetention(
+				accountSeriesRetention, cmd.Flags().Changed("account-series-retention"), os.Getenv(accountSeriesRetentionEnv),
+			)
+			if err != nil {
+				return err
+			}
+			seriesDir := ""
+			if layout.Home != "" {
+				seriesDir = filepath.Join(layout.StateDir(), "account-series")
+			}
 			rootLock := ""
 			if layout.Home != "" {
 				if err := layout.EnsureRunDir(); err != nil {
@@ -440,6 +472,9 @@ Examples:
 				ShiftTimeout: shiftTO,
 				Reclaim:      reclaim,
 				Build:        thisBuild(),
+
+				AccountSeriesDir:       seriesDir,
+				AccountSeriesRetention: seriesRetention,
 			})
 			if err != nil {
 				return lockedStateHint(err, pidFilePath, cmd.Root())
@@ -520,6 +555,8 @@ Examples:
 		"bbolt L2 file for durable state (empty string disables persistence; daemon restart loses state and kills running agents per pre-L2 contract C12)")
 	cmd.Flags().DurationVar(&shiftTimeout, "shift-timeout", 0,
 		"abort and roll back a shift that has not reached readiness within this Go duration (0 uses the built-in 10m default; env "+shiftTimeoutEnv+" is the fallback when this flag is unset)")
+	cmd.Flags().DurationVar(&accountSeriesRetention, "account-series-retention", 0,
+		"keep the day files of quota readings this long (0 uses the default of 90 days; env "+accountSeriesRetentionEnv+" is the fallback when this flag is unset)")
 	// Log rotation / retention — bounds disk usage for --log-file.
 	// Motivated by desk Pi headroom (aae-orc-k0t, Skippy session-025/026).
 	// Zero for any of these disables the corresponding limit.
