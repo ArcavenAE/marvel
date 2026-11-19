@@ -230,6 +230,7 @@ jobs:
             ./internal/bus/... \
             ./internal/workload/... \
             ./internal/backoff/... \
+            ./internal/team/... \
             ./internal/childproof/... \
             > "${RUNNER_TEMP}/restructure-tests.json"
           scripts/no-skips.sh "${RUNNER_TEMP}/restructure-tests.json" \
@@ -238,6 +239,7 @@ jobs:
             github.com/arcavenae/marvel/internal/bus \
             github.com/arcavenae/marvel/internal/workload \
             github.com/arcavenae/marvel/internal/backoff \
+            github.com/arcavenae/marvel/internal/team \
             github.com/arcavenae/marvel/internal/childproof
 
   goreleaser-check:
