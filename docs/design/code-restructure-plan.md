@@ -650,11 +650,11 @@ supervisor. The `s.pid` match at `proctable_test.go:142` is a `sentSignal`
 field, not the supervisor's, so it needed no edit.
 
 Two test files that arrived after the plan's count at `76a7db9` (#885, #915)
-were also re-pointed by #1013, in their setup only: `supervisor_lifecycle_test.go`
-(lines 119 and 172) seeds `Pid`, `BackoffUntil` and `Restarts` through
+were also re-pointed by #1013: `supervisor_lifecycle_test.go`
+(lines 119 and 172), in its setup only, seeds `Pid`, `BackoffUntil` and `Restarts` through
 `workload.SeedStateForTest` in place of writing `s.pid`, `s.backoffTill` and
-`s.restarts`, and `supervisor_crash_path_test.go` (line 391) calls
-`s.process().Stop(false)` in place of setting `s.stopping`. On 2026-10-22
+`s.restarts`, and `supervisor_crash_path_test.go` (line 391), in its setup and
+stimulus, calls `s.process().Stop(false)` in place of setting `s.stopping`. On 2026-10-22
 the operator ruled that the 2026-10-10 grant already covers these re-points
 (recorded on aae-orc-dyr4e). No assertion in those files changed. The count and the
 table below are the plan's, kept as the record of what was ruled.

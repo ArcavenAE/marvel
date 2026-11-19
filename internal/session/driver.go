@@ -13,7 +13,8 @@ import (
 // The manager calls nine methods itself: the eight listed here and KillPane.
 // It also hands the driver to the runtime's tmux instance, which asks for a
 // runtime.PaneController (NewPaneAt, KillPane, SendKeys, CapturePane), so the
-// interface embeds it and carries eleven methods in all; KillPane is in both.
+// interface embeds it and carries twelve methods in all: the eight listed and
+// the controller's four, with KillPane counted once.
 type TmuxDriver interface {
 	ListSessions() ([]string, error)
 	NewSession(name string) error
