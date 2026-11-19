@@ -147,7 +147,7 @@ func fillSample(v reflect.Value, tag string) {
 		v.SetUint(7)
 	case reflect.Float32, reflect.Float64:
 		v.SetFloat(1.5)
-	case reflect.Ptr:
+	case reflect.Pointer:
 		v.Set(reflect.New(v.Type().Elem()))
 		fillSample(v.Elem(), tag)
 	case reflect.Slice:

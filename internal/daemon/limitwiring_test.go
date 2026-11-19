@@ -661,6 +661,61 @@ func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 			t.Errorf("callers of %s are %v, inventoried as %v", name, got[name], w)
 		}
 	}
+
+	// handleInjectAs is named once, in the method table, so the road to it now
+	// runs through the table's Handle field. Count that road the same way: every
+	// use of methodTable by the function it sits in, and every use of a Handle
+	// selector. A second reader of the table, or a second place that calls a
+	// handler out of it, changes a count and fails here. The known readers are
+	// init (which fills it), the dispatcher, deriveMethodSets and FanOutMethods;
+	// the last two read the flags and never call a handler.
+	tableUses := map[string]int{}
+	tableTotal, handleTotal := 0, 0
+	p.eachFunc(func(file, fun string, n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == "methodTable" {
+			tableUses[fun]++
+		}
+		return true
+	})
+	p.each(func(file string, n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Ident:
+			if x.Name == "methodTable" {
+				tableTotal++
+			}
+		case *ast.SelectorExpr:
+			if x.Sel.Name == "Handle" {
+				handleTotal++
+			}
+		}
+		return true
+	})
+	wantTable := map[string]int{"init": 1, "*Daemon.dispatchUntimed": 1, "deriveMethodSets": 1, "FanOutMethods": 1}
+	if !reflect.DeepEqual(tableUses, wantTable) {
+		t.Errorf("methodTable is used in %v, inventoried as %v", tableUses, wantTable)
+	}
+	// The declaration is the one use outside a function.
+	if tableTotal != 5 {
+		t.Errorf("methodTable is named %d times in the package, want 5 (its declaration and the four uses above)", tableTotal)
+	}
+	if handleTotal != 1 {
+		t.Errorf("a Handle selector appears %d times in the package, want 1 (the dispatcher's call)", handleTotal)
+	}
+	handleCalls := 0
+	p.eachFunc(func(file, fun string, n ast.Node) bool {
+		if c, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := c.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Handle" {
+				handleCalls++
+				if fun != "*Daemon.dispatchUntimed" {
+					t.Errorf("%s calls a table handler from %s; only the dispatcher may", file, fun)
+				}
+			}
+		}
+		return true
+	})
+	if handleCalls != 1 {
+		t.Errorf("%d calls of a table handler, want 1", handleCalls)
+	}
 }
 
 // isDeclName reports whether an identifier is the name of a function declaration
