@@ -16,7 +16,7 @@ The thresholds come from a study of team moves between an Ultra account and an E
 
 Guidance for leaving `dry-run`, not a rule: the study set a bar of at least three proposed moves, carried out by hand, with no lost mail and no team held over 3 hours, before acting without a person. `marvel get failovers` could show a count of clean dry-run proposals to help a user judge it.
 
-## 1. What marvel has today, checked on origin/main cf01437f
+## 1. What marvel has today, checked on origin/main cf01437f (rows marked "re-checked 2026-11-19" at bfccaca2)
 
 | fact | how checked | what it means here |
 |---|---|---|
@@ -98,7 +98,7 @@ A user turns automatic moves on and off in the manifest, and can stop them for a
 |---|---|---|---|
 | no `failovers` entry for the team | manifest | Nothing runs for the team. | `apply` |
 | `enabled: false` | the policy, in the manifest | The policy stays on file. It is not evaluated, and `get failovers` shows it `disabled`. | `apply` |
-| `mode: dry-run` | the policy | Both directions are proposals only. Nothing moves, whatever `failback.mode` says (section 2.2). | `apply` |
+| `mode: dry-run` | the policy | Both directions are proposals only. Nothing moves on its own, whatever `failback.mode` says; a person can carry out one proposal with `marvel failover move` or `back` (section 2.2). | `apply` |
 | `mode: enabled` | the policy | Failover acts on its own. Failback does what `failback.mode` says. | `apply` |
 | `failback.mode` | the policy | Failback alone: `auto`, `alert` or `none` (section 6). | `apply` |
 | `marvel failover hold <policy>` and `marvel failover release <policy>` | the daemon's store, kept across `apply` and restart | While held, the policy is evaluated and shown, but it starts no move in either direction. A move already running finishes the step it is on (one role's shift, or one hibernate) and stops there, with the record marked held, not faulted. | a person on the host |
@@ -133,7 +133,7 @@ Alerting only is `mode: dry-run`. A policy in this mode is evaluated as if enabl
 
 **Acting on an alert.** A person who agrees with a proposal runs `marvel failover move <policy>` (or `marvel failover back <policy>` for failback). That carries out the proposed move once, through the same executor, checks and records as an enabled policy. It is refused unless the policy's current decision is that proposal, and refused while a hold is set. A move carried out this way is counted for the guidance on leaving `dry-run` (the "Why" section).
 
-**What never happens under alerting only:** no shift, scale, hibernate or wake; no account override; no change to any seat's env; no handoff asked of any seat; no manifest edit; no move record (only proposal log lines); and no proposal from a stale or missing reading of a metered account.
+**What marvel never does on its own under alerting only** (a person's `marvel failover move` or `back` is the one exception, and it acts once): no shift, scale, hibernate or wake; no account override; no change to any seat's env; no handoff asked of any seat; no manifest edit; no move record (only proposal log lines); and no proposal from a stale or missing reading of a metered account.
 
 ## 3. Two ways to move: `relogin` and `swap-team`
 
@@ -163,7 +163,7 @@ The daemon evaluates every enabled policy on a timer (default each minute) and o
 
 Fault states, checked before and after every move: both teams live (`swap-team`); neither live; a role in scope with a seat whose account does not match the override (`relogin`); a move left part done. A fault never resolves itself: it is shown, an event is emitted, and the policy holds until `marvel failover clear <policy>` after a person has looked.
 
-Never: act on a stale or missing reading of a metered account; act while the policy is `dry-run` or disabled; start a second move while one is in progress; pick a target the user did not list.
+Never: act on a stale or missing reading of a metered account; start a move on its own while the policy is `dry-run` or disabled; start a second move while one is in progress; pick a target the user did not list. A person's `marvel failover move` or `back` under `dry-run` is not marvel acting on its own: it carries out one current proposal, through the same checks, and leaves the policy in `dry-run` (section 2.2). Under a disabled policy it is refused, because a disabled policy makes no proposal.
 
 A hold (section 2.1) is checked before every other row: a held policy shows `hold: held` with who set it, and an account hold makes that account ineligible, so a scope whose only target is held shows `hold: no-target`.
 
@@ -191,6 +191,14 @@ The executor uses the hibernate and wake that marvel already has, not a new repl
 1. Before record, as above, covering both teams.
 2. Hibernate the primary in handoff mode, through the daemon's own call. Workers sign off first and supervisors last (`fleet-hibernate.md` section 4). The hibernated mark is set at the first request, so nothing respawns the primary from then on.
 3. Wait until no seat of the primary runs. A seat that hibernate reports without a handoff (`team.shift-handoff-missing`) stops the move as in 5.1, step 4: the primary stays hibernated with that seat still running, the mirror is not started, and the policy enters the fault state "part done". The executor never runs `marvel hibernate --end`.
+
+   No timeout ends a seat (`fleet-hibernate.md` section 4), so the wait has a bound of its own. For each role in the primary, the bound is the role's `max_defer` (default 30m) plus its `handoff_window` (default 5m), the longest a seat can take before hibernate either ends it or reports it. The executor waits for the largest bound across the roles, plus one evaluation period. A seat that is still running at the end, ended or reported or neither, stops the move as "part done", as above:
+   - the seat keeps running and keeps its context, and the primary stays hibernated, so nothing respawns it;
+   - the mirror is not started;
+   - the record names each such seat, with its role and whether hibernate reported it;
+   - `get failovers` shows `hold: fault` until a person runs `marvel failover clear` after one of three acts: waiting for the seat to hand off, ending it with `marvel hibernate --end`, or waking the primary.
+
+   While the move waits, the scope is `hold: busy` and no other move starts.
 4. Start the mirror: `wake` it if it is hibernated, or scale it to its manifest replicas if it is at 0, with the account's `env_on_move` overlay applied at spawn (section 7).
 5. After record.
 
