@@ -785,9 +785,9 @@ a prefix other than Ctrl-B, and any tmux version other than 3.7b. The keys for
 those rows follow from tmux's own defaults and have not been run.
 
 On a remote cluster the attach command is printed and not run. It is an ssh
-command, and the operator has ruled that host-native ssh is not on by default in
-macOS and is not a requirement, so treat the printed line as a convenience for a
-host where ssh already works, not a supported path.
+command. marvel does not require ssh on the host, and on macOS it is off by
+default, so treat the printed line as a convenience for a host where ssh already
+works, not a supported path.
 
 ### Capture pane content
 
