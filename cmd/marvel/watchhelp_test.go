@@ -73,8 +73,11 @@ func linesWithTokens(text string, want ...string) []string {
 
 func TestHelpOverlayTellsWhatEnterDoes(t *testing.T) {
 	frame := helpFrame(t)
-	if len(linesHolding(frame, "Enter", "attach plan")) == 0 {
-		t.Errorf("no line says that Enter shows the attach plan:\n%s", frame)
+	if len(linesHolding(frame, "Enter", "open the selected session", "remote")) == 0 {
+		t.Errorf("no line says that Enter opens the selected session and that a remote row only prints:\n%s", frame)
+	}
+	if strings.Contains(frame, "show the attach plan") {
+		t.Errorf("the overlay still says Enter shows the attach plan:\n%s", frame)
 	}
 }
 
@@ -87,10 +90,13 @@ func TestHelpOverlayHasNoEmDash(t *testing.T) {
 
 func TestGetSessionsHelpListsWatchKeys(t *testing.T) {
 	long := getCmd().Long
-	for _, want := range []string{"arrow keys", "Enter shows the attach plan"} {
+	for _, want := range []string{"arrow keys", "Enter opens the selected session", "prints the attach command and runs nothing"} {
 		if !strings.Contains(long, want) {
 			t.Errorf("get --help does not say %q", want)
 		}
+	}
+	if strings.Contains(long, "shows the attach plan") {
+		t.Error("get --help still says Enter shows the attach plan")
 	}
 	// j, k and q are keys too and do not sort, so "a letter key sorts" is too broad.
 	if strings.Contains(long, "A letter key sorts") {
@@ -116,6 +122,9 @@ func TestUserGuideWatchModeNamesTheRightKeys(t *testing.T) {
 		if !strings.Contains(section, want) {
 			t.Errorf("Watch mode section does not mention %q:\n%s", want, section)
 		}
+	}
+	if !strings.Contains(section, "Enter opens the selected session") || strings.Contains(section, "shows the attach plan") {
+		t.Errorf("Watch mode section should say Enter opens the selected session, not that it shows the attach plan:\n%s", section)
 	}
 	if !strings.Contains(section, "arrow keys") {
 		t.Errorf("Watch mode section does not mention the arrow keys:\n%s", section)

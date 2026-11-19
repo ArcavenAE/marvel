@@ -111,6 +111,7 @@ type keyReader struct {
 	stop         chan struct{}
 	done         chan struct{}
 	waits        atomic.Int64 // calls to waitReadable
+	dropHeld     atomic.Bool  // Flush: the byte held at the pause is not delivered at Resume
 
 	// The pause request is state under mu, not a message: Pause counts it in
 	// pauseGen and the reader answers it by catching seenGen up. A wake byte
@@ -195,6 +196,13 @@ func (r *keyReader) takePause() bool {
 	return true
 }
 
+// Flush, called while the reader is paused, drops the one byte it holds from
+// before the pause, so it is not delivered at Resume. A byte typed behind the
+// Enter that handed the terminal to a child belongs to the child, and the view
+// must not act on it afterwards. It does not touch bytes still unread on the
+// descriptor.
+func (r *keyReader) Flush() { r.dropHeld.Store(true) }
+
 // Resume lets a paused reader read again. Resume on a reader that is not
 // paused does nothing.
 func (r *keyReader) Resume() {
@@ -243,6 +251,9 @@ func (r *keyReader) run() {
 	defer close(r.done)
 	var held []byte
 	for {
+		if r.dropHeld.Swap(false) {
+			held = nil
+		}
 		if len(held) > 0 {
 			switch r.deliver(held[0]) {
 			case delivered:

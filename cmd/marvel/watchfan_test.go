@@ -53,6 +53,13 @@ func newFanRig(t *testing.T, stale, timeout time.Duration, names ...string) *fan
 // edits the config before the loop starts.
 func newFanRigWith(t *testing.T, width, height int, stale, timeout time.Duration, clusters []fanWatchCluster, opts ...func(*fanWatchConfig)) *fanRig {
 	t.Helper()
+	return newFanRigPrep(t, width, height, stale, timeout, clusters, nil, opts...)
+}
+
+// newFanRigPrep is newFanRigWith with a hook that edits the watch state
+// before the loop starts, so a test can give it a terminal and a child runner.
+func newFanRigPrep(t *testing.T, width, height int, stale, timeout time.Duration, clusters []fanWatchCluster, prep func(*watchSort), opts ...func(*fanWatchConfig)) *fanRig {
+	t.Helper()
 	setWidth(t, width)
 	r := &fanRig{
 		t:       t,
@@ -72,6 +79,9 @@ func newFanRigWith(t *testing.T, width, height int, stale, timeout time.Duration
 	}
 	ws := newWatchState(cols)
 	ws.height = height
+	if prep != nil {
+		prep(ws)
+	}
 	cfg := fanWatchConfig{
 		clusters: clusters,
 		interval: 2 * time.Second,

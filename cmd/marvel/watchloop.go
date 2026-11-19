@@ -57,7 +57,12 @@ func handleWatchKey(ws *watchSort, key byte) (quit, redraw bool) {
 		if ws.showHelp {
 			return false, false
 		}
-		return false, ws.cursorKey(key)
+		redraw := ws.cursorKey(key)
+		if ws.pending != nil {
+			ws.openPending()
+			redraw = true
+		}
+		return false, redraw
 	default:
 		return false, false
 	}
@@ -76,11 +81,15 @@ func watchLoop(ws *watchSort, cfg watchLoopConfig, keys <-chan byte, ticks <-cha
 	done := make(chan struct{})
 	defer close(done)
 	keys = parseKeys(keys, escWait, done)
+	ws.drainKeys = drainKeysFrom(keys)
 	var (
 		results  = make(chan watchData, 1)
 		inflight bool
-		deadline *time.Timer
-		late     <-chan time.Time
+		// staleInflight marks a fetch that began before a child ran in place:
+		// its answer is not a fresh one.
+		staleInflight bool
+		deadline      *time.Timer
+		late          <-chan time.Time
 	)
 	start := func() {
 		if inflight {
@@ -110,6 +119,16 @@ func watchLoop(ws *watchSort, cfg watchLoopConfig, keys <-chan byte, ticks <-cha
 				cfg.out("\033[2J\033[H")
 				return
 			}
+			if ws.wantRefresh {
+				// Back from a child. A fetch already running began before the
+				// return, so its answer is dropped and a new one starts.
+				ws.wantRefresh = false
+				if inflight {
+					staleInflight = true
+				} else {
+					start()
+				}
+			}
 			if redraw {
 				draw() // from what is on hand; a key never waits on the daemon
 			}
@@ -120,6 +139,11 @@ func watchLoop(ws *watchSort, cfg watchLoopConfig, keys <-chan byte, ticks <-cha
 		case d := <-results:
 			inflight = false
 			stopDeadline()
+			if staleInflight {
+				staleInflight = false
+				start()
+				continue
+			}
 			ws.apply(d)
 			if !ws.showHelp {
 				draw()

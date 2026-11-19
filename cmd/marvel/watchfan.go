@@ -87,7 +87,10 @@ type fanState struct {
 	inflight bool
 	seq      uint64 // the last fetch started
 	applied  uint64 // the highest fetch applied, by result or by timeout
-	timers   []*time.Timer
+	// staleUpTo is the last fetch that began before a child ran in place. Its
+	// answer was read before the return, so it is dropped, not applied.
+	staleUpTo uint64
+	timers    []*time.Timer
 }
 
 type fanResult struct {
@@ -109,6 +112,7 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 	done := make(chan struct{})
 	defer close(done)
 	keys = parseKeys(keys, escWait, done)
+	ws.drainKeys = drainKeysFrom(keys)
 	states := make([]*fanState, len(cfg.clusters))
 	byName := map[string]*fanState{}
 	for i, c := range cfg.clusters {
@@ -215,6 +219,19 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 				trace(fanEvent{Kind: "key", Applied: true})
 				return
 			}
+			if ws.wantRefresh {
+				// Back from a child: poll every cluster again, so the rows
+				// that replace "refreshing..." were read after the return.
+				ws.wantRefresh = false
+				for _, s := range states {
+					// A fetch already running began before the return, so its
+					// answer is dropped and a new one starts when it ends.
+					if s.inflight {
+						s.staleUpTo = s.seq
+					}
+					start(s)
+				}
+			}
 			if redraw {
 				draw()
 			}
@@ -228,6 +245,21 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 			trace(fanEvent{Kind: "tick", Applied: true})
 		case r := <-results:
 			s := byName[r.cluster]
+			if r.seq <= s.staleUpTo {
+				// Read before the child ran. It frees the cluster's slot if it
+				// still holds it, and the poll after the return starts. It does
+				// not replace "refreshing..." and does not clear it.
+				if r.seq > s.applied {
+					s.applied = r.seq
+				}
+				if r.seq == s.seq && s.inflight {
+					s.inflight, s.late = false, false
+					stopTimers(s)
+					start(s)
+				}
+				trace(fanEvent{Kind: "result", Cluster: r.cluster, Seq: r.seq, Applied: false})
+				continue
+			}
 			applied := r.seq > s.applied
 			if applied {
 				s.applied = r.seq
@@ -236,6 +268,7 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 					stopTimers(s)
 				}
 				s.apply(r.f, cfg.now())
+				ws.refreshing = false
 				if !ws.showHelp {
 					draw()
 				}
@@ -256,6 +289,11 @@ func fanWatchLoop(ws *watchSort, cfg fanWatchConfig, keys <-chan byte, ticks <-c
 						Cluster: s.name, Outcome: outcomeNoAnswer, Phase: "reply",
 						Cause: fmt.Sprintf("no answer within %s", cfg.timeout),
 					})
+					if t.seq <= s.staleUpTo {
+						// It began before the child, so the poll after the
+						// return starts now and does not wait for a tick.
+						start(s)
+					}
 				}
 				if !ws.showHelp {
 					draw()
@@ -299,7 +337,7 @@ func (s *fanState) fail(rec clusterRecord) {
 // status line for each cluster, then one table of the rows of every cluster
 // that gave any.
 func renderFanFrame(ws *watchSort, cfg fanWatchConfig, states []*fanState, now time.Time) string {
-	if ws.showHelp {
+	if ws.showHelp || ws.refreshing {
 		return renderWatchFrame(ws, cfg.interval, now)
 	}
 	var buf bytes.Buffer
@@ -502,10 +540,11 @@ func runFanWatch(names []string, columns string, noTrunc bool, interval time.Dur
 	if err != nil {
 		return err
 	}
-	return withWatchTerminal(interval, func(keys <-chan byte, ticks <-chan time.Time, out func(string)) {
+	return withWatchTerminal(interval, func(keys <-chan byte, ticks <-chan time.Time, out func(string), hand terminalHandoff) {
 		ws := newWatchState(cols)
 		ws.explicit, ws.noTrunc = explicit, noTrunc
 		ws.heightFn = terminalHeight
+		ws.openInPlace(hand)
 		cfg := newFanWatchConfig(targets, params, interval)
 		cfg.out = out
 		fanWatchLoop(ws, cfg, keys, ticks)
