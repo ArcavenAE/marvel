@@ -272,6 +272,12 @@ type Daemon struct {
 	afterRootLock func() (fallback string, err error)
 	fallback      string
 
+	// accountSeriesDir and accountSeriesRetention are Options.AccountSeriesDir
+	// and Options.AccountSeriesRetention. Start attaches the series to the
+	// directory once it holds the root lock.
+	accountSeriesDir       string
+	accountSeriesRetention time.Duration
+
 	// reexec replaces the process image. Defaults to syscall.Exec; tests
 	// override it to assert the pre-exec contract without actually
 	// handing the process over.
@@ -544,13 +550,9 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		leafLossCause: leafLossCause,
 		rootLockPath:  opts.RootLock,
 		afterRootLock: opts.AfterRootLock,
-	}
-	if opts.AccountSeriesDir != "" {
-		// Readings that cannot be kept are not worth refusing to start over: the
-		// series still answers from memory.
-		if err := d.accountSeries.Attach(opts.AccountSeriesDir, opts.AccountSeriesRetention, time.Now()); err != nil {
-			log.Printf("warning: account series not persisted: %v", err)
-		}
+
+		accountSeriesDir:       opts.AccountSeriesDir,
+		accountSeriesRetention: opts.AccountSeriesRetention,
 	}
 	teamCtrl.Suspended = d.clusterSuspended
 	driver.SetSuspendGate(d.clusterSuspended)
@@ -679,6 +681,16 @@ func (d *Daemon) Start(socketPath string) (err error) {
 				log.Printf("start: the after-lock hook failed: %v", herr)
 			}
 			d.fallback = fb
+		}
+	}
+
+	// The series directory is read and pruned only by the daemon that holds the
+	// root: one that lost the lock above never reaches it. Readings that cannot
+	// be kept are not worth refusing to start over; the series still answers
+	// from memory.
+	if d.accountSeriesDir != "" {
+		if err := d.accountSeries.Attach(d.accountSeriesDir, d.accountSeriesRetention, time.Now()); err != nil {
+			log.Printf("warning: account series not persisted: %v", err)
 		}
 	}
 

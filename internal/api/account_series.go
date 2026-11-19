@@ -67,7 +67,7 @@ type AccountSeries struct {
 	cluster   string
 	retention time.Duration
 	m         map[seriesSlot][]AccountSample
-	store     seriesStore
+	store     *seriesStore
 }
 
 // NewAccountSeries returns an empty series. cluster stamps every sample; a
@@ -91,8 +91,9 @@ func (s *AccountSeries) SetCluster(name string) {
 // usable percentage is not recorded. A reading older than the retention before
 // the newest one held is dropped.
 func (s *AccountSeries) Append(key AccountKey, windows []AccountWindow, session string, at time.Time) {
+	var kept []seriesLine
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	st := s.store
 	for _, w := range windows {
 		if w.UsedPercent == nil || !usablePercent(*w.UsedPercent) {
 			continue
@@ -101,15 +102,22 @@ func (s *AccountSeries) Append(key AccountKey, windows []AccountWindow, session 
 			Cluster: s.cluster, Account: key.String(), Window: w.Name,
 			UsedPercent: *w.UsedPercent, ResetsAt: w.ResetsAt, At: at.UTC(), Session: session,
 		}
-		if s.insert(key, smp) {
-			s.persist(key, smp)
+		if s.insert(key, smp) && st != nil {
+			kept = append(kept, seriesLine{Key: key, Sample: smp})
 		}
+	}
+	s.mu.Unlock()
+	// The files are written after the lock is let go: Samples and Delta do not
+	// wait on the disk.
+	if len(kept) > 0 {
+		st.write(kept)
 	}
 }
 
 // insert places one sample in its window's series, in time order, and reports
 // whether it was kept: a repeat of the previous reading within seriesRepeatGap
-// is not. The caller holds s.mu.
+// is not, and neither is a sample the retention or the size bound drops in the
+// same call. The caller holds s.mu.
 func (s *AccountSeries) insert(key AccountKey, smp AccountSample) bool {
 	sk := seriesSlot{key, smp.Window}
 	cur := s.m[sk]
@@ -131,7 +139,7 @@ func (s *AccountSeries) insert(key AccountKey, smp AccountSample) bool {
 	// Reslice, do not copy: in time order the insert is a plain append, and the
 	// dropped prefix is released when the slice next grows.
 	s.m[sk] = cur[drop:]
-	return true
+	return i >= drop
 }
 
 func usablePercent(p float64) bool { return p >= 0 && p <= 1e6 }

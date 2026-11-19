@@ -203,7 +203,9 @@ removed at start and when a new day's first reading arrives.
 
 The retention defaults to 90 days. Set it with `--account-series-retention` (a Go
 duration) or the `MARVEL_ACCOUNT_SERIES_RETENTION` environment variable; the flag
-wins when set, and unset keeps 90 days:
+wins when set, and unset keeps 90 days. A retention under eight days is raised to
+eight, the length of the memory window, so a short setting cannot shorten what a
+restart reads back. A negative value is refused at start:
 
 ```bash
 marvel daemon --account-series-retention 720h   # keep 30 days of day files

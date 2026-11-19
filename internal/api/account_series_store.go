@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,23 +33,29 @@ type seriesLine struct {
 	Sample AccountSample `json:"sample"`
 }
 
-// seriesStore is the disk side of an AccountSeries. Its zero value is no store:
-// a series that was never attached writes nothing.
+// seriesStore is the disk side of an AccountSeries. A series that was never
+// attached has none and writes nothing. It has its own lock, so a write that is
+// slow does not hold up a reader of the series.
 type seriesStore struct {
 	dir       string
 	retention time.Duration
-	pruneDay  string // the UTC day the last prune ran for
-	failed    bool   // the last write failed; log the first failure, not each
+
+	mu       sync.Mutex
+	pruneDay string // the UTC day the last prune ran for
+	failed   bool   // the last write failed; log the first failure, not each
 
 	// beforeWrite, when set by a test, runs just before a line is written.
 	beforeWrite func()
 }
 
 // Attach makes the series durable. It creates dir, removes day files whose day
-// ended more than retention before now (a retention of zero or less means
-// DefaultPersistRetention), reads the day files that can hold a reading inside
-// the memory window back into the series, and from then on appends every
-// reading the series keeps to the file of its UTC day, mode 0600.
+// ended more than retention before now, reads the day files that can hold a
+// reading inside the memory window back into the series, and from then on
+// appends every reading the series keeps to the file of its UTC day, mode 0600.
+//
+// A retention of zero or less means DefaultPersistRetention, and a retention
+// shorter than the memory window is raised to it, so a short setting cannot
+// shorten the window a restart reads back.
 //
 // A line that does not parse is skipped and logged, so a file cut short by a
 // crash costs one reading and not the start. An error is returned only when dir
@@ -61,13 +69,16 @@ func (s *AccountSeries) Attach(dir string, retention time.Duration, now time.Tim
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if retention < s.retention {
+		retention = s.retention
+	}
 	if err := pruneSeriesDays(dir, retention, now); err != nil {
 		return err
 	}
 	if err := s.loadDays(dir, now); err != nil {
 		return err
 	}
-	s.store = seriesStore{dir: dir, retention: retention, pruneDay: now.UTC().Format(seriesDayLayout)}
+	s.store = &seriesStore{dir: dir, retention: retention, pruneDay: now.UTC().Format(seriesDayLayout)}
 	return nil
 }
 
@@ -123,23 +134,7 @@ func (s *AccountSeries) loadDays(dir string, now time.Time) error {
 			log.Printf("account series: open %s: %v", e.Name(), err)
 			continue
 		}
-		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		skipped := 0
-		for sc.Scan() {
-			var ln seriesLine
-			if err := json.Unmarshal(sc.Bytes(), &ln); err != nil || ln.Sample.Window == "" || ln.Sample.At.IsZero() {
-				skipped++
-				continue
-			}
-			if ln.Sample.At.Before(cutoff) {
-				continue
-			}
-			s.insert(ln.Key, ln.Sample)
-		}
-		if err := sc.Err(); err != nil {
-			skipped++
-		}
+		skipped := s.loadLines(f, cutoff)
 		_ = f.Close()
 		if skipped > 0 {
 			log.Printf("account series: %s: skipped %d unreadable line(s)", e.Name(), skipped)
@@ -148,42 +143,98 @@ func (s *AccountSeries) loadDays(dir string, now time.Time) error {
 	return nil
 }
 
-// persist appends one kept reading to its day file and, the first time a new
-// UTC day is seen, removes day files past the retention. A failure is logged
-// and the reading stays in memory: the series answers from memory either way.
-// The caller holds s.mu.
-func (s *AccountSeries) persist(key AccountKey, smp AccountSample) {
-	if s.store.dir == "" {
-		return
-	}
-	line, err := json.Marshal(seriesLine{Key: key, Sample: smp})
-	if err == nil {
-		err = s.store.append(smp.At, append(line, '\n'))
-	}
-	if err != nil {
-		if !s.store.failed {
-			log.Printf("account series: not persisting readings: %v", err)
+// seriesMaxLine is the longest line loadLines will hold. A real line is a few
+// hundred bytes; a longer one is damage, and is skipped without being held.
+const seriesMaxLine = 1 << 20
+
+// loadLines reads one day file line by line and keeps the readings at or after
+// cutoff. A line of any length is one line: a corrupt or overlong one is counted
+// and skipped, and the lines after it are still read. The caller holds s.mu.
+func (s *AccountSeries) loadLines(r io.Reader, cutoff time.Time) (skipped int) {
+	br := bufio.NewReaderSize(r, 64*1024)
+	var line []byte
+	tooLong := false
+	for {
+		part, isPrefix, err := br.ReadLine()
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				skipped++
+			}
+			return skipped
 		}
-		s.store.failed = true
-		return
+		if !tooLong {
+			if len(line)+len(part) > seriesMaxLine {
+				tooLong = true
+			} else {
+				line = append(line, part...)
+			}
+		}
+		if isPrefix {
+			continue
+		}
+		if tooLong {
+			skipped++
+		} else if len(line) > 0 {
+			var ln seriesLine
+			switch {
+			case json.Unmarshal(line, &ln) != nil || ln.Sample.Window == "" || ln.Sample.At.IsZero():
+				skipped++
+			case ln.Sample.At.Before(cutoff):
+			default:
+				s.insert(ln.Key, ln.Sample)
+			}
+		}
+		line, tooLong = line[:0], false
 	}
-	s.store.failed = false
-	if day := smp.At.UTC().Format(seriesDayLayout); day != s.store.pruneDay {
-		s.store.pruneDay = day
-		if err := pruneSeriesDays(s.store.dir, s.store.retention, smp.At); err != nil {
-			log.Printf("account series: %v", err)
+}
+
+// write appends kept readings to their day files and, the first time a new UTC
+// day is seen, removes day files past the retention. A failure is logged and
+// the readings stay in memory: the series answers from memory either way. It is
+// called without the series lock.
+func (st *seriesStore) write(lines []seriesLine) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, ln := range lines {
+		b, err := json.Marshal(ln)
+		if err == nil {
+			err = st.append(ln.Sample.At, append(b, '\n'))
+		}
+		if err != nil {
+			if !st.failed {
+				log.Printf("account series: not persisting readings: %v", err)
+			}
+			st.failed = true
+			continue
+		}
+		st.failed = false
+		if day := ln.Sample.At.UTC().Format(seriesDayLayout); day != st.pruneDay {
+			st.pruneDay = day
+			if err := pruneSeriesDays(st.dir, st.retention, ln.Sample.At); err != nil {
+				log.Printf("account series: %v", err)
+			}
 		}
 	}
 }
 
+// append writes one line to the file of the UTC day of at. When the file ends
+// without a newline (a crash or a full disk cut the last write short), the line
+// starts after one, so the torn line stays one bad line and the new reading is
+// its own.
 func (st *seriesStore) append(at time.Time, b []byte) error {
 	if st.beforeWrite != nil {
 		st.beforeWrite()
 	}
 	name := filepath.Join(st.dir, at.UTC().Format(seriesDayLayout)+seriesDaySuffix)
-	f, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(name, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		return err
+	}
+	if fi, serr := f.Stat(); serr == nil && fi.Size() > 0 {
+		last := make([]byte, 1)
+		if _, rerr := f.ReadAt(last, fi.Size()-1); rerr == nil && last[0] != '\n' {
+			b = append([]byte{'\n'}, b...)
+		}
 	}
 	_, werr := f.Write(b)
 	if cerr := f.Close(); werr == nil {

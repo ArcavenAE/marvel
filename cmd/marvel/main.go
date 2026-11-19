@@ -349,6 +349,9 @@ const accountSeriesRetentionEnv = "MARVEL_ACCOUNT_SERIES_RETENTION"
 // parsed as a Go duration, else zero, which the daemon reads as 90 days.
 func resolveAccountSeriesRetention(flagVal time.Duration, flagChanged bool, env string) (time.Duration, error) {
 	if flagChanged {
+		if flagVal < 0 {
+			return 0, fmt.Errorf("--account-series-retention must not be negative, got %s", flagVal)
+		}
 		return flagVal, nil
 	}
 	if env == "" {
@@ -357,6 +360,9 @@ func resolveAccountSeriesRetention(flagVal time.Duration, flagChanged bool, env 
 	d, err := time.ParseDuration(env)
 	if err != nil {
 		return 0, fmt.Errorf("invalid %s %q: %w", accountSeriesRetentionEnv, env, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%s must not be negative, got %q", accountSeriesRetentionEnv, env)
 	}
 	return d, nil
 }
@@ -453,10 +459,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			seriesDir := ""
-			if layout.Home != "" {
-				seriesDir = filepath.Join(layout.StateDir(), "account-series")
-			}
+			seriesDir := accountSeriesDir(layout)
 			rootLock := ""
 			if layout.Home != "" {
 				if err := layout.EnsureRunDir(); err != nil {
