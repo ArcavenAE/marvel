@@ -81,13 +81,6 @@ func (d *Daemon) handleCredentialGet(params json.RawMessage) daemonrpc.Response 
 	return respond(cred)
 }
 
-// credentialRevealResult carries a revealed secret value back to the local
-// caller. Value marshals as base64 (encoding/json's []byte behavior), so it is
-// binary-safe; the CLI decodes it and writes the raw bytes to stdout.
-type credentialRevealResult struct {
-	Value []byte `json:"value"`
-}
-
 // handleCredentialReveal returns a credential's secret value. It is the one
 // path that returns a value, and the daemon reaches it only for a local-socket
 // caller (dispatchAs gates credential.reveal to the local socket; brief 9 S3).
@@ -108,7 +101,7 @@ func (d *Daemon) handleCredentialReveal(params json.RawMessage, c caller) daemon
 		return daemonrpc.Response{Error: err.Error()}
 	}
 	d.emitCredentialEvent(events.KindCredentialRevealed, p.Name, "", c)
-	return respond(credentialRevealResult{Value: value})
+	return respond(daemonrpc.CredentialRevealResult{Value: value})
 }
 
 // handleCredentialList returns metadata for every credential.

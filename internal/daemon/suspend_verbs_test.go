@@ -124,7 +124,7 @@ func TestResumeOnAHeldStartResumesThenAdopts(t *testing.T) {
 	if r.atAdopt.applyError != ErrDaemonStarting.Error() {
 		t.Errorf("apply during adoption: %q, want %q", r.atAdopt.applyError, ErrDaemonStarting)
 	}
-	var out resumeResult
+	var out daemonrpc.ResumeResult
 	if err := json.Unmarshal(resp.Result, &out); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestResumeReportsGoneAndStillStopped(t *testing.T) {
 	if resp.Error != "" {
 		t.Fatalf("resume: %s", resp.Error)
 	}
-	var out resumeResult
+	var out daemonrpc.ResumeResult
 	if err := json.Unmarshal(resp.Result, &out); err != nil {
 		t.Fatal(err)
 	}

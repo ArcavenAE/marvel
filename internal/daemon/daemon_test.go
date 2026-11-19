@@ -490,7 +490,7 @@ func TestHandleLogs(t *testing.T) {
 	if resp.Error != "" {
 		t.Fatalf("logs error: %s", resp.Error)
 	}
-	var result logsResult
+	var result daemonrpc.LogsResult
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		t.Fatalf("unmarshal logs: %v", err)
 	}
@@ -523,7 +523,7 @@ func TestHandleLogsDefaultN(t *testing.T) {
 	if resp.Error != "" {
 		t.Fatalf("logs error: %s", resp.Error)
 	}
-	var result logsResult
+	var result daemonrpc.LogsResult
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		t.Fatalf("unmarshal logs: %v", err)
 	}

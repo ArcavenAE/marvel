@@ -1375,10 +1375,6 @@ func (d *Daemon) dispatchUntimed(req daemonrpc.Request, c caller) daemonrpc.Resp
 	return spec.Handle(d, req.Params, c)
 }
 
-type logsResult struct {
-	Lines []string `json:"lines"`
-}
-
 func (d *Daemon) handleLogs(params json.RawMessage) daemonrpc.Response {
 	var p daemonrpc.LogsParams
 	if len(params) > 0 {
@@ -1390,7 +1386,7 @@ func (d *Daemon) handleLogs(params json.RawMessage) daemonrpc.Response {
 		p.N = d.logs.Cap()
 	}
 	lines := d.logs.Tail(p.N)
-	return respond(logsResult{Lines: lines})
+	return respond(daemonrpc.LogsResult{Lines: lines})
 }
 
 func (d *Daemon) handleEvents(params json.RawMessage) daemonrpc.Response {
@@ -1814,7 +1810,7 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 
 // planResult carries the convergence preview returned by the plan RPC: the
 // RolePlans the next reconcile tick would enact, computed without enacting
-// anything. Named-struct result, like logsResult and eventsResult, so the
+// anything. Named-struct result, like daemonrpc.LogsResult and eventsResult, so the
 // wire shape is self-describing and can gain aggregate fields later without
 // breaking the CLI decode.
 type planResult struct {

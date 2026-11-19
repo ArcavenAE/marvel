@@ -280,3 +280,35 @@ func (p EventsParams) Filter() events.Filter {
 		SinceSeq:    p.SinceSeq,
 	}
 }
+
+// The results the daemon returns that the CLI decodes, where they carry only
+// plain fields.
+
+type LogsResult struct {
+	Lines []string `json:"lines"`
+}
+
+// CredentialRevealResult carries a revealed secret value back to the local
+// caller. Value marshals as base64 (encoding/json's []byte behavior), so it is
+// binary-safe; the CLI decodes it and writes the raw bytes to stdout.
+type CredentialRevealResult struct {
+	Value []byte `json:"value"`
+}
+
+// SuspendResult is the answer to a suspend that held.
+type SuspendResult struct {
+	Suspended bool  `json:"suspended"`
+	Seats     int   `json:"seats"`
+	Gone      []int `json:"gone,omitempty"`
+}
+
+// ResumeResult is the answer to a resume that sent every SIGCONT. Gone are
+// recorded pids whose process had exited or been replaced; StillStopped are
+// pids that read stopped after their SIGCONT. Either makes the CLI exit
+// partial, and neither keeps the record (design section 6: a seat that fails
+// after resume is reported, never restarted).
+type ResumeResult struct {
+	Resumed      bool  `json:"resumed"`
+	Gone         []int `json:"gone,omitempty"`
+	StillStopped []int `json:"still_stopped,omitempty"`
+}
