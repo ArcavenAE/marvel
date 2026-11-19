@@ -2,6 +2,8 @@
 
 Design only. Arcaven architect seat, 2026-11-18. Status: draft for the operator. Nothing here is built, and no ticket is filed.
 
+Amended 2026-11-19: section 2.1 says where each switch sits and who may flip it, section 2.2 says what alerting only means, section 4.1 says how dry-run proposals surface, section 5.2 uses hibernate and wake in place of a new replica hold, and section 1 has three new rows and one corrected line reference. Sections 10 and 12 follow.
+
 ## Why
 
 When an account nears its seven-day limit today, a person reads a statusline and moves the team by hand. The operator wants marvel to do that move from a policy the user writes, with failback that is automatic, an alert, or nothing. This design gives that policy a shape in marvel's manifest, says when it may act and how it acts without losing work, and names the two pieces marvel must build first, because without them the policy would act on numbers it cannot trust.
@@ -23,7 +25,10 @@ Guidance for leaving `dry-run`, not a rule: the study set a bar of at least thre
 | A time series of readings is kept, in memory, for 8 days, behind the `account.series` and `account.delta` RPCs (#1380) | `internal/api/account_series.go`; `internal/daemon/daemon.go` case list | Half of MR1 is built. Not on disk, gone on a daemon restart, and no CLI verb reads it. |
 | The account key is (harness, backend, credential source, config home) | `AccountKeyOf` | A policy account can be resolved to the same key the readings use. |
 | Which login a claude role runs on is one env value, `CLAUDE_CONFIG_DIR` | `ClaudeConfigDirEnv`; a diff of a live team's manifest against its stand-by mirror's | The two manifests differ in three things: the team name, that env key on every role, and replicas 0 on two roles. The account is one key, not a second team. |
-| `marvel scale` writes the stored team, so a reconcile keeps it; a later `marvel apply` of the manifest resets it | `handleScale`, `internal/daemon/daemon.go:2140-2225` | A team scaled down by failover comes back up on the next apply unless something holds it. |
+| `marvel scale` writes the stored team, so a reconcile keeps it; a later `marvel apply` of the manifest resets it | `handleScale`, `internal/daemon/daemon.go` (line 2140 at cf01437f; line 1936 at bfccaca2, re-checked 2026-11-19) | A team scaled down by failover comes back up on the next apply unless something holds it. |
+| Scaling a role down retires its seats: an interactive seat is asked for its handoff and its pane is killed when the handoff lands or when its role's handoff window ends; a headless seat is not asked. Re-checked 2026-11-19 at bfccaca2 | `internal/team/retire.go`; `docs/design/work-prune.md` section 6 | A scale to 0 is not an immediate stop, and a seat that misses its window loses its context. A move must not use it to stop a team. |
+| A hibernated team spawns nothing until `wake`, whatever reconcile, converge, scale or apply would do. In handoff mode every seat writes its handoff first, and a seat with no handoff is reported and left running, never ended. Re-checked 2026-11-19 at bfccaca2 | `docs/design/fleet-hibernate.md` sections 4 and 6, HB-B; `MethodTeamHibernate` | The hold section 5.2 needs already exists, and it is safer than a scale to 0. |
+| `team.hibernate` and `team.wake` are local only: the daemon's own socket, never the `mrvl://` tunnel, until the remote scope is ruled. Re-checked 2026-11-19 at bfccaca2 | `internal/daemon/methods.go`, `LocalOnly` on both | A person on another host cannot hibernate a team by hand. A policy's executor runs inside the daemon, so the limit does not bind it. |
 | A rolling shift asks each role for its handoff and waits for the marker; a missing marker stops the shift and emits `team.shift-handoff-missing` | `marvel shift --help`; event kinds `team.shift-*` | The safe cut point already exists. |
 | The declared pause of `usage-limit-pause.md` section 4 is not built | `marvel get pauses`: `unknown resource type: pauses` | Failover cannot lean on a pause record. |
 | The manifest key `policies` is taken: it projects harness settings | `ManifestPolicy`, `internal/api/manifest.go:64` | The new section needs its own name. |
@@ -85,6 +90,51 @@ Validation (structural, so it may gate `apply`): every listed account exists and
 
 The defaults are the study's rule: 90%, reset more than 12h away, back at the recorded reset. The replay found that rule held a team 3 hours or less in every run with the fewest moves, and that a "reset more than two days away" guard left teams held up to 66 hours.
 
+### 2.1 Turning failover and failback on and off
+
+A user turns automatic moves on and off in the manifest, and can stop them for a while on the host without editing it. The rule that ties them together: **a switch on the host can only make a policy less active, never more.** Turning a policy on, or moving it from `dry-run` to `enabled`, is always a manifest change through `apply`, so the written policy stays the ratification.
+
+| switch | where it lives | what it does | how it changes |
+|---|---|---|---|
+| no `failovers` entry for the team | manifest | Nothing runs for the team. | `apply` |
+| `enabled: false` | the policy, in the manifest | The policy stays on file. It is not evaluated, and `get failovers` shows it `disabled`. | `apply` |
+| `mode: dry-run` | the policy | Both directions are proposals only. Nothing moves, whatever `failback.mode` says (section 2.2). | `apply` |
+| `mode: enabled` | the policy | Failover acts on its own. Failback does what `failback.mode` says. | `apply` |
+| `failback.mode` | the policy | Failback alone: `auto`, `alert` or `none` (section 6). | `apply` |
+| `marvel failover hold <policy>` and `marvel failover release <policy>` | the daemon's store, kept across `apply` and restart | While held, the policy is evaluated and shown, but it starts no move in either direction. A move already running finishes the step it is on (one role's shift, or one hibernate) and stops there, with the record marked held, not faulted. | a person on the host |
+| `marvel failover hold --account <name>` and `release --account <name>` | the daemon's store, kept across `apply` and restart | No policy moves a scope onto that account. Moves off it, failback included, go ahead. | a person on the host |
+
+**Per team.** One policy per scope (section 2, validation), so a team's switch is its policy's switches.
+
+**Per account pair.** A policy's ordered `accounts` list is its pair, so `enabled`, `mode` and `failback.mode` already apply to one team on one pair. The account hold is the cluster-wide switch: it takes one login out of every policy as a target, for example while that account has a fault or its owner wants it left alone.
+
+**Failover and failback apart.** `mode` governs whether anything moves; `failback.mode` only narrows what failback does. The useful combinations:
+
+| `mode` | `failback.mode` | result |
+|---|---|---|
+| `dry-run` | any | Alerting only, both directions (section 2.2). |
+| `enabled` | `auto` | Fully automatic. |
+| `enabled` | `alert` | marvel moves away on its own; a person brings the team back with `marvel failover back`. |
+| `enabled` | `none` | marvel moves away; it never proposes the way back. |
+
+A hold is shown in `get failovers` with who set it and when, and emits `failover.held` or `failover.released`. `apply` never clears a hold; only `release` does.
+
+**Reach.** `apply` is served over `mrvl://` as today, so a user on another host turns a policy off by applying `enabled: false`. `hold` and `release` are local only, like `team.hibernate`, and follow whatever the operator rules for hibernate's remote scope (`fleet-hibernate.md` section 10).
+
+### 2.2 Alerting only
+
+Alerting only is `mode: dry-run`. A policy in this mode is evaluated as if enabled, and every decision it would act on is reported instead.
+
+**Through what.** marvel's own surfaces, and nothing else: the `failover.proposed` and `failback.proposed` events in the daemon's ring (`marvel events`, `marvel events --follow`), the policy's status in `marvel get failovers`, and the proposal log of section 4.1. marvel sends nothing out of its process: no mail, no webhook, no bus message (section 9).
+
+**Who is told.** Whoever follows those surfaces. In a fleet with a coordinator such as director, the coordinator follows the events and routes a proposal to the supervisor of the team in scope. Without one, a person reads `marvel get failovers`, or a script follows `marvel events`. marvel does not choose the person.
+
+**How often.** One event when a decision enters `propose`, not one per evaluation. While the decision stays at `propose`, the event is sent again once per `cooldown` as a reminder. When it leaves `propose` without a move, marvel emits `failover.proposal-ended` with the new decision as its reason.
+
+**Acting on an alert.** A person who agrees with a proposal runs `marvel failover move <policy>` (or `marvel failover back <policy>` for failback). That carries out the proposed move once, through the same executor, checks and records as an enabled policy. It is refused unless the policy's current decision is that proposal, and refused while a hold is set. A move carried out this way is counted for the guidance on leaving `dry-run` (the "Why" section).
+
+**What never happens under alerting only:** no shift, scale, hibernate or wake; no account override; no change to any seat's env; no handoff asked of any seat; no manifest edit; no move record (only proposal log lines); and no proposal from a stale or missing reading of a metered account.
+
 ## 3. Two ways to move: `relogin` and `swap-team`
 
 **`relogin` (recommended).** The team stays the same team. marvel records an account override for the scope, then shifts each role with its handoff. The successor seat spawns with the next account's `env` over its own. Seat names keep their team and role; only the generation moves. Mail named for the seat still reaches it; the successor resumes from its predecessor as every shift does; posting identity comes from the role's launch, so it does not change.
@@ -115,6 +165,15 @@ Fault states, checked before and after every move: both teams live (`swap-team`)
 
 Never: act on a stale or missing reading of a metered account; act while the policy is `dry-run` or disabled; start a second move while one is in progress; pick a target the user did not list.
 
+A hold (section 2.1) is checked before every other row: a held policy shows `hold: held` with who set it, and an account hold makes that account ineligible, so a scope whose only target is held shows `hold: no-target`.
+
+### 4.1 How dry-run proposals surface
+
+- **`marvel get failovers`**: one line per policy, with `POLICY`, `SCOPE`, `MODE` (`disabled`, `dry-run` or `enabled`), `HOLD`, `ON` (the account the scope runs on now), `DECISION`, `READING` (percent and age), `PROPOSED` (since when, or `-`) and `MOVES` (moves carried out by hand under `dry-run` that completed with no fault, the count the guidance in "Why" asks for).
+- **`marvel describe failover <policy>`**: the last 20 decisions, each with its reason, the reading it used and the time.
+- **The proposal log**: `failover/<policy>/proposals.jsonl` under the marvel home, one line each time a decision enters or leaves `propose`, appended and never edited, and read back at start. It keeps the count and the history across a daemon restart, which the in-memory status does not.
+- **Events**: section 2.2 gives when they fire.
+
 ## 5. Carrying out a move safely
 
 ### 5.1 `relogin`
@@ -127,16 +186,21 @@ Never: act on a stale or missing reading of a metered account; act while the pol
 
 ### 5.2 `swap-team`
 
+The executor uses the hibernate and wake that marvel already has, not a new replica hold and not a scale to 0. A hibernated team cannot be respawned by `apply`, `scale`, `converge` or reconcile, so the hazard in section 1 is closed by a built mechanism. And hibernate never ends a seat that has not written its handoff, where a scale to 0 retires a seat when its window ends, with or without one.
+
 1. Before record, as above, covering both teams.
-2. Hold: the override record marks the primary team held at 0 and the mirror at its manifest replicas. While it holds, `apply` of either team's manifest keeps the held replicas and says so, rather than restoring them; `marvel failover clear` is the way out. This closes the hazard in section 1 (apply restores a scaled-down team).
-3. Wind down the primary: each role with a handoff is asked for it (the shift handoff request, with the successor count set to 0). Wait for every marker; a miss stops the move as in 5.1, step 4.
-4. Scale the primary to 0 and confirm no seat runs.
-5. Scale the mirror up with the account's `env_on_move` overlay applied at spawn (section 7).
-6. After record.
+2. Hibernate the primary in handoff mode, through the daemon's own call. Workers sign off first and supervisors last (`fleet-hibernate.md` section 4). The hibernated mark is set at the first request, so nothing respawns the primary from then on.
+3. Wait until no seat of the primary runs. A seat that hibernate reports without a handoff (`team.shift-handoff-missing`) stops the move as in 5.1, step 4: the primary stays hibernated with that seat still running, the mirror is not started, and the policy enters the fault state "part done". The executor never runs `marvel hibernate --end`.
+4. Start the mirror: `wake` it if it is hibernated, or scale it to its manifest replicas if it is at 0, with the account's `env_on_move` overlay applied at spawn (section 7).
+5. After record.
+
+Failback runs the same steps the other way: hibernate the mirror, then `wake` the primary, which starts its supervisors before its workers (`fleet-hibernate.md` section 6).
+
+Both teams must be served by the daemon that runs the policy; `apply` refuses a `mirror` that is not a team of the same cluster. A policy never moves a team across clusters. Hibernate refuses a team that is mid-shift, so the policy's `hold: busy` check comes first. `marvel failover clear` clears the fault only; it does not wake or scale either team, and a person does that by hand. If the operator renames hibernate and wake (`fleet-hibernate.md` section 10), this section follows the new names.
 
 ### 5.3 What every move emits
 
-Events in the daemon's ring, so `marvel events` and anything that follows it see them: `failover.proposed`, `failover.started`, `failover.role-moved`, `failover.completed`, `failover.stopped` (with the reason and the record path), `failover.fault`, and the same for `failback.*`. A record file is written once and never edited after the move.
+Events in the daemon's ring, so `marvel events` and anything that follows it see them: `failover.proposed`, `failover.proposal-ended`, `failover.started`, `failover.role-moved`, `failover.completed`, `failover.stopped` (with the reason and the record path), `failover.fault`, `failover.held`, `failover.released`, and the same for `failback.*` where they apply. A record file is written once and never edited after the move.
 
 ## 6. Failback
 
@@ -191,11 +255,11 @@ Each lands in its own PR; each check is a test written red before the change.
 | FO1 | MR1: account readings on disk, reloaded at start, `marvel get account-readings` | none | Report a reading, restart the daemon: `get account-readings --since 1h` shows it and `get budgets` shows it `stale`, not `none`. |
 | FO2 | MP1: measure whether headless claude sends a statusline; then a scheduled probe role example | FO1 | With no other seat on the account, a fresh reading appears within one schedule period. |
 | FO3 | Manifest sections `accounts` and `failovers`: parse, validate, store; no behavior | none | Each validation rule in section 2 refuses its bad case; a good policy round-trips through `apply` and `get failovers` shows it `disabled` or `dry-run`. |
-| FO4 | Evaluator in `dry-run`: decisions and reasons, `get failovers` status, `failover.proposed` events | FO1, FO3 | Fixture readings give each row of section 4's table; a stale 92% gives `hold: stale`, never `propose`. |
-| FO5 | Account override record and spawn-time env, persisted, kept across `apply`; `marvel failover clear` | FO3 | A role with an override spawns with the account's env; `apply` of the manifest does not clear it; `clear` does. |
+| FO4 | Evaluator in `dry-run`: decisions and reasons, `get failovers` and `describe failover`, the proposal log, and `failover.proposed` and `failover.proposal-ended` sent once per entry into and out of `propose` (sections 2.2 and 4.1) | FO1, FO3 | Fixture readings give each row of section 4's table; a stale 92% gives `hold: stale`, never `propose`; ten evaluations at `propose` give one event; the proposal log survives a daemon restart. |
+| FO5 | Account override record and spawn-time env, persisted, kept across `apply`; `marvel failover clear`; `marvel failover hold` and `release`, per policy and per account, local only (section 2.1) | FO3 | A role with an override spawns with the account's env; `apply` of the manifest does not clear it; `clear` does. A held policy shows `hold: held`, and `apply` does not release it. |
 | FO6 | `relogin` executor in `enabled` mode: records, role-by-role handoff shift, stop on a missing marker | FO4, FO5 | A fake seat that never writes its marker leaves the move `part done` with both role sets in the record, and no `--no-handoff` shift is issued. |
-| FO7 | Failback `auto`, `alert`, `none`, and `marvel failover back` | FO6 | With `when: reset`, a recorded reset in the past and the scope at a cut point gives a failback under `auto`, one `failback.proposed` under `alert`, and nothing under `none`. |
-| FO8 | `swap-team` executor, replica hold across `apply`, and `env_on_move` | FO6 | `apply` of the primary's manifest during a hold keeps it at 0 and says why; mirror seats spawned by the move carry the overlay and later seats do not. |
+| FO7 | Failback `auto`, `alert`, `none`; `marvel failover back`; and `marvel failover move`, which carries out a current proposal once by hand (section 2.2) | FO6 | With `when: reset`, a recorded reset in the past and the scope at a cut point gives a failback under `auto`, one `failback.proposed` under `alert`, and nothing under `none`. `move` on a `dry-run` policy whose decision is not `propose` is refused. |
+| FO8 | `swap-team` executor through hibernate and wake (section 5.2), and `env_on_move` | FO6 | `apply` of the primary's manifest during a move leaves it hibernated with no seat; a fake seat that never writes its handoff stops the move as `part done` with the mirror not started; mirror seats spawned by the move carry the overlay and later seats do not. |
 
 FO1 and FO3 have no edges between them and can be built side by side.
 
@@ -211,3 +275,4 @@ FO1 and FO3 have no edges between them and can be built side by side.
 - Real seven-day readings over a whole week: none are on disk (FO1 fixes this).
 - Whether a role's settings differ between two config directories on a fleet host, which `relogin` would expose.
 - The real cost of a role-by-role handoff shift for a whole team; the 40 minutes per move in the study's replay is from one run, on 2026-09-19.
+- How long a handoff-mode hibernate of a whole team takes, and whether its report of a seat with no handoff can be read by an executor in the daemon, not only by a person at the CLI. One team was hibernated in handoff mode by hand on 2026-11-19 and reached 0 seats; its timing was not measured.
