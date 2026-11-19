@@ -593,7 +593,7 @@ func daemonLogsCmd() *cobra.Command {
 		Short: "Print the daemon's recent log lines (over mrvl:// if --cluster is set)",
 		Long: `Fetch the daemon's in-memory log ring and print the most recent N lines.
 
-The ring is populated by every 'log.Printf' the daemon emits — RPC
+The ring is populated by every 'log.Printf' the daemon emits: RPC
 dispatch, session creation, health-check decisions, shifts, auth
 events. Lines survive as long as the daemon process does; the ring
 is bounded so memory stays flat.
@@ -1541,9 +1541,9 @@ func planCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "plan [workspace/team]",
 		Short: "Preview the convergence delta per team without spawning (dry run)",
-		Long: `Print the plan the next reconcile tick would enact — desired vs alive
+		Long: `Print the plan the next reconcile tick would enact: desired vs alive
 replica counts, sessions that would spawn, sessions that would scale down, and
-any hold (crash-loop backoff or admission refusal) — computed without applying
+any hold (crash-loop backoff or admission refusal), computed without applying
 it. No session is spawned or deleted, so this is a spawn-free way to inspect
 what the daemon is about to do.
 
@@ -2376,7 +2376,7 @@ Without flags, captures the visible area. -S with a negative value reaches
 into scrollback; an omitted -E defaults to the bottom of the visible area.
 
 Full-screen TUI harnesses (interactive claude and friends) run on the tmux
-alternate screen, which has no scrollback — captures of those sessions cap
+alternate screen, which has no scrollback, so captures of those sessions cap
 at the visible screen regardless of -S.
 
 A capture is what the program last painted, not necessarily what is on its

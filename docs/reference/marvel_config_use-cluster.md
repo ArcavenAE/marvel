@@ -1,0 +1,24 @@
+## marvel config use-cluster
+
+Set the current cluster
+
+### Synopsis
+
+Set the current cluster
+
+```
+marvel config use-cluster <name>
+```
+
+### Options inherited from parent commands
+
+```
+      --cluster string       named cluster from ~/.marvel/config.yaml
+  -i, --identity string      private key file for SSH auth (overrides cluster identity)
+      --marvel-home string   marvel's state root, an absolute path (default ~/.marvel); sets $MARVEL_HOME, and the flag wins over the variable
+      --socket string        explicit daemon address (overrides --cluster)
+```
+
+### SEE ALSO
+
+* [marvel config](marvel_config.md)	 - Manage marvel cluster configuration
