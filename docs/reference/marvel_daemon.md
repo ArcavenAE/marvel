@@ -22,16 +22,17 @@ marvel daemon [flags]
 ### Options
 
 ```
-      --log-file string          tee daemon stderr to this file (empty string disables) (default "~/.marvel/log/daemon.log")
-      --log-max-files int        keep at most N gzipped archives of --log-file (0 keeps all) (default 5)
-      --log-max-size int         rotate --log-file when it exceeds this size in MiB (0 disables rotation) (default 10)
-      --log-max-total int        cap total disk usage across --log-file and archives in MiB (0 disables)
-      --mrvl seconds[=:6785]     start mrvl:// listener (use --mrvl=:<port> for a custom port)
-      --pidfile string           write pid to this file on start, remove on stop (empty string disables) (default "~/.marvel/run/daemon.pid")
-      --reclaim                  destroy marvel tmux state this daemon does not own, instead of leaving it running
-      --shift-timeout duration   abort and roll back a shift that has not reached readiness within this Go duration (0 uses the built-in 10m default; env MARVEL_SHIFT_TIMEOUT is the fallback when this flag is unset)
-      --socket string            Unix socket path (default ~/.marvel/run/marvel.sock, or $MARVEL_SOCKET)
-      --state-bolt string        bbolt L2 file for durable state (empty string disables persistence; daemon restart loses state and kills running agents per pre-L2 contract C12) (default "~/.marvel/state/marvel.bolt")
+      --account-series-retention duration   keep the day files of quota readings this long (0 uses the default of 90 days; env MARVEL_ACCOUNT_SERIES_RETENTION is the fallback when this flag is unset)
+      --log-file string                     tee daemon stderr to this file (empty string disables) (default "~/.marvel/log/daemon.log")
+      --log-max-files int                   keep at most N gzipped archives of --log-file (0 keeps all) (default 5)
+      --log-max-size int                    rotate --log-file when it exceeds this size in MiB (0 disables rotation) (default 10)
+      --log-max-total int                   cap total disk usage across --log-file and archives in MiB (0 disables)
+      --mrvl seconds[=:6785]                start mrvl:// listener (use --mrvl=:<port> for a custom port)
+      --pidfile string                      write pid to this file on start, remove on stop (empty string disables) (default "~/.marvel/run/daemon.pid")
+      --reclaim                             destroy marvel tmux state this daemon does not own, instead of leaving it running
+      --shift-timeout duration              abort and roll back a shift that has not reached readiness within this Go duration (0 uses the built-in 10m default; env MARVEL_SHIFT_TIMEOUT is the fallback when this flag is unset)
+      --socket string                       Unix socket path (default ~/.marvel/run/marvel.sock, or $MARVEL_SOCKET)
+      --state-bolt string                   bbolt L2 file for durable state (empty string disables persistence; daemon restart loses state and kills running agents per pre-L2 contract C12) (default "~/.marvel/state/marvel.bolt")
 ```
 
 ### Options inherited from parent commands
