@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The tmux TestMain is written once, in tmuxtest.RunMain, and the packages that
+// The tmux TestMain is written once, in tmuxtest.StartServer, and the packages that
 // run tests against a tmux server (team, daemon and session) each call it. Each
 // used to repeat the whole body and point at internal/tmux/testmain_test.go for
 // its rationale (I-458 row 8). This reads their testmain files, so a package
@@ -20,8 +20,8 @@ func TestTeamDaemonAndSessionShareOneTmuxTestMain(t *testing.T) {
 			t.Fatal(err)
 		}
 		src := string(b)
-		if !strings.Contains(src, "tmuxtest.RunMain(") {
-			t.Errorf("%s does not call tmuxtest.RunMain", path)
+		if !strings.Contains(src, "tmuxtest.StartServer(") {
+			t.Errorf("%s does not call tmuxtest.StartServer", path)
 		}
 		if strings.Contains(src, "UseScratchTmuxTmpDir") || strings.Contains(src, "func killTestServer") {
 			t.Errorf("%s still carries its own copy of the tmux TestMain body", path)
