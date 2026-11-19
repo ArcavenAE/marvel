@@ -736,8 +736,52 @@ Live-updating dashboard. Sort by pressing keys: `c` (context %), `p`
 Enter opens the selected session; on a remote cluster's row it prints the
 attach command and runs nothing. Press `?` for the full key list, `q` to quit.
 
+To leave an opened session without stopping its agent, press Ctrl-B, then d.
+Typing exit or Ctrl-D in the session stops the agent. The keys differ a little
+when the watch runs inside tmux; see [Open a session and leave it](#open-a-session-and-leave-it).
+
 **When to use:** Monitoring a running team, watching shifts progress,
 observing health state changes in real time.
+
+### Open a session and leave it
+
+Enter in the watch, and `marvel attach <desk|key|name>`, open a session's tmux
+pane, which puts you inside tmux, and tmux may be new to you. Know this before
+you open one: **typing exit or Ctrl-D in the session ends the agent's process and
+stops the agent.** To leave and keep the agent running, detach from tmux with
+Ctrl-B, then d (press Ctrl-B, release it, then press d).
+
+marvel sets no tmux prefix. Ctrl-B is tmux's default, and a prefix set in your
+own tmux configuration replaces it in every row below. Where the keys take you
+depends on where the watch or `marvel attach` ran:
+
+| Where it ran | What it does | To leave and keep the agent running |
+|---|---|---|
+| Outside tmux | Runs `tmux attach` as a child and waits for it | Ctrl-B d detaches and returns to the watch, or to your shell for `marvel attach` |
+| Inside marvel's own tmux server | Runs `tmux switch-client`; your tmux client moves to the session | Ctrl-B L switches back to the session you came from. Ctrl-B d detaches from tmux altogether and does not return to the watch |
+| Inside another tmux server | Opens a new window of that server running `tmux attach` | Ctrl-B p moves to the previous window and leaves the session attached. Ctrl-B Ctrl-B d detaches the session and closes its window. Ctrl-B d detaches your own tmux instead |
+| A remote cluster | Prints `ssh -t <host> tmux ... attach` and runs nothing | tmux runs on the other host, so that host's prefix applies; Ctrl-B d detaches |
+
+What was measured. Each row was run on scratch tmux servers (tmux 3.7b, macOS,
+default configuration, no marvel daemon) with a pseudo-terminal standing in for
+the person typing, and a shell standing in for the agent:
+
+- Outside tmux: Ctrl-B d detached the client and the attach child exited, so the
+  watch's terminal came back. `exit` and Ctrl-D each ended the pane's process;
+  the pane was left dead, with marvel's `remain-on-exit on` set.
+- Inside marvel's tmux: after `switch-client` the client was on the session.
+  Ctrl-B L put it back on the watch's session. Ctrl-B d removed the client and
+  its terminal process ended; the agent's pane was still alive.
+- Inside another tmux: the new window held one client of marvel's server. Ctrl-B d
+  detached the outer client, and the inner client stayed attached. Ctrl-B p
+  returned to the watch's window with the inner client still attached. Ctrl-B
+  Ctrl-B d detached the inner client and the window closed. Ctrl-B & then y
+  (close the window, with a pause before y) closed it and the agent's pane was
+  still alive.
+
+These were not measured: a remote cluster over ssh, a real agent harness (a shell stood in),
+a prefix other than Ctrl-B, and any tmux version other than 3.7b. The keys for
+those rows follow from tmux's own defaults and have not been run.
 
 ### Capture pane content
 

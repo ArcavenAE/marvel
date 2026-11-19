@@ -302,7 +302,25 @@ terminal; the host is the one in the cluster's address, so it may need a login
 name or an ssh config entry of your own.
 
 A desk is unique only within one cluster's tmux server, so a desk number is
-never looked up across clusters.`,
+never looked up across clusters.
+
+Leaving the session. Typing exit or Ctrl-D in its pane stops the agent; detaching
+from tmux does not. Detach with Ctrl-B, then d. Ctrl-B is tmux's default prefix;
+marvel does not change it, and a prefix set in your own tmux configuration
+replaces it in the keys below. Where you land depends on how the session was
+opened (measured on tmux 3.7b):
+
+  - Outside tmux, and the watch's Enter outside tmux: Ctrl-B d detaches and
+    returns you to the shell, or to the watch.
+  - Inside marvel's own tmux server: Ctrl-B d detaches from tmux altogether and
+    does not return you to the watch. Ctrl-B L switches back to the session you
+    came from, and the agent keeps running.
+  - Inside any other tmux server: the session is in a new window of that server,
+    and Ctrl-B goes to your own tmux. Ctrl-B p moves to the previous window and
+    leaves the session attached. Ctrl-B Ctrl-B d detaches the session and closes
+    its window. Ctrl-B d detaches your own tmux, not the session.
+  - A remote desk: the printed ssh command runs tmux on the other host, and
+    that host's prefix applies; Ctrl-B d is its default.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAttach(cmd.OutOrStdout(), args[0], printOnly, processAttachEnv())
