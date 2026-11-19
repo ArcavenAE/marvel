@@ -57,14 +57,17 @@ type seriesSlot struct {
 	window  string
 }
 
-// AccountSeries keeps time-stamped readings per account and window, in memory.
-// It is fed by the same account.limits readings AccountReadings receives, and
-// asks nothing of the harness. A daemon restart empties it.
+// AccountSeries keeps time-stamped readings per account and window, in memory,
+// as a cache of eight days. It is fed by the same account.limits readings
+// AccountReadings receives, and asks nothing of the harness. Attach makes it
+// durable: each reading is also appended to a day file, and a restart reads the
+// last eight days back.
 type AccountSeries struct {
 	mu        sync.Mutex
 	cluster   string
 	retention time.Duration
 	m         map[seriesSlot][]AccountSample
+	store     seriesStore
 }
 
 // NewAccountSeries returns an empty series. cluster stamps every sample; a
@@ -94,31 +97,41 @@ func (s *AccountSeries) Append(key AccountKey, windows []AccountWindow, session 
 		if w.UsedPercent == nil || !usablePercent(*w.UsedPercent) {
 			continue
 		}
-		sk := seriesSlot{key, w.Name}
-		cur := s.m[sk]
 		smp := AccountSample{
 			Cluster: s.cluster, Account: key.String(), Window: w.Name,
 			UsedPercent: *w.UsedPercent, ResetsAt: w.ResetsAt, At: at.UTC(), Session: session,
 		}
-		i := sort.Search(len(cur), func(i int) bool { return cur[i].At.After(smp.At) })
-		if i > 0 {
-			prev := cur[i-1]
-			if prev.UsedPercent == smp.UsedPercent && prev.ResetsAt.Equal(smp.ResetsAt) && smp.At.Sub(prev.At) < seriesRepeatGap {
-				continue
-			}
+		if s.insert(key, smp) {
+			s.persist(key, smp)
 		}
-		cur = append(cur, AccountSample{})
-		copy(cur[i+1:], cur[i:])
-		cur[i] = smp
-		cutoff := cur[len(cur)-1].At.Add(-s.retention)
-		drop := sort.Search(len(cur), func(i int) bool { return !cur[i].At.Before(cutoff) })
-		if over := len(cur) - drop - SeriesMaxSamples; over > 0 {
-			drop += over
-		}
-		// Reslice, do not copy: in time order the insert is a plain append, and the
-		// dropped prefix is released when the slice next grows.
-		s.m[sk] = cur[drop:]
 	}
+}
+
+// insert places one sample in its window's series, in time order, and reports
+// whether it was kept: a repeat of the previous reading within seriesRepeatGap
+// is not. The caller holds s.mu.
+func (s *AccountSeries) insert(key AccountKey, smp AccountSample) bool {
+	sk := seriesSlot{key, smp.Window}
+	cur := s.m[sk]
+	i := sort.Search(len(cur), func(i int) bool { return cur[i].At.After(smp.At) })
+	if i > 0 {
+		prev := cur[i-1]
+		if prev.UsedPercent == smp.UsedPercent && prev.ResetsAt.Equal(smp.ResetsAt) && smp.At.Sub(prev.At) < seriesRepeatGap {
+			return false
+		}
+	}
+	cur = append(cur, AccountSample{})
+	copy(cur[i+1:], cur[i:])
+	cur[i] = smp
+	cutoff := cur[len(cur)-1].At.Add(-s.retention)
+	drop := sort.Search(len(cur), func(i int) bool { return !cur[i].At.Before(cutoff) })
+	if over := len(cur) - drop - SeriesMaxSamples; over > 0 {
+		drop += over
+	}
+	// Reslice, do not copy: in time order the insert is a plain append, and the
+	// dropped prefix is released when the slice next grows.
+	s.m[sk] = cur[drop:]
+	return true
 }
 
 func usablePercent(p float64) bool { return p >= 0 && p <= 1e6 }
