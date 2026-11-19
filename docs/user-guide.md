@@ -757,7 +757,7 @@ depends on where the watch or `marvel attach` ran:
 
 | Where it ran | What it does | To leave and keep the agent running |
 |---|---|---|
-| Outside tmux | Runs `tmux attach` as a child and waits for it | Ctrl-B d detaches and returns to the watch, or to your shell for `marvel attach` |
+| Outside tmux | The watch runs `tmux attach` as a child and waits for it. `marvel attach` replaces itself with `tmux attach` | Ctrl-B d detaches. The watch comes back; after `marvel attach` you are back at your shell |
 | Inside marvel's own tmux server | Runs `tmux switch-client`; your tmux client moves to the session | Ctrl-B L switches back to the session you came from. Ctrl-B d detaches from tmux altogether and does not return to the watch |
 | Inside another tmux server | Opens a new window of that server running `tmux attach` | Ctrl-B p moves to the previous window and leaves the session attached. Ctrl-B Ctrl-B d detaches the session and closes its window. Ctrl-B d detaches your own tmux instead |
 
@@ -766,8 +766,10 @@ default configuration, no marvel daemon) with a pseudo-terminal standing in for
 the person typing, and a shell standing in for the agent:
 
 - Outside tmux: Ctrl-B d detached the client and the attach child exited, so the
-  watch's terminal came back. `exit` and Ctrl-D each ended the pane's process;
-  the pane was left dead, with marvel's `remain-on-exit on` set.
+  watch's terminal came back. With the tmux client as the process itself, as
+  `marvel attach` runs it, Ctrl-B d ended that process. `exit` and Ctrl-D each
+  ended the pane's process; the pane was left dead, with marvel's
+  `remain-on-exit on` set.
 - Inside marvel's tmux: after `switch-client` the client was on the session.
   Ctrl-B L put it back on the watch's session. Ctrl-B d removed the client and
   its terminal process ended; the agent's pane was still alive.
