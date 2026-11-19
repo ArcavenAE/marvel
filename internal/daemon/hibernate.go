@@ -26,20 +26,6 @@ const (
 	checkHarness = "harness-binary"
 )
 
-// hibernateParams is the request. Teams names the teams, All takes every team,
-// Backend and ExceptBackend select roles by label, End names one seat to end
-// without a handoff, DryRun counts what would be signed off, and Status reads
-// where each team stands.
-type hibernateParams struct {
-	Teams         []string `json:"teams,omitempty"`
-	All           bool     `json:"all,omitempty"`
-	Backend       []string `json:"backend,omitempty"`
-	ExceptBackend []string `json:"except_backend,omitempty"`
-	End           string   `json:"end,omitempty"`
-	DryRun        bool     `json:"dry_run,omitempty"`
-	Status        bool     `json:"status,omitempty"`
-}
-
 // hibernateTeamStatus is where one team stands.
 type hibernateTeamStatus struct {
 	Team  string   `json:"team"`
@@ -96,7 +82,7 @@ func (d *Daemon) hibernateStatusOf(t api.Team) hibernateTeamStatus {
 }
 
 // teamsFor resolves the request's teams: the named ones, or every team for All.
-func (d *Daemon) teamsFor(p hibernateParams) ([]api.Team, error) {
+func (d *Daemon) teamsFor(p daemonrpc.HibernateParams) ([]api.Team, error) {
 	if p.All == (len(p.Teams) > 0) {
 		return nil, fmt.Errorf("name one or more workspace/team keys, or pass --all")
 	}
@@ -117,7 +103,7 @@ func (d *Daemon) teamsFor(p hibernateParams) ([]api.Team, error) {
 // handleHibernate starts a hibernate, ends one seat (--end), counts a dry run,
 // or reads status.
 func (d *Daemon) handleHibernate(params json.RawMessage) daemonrpc.Response {
-	var p hibernateParams
+	var p daemonrpc.HibernateParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return daemonrpc.Response{Error: fmt.Sprintf("hibernate: bad params: %v", err)}
@@ -216,14 +202,6 @@ func (d *Daemon) handleHibernate(params json.RawMessage) daemonrpc.Response {
 	return respond(res)
 }
 
-// wakeParams is the wake request.
-type wakeParams struct {
-	Teams      []string `json:"teams,omitempty"`
-	All        bool     `json:"all,omitempty"`
-	SkipChecks []string `json:"skip_checks,omitempty"`
-	Order      []string `json:"order,omitempty"`
-}
-
 // wakeResult reports the preflight and the teams now waking.
 type wakeResult struct {
 	Checks []preflightCheck      `json:"checks"`
@@ -241,7 +219,7 @@ type preflightCheck struct {
 // handleWake runs the preflight, then wakes each team. A failed check stops the
 // wake before any team changes, unless the operator skipped it by name.
 func (d *Daemon) handleWake(params json.RawMessage) daemonrpc.Response {
-	var p wakeParams
+	var p daemonrpc.WakeParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return daemonrpc.Response{Error: fmt.Sprintf("wake: bad params: %v", err)}
@@ -251,7 +229,7 @@ func (d *Daemon) handleWake(params json.RawMessage) daemonrpc.Response {
 		return daemonrpc.Response{Error: "wake refused: the cluster is suspended; run marvel resume first"}
 	}
 	var targets []api.Team
-	all, err := d.teamsFor(hibernateParams{Teams: p.Teams, All: p.All})
+	all, err := d.teamsFor(daemonrpc.HibernateParams{Teams: p.Teams, All: p.All})
 	if err != nil {
 		return daemonrpc.Response{Error: err.Error()}
 	}

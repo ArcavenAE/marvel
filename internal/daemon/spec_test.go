@@ -177,7 +177,7 @@ func TestApplyCountsSessionsLeftBehind(t *testing.T) {
 // with its own runtime, and returns the run session's key.
 func runIntoRole(t *testing.T, d *Daemon, sess api.Session) string {
 	t.Helper()
-	resp := d.handleRun(mustMarshal(t, runParams{
+	resp := d.handleRun(mustMarshal(t, daemonrpc.RunParams{
 		Workspace: sess.Workspace, Team: sess.Team, Role: sess.Role,
 		RuntimeCommand: "sleep", RuntimeArgs: []string{"301"},
 	}))

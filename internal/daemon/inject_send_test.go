@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -56,20 +57,20 @@ func TestSendInjectRecordsOnlyWhatReachedThePane(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name      string
-		p         injectParams
+		p         daemonrpc.InjectParams
 		clearKey  string
 		failOn    func(sendCall) error
 		wantCalls int
 		wantErr   string
 		wantEvent bool
 	}{
-		{"clear fails", injectParams{Text: "hello", Literal: true, Enter: true}, "C-u", failClear, 1, "clear: tmux refused", false},
-		{"text fails after a clear", injectParams{Text: "hello", Literal: true}, "C-u", failText, 2, "already sent", false},
-		{"text fails with no clear", injectParams{Text: "hello", Literal: true}, "", failText, 1, "tmux refused", false},
-		{"enter fails after the text", injectParams{Text: "hello", Literal: true, Enter: true}, "", failEnter, 1, "tmux refused", false},
-		{"enter fails after a clear", injectParams{Literal: true, Enter: true}, "C-u", failEnter, 2, "already sent", false},
-		{"clear and text both go out", injectParams{Text: "hello", Literal: true, Enter: true}, "C-u", nil, 2, "", true},
-		{"empty text with enter goes out", injectParams{Literal: true, Enter: true}, "", nil, 1, "", true},
+		{"clear fails", daemonrpc.InjectParams{Text: "hello", Literal: true, Enter: true}, "C-u", failClear, 1, "clear: tmux refused", false},
+		{"text fails after a clear", daemonrpc.InjectParams{Text: "hello", Literal: true}, "C-u", failText, 2, "already sent", false},
+		{"text fails with no clear", daemonrpc.InjectParams{Text: "hello", Literal: true}, "", failText, 1, "tmux refused", false},
+		{"enter fails after the text", daemonrpc.InjectParams{Text: "hello", Literal: true, Enter: true}, "", failEnter, 1, "tmux refused", false},
+		{"enter fails after a clear", daemonrpc.InjectParams{Literal: true, Enter: true}, "C-u", failEnter, 2, "already sent", false},
+		{"clear and text both go out", daemonrpc.InjectParams{Text: "hello", Literal: true, Enter: true}, "C-u", nil, 2, "", true},
+		{"empty text with enter goes out", daemonrpc.InjectParams{Literal: true, Enter: true}, "", nil, 1, "", true},
 	} {
 		ring := events.NewRing(8)
 		drv := &failingKeys{failOn: tc.failOn}
@@ -96,7 +97,7 @@ func TestSendInjectSendsTheClearBeforeTheText(t *testing.T) {
 	ring := events.NewRing(8)
 	drv := &failingKeys{}
 	sess := api.Session{Name: "squad-worker-g1-0", PaneID: "%3"}
-	p := injectParams{Text: "hello", Literal: true, Enter: true}
+	p := daemonrpc.InjectParams{Text: "hello", Literal: true, Enter: true}
 	if err := sendInject(drv, ring, sess, p, "C-u", "transport=local"); err != nil {
 		t.Fatalf("sendInject: %v", err)
 	}

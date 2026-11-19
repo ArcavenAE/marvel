@@ -53,7 +53,7 @@ func TestScaleToNegativeReplicasIsRefused(t *testing.T) {
 
 	var resp daemonrpc.Response
 	noPanic(t, "scale to -1", func() {
-		resp = d.handleScale(mustMarshal(t, scaleParams{TeamKey: "negscale/crew", Role: "crew", Replicas: -1}))
+		resp = d.handleScale(mustMarshal(t, daemonrpc.ScaleParams{TeamKey: "negscale/crew", Role: "crew", Replicas: -1}))
 	})
 	if resp.Error == "" || !strings.Contains(resp.Error, "crew") {
 		t.Errorf("scale to -1: error = %q, want a refusal naming the role", resp.Error)

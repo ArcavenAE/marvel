@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/suspend"
@@ -59,7 +60,7 @@ type daemonResp struct{ Result json.RawMessage }
 
 func TestHibernateMarksTheTeamAndCountsLabels(t *testing.T) {
 	d := hibernateDaemon(t, roleOn("paid", "sleep", "bedrock"), roleOn("local", "sleep", ""))
-	resp, errText := call(t, d, "team.hibernate", hibernateParams{Teams: []string{"acme/squad"}, Backend: []string{"none"}, DryRun: true})
+	resp, errText := call(t, d, "team.hibernate", daemonrpc.HibernateParams{Teams: []string{"acme/squad"}, Backend: []string{"none"}, DryRun: true})
 	if errText != "" {
 		t.Fatal(errText)
 	}
@@ -74,7 +75,7 @@ func TestHibernateMarksTheTeamAndCountsLabels(t *testing.T) {
 		t.Fatal("a dry run marked the team")
 	}
 
-	if _, errText := call(t, d, "team.hibernate", hibernateParams{Teams: []string{"acme/squad"}, ExceptBackend: []string{"bedrock"}}); errText != "" {
+	if _, errText := call(t, d, "team.hibernate", daemonrpc.HibernateParams{Teams: []string{"acme/squad"}, ExceptBackend: []string{"bedrock"}}); errText != "" {
 		t.Fatal(errText)
 	}
 	tm, _ := d.store.GetTeam("acme/squad")
@@ -87,7 +88,7 @@ func TestHibernateAndSuspendRefuseEachOther(t *testing.T) {
 	d := hibernateDaemon(t, roleOn("worker", "sleep", ""))
 	rec := suspend.Record{State: suspend.StateSuspended}
 	d.suspendRec.Store(&rec)
-	if _, errText := call(t, d, "team.hibernate", hibernateParams{All: true}); !strings.Contains(errText, "suspended") {
+	if _, errText := call(t, d, "team.hibernate", daemonrpc.HibernateParams{All: true}); !strings.Contains(errText, "suspended") {
 		t.Fatalf("hibernate during a suspend: err = %q, want a refusal naming it", errText)
 	}
 	d.suspendRec.Store(nil)
@@ -113,16 +114,16 @@ func TestWakeRefusedByAFailedCheckUntilItIsSkipped(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, errText := call(t, d, "team.wake", wakeParams{All: true}); !strings.Contains(errText, "harness-binary") || !strings.Contains(errText, "no-such-harness-binary-xyz") {
+	if _, errText := call(t, d, "team.wake", daemonrpc.WakeParams{All: true}); !strings.Contains(errText, "harness-binary") || !strings.Contains(errText, "no-such-harness-binary-xyz") {
 		t.Fatalf("wake err = %q, want the failed check named", errText)
 	}
 	if tm, _ := d.store.GetTeam("acme/squad"); tm.Hibernate.State != api.HibernateHibernated {
 		t.Fatal("a refused wake changed the mark")
 	}
-	if _, errText := call(t, d, "team.wake", wakeParams{All: true, SkipChecks: []string{"bogus"}}); !strings.Contains(errText, "unknown check") {
+	if _, errText := call(t, d, "team.wake", daemonrpc.WakeParams{All: true, SkipChecks: []string{"bogus"}}); !strings.Contains(errText, "unknown check") {
 		t.Fatalf("an unknown check name: err = %q", errText)
 	}
-	resp, errText := call(t, d, "team.wake", wakeParams{All: true, SkipChecks: []string{"harness-binary"}})
+	resp, errText := call(t, d, "team.wake", daemonrpc.WakeParams{All: true, SkipChecks: []string{"harness-binary"}})
 	if errText != "" {
 		t.Fatalf("a skipped check still refused: %s", errText)
 	}

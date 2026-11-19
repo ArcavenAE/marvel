@@ -46,14 +46,9 @@ func (d *Daemon) startViews(ctx context.Context) {
 	}()
 }
 
-type viewRefreshParams struct {
-	Session string `json:"session"`
-	Name    string `json:"name"`
-}
-
 // handleViewRefresh follows one named view of a session, or all of them.
 func (d *Daemon) handleViewRefresh(params json.RawMessage) daemonrpc.Response {
-	var p viewRefreshParams
+	var p daemonrpc.ViewRefreshParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}

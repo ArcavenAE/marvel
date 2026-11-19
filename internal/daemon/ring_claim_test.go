@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -30,7 +31,7 @@ func ringSeat(t *testing.T, d *Daemon) api.Session {
 	return got
 }
 
-func ringParams(t *testing.T, key string, from Injector) []byte {
+func ringParams(t *testing.T, key string, from daemonrpc.Injector) []byte {
 	t.Helper()
 	return mustMarshal(t, map[string]any{
 		"session_key": key, "text": "wake", "literal": true, "enter": true,
@@ -53,7 +54,7 @@ func TestRingClaimNamesTheRingerLikeTheInjectEvent(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := ringSeat(t, d)
 	now := time.Date(2026, 10, 25, 4, 0, 0, 0, time.UTC)
-	if err := d.ringClaim(sess, localCaller(), Injector{Session: "seat-x", User: "example-user"}, now); err != nil {
+	if err := d.ringClaim(sess, localCaller(), daemonrpc.Injector{Session: "seat-x", User: "example-user"}, now); err != nil {
 		t.Fatalf("ringClaim: %v", err)
 	}
 	c := claimOf(t, d, sess.Key())
@@ -70,7 +71,7 @@ func TestRingSettleMarksSentOrFailed(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := ringSeat(t, d)
 	at := time.Date(2026, 10, 25, 4, 0, 0, 0, time.UTC)
-	if err := d.ringClaim(sess, localCaller(), Injector{}, at); err != nil {
+	if err := d.ringClaim(sess, localCaller(), daemonrpc.Injector{}, at); err != nil {
 		t.Fatal(err)
 	}
 	d.ringSettle(sess, at, nil)
@@ -78,7 +79,7 @@ func TestRingSettleMarksSentOrFailed(t *testing.T) {
 		t.Fatalf("after a send: claim = %+v, want sent", c)
 	}
 	later := at.Add(api.RingClaimWindow)
-	if err := d.ringClaim(sess, localCaller(), Injector{}, later); err != nil {
+	if err := d.ringClaim(sess, localCaller(), daemonrpc.Injector{}, later); err != nil {
 		t.Fatal(err)
 	}
 	d.ringSettle(sess, later, errors.New("no such pane"))
@@ -100,7 +101,7 @@ func TestRingInjectInsideTheWindowIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp := d.handleInjectAs(ringParams(t, sess.Key(), Injector{Session: "other-seat"}), localCaller())
+	resp := d.handleInjectAs(ringParams(t, sess.Key(), daemonrpc.Injector{Session: "other-seat"}), localCaller())
 	for _, want := range []string{"ring refused", "the-holder", "window 120s"} {
 		if !strings.Contains(resp.Error, want) {
 			t.Errorf("error %q lacks %q", resp.Error, want)
@@ -127,7 +128,7 @@ func TestPlainInjectIgnoresTheRingClaim(t *testing.T) {
 	if err := d.store.ClaimRing(sess.Key(), "the-holder", held); err != nil {
 		t.Fatal(err)
 	}
-	params := mustMarshal(t, map[string]any{"session_key": sess.Key(), "text": "x", "literal": true, "injector": Injector{}})
+	params := mustMarshal(t, map[string]any{"session_key": sess.Key(), "text": "x", "literal": true, "injector": daemonrpc.Injector{}})
 	resp := d.handleInjectAs(params, localCaller())
 	if strings.Contains(resp.Error, "ring refused") {
 		t.Fatalf("a plain inject was refused by the ring claim: %q", resp.Error)
@@ -142,14 +143,14 @@ func TestPlainInjectIgnoresTheRingClaim(t *testing.T) {
 func TestRingInjectThatFailsToSendLeavesAFailedClaim(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := ringSeat(t, d)
-	resp := d.handleInjectAs(ringParams(t, sess.Key(), Injector{}), localCaller())
+	resp := d.handleInjectAs(ringParams(t, sess.Key(), daemonrpc.Injector{}), localCaller())
 	if resp.Error == "" || strings.Contains(resp.Error, "ring refused") {
 		t.Fatalf("first ring error = %q, want a send failure", resp.Error)
 	}
 	if c := claimOf(t, d, sess.Key()); c == nil || c.Result != api.RingFailed {
 		t.Fatalf("claim after a failed send = %+v, want failed", c)
 	}
-	resp = d.handleInjectAs(ringParams(t, sess.Key(), Injector{}), localCaller())
+	resp = d.handleInjectAs(ringParams(t, sess.Key(), daemonrpc.Injector{}), localCaller())
 	if strings.Contains(resp.Error, "ring refused") {
 		t.Fatalf("a ring after a failed one was refused: %q", resp.Error)
 	}
@@ -181,7 +182,7 @@ func TestRefusedRingInjectLeavesNoClaim(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			p := map[string]any{"session_key": sess.Key(), "text": "wake", "literal": true, "enter": true, "injector": Injector{}, "ring": true}
+			p := map[string]any{"session_key": sess.Key(), "text": "wake", "literal": true, "enter": true, "injector": daemonrpc.Injector{}, "ring": true}
 			for k, v := range tc.extra {
 				p[k] = v
 			}
@@ -202,11 +203,11 @@ func TestRefusedRingInjectLeavesNoClaim(t *testing.T) {
 func TestRingInjectAfterARefusedOneIsNotHeld(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := ringSeat(t, d)
-	refused := map[string]any{"session_key": sess.Key(), "text": "wake", "literal": true, "enter": true, "injector": Injector{}, "ring": true, "clear": true}
+	refused := map[string]any{"session_key": sess.Key(), "text": "wake", "literal": true, "enter": true, "injector": daemonrpc.Injector{}, "ring": true, "clear": true}
 	if resp := d.handleInjectAs(mustMarshal(t, refused), localCaller()); !strings.Contains(resp.Error, "refusing --clear") {
 		t.Fatalf("first ring error = %q, want the clear refusal", resp.Error)
 	}
-	resp := d.handleInjectAs(ringParams(t, sess.Key(), Injector{}), localCaller())
+	resp := d.handleInjectAs(ringParams(t, sess.Key(), daemonrpc.Injector{}), localCaller())
 	if resp.Error == "" || strings.Contains(resp.Error, "ring refused") || strings.Contains(resp.Error, "refusing --clear") {
 		t.Fatalf("second ring error = %q, want a send failure, not a ring or clear refusal", resp.Error)
 	}

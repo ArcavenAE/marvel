@@ -197,12 +197,6 @@ func (d *Daemon) clusterSuspended() bool {
 	return d.suspendHeld.Load() || d.suspendRec.Load() != nil
 }
 
-// suspendParams is what the CLI sends with suspend: its own pid, so the
-// collector leaves it and its ancestors out.
-type suspendParams struct {
-	CLIPid int `json:"cli_pid"`
-}
-
 // suspendResult is the answer to a suspend that held.
 type suspendResult struct {
 	Suspended bool  `json:"suspended"`
@@ -280,7 +274,7 @@ func (d *Daemon) sessionPanePids() []int {
 // stops. A failure before the record is saved, or a rollback, drops the hold
 // again and leaves nothing frozen.
 func (d *Daemon) handleSuspend(params json.RawMessage) daemonrpc.Response {
-	var p suspendParams
+	var p daemonrpc.SuspendParams
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
 			return daemonrpc.Response{Error: fmt.Sprintf("suspend: bad params: %v", err)}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/composer"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/limitmenu"
 	"github.com/arcavenae/marvel/internal/team"
@@ -55,7 +56,7 @@ func TestStartsWithMenuDigit(t *testing.T) {
 	for _, tt := range tests {
 		for _, lit := range []bool{true, false} {
 			for _, enter := range []bool{true, false} {
-				if got := startsWithMenuDigit(injectParams{Text: tt.text, Literal: lit, Enter: enter}); got != tt.want {
+				if got := startsWithMenuDigit(daemonrpc.InjectParams{Text: tt.text, Literal: lit, Enter: enter}); got != tt.want {
 					t.Errorf("startsWithMenuDigit(%q literal=%v enter=%v) = %v, want %v", tt.text, lit, enter, got, tt.want)
 				}
 			}

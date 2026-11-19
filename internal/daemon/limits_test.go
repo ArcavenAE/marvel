@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 )
 
@@ -109,7 +110,7 @@ func TestLimitedConditionSurvivesARestart(t *testing.T) {
 // limit_reading beside state, describe carries the text, and neither is stored.
 func TestGetAndDescribeSessionCarryTheLimitReading(t *testing.T) {
 	d, key := limitDaemon(t)
-	resp := d.handleGet(mustMarshal(t, getParams{ResourceType: "sessions"}))
+	resp := d.handleGet(mustMarshal(t, daemonrpc.GetParams{ResourceType: "sessions"}))
 	if resp.Error != "" {
 		t.Fatalf("get: %s", resp.Error)
 	}
@@ -129,7 +130,7 @@ func TestGetAndDescribeSessionCarryTheLimitReading(t *testing.T) {
 	if !found {
 		t.Fatalf("session %s not listed", key)
 	}
-	dresp := d.handleDescribe(mustMarshal(t, describeParams{ResourceType: "session", Name: key}))
+	dresp := d.handleDescribe(mustMarshal(t, daemonrpc.DescribeParams{ResourceType: "session", Name: key}))
 	if dresp.Error != "" {
 		t.Fatalf("describe: %s", dresp.Error)
 	}

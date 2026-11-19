@@ -17,7 +17,7 @@ import (
 // manifest plan will (aae-orc-qawkf), except placement: a declared root or a
 // workdir this host lacks is refused, as apply refuses it.
 func (d *Daemon) handlePrunePlan(params json.RawMessage) daemonrpc.Response {
-	var p applyParams
+	var p daemonrpc.ApplyParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}

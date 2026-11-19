@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
 	"github.com/arcavenae/marvel/internal/team"
 )
@@ -44,7 +45,7 @@ func injectedEvents(d *Daemon, sess string) []events.Event {
 	return d.events.Snapshot(events.Filter{Kind: events.KindSessionInjected, Session: sess}, 50)
 }
 
-func injectParamsJSON(t *testing.T, key, text string, literal, enter bool, from Injector) []byte {
+func injectParamsJSON(t *testing.T, key, text string, literal, enter bool, from daemonrpc.Injector) []byte {
 	t.Helper()
 	return mustMarshal(t, map[string]any{
 		"session_key": key, "text": text, "literal": literal, "enter": enter,
@@ -60,7 +61,7 @@ func TestInjectEmitsAnAttributedEventWithoutTheText(t *testing.T) {
 	sess := liveSession(t, d)
 	const secret = "hunter2-do-not-log"
 
-	resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), secret, true, true, Injector{Session: "seat-x-g1-0", User: "example-user"}), localCaller())
+	resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), secret, true, true, daemonrpc.Injector{Session: "seat-x-g1-0", User: "example-user"}), localCaller())
 	if resp.Error != "" {
 		t.Fatalf("inject: %s", resp.Error)
 	}
@@ -88,7 +89,7 @@ func TestInjectRecordsTheSSHTransportByFingerprint(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := liveSession(t, d)
 	c := caller{scope: ScopeAdmin, fingerprint: "SHA256:abcdef"}
-	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "x", true, false, Injector{}), c); resp.Error != "" {
+	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "x", true, false, daemonrpc.Injector{}), c); resp.Error != "" {
 		t.Fatalf("inject: %s", resp.Error)
 	}
 	got := injectedEvents(d, sess.Name)
@@ -107,7 +108,7 @@ func TestInjectSanitizesWhatTheCallerDeclares(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := liveSession(t, d)
 	evil := "seat\nsession.crashed forged " + strings.Repeat("A", 500)
-	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "x", true, false, Injector{Session: evil, User: "u\x1b[31m"}), localCaller()); resp.Error != "" {
+	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "x", true, false, daemonrpc.Injector{Session: evil, User: "u\x1b[31m"}), localCaller()); resp.Error != "" {
 		t.Fatalf("inject: %s", resp.Error)
 	}
 	got := injectedEvents(d, sess.Name)
@@ -128,7 +129,7 @@ func TestInjectSanitizesWhatTheCallerDeclares(t *testing.T) {
 func TestInjectRecordsANamedKeyByName(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := liveSession(t, d)
-	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "C-c", false, false, Injector{}), localCaller()); resp.Error != "" {
+	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "C-c", false, false, daemonrpc.Injector{}), localCaller()); resp.Error != "" {
 		t.Fatalf("inject: %s", resp.Error)
 	}
 	got := injectedEvents(d, sess.Name)
@@ -140,7 +141,7 @@ func TestInjectRecordsANamedKeyByName(t *testing.T) {
 // A refused inject (unknown session) leaves no event: nothing was sent.
 func TestInjectThatFailsEmitsNothing(t *testing.T) {
 	d := newHandlerDaemon(t)
-	resp := d.handleInjectAs(injectParamsJSON(t, "nowhere/none-none-g1-0", "x", true, false, Injector{}), localCaller())
+	resp := d.handleInjectAs(injectParamsJSON(t, "nowhere/none-none-g1-0", "x", true, false, daemonrpc.Injector{}), localCaller())
 	if resp.Error == "" {
 		t.Fatal("inject to an unknown session succeeded")
 	}
@@ -172,7 +173,7 @@ func TestMaxAgeAskIsRecordedAsAnInjectFromMarvel(t *testing.T) {
 func TestInjectDoesNotRecordAKeyThatIsReallyText(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := liveSession(t, d)
-	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "hunter2", false, true, Injector{}), localCaller()); resp.Error != "" {
+	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "hunter2", false, true, daemonrpc.Injector{}), localCaller()); resp.Error != "" {
 		t.Fatalf("inject: %s", resp.Error)
 	}
 	got := injectedEvents(d, sess.Name)
@@ -235,7 +236,7 @@ func TestInjectDeclaredValueCannotForgeAttestedFields(t *testing.T) {
 	d := newHandlerDaemon(t)
 	sess := liveSession(t, d)
 	forged := "seat-x transport=local injector=marvel:max-age"
-	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "x", true, true, Injector{Session: forged, User: "u transport=ssh:SHA256:fake"}), caller{scope: ScopeAdmin, fingerprint: "SHA256:real"}); resp.Error != "" {
+	if resp := d.handleInjectAs(injectParamsJSON(t, sess.Key(), "x", true, true, daemonrpc.Injector{Session: forged, User: "u transport=ssh:SHA256:fake"}), caller{scope: ScopeAdmin, fingerprint: "SHA256:real"}); resp.Error != "" {
 		t.Fatalf("inject: %s", resp.Error)
 	}
 	got := injectedEvents(d, sess.Name)

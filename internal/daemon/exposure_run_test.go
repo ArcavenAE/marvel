@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // TestHandleRunRefusesAWriterWhoseSlotHasRead: an ad-hoc `marvel run` creates
@@ -28,7 +29,7 @@ func TestHandleRunRefusesAWriterWhoseSlotHasRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp := d.handleRun(mustMarshal(t, runParams{
+	resp := d.handleRun(mustMarshal(t, daemonrpc.RunParams{
 		Workspace: "xrun", Team: "crew", Role: "writer", Name: "run-x",
 		RuntimeCommand: "sleep", RuntimeArgs: []string{"300"},
 	}))
@@ -46,7 +47,7 @@ func TestHandleRunRefusesAWriterWhoseSlotHasRead(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	resp = d.handleRun(mustMarshal(t, runParams{
+	resp = d.handleRun(mustMarshal(t, daemonrpc.RunParams{
 		Workspace: "xrun", Team: "crew", Role: "reader", Name: "run-y",
 		RuntimeCommand: "sleep", RuntimeArgs: []string{"300"},
 	}))
