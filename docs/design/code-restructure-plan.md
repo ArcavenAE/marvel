@@ -2,8 +2,19 @@ Closed 2026-10-25: pointers closed (rule d adopted)
 
 # Code restructure plan: two package moves and a sequencing rule
 
-- **Status:** Proposal, 2026-10-10, revision 6 (2026-10-16). It is for review. It changes
-  no code, and no ticket is filed from it until it has been reviewed.
+- **Status:** Implemented 2026-10-16 to 2026-10-22. The text below is the plan as it
+  was ruled (proposal 2026-10-10, revision 6 of 2026-10-16); where the built shape
+  differs, section 5 says so.
+  - Move 1 (the client into `internal/daemonrpc`): #908, #909 and #987.
+  - Move 2 (the bus lifecycle into `workload.Process`): #885 (`service.Lifecycle`),
+    #911 (one backoff schedule), #915 (the crash-path characterization), and
+    #988, #1013 and #1014 (`workload.Process` and the broker run through it).
+  - The skip gates and the macOS job: #986 and #991 (the skip gates), #985, #994
+    and #1002 (the macOS job and its checks).
+  - Successor record: the November 2026 architecture review of the daemon, which
+    carries what this plan left open (the provider-map dispatch and the status
+    accessor through the interface, clauses (c) and (h) of MS-8 in
+    `services-shape-requirements.md`, among them).
 - **Ruling it implements:** the operator chose (b) plus (d) from
   finding-marvel-4m2m section 6, on 2026-10-09:
   - two package moves;
@@ -631,6 +642,14 @@ same package, in a separate commit inside that PR. Never as a sweep.
 supervisors tests, allow the five edits". The grant covers the five
 live-state reaches in the last row of the table below, and nothing else.
 
+**As built.** The split needed two lines, not five. On 2026-10-14 the operator
+ruled option (ii) ("go with ii"): the adopted-child check in
+`supervisor_identity_test.go` reads the live child from the `Process` state
+(`s.snapshot().Child`) where it read a field on the supervisor, and every other
+assertion in the supervisor tests stayed as it was. The `s.pid` reach in
+`proctable_test.go` was gone by then. The count and the table below are the
+plan's, kept as the record of what was ruled.
+
 Counted at `76a7db9`
 (`grep -oE '\bs\.<field>\b' internal/bus/*_test.go`), sorted by what each
 reach does under the split in section 3:
@@ -660,13 +679,13 @@ recommended and ruled. If the split as built needs any edit beyond these
 five, it comes back as its own decision and is not folded into this grant.
 
 `services-list.md` 3.4 item 3, "the ten existing supervisor tests pass
-unedited", is amended in PR 2d to "pass, with five live-state reads in two
-tests re-pointed at `Process.Snapshot`".
+unedited", was amended to say the tests pass "with the reaches into
+live lifecycle state re-pointed at `workload.Process` and no assertion
+changed", which is what that file now reads.
 
 ## 6. Work items, proposed
 
-None is filed until this plan has been reviewed. D1 is ruled (section 5). Each would
-land as its own ticket, with the edges shown.
+D1 is ruled (section 5). Each would land as its own ticket, with the edges shown.
 
 | id | work | depends on |
 |---|---|---|
