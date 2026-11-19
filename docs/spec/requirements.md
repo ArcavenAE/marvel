@@ -59,7 +59,7 @@ Teams shall maintain desired replica count. If a session dies or is
 deleted, the team controller shall create a replacement.
 
 ### FR-05: CLI Operations
-- `marvel apply <manifest.toml>` — apply desired state
+- `marvel work <manifest.toml>` — apply desired state
 - `marvel get <resource-type>` — list resources
 - `marvel describe <resource-type> <name>` — detail view
 - `marvel delete <resource-type> <name>` — remove resource
