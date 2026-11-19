@@ -22,7 +22,7 @@ The operator can list budgets but not schedules, and wants to know what else the
 
 A four-seat party (a fleet operator, an architect, a CLI designer and a distributed-systems seat) worked it over three rounds and a forced vote. The recommendation, for the operator to rule on:
 
-1. One kind table that drives both `get` switches, the help and the unknown-kind error, so help never names a kind the CLI cannot print.
+1. One kind table that drives both `get` switches, the help and the unknown-kind error, so every kind the daemon answers has a printer and a place in help. Today `register` and `team-load` print as raw JSON and help names neither; `register` gets a table, and team load stays `get teams --load`.
 2. `get schedules`, one row per declared scheduled role: WORKSPACE, TEAM, ROLE, CRON, TZ, STATE, NEXT-FIRE, LAST-RUN, OUTCOME, LAST-OK, STALE. NEXT-FIRE is the jittered fire time. STATE is a closed list: `starting`, `paused`, `suspended`, `frozen`, `retrying`, `firing`, `late`, `waiting`, `pending`. Firings are rows inside a schedule, not a kind of their own.
 3. `-o json|yaml` for every kind, and plural names for `describe`.
 4. `describe schedule <ws>/<team>/<role>` with the run history and the retry fields no read shows today.
