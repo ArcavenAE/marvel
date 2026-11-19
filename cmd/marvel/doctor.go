@@ -484,9 +484,9 @@ func checkSeats(r *doctorReport, in doctorInput) {
 		name := "seat " + s.Name
 		switch s.Pane {
 		case "prompt":
-			r.line(statWait, name, "waits at a menu; text typed or injected will not reach the model until someone answers it (marvel attach)", "")
+			r.line(statWait, name, "waits at a menu; text typed or injected will not reach the model until someone answers it (marvel attach; leave with Ctrl-B, then d, because exit or Ctrl-D stops the agent)", "")
 		case "logged-out":
-			r.line(statFail, name, "its harness is logged out", "attach to the seat and log in (marvel attach "+s.Name+")")
+			r.line(statFail, name, "its harness is logged out", "attach to the seat and log in (marvel attach "+s.Name+"); leave with Ctrl-B, then d, because exit or Ctrl-D stops the agent")
 		case "fresh":
 			r.line(statPass, name, "fresh; it has not taken a turn yet", "")
 		case "working", "idle":

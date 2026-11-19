@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
 // Every place that says Enter or `marvel attach` opens a session also says how
@@ -74,4 +76,56 @@ func TestUserGuideRecordsTheLeaveKeysItMeasured(t *testing.T) {
 		watch = watch[:len("### Watch mode")+j]
 	}
 	mustContain(t, "the Watch mode section", watch, "Ctrl-B, then d", "exit or Ctrl-D", "Open a session and leave it")
+}
+
+// The doctor's hints send a person into a session with `marvel attach`, so they
+// say how to leave it without stopping the agent too.
+
+func TestDoctorMenuHintSaysHowToLeave(t *testing.T) {
+	in := fakeHost(t)
+	in.Sessions = func() ([]api.Session, error) {
+		return []api.Session{{Name: "builder-0", Pane: "prompt"}}, nil
+	}
+	out, _ := doctorRun(in)
+	l := lineWith(out, "builder-0")
+	mustContain(t, "the menu line", l, "marvel attach", "Ctrl-B, then d", "exit or Ctrl-D", "stops the agent")
+}
+
+func TestDoctorLoggedOutFixSaysHowToLeave(t *testing.T) {
+	in := fakeHost(t)
+	in.Sessions = func() ([]api.Session, error) {
+		return []api.Session{{Name: "builder-0", Pane: "logged-out"}}, nil
+	}
+	out, _ := doctorRun(in)
+	var fix string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "fix:") && strings.Contains(l, "marvel attach builder-0") {
+			fix = l
+		}
+	}
+	if fix == "" {
+		t.Fatalf("no fix line names marvel attach builder-0:\n%s", out)
+	}
+	mustContain(t, "the logged-out fix line", fix, "Ctrl-B, then d", "exit or Ctrl-D", "stops the agent")
+}
+
+// marvel attach replaces itself with tmux and the watch runs tmux as a child
+// and waits (attach.go execArgv, watchhandoff.go runAttachChild), so the
+// "Outside tmux" row of the guide says which does which.
+func TestUserGuideOutsideTmuxRowNamesBothPaths(t *testing.T) {
+	b, err := os.ReadFile("../../docs/user-guide.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row string
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(l, "| Outside tmux |") {
+			row = l
+		}
+	}
+	if row == "" {
+		t.Fatal("the user guide has no \"Outside tmux\" table row")
+	}
+	mustContain(t, "the Outside tmux row", row,
+		"The watch runs `tmux attach` as a child and waits", "`marvel attach` replaces itself")
 }
