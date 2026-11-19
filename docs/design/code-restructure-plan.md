@@ -653,7 +653,7 @@ Two test files that arrived after the plan's count at `76a7db9` (#885, #915)
 were also re-pointed by #1013: `supervisor_lifecycle_test.go`
 (lines 119 and 172), in its setup only, seeds `Pid`, `BackoffUntil` and `Restarts` through
 `workload.SeedStateForTest` in place of writing `s.pid`, `s.backoffTill` and
-`s.restarts`, and `supervisor_crash_path_test.go` (line 391), in its setup and
+`s.restarts`, and `supervisor_crash_path_test.go` (line 391), in its
 stimulus, calls `s.process().Stop(false)` in place of setting `s.stopping`. On 2026-10-22
 the operator ruled that the 2026-10-10 grant already covers these re-points
 (recorded on aae-orc-dyr4e). No assertion in those files changed. The count and the
