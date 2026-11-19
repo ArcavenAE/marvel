@@ -654,9 +654,9 @@ were also re-pointed by #1013, in their setup only: `supervisor_lifecycle_test.g
 (lines 119 and 172) seeds `Pid`, `BackoffUntil` and `Restarts` through
 `workload.SeedStateForTest` in place of writing `s.pid`, `s.backoffTill` and
 `s.restarts`, and `supervisor_crash_path_test.go` (line 391) calls
-`s.process().Stop(false)` in place of setting `s.stopping`. The operator's
-2026-10-22 ruling, as recorded on the ticket, is that "the 10-10 grant already
-covers 2c's re-points". No assertion in those files changed. The count and the
+`s.process().Stop(false)` in place of setting `s.stopping`. On 2026-10-22
+the operator ruled that the 2026-10-10 grant already covers these re-points
+(recorded on aae-orc-dyr4e). No assertion in those files changed. The count and the
 table below are the plan's, kept as the record of what was ruled.
 
 Counted at `76a7db9`
