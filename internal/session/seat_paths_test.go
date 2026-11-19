@@ -8,6 +8,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/shorttmp"
 )
 
 // A running seat keeps reading the settings file it was launched with, so a
@@ -154,7 +155,7 @@ func TestReprojectDoesNotWriteARecordedPathInADirThatIsNotPrivate(t *testing.T) 
 // The three defaults sit under the marvel home, which nothing sweeps, beside
 // the harness homes, and not in the shared temp directory.
 func TestDefaultSeatDirsAreUnderTheMarvelHome(t *testing.T) {
-	home := t.TempDir()
+	home := shorttmp.Dir(t)
 	t.Setenv(paths.HomeEnv, home)
 	layout, err := paths.Default()
 	if err != nil {
