@@ -104,3 +104,35 @@ func TestFanReturnPollsAgainWhenTheStaleFetchTimesOut(t *testing.T) {
 		t.Errorf("refreshing... stayed after a post-return fetch answered:\n%s", f)
 	}
 }
+
+// Back from a child with nothing in flight, every cluster is polled again. If
+// such a fetch, one that began after the return, runs out of time, the view
+// has had its answer for that cluster: the "no answer" record. "refreshing..."
+// must not stay on until some other cluster answers.
+func TestFanReturnTimeoutOfAPostReturnFetchClearsRefreshing(t *testing.T) {
+	r, rec := fanReturnRig(t, 400*time.Millisecond)
+	r.waitStarted("a", 1)
+	r.waitStarted("b", 1)
+	for _, c := range []string{"a", "b"} {
+		r.gate(fanKey{c, 1}) <- fanFetch{
+			rec:  clusterRecord{Cluster: c, Outcome: outcomeAnswered, Cause: "1 sessions"},
+			rows: []api.Session{{Workspace: "w", Name: c + "-before", PaneID: "%5"}},
+		}
+	}
+	r.frame("both rows", func(f string) bool { return strings.Contains(f, "a-before") && strings.Contains(f, "b-before") })
+	r.keys <- 'j'
+	r.keys <- 13
+	rec.waitUnparked(t)
+	r.waitStarted("a", 2)
+	r.waitStarted("b", 2)
+
+	// Neither post-return fetch is answered. Both time out.
+	r.waitEvent("a's timer", func(e fanEvent) bool { return e.Kind == "timeout" && e.Cluster == "a" && e.Seq == 2 && e.Applied })
+	f := r.redraw()
+	if strings.Contains(f, "refreshing...") {
+		t.Errorf("refreshing... stayed after a post-return fetch timed out:\n%s", f)
+	}
+	if !strings.Contains(f, "no answer within") {
+		t.Errorf("the timed-out cluster's record is not on screen:\n%s", f)
+	}
+}
