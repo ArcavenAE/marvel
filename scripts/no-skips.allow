@@ -1,0 +1,13 @@
+# Tests a package skips by design, read by scripts/no-skips.sh.
+#
+# One "<import path> <TestName>" per line: the exact top-level test, no
+# wildcard, no subtest. A skip on this list does not fail the gate; any other
+# skip does. internal/toolchain's tests check that each name is a real test
+# function and that this list holds only what a ruling named.
+#
+# internal/session: three tests need a real agent binary, one is a helper
+# process the sweep tests start (aae-orc-1wz40).
+github.com/arcavenae/marvel/internal/session TestManagerSmokeRealClaude
+github.com/arcavenae/marvel/internal/session TestManagerSmokeRealCodex
+github.com/arcavenae/marvel/internal/session TestManagerSmokeRealOpenCode
+github.com/arcavenae/marvel/internal/session TestSweepHelperProcess

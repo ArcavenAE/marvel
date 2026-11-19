@@ -231,6 +231,7 @@ jobs:
             ./internal/workload/... \
             ./internal/backoff/... \
             ./internal/team/... \
+            ./internal/session/... \
             ./internal/tmux/tmuxtest/... \
             ./internal/tmux/tmuxtest/fake/... \
             ./internal/childproof/... \
@@ -242,6 +243,7 @@ jobs:
             github.com/arcavenae/marvel/internal/workload \
             github.com/arcavenae/marvel/internal/backoff \
             github.com/arcavenae/marvel/internal/team \
+            github.com/arcavenae/marvel/internal/session \
             github.com/arcavenae/marvel/internal/tmux/tmuxtest \
             github.com/arcavenae/marvel/internal/tmux/tmuxtest/fake \
             github.com/arcavenae/marvel/internal/childproof
