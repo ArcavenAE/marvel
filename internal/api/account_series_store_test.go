@@ -101,7 +101,7 @@ func TestSeriesWritesARepeatedReadingOnce(t *testing.T) {
 func TestSeriesAttachRemovesDayFilesPastTheRetention(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
-	for _, name := range []string{"2026-08-01.jsonl", "2026-08-21.jsonl", "2026-08-22.jsonl", "2026-11-18.jsonl"} {
+	for _, name := range []string{"2026-08-01.jsonl", "2026-08-20.jsonl", "2026-08-21.jsonl", "2026-08-22.jsonl", "2026-11-18.jsonl"} {
 		line := `{"key":{"harness":"claude","backend":"default"},"sample":{"cluster":"kinu","account":"a","window":"five_hour","used_percent":5,"at":"` + name[:10] + `T01:00:00Z"}}` + "\n"
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(line), 0o600); err != nil {
 			t.Fatal(err)
@@ -112,8 +112,9 @@ func TestSeriesAttachRemovesDayFilesPastTheRetention(t *testing.T) {
 	}
 	for name, want := range map[string]bool{
 		"2026-08-01.jsonl": false, // 110 days old
-		"2026-08-21.jsonl": false, // 90 days and 11 hours old
-		"2026-08-22.jsonl": true,  // inside 90 days
+		"2026-08-20.jsonl": false, // its day ended 90 days and 12 hours ago
+		"2026-08-21.jsonl": true,  // its day still holds readings inside 90 days
+		"2026-08-22.jsonl": true,
 		"2026-11-18.jsonl": true,
 	} {
 		_, err := os.Stat(filepath.Join(dir, name))
