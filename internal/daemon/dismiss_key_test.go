@@ -1,8 +1,9 @@
 package daemon
 
 import (
-	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // isDismissKey is the one exemption from the pre-inject read: a lone Escape

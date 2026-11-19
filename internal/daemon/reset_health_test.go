@@ -2,9 +2,10 @@ package daemon
 
 import (
 	"encoding/json"
-	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // resetHealthManifest is a one-role team with no budget or healthcheck — the

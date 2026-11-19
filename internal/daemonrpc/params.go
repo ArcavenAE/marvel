@@ -7,12 +7,12 @@ import "github.com/arcavenae/marvel/internal/events"
 // fields; the json tags are the wire, and a golden fixture under
 // testdata/rpc pins each one (I-458 row 6).
 
-// Logs params — tail of the daemon's in-memory log ring.
+// LogsParams asks for the tail of the daemon's in-memory log ring.
 type LogsParams struct {
 	N int `json:"n"` // number of lines; 0 or negative = unbounded (whole buffer)
 }
 
-// Events params — filtered tail of the daemon's structured event ring.
+// EventsParams asks for a filtered tail of the daemon's structured event ring.
 type EventsParams struct {
 	N           int    `json:"n"` // number of events; <=0 returns the whole ring
 	Workspace   string `json:"workspace,omitempty"`
@@ -22,11 +22,11 @@ type EventsParams struct {
 	Kind        string `json:"kind,omitempty"`
 	MinSeverity string `json:"min_severity,omitempty"` // "" or "warning"
 	// SinceSeq returns only events with Seq strictly greater than this
-	// value — the follow-mode resume cursor. Zero means no cursor.
+	// value, the follow-mode resume cursor. Zero means no cursor.
 	SinceSeq uint64 `json:"since_seq,omitempty"`
 }
 
-// Apply params
+// ApplyParams carries a manifest to apply.
 type ApplyParams struct {
 	ManifestData []byte `json:"manifest_data"`
 	// WorkspaceRoot is the absolute root marvel work resolved from the
@@ -45,26 +45,26 @@ type ApplyParams struct {
 	Prune bool `json:"prune,omitempty"`
 }
 
-// Get params
+// GetParams names the resource type to list.
 type GetParams struct {
 	ResourceType string `json:"resource_type"`
 	// Composer asks for the COMPOSER column, which reads each seat's pane.
 	Composer bool `json:"composer,omitempty"`
 }
 
-// Describe params
+// DescribeParams names one resource to describe.
 type DescribeParams struct {
 	ResourceType string `json:"resource_type"`
 	Name         string `json:"name"`
 }
 
-// Delete params
+// DeleteParams names one resource to delete.
 type DeleteParams struct {
 	ResourceType string `json:"resource_type"`
 	Name         string `json:"name"`
 }
 
-// Scale params
+// ScaleParams sets one role's replica count.
 type ScaleParams struct {
 	TeamKey  string `json:"team_key"`
 	Role     string `json:"role"`
@@ -73,14 +73,14 @@ type ScaleParams struct {
 
 // ConvergeParams selects which team(s) to move and which way. An empty TeamKey
 // targets every team (the daemon-wide go-line). Hold flips the posture the
-// other way — back to the start line — for a future majordomo or an operator
+// other way, back to the start line, for a future majordomo or an operator
 // re-arming a team; the CLI exposes only the converge direction.
 type ConvergeParams struct {
 	TeamKey string `json:"team_key,omitempty"`
 	Hold    bool   `json:"hold,omitempty"`
 }
 
-// Run params
+// RunParams starts a one-off session.
 type RunParams struct {
 	Workspace      string   `json:"workspace"`
 	Team           string   `json:"team"`
@@ -102,7 +102,7 @@ type RunParams struct {
 	Name   string            `json:"name,omitempty"`
 }
 
-// Shift params
+// ShiftParams asks for a rolling shift of a team.
 type ShiftParams struct {
 	TeamKey string `json:"team_key"`
 	Role    string `json:"role,omitempty"`
@@ -111,14 +111,14 @@ type ShiftParams struct {
 	NoHandoff bool `json:"no_handoff,omitempty"`
 }
 
-// Reset-health params — clear one role's crash-loop state (RestartCount +
+// ResetHealthParams clears one role's crash-loop state (RestartCount and
 // backoff) without deleting the team. See aae-orc-fv3h.
 type ResetHealthParams struct {
 	TeamKey string `json:"team_key"` // workspace/team
 	Role    string `json:"role"`
 }
 
-// Inject params — send keystrokes to a session's pane (executive privilege).
+// InjectParams sends keystrokes to a session's pane (executive privilege).
 type InjectParams struct {
 	SessionKey string `json:"session_key"`
 	Text       string `json:"text"`
@@ -148,7 +148,7 @@ type InjectParams struct {
 	Ring bool `json:"ring,omitempty"`
 }
 
-// Capture params — read a session's pane content.
+// CaptureParams reads a session's pane content.
 type CaptureParams struct {
 	SessionKey string `json:"session_key"`
 	Start      *int   `json:"start,omitempty"`
@@ -170,7 +170,7 @@ type CaptureParams struct {
 	Composer bool `json:"composer,omitempty"`
 }
 
-// Stop params
+// StopParams selects how the daemon stops.
 type StopParams struct {
 	// Teardown selects agent destruction over detach: delete every
 	// session and kill every workspace tmux session before exiting.

@@ -1,9 +1,10 @@
 package daemon
 
 import (
-	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"strings"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // The apply-time refusal of max-age on a role with several replicas (marvel#452)
