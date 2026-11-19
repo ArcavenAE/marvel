@@ -33,8 +33,9 @@ type Server struct{ socket string }
 // server and race its siblings. Intra-binary concurrency, the production
 // pattern of many goroutines sharing one Driver, is exercised by
 // tmux.TestDriverConcurrentUse. internal/tmux's own TestMain holds the full
-// rationale and keeps its own copy, because it cannot import this package's
-// callers.
+// rationale and keeps its own copy of this helper, because its tests call
+// its package-local killTestServer directly and socketpath_test.go pins the
+// path derivation it uses.
 func StartServer(pkg string) (*Server, error) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return nil, nil
