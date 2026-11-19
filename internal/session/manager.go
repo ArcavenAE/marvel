@@ -64,7 +64,7 @@ type Manager struct {
 	roleReader func(*api.Session) (api.Role, bool)
 
 	store      *api.Store
-	driver     *tmux.Driver
+	driver     TmuxDriver
 	adapters   *runtime.Registry
 	SocketPath string
 	// Bus supplies the cluster's bus URL and, for a managed broker, each
@@ -306,7 +306,12 @@ func defaultTokenDir() string {
 }
 
 // NewManager creates a session manager with the default runtime adapter registry.
-func NewManager(store *api.Store, driver *tmux.Driver) *Manager {
+func NewManager(store *api.Store, driver TmuxDriver) *Manager {
+	// A nil *tmux.Driver inside the interface is not a nil interface, and the
+	// manager reads nil as "no tmux".
+	if d, ok := driver.(*tmux.Driver); ok && d == nil {
+		driver = nil
+	}
 	m := &Manager{
 		store:             store,
 		driver:            driver,

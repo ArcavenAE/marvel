@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/arcavenae/marvel/internal/tmux/tmuxtest"
 )
 
 // useFreshTmuxServer points this test at its own tmux server, named socket,
@@ -17,7 +19,7 @@ import (
 func useFreshTmuxServer(t *testing.T, socket string) {
 	t.Helper()
 	t.Setenv("MARVEL_TMUX_SOCKET", socket)
-	t.Cleanup(func() { killTestServer(socket) })
+	t.Cleanup(func() { tmuxtest.KillTestServer(socket) })
 }
 
 // TestFreshTmuxServerLeavesNoSocket starts a server under the helper in a
