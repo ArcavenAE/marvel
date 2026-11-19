@@ -3311,8 +3311,9 @@ type watchSort struct {
 	status string
 	height int
 	target func(cluster string) (attachTarget, error)
-	// exec runs a plan's argv. Slice 1 never calls it: Enter only shows the
-	// plan. The field is here so a test can fail on any call.
+	// exec runs a plan's argv when Enter opens a session: a short child on its
+	// own, or an in-place child with the terminal handed over (openPending).
+	// openInPlace sets it to runAttachChild; a test sets a fake.
 	exec func(argv []string) error
 	// term hands the terminal to a child that runs in place, and takes it
 	// back. Nil means Enter only shows the plan and opens nothing: the view
