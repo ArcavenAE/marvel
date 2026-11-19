@@ -18,8 +18,10 @@ import (
 // figure over a quarter) reads past it.
 const DefaultPersistRetention = 90 * 24 * time.Hour
 
-const seriesDayLayout = "2006-01-02"
-const seriesDaySuffix = ".jsonl"
+const (
+	seriesDayLayout = "2006-01-02"
+	seriesDaySuffix = ".jsonl"
+)
 
 // seriesLine is one line of a day file. The key is the whole AccountKey, not
 // its rendering: String drops nothing today, but a line must be able to put a
