@@ -1,0 +1,9 @@
+{
+  "session_key": "session_key",
+  "start": 7,
+  "end": 7,
+  "repaint": true,
+  "settle_ms": 7,
+  "escapes": true,
+  "composer": true
+}

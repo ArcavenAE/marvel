@@ -1,0 +1,12 @@
+{
+  "session": "session",
+  "session_token": "session_token",
+  "windows": [
+    {
+      "name": "name",
+      "used_percent": 1.5,
+      "resets_at": "2026-01-02T03:04:05Z"
+    }
+  ],
+  "observed_at": "2026-01-02T03:04:05Z"
+}

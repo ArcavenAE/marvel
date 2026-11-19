@@ -1,0 +1,18 @@
+{
+  "workspace": "workspace",
+  "team": "team",
+  "role": "role",
+  "runtime_command": "runtime_command",
+  "runtime_args": [
+    "runtime_args"
+  ],
+  "script": "script",
+  "workdir": "workdir",
+  "workdir_default": true,
+  "mode": "mode",
+  "prompt": "prompt",
+  "env": {
+    "k": "env"
+  },
+  "name": "name"
+}

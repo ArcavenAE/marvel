@@ -1,11 +1,6 @@
 package daemon
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"go/types"
-	"strconv"
 	"testing"
 	"time"
 
@@ -70,13 +65,7 @@ func TestAServedMethodRefusedWhileAdoptingKeepsItsOwnSite(t *testing.T) {
 	}
 }
 
-// switchConstants resolves the switch cases that are written as constants.
-var switchConstants = map[string]string{
-	"MethodVersion":               MethodVersion,
-	"daemonrpc.MethodEventsWatch": daemonrpc.MethodEventsWatch,
-}
-
-// version and events.watch are cases written as constants. Each is timed under
+// version and events.watch are named by constants. Each is timed under
 // its own name and never as other.
 func TestConstantCaseMethodsAreTimedUnderTheirOwnName(t *testing.T) {
 	for _, m := range []string{MethodVersion, daemonrpc.MethodEventsWatch} {
@@ -88,62 +77,6 @@ func TestConstantCaseMethodsAreTimedUnderTheirOwnName(t *testing.T) {
 		}
 		if got := sites[timing.RPCSite("other")].Count; got != 0 {
 			t.Errorf("%s was timed as rpc.other (%d)", m, got)
-		}
-	}
-}
-
-// servedMethods must equal the string cases of dispatchUntimed's switch, so a
-// method added to the switch is timed under its own name and never as "other".
-func TestServedMethodsAreTheSwitchCases(t *testing.T) {
-	t.Parallel()
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "daemon.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cases := map[string]bool{}
-	ast.Inspect(f, func(n ast.Node) bool {
-		fd, ok := n.(*ast.FuncDecl)
-		if !ok || fd.Name.Name != "dispatchUntimed" {
-			return true
-		}
-		ast.Inspect(fd.Body, func(m ast.Node) bool {
-			cc, ok := m.(*ast.CaseClause)
-			if !ok {
-				return true
-			}
-			for _, e := range cc.List {
-				if lit, ok := e.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-					if s, err := strconv.Unquote(lit.Value); err == nil {
-						cases[s] = true
-					}
-					continue
-				}
-				// A case written as a constant is resolved from the table
-				// below; any other expression fails the test, so the parse
-				// can never skip a case it cannot read.
-				text := types.ExprString(e)
-				if v, ok := switchConstants[text]; ok {
-					cases[v] = true
-					continue
-				}
-				t.Errorf("dispatchUntimed has a case %q the test cannot read as a method name; add it to switchConstants", text)
-			}
-			return true
-		})
-		return false
-	})
-	if len(cases) < 20 {
-		t.Fatalf("parsed %d switch cases from dispatchUntimed, want the whole switch", len(cases))
-	}
-	for c := range cases {
-		if !servedMethods[c] {
-			t.Errorf("the switch serves %q and servedMethods does not list it", c)
-		}
-	}
-	for s := range servedMethods {
-		if !cases[s] {
-			t.Errorf("servedMethods lists %q and the switch does not serve it", s)
 		}
 	}
 }

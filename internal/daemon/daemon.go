@@ -1322,32 +1322,6 @@ var ErrClusterSuspended = errors.New("cluster suspended; run marvel resume")
 // adoption and shutdown has already run.
 var errStoppedWhileStarting = errors.New("daemon stopped while starting")
 
-// startingMethods is the set of methods that answer while the daemon is still
-// adopting tmux state: the reads that say what the daemon is doing. A plain
-// stop (detach) also answers, through startingAllows, because it must not wait
-// on adoption and a remote operator has no other way to end the daemon; stop
-// with teardown stays refused, because it would destroy panes adoption has not
-// finished accounting for. Every other method is refused with
-// ErrDaemonStarting before its handler runs. heartbeat, bus.beat and account.limits get
-// ErrReportDeferred instead, which wraps ErrDaemonStarting: a heartbeat does
-// more than stamp liveness (it checks the session token and records orphan
-// sightings against a store adoption has not finished reconciling), so the
-// refusal comes before the handler. plan is refused because its delta would be
-// against an unreconciled store, and inject and capture because they drive tmux.
-var startingMethods = map[string]bool{
-	"daemon.status":   true,
-	"suspend.status":  true,
-	"get":             true,
-	"describe":        true,
-	"logs":            true,
-	"events":          true,
-	"bus.status":      true,
-	"bus.audit":       true,
-	"orphans":         true,
-	"credential.list": true,
-	MethodVersion:     true,
-}
-
 // startingAllows reports whether req may run while the daemon is adopting.
 func startingAllows(req daemonrpc.Request) bool {
 	if req.Method == "stop" {
@@ -1358,7 +1332,7 @@ func startingAllows(req daemonrpc.Request) bool {
 	}
 	// resume is how a held daemon, or one that suspended while running, ends
 	// the hold, so it must be served while held.
-	return startingMethods[req.Method] || req.Method == "resume"
+	return startingMethods[req.Method]
 }
 
 // dispatchAs enforces the caller's scope, then routes the request. A method
@@ -1389,114 +1363,16 @@ func (d *Daemon) dispatchUntimed(req daemonrpc.Request, c caller) daemonrpc.Resp
 		return daemonrpc.Response{Error: ErrClusterSuspended.Error()}
 	}
 	if d.adoptingSince.Load() != 0 && !startingAllows(req) {
-		if req.Method == "heartbeat" || req.Method == "bus.beat" || req.Method == "account.limits" {
+		if reportDeferredMethods[req.Method] {
 			return daemonrpc.Response{Error: ErrReportDeferred.Error(), Starting: true}
 		}
 		return daemonrpc.Response{Error: ErrDaemonStarting.Error(), Starting: true}
 	}
-	switch req.Method {
-	case "apply":
-		return d.handleApply(req.Params)
-	case "get":
-		return d.handleGet(req.Params)
-	case "describe":
-		return d.handleDescribe(req.Params)
-	case "delete":
-		return d.handleDelete(req.Params)
-	case "scale":
-		return d.handleScale(req.Params)
-	case "converge":
-		return d.handleConverge(req.Params)
-	case "reap":
-		return d.handleReap(req.Params)
-	case "heartbeat":
-		return d.handleHeartbeat(req.Params)
-	case "bus.beat":
-		return d.handleBusBeat(req.Params)
-	case "handoff.put":
-		return d.handleHandoffPut(req.Params)
-	case "broker.token":
-		return d.handleBrokerToken(context.Background(), req.Params)
-	case "account.limits":
-		return d.handleAccountLimits(req.Params)
-	case "account.series":
-		return d.handleAccountSeries(req.Params)
-	case "account.delta":
-		return d.handleAccountDelta(req.Params)
-	case "run":
-		return d.handleRun(req.Params)
-	case "shift":
-		return d.handleShift(req.Params)
-	case "reset-health":
-		return d.handleResetHealth(req.Params)
-	case "inject":
-		return d.handleInjectAs(req.Params, c)
-	case "capture":
-		return d.handleCapture(req.Params)
-	case "credential.put":
-		return d.handleCredentialPut(req.Params, c)
-	case "credential.get":
-		return d.handleCredentialGet(req.Params)
-	case "credential.reveal":
-		return d.handleCredentialReveal(req.Params, c)
-	case "backend.verify":
-		return d.handleBackendVerify(req.Params)
-	case "bus.status":
-		return d.handleBusStatus()
-	case "bus.audit":
-		return d.handleBusAudit(req.Params)
-	case "daemon.status":
-		return d.handleDaemonStatus()
-	case "suspend.status":
-		return d.handleSuspendStatus()
-	case "suspend":
-		return d.handleSuspend(req.Params)
-	case "resume":
-		return d.handleResume()
-	case "team.hibernate":
-		return d.handleHibernate(req.Params)
-	case "team.wake":
-		return d.handleWake(req.Params)
-	case "view.refresh":
-		return d.handleViewRefresh(req.Params)
-	case "bus.leaf.connect":
-		return d.handleBusLeafConnect()
-	case "bus.leaf.disconnect":
-		return d.handleBusLeafDisconnect()
-	case "exposure.add":
-		return d.handleExposureAdd(req.Params, c)
-	case "exposure.end":
-		return d.handleExposureEnd(req.Params, c)
-	case "exposure.void":
-		return d.handleExposureVoid(req.Params, c)
-	case "credential.list":
-		return d.handleCredentialList()
-	case "credential.delete":
-		return d.handleCredentialDelete(req.Params, c)
-	case "stop":
-		return d.handleStop(req.Params)
-	case "reexec":
-		return d.handleReexec(req.Params, c)
-	case "logs":
-		return d.handleLogs(req.Params)
-	case "events":
-		return d.handleEvents(req.Params)
-	case daemonrpc.MethodEventsWatch:
-		// Reachable only through dispatch(), which tests and the SSH
-		// path do not use for this method; handleRWCAs routes it to the
-		// streaming handler before dispatch.
-		return daemonrpc.Response{Error: fmt.Sprintf("%s streams many responses on one connection; use daemonrpc.WatchEventsWith", daemonrpc.MethodEventsWatch)}
-	case MethodVersion:
-		return d.handleVersion()
-	case "orphans":
-		return d.handleOrphans()
-	case "prune_plan":
-		return d.handlePrunePlan(req.Params)
-	case "plan":
-		return d.handlePlan()
-	default:
+	spec, ok := methodTable[req.Method]
+	if !ok {
 		return daemonrpc.Response{Error: unknownMethodPrefix + req.Method}
 	}
+	return spec.Handle(d, req.Params, c)
 }
 
 // Logs params — tail of the daemon's in-memory log ring.

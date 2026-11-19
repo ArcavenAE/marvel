@@ -14,6 +14,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemon"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/knownhosts"
 )
@@ -29,8 +30,9 @@ import (
 // commands). A variable so a test can shorten it.
 var fanOutTimeout = 10 * time.Second
 
-// fanOutMethods are the daemon methods a fan-out may call: reads only.
-var fanOutMethods = []string{"get", "version"}
+// fanOutMethods are the daemon methods a fan-out may call: reads only. The
+// daemon's method table declares them (daemon.FanOutMethods).
+var fanOutMethods = daemon.FanOutMethods()
 
 // outcome is how one cluster's read ended. The set is closed and pinned by a
 // test.

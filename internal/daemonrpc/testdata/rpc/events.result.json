@@ -1,0 +1,22 @@
+{
+  "events": [
+    {
+      "seq": 7,
+      "ts": "2026-01-02T03:04:05Z",
+      "kind": "kind",
+      "severity": "severity",
+      "workspace": "workspace",
+      "team": "team",
+      "role": "role",
+      "session": "session",
+      "actor": "actor",
+      "generation": 7,
+      "cause": "cause",
+      "reason": "reason",
+      "since": "since",
+      "message": "message"
+    }
+  ],
+  "dropped": 7,
+  "resume_from": 7
+}
