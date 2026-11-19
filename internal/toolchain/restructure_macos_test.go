@@ -27,6 +27,8 @@ var restructurePackages = []string{
 	"internal/workload",
 	"internal/backoff",
 	"internal/team",
+	"internal/tmux/tmuxtest",
+	"internal/tmux/tmuxtest/fake",
 }
 
 // extraMacOSPackages are packages outside the restructure plan that the same
