@@ -1,5 +1,7 @@
 package runtime
 
+import "strings"
+
 // PermissionMapper is implemented by an adapter that turns a role's
 // permissions into its harness's own flags. refusal is non-empty when the
 // harness has no ruled mapping for the mode, and args is then nil.
@@ -10,8 +12,70 @@ type PermissionMapper interface {
 	OverridingArg(args []string) string
 }
 
-// OverridingArg is a stub until the check is written.
-func (c *Codex) OverridingArg(_ []string) string { return "" }
+// codexPostureFlags are the codex flags that change the sandbox or approval
+// posture the mapped flags set, read from codex 0.160.1 help. --full-auto is
+// not in that help but older codex took it and a role may still carry it.
+// --add-dir widens what a workspace-write sandbox may write, -p layers a
+// profile that can set either posture, and --approve-for-me hands approvals to
+// an automatic reviewer.
+var codexPostureFlags = []string{
+	"-s", "--sandbox",
+	"-a", "--ask-for-approval",
+	"-p", "--profile",
+	"--add-dir",
+	"--dangerously-bypass-approvals-and-sandbox",
+	"--full-auto",
+	"--approve-for-me",
+}
+
+// codexPostureKeys are the -c config keys that do the same, by exact key or,
+// for sandbox_workspace_write, by table prefix.
+func codexPostureKey(key string) bool {
+	return key == "sandbox_mode" || key == "approval_policy" ||
+		key == "sandbox_workspace_write" || strings.HasPrefix(key, "sandbox_workspace_write.")
+}
+
+// OverridingArg returns the first of a role's own runtime.args that would
+// change the sandbox or approval posture the mapped flags set, named as the
+// role wrote it (for a -c override, the flag and the key), or "". The mapped
+// flags go first and codex reads the later flag, so such an arg would let a
+// role run wider than its permissions read. Flags that leave the posture
+// alone, and -c keys other than the posture keys, are not named.
+func (c *Codex) OverridingArg(args []string) string {
+	for i, a := range args {
+		for _, f := range codexPostureFlags {
+			if a == f {
+				return a
+			}
+			if strings.HasPrefix(f, "--") && strings.HasPrefix(a, f+"=") {
+				return a
+			}
+			// An attached short value, as in -sread-only.
+			if len(f) == 2 && len(a) > 2 && strings.HasPrefix(a, f) && !strings.HasPrefix(a, "--") {
+				return a
+			}
+		}
+		flag, val := "", ""
+		switch {
+		case a == "-c" || a == "--config":
+			if i+1 < len(args) {
+				flag, val = a, args[i+1]
+			}
+		case strings.HasPrefix(a, "--config="):
+			flag, val = "--config", strings.TrimPrefix(a, "--config=")
+		case strings.HasPrefix(a, "-c") && !strings.HasPrefix(a, "--") && len(a) > 2:
+			flag, val = "-c", a[2:]
+		}
+		if flag == "" {
+			continue
+		}
+		key, _, _ := strings.Cut(val, "=")
+		if key = strings.TrimSpace(key); codexPostureKey(key) {
+			return flag + " " + key
+		}
+	}
+	return ""
+}
 
 // MapPermissions maps a codex role's permissions for the rows the operator
 // ruled (Desk card i260f-3): unset adds nothing; plan is read-only and never
@@ -59,6 +123,9 @@ func codexPermissionArgs(ctx *LaunchContext, headless bool) []string {
 	args, refusal := (&Codex{}).MapPermissions(ctx.Role.Permissions, ctx.Role.DangerousPermissions, headless)
 	if refusal != "" {
 		logLaunch("role %s: %s; no flags added", ctx.Role.Name, refusal)
+	}
+	if flag := (&Codex{}).OverridingArg(ctx.Session.Runtime.Args); flag != "" && len(args) > 0 {
+		logLaunch("role %s: runtime.args flag %q follows the flags permissions %q maps to and overrides them", ctx.Role.Name, flag, ctx.Role.Permissions)
 	}
 	return args
 }

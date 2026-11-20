@@ -1892,8 +1892,18 @@ func (m *Manager) RolePermissionRefusal(r api.ManifestRole) string {
 	if !ok {
 		return ""
 	}
-	_, refusal := pm.MapPermissions(r.Permissions, r.DangerousPermissions, r.Runtime.Mode == api.RuntimeModeHeadless)
-	return refusal
+	if _, refusal := pm.MapPermissions(r.Permissions, r.DangerousPermissions, r.Runtime.Mode == api.RuntimeModeHeadless); refusal != "" {
+		return refusal
+	}
+	// With permissions unset the role's args stay open. With a mode set, a
+	// runtime.args flag that moves the sandbox or approval posture would win
+	// over the mapped flags, so the role would run wider than it reads.
+	if r.Permissions != "" {
+		if flag := pm.OverridingArg(r.Runtime.Args); flag != "" {
+			return fmt.Sprintf("permissions %q cannot be combined with the runtime.args flag %q, which would override the sandbox or approval posture the mode maps to; drop one of them", r.Permissions, flag)
+		}
+	}
+	return ""
 }
 
 // streams reports whether the launch wants a stream pipe: the adapter can

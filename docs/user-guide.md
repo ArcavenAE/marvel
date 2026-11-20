@@ -137,6 +137,15 @@ next apply until you move the sandbox and approval flags into `runtime.args`.
 Codex lets a trusted project write whatever its sandbox flag says, so `plan`
 is read-only only in a directory that is not listed in `workspace.trusted_folders`.
 
+A codex role that sets `permissions` may not also carry a `runtime.args` flag
+that changes the sandbox or approval posture, because codex reads the later
+flag and the role would run wider than its mode says. Apply refuses `-s`,
+`--sandbox`, `-a`, `--ask-for-approval`, `-p`, `--profile`, `--add-dir`,
+`--dangerously-bypass-approvals-and-sandbox`, `--full-auto`, `--approve-for-me`,
+and a `-c` or `--config` override of `sandbox_mode`, `approval_policy` or any
+`sandbox_workspace_write` key, and names the flag. With `permissions` unset,
+`runtime.args` stays open.
+
 **`dangerous_permissions` is separate.** The boolean `dangerous_permissions:
 true` appends `--dangerously-skip-permissions`, which removes the permission
 model entirely rather than choosing a mode within it. It is orthogonal to
