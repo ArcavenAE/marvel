@@ -126,6 +126,32 @@ class ScanGit(unittest.TestCase):
             self.assertEqual(rep["bytes"], len(b"no token here\n"))
 
 
+class Unreadable(unittest.TestCase):
+    """A scan that could not read everything must say so (review of 213d2bac): an absent or
+    unreadable root is recorded, and it never reads as clean."""
+
+    def test_a_root_that_does_not_exist_is_recorded_as_unreadable(self):
+        with tempfile.TemporaryDirectory() as d:
+            gone = os.path.join(d, "no-such-dir")
+            rep = canary_scan.scan_tree(gone, {h(TOKEN)})
+            self.assertEqual(rep["unreadable"], [gone])
+            self.assertEqual(rep["files"], 0)
+
+    def test_a_subdirectory_that_cannot_be_listed_is_recorded_as_unreadable(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "ok.txt"), "w") as f:
+                f.write("clean\n")
+            locked = os.path.join(d, "locked")
+            os.makedirs(locked)
+            os.chmod(locked, 0)
+            try:
+                rep = canary_scan.scan_tree(d, {h(TOKEN)})
+            finally:
+                os.chmod(locked, 0o700)
+            self.assertEqual(rep["unreadable"], [locked])
+            self.assertEqual(rep["files"], 1)
+
+
 class Cli(unittest.TestCase):
     def run_cli(self, *args):
         return subprocess.run([sys.executable, "-I", "-B", os.path.join(HERE, "canary_scan.py")] + list(args),
@@ -144,6 +170,42 @@ class Cli(unittest.TestCase):
             self.assertEqual(bad.returncode, 2)
             nothing = self.run_cli("--hash", h(TOKEN))
             self.assertEqual(nothing.returncode, 2)
+
+
+    def test_a_readable_tree_reports_no_unreadable_and_exits_0(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "ok.txt"), "w") as f:
+                f.write("clean\n")
+            r = self.run_cli("--hash", h(TOKEN), "--tree", d)
+            self.assertEqual(r.returncode, 0)
+            self.assertEqual(json.loads(r.stdout).get("unreadable_count"), 0)
+
+    def test_exit_3_when_nothing_was_found_but_something_could_not_be_read(self):
+        with tempfile.TemporaryDirectory() as d:
+            gone = os.path.join(d, "no-such-dir")
+            r = self.run_cli("--hash", h(TOKEN), "--tree", gone)
+            self.assertEqual(r.returncode, 3)
+            out = json.loads(r.stdout)
+            self.assertEqual(out["hit_count"], 0)
+            self.assertEqual(out.get("unreadable_count"), 1)
+            self.assertEqual(out["roots"][0]["unreadable"], [gone])
+
+    def test_a_hit_keeps_exit_1_even_when_something_else_was_unreadable(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "f.txt"), "w") as f:
+                f.write(TOKEN + "\n")
+            r = self.run_cli("--hash", h(TOKEN), "--tree", d, "--tree", os.path.join(d, "no-such-dir"))
+            self.assertEqual(r.returncode, 1)
+            self.assertEqual(json.loads(r.stdout).get("unreadable_count"), 1)
+
+    def test_a_git_root_that_is_not_a_repository_takes_exit_3_and_prints_no_traceback(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = self.run_cli("--hash", h(TOKEN), "--git", d)
+            self.assertEqual(r.returncode, 3)
+            self.assertNotIn(b"Traceback", r.stderr)
+            out = json.loads(r.stdout)
+            self.assertEqual(out.get("unreadable_count"), 1)
+            self.assertEqual(out["roots"][0]["kind"], "git")
 
 
 if __name__ == "__main__":
