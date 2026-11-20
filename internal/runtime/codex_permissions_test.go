@@ -161,6 +161,17 @@ func TestCodexNamesTheRuntimeArgThatOverridesThePermissionMapping(t *testing.T) 
 		{[]string{"-c", `sandbox_workspace_write.network_access=true`}, "-c sandbox_workspace_write.network_access"},
 		{[]string{"-c", ` sandbox_mode = "read-only"`}, "-c sandbox_mode"},
 		{[]string{"--model", "gpt-x", "-s", "read-only"}, "-s"},
+		// codex 0.160.1's own help gives -c 'sandbox_permissions=[...]' as an
+		// example, so any sandbox or approval key is named, not only the two
+		// known ones.
+		{[]string{"-c", `sandbox_permissions=["disk-full-read-access"]`}, "-c sandbox_permissions"},
+		{[]string{"-c", ` sandbox_permissions = ["disk-full-read-access"]`}, "-c sandbox_permissions"},
+		{[]string{"--config=sandbox_permissions=[\"disk-full-read-access\"]"}, "--config sandbox_permissions"},
+		{[]string{"-c", `approval_policy_extra="x"`}, "-c approval_policy_extra"},
+		// A profile layers a config that can set either posture.
+		{[]string{"-c", `profile="wide"`}, "-c profile"},
+		{[]string{"-c", `profiles.wide.sandbox_mode="danger-full-access"`}, "-c profiles.wide.sandbox_mode"},
+		{[]string{"--config", `permissions_profile="wide"`}, "--config permissions_profile"},
 	}
 	for _, tc := range over {
 		if got := c.OverridingArg(tc.args); got != tc.want {
@@ -173,7 +184,8 @@ func TestCodexNamesTheRuntimeArgThatOverridesThePermissionMapping(t *testing.T) 
 		{"-m", "gpt-x", "--json", "--skip-git-repo-check"},
 		{"-C", "/work", "--ephemeral"},
 		{"-c", `model="o3"`},
-		{"-c", `sandbox_permissions=["disk-full-read-access"]`},
+		{"-c", `model_provider="x"`},
+		{"-c", `model_reasoning_effort="high"`},
 		{"--search", "--no-alt-screen"},
 	} {
 		if got := c.OverridingArg(args); got != "" {
