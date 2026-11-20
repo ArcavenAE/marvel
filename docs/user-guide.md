@@ -252,13 +252,17 @@ owns its own command line, so marvel exports the composed text as
 `MARVEL_FIRST_PROMPT` and the wrapper can pass it on. Only the claude adapter
 does either today; a codex or opencode successor gets no first message.
 
-`apply` refuses nothing on this. The daemon writes an advisory to its log, not
-to the output of `marvel work`, for each of these:
+`apply` refuses an interactive role that declares `runtime.prompt` on a harness
+that cannot take it as a first message (only claude does today), and the
+refusal names the team, the role and the runtime. Remove the `runtime.prompt`
+line or use a harness that takes one. The refusal lifts for codex and opencode
+when their first-message support lands. A headless role keeps `runtime.prompt`
+as its one request and is never refused.
 
-- an interactive role declares `runtime.prompt` on a harness that cannot take
-  it as a first message yet (only claude does), so the prompt is not delivered;
-- an interactive role declares neither `runtime.prompt` nor `shift.handoff`, so
-  a fresh seat of it starts idle at an empty prompt.
+The one thing `apply` still only advises on is an interactive role that
+declares neither `runtime.prompt` nor `shift.handoff`: the daemon writes a line
+to its log, not to the output of `marvel work`, saying that a fresh seat of it
+starts idle at an empty prompt.
 
 Each spawn records `session.first-prompt` with the source of its first message
 and its byte length, never the text. The event records what marvel passed, not

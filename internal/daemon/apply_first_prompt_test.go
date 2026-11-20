@@ -34,7 +34,6 @@ name = "crew"
     [team.role.runtime]
     image = "codex"
     command = "codex"
-    mode = "interactive"
     prompt = "review the open pull requests"
 `)
 	if resp.Error == "" {
