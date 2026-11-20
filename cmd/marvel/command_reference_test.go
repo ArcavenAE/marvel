@@ -38,7 +38,7 @@ func visibleCommands(c *cobra.Command) []*cobra.Command {
 }
 
 func TestCommandReferenceHasAPagePerVisibleCommand(t *testing.T) {
-	root := newRootCmd()
+	root := newReferenceRoot()
 	pages := commandReference(root)
 	if len(pages) == 0 {
 		t.Fatal("commandReference returned no pages for the marvel command tree")
@@ -60,7 +60,7 @@ func TestCommandReferenceHasAPagePerVisibleCommand(t *testing.T) {
 }
 
 func TestCommandReferencePagesNameEveryLocalFlag(t *testing.T) {
-	root := newRootCmd()
+	root := newReferenceRoot()
 	pages := commandReference(root)
 	if len(pages) == 0 {
 		t.Fatal("commandReference returned no pages for the marvel command tree")
@@ -91,11 +91,11 @@ func localFlagNames(c *cobra.Command) []string {
 }
 
 func TestCommandReferenceIsDeterministic(t *testing.T) {
-	first := commandReference(newRootCmd())
+	first := commandReference(newReferenceRoot())
 	if len(first) == 0 {
 		t.Fatal("commandReference returned no pages for the marvel command tree")
 	}
-	second := commandReference(newRootCmd())
+	second := commandReference(newReferenceRoot())
 	if len(first) != len(second) {
 		t.Fatalf("two runs produced %d and %d pages", len(first), len(second))
 	}
@@ -107,7 +107,7 @@ func TestCommandReferenceIsDeterministic(t *testing.T) {
 }
 
 func TestCommandReferenceCarriesNoGenerationStamp(t *testing.T) {
-	pages := commandReference(newRootCmd())
+	pages := commandReference(newReferenceRoot())
 	if len(pages) == 0 {
 		t.Fatal("commandReference returned no pages for the marvel command tree")
 	}
@@ -123,7 +123,7 @@ func TestCommandReferenceCarriesNoGenerationStamp(t *testing.T) {
 //
 //	go test ./cmd/marvel -run TestCommittedCommandReferenceMatchesTheTree -update-reference
 func TestCommittedCommandReferenceMatchesTheTree(t *testing.T) {
-	generated := commandReference(newRootCmd())
+	generated := commandReference(newReferenceRoot())
 	if len(generated) == 0 {
 		t.Fatal("commandReference returned no pages for the marvel command tree")
 	}
@@ -177,14 +177,14 @@ func TestCommittedCommandReferenceMatchesTheTree(t *testing.T) {
 // still read ~/.marvel and carry no machine path.
 func TestCommandReferenceIgnoresMarvelHome(t *testing.T) {
 	t.Setenv(paths.HomeEnv, "")
-	unset := commandReference(newRootCmd())
+	unset := commandReference(newReferenceRoot())
 	if len(unset) == 0 {
 		t.Fatal("commandReference returned no pages for the marvel command tree")
 	}
 
 	root := filepath.Join(t.TempDir(), "mh")
 	t.Setenv(paths.HomeEnv, root)
-	set := commandReference(newRootCmd())
+	set := commandReference(newReferenceRoot())
 	if len(set) != len(unset) {
 		t.Fatalf("MARVEL_HOME changed the page count from %d to %d", len(unset), len(set))
 	}
