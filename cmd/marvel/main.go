@@ -3379,6 +3379,10 @@ type watchSort struct {
 	// resolved, which the i key shows; it is dropped when the cursor moves.
 	pendingShort string
 	detail       string
+	// cluster is the one cluster the watch was given with --cluster, or empty.
+	// A single named cluster is not a fan-out, so its rows carry no cluster of
+	// their own, and the short line needs the name to reach the same daemon.
+	cluster string
 	// drainKeys discards the keys the loop's parser still holds. The loop sets
 	// it; openPending calls it with the reader parked.
 	drainKeys   func()

@@ -129,3 +129,50 @@ func TestDetailsKeyIsListedInTheOverlayHelpAndGuide(t *testing.T) {
 		t.Error("the user guide does not say that i shows the tmux command")
 	}
 }
+
+// A watch given one --cluster is not a fan-out, so its rows carry no cluster, but
+// the line an operator pastes elsewhere must still reach the same daemon: it
+// carries --cluster with the name the watch was given. The same holds for the
+// print-only line of a remote cluster and for the failure hint.
+func TestSingleNamedClusterIsCarriedIntoTheShortLine(t *testing.T) {
+	ws := statusRig(t, []api.Session{{Workspace: "aae", Name: "seat00", PaneID: "%5"}})
+	ws.cluster = "beta"
+	press(t, ws, 'j', 13)
+	if want := "plan: marvel attach aae/seat00 --cluster beta"; ws.status != want {
+		t.Errorf("status %q, want %q", ws.status, want)
+	}
+}
+
+func TestSingleNamedRemoteClusterPrintOnlyLineCarriesTheCluster(t *testing.T) {
+	ws := selRig(t, []api.Session{{Workspace: "aae", Name: "one", PaneID: "%7"}})
+	ws.cluster = "far"
+	ws.target = func(string) (attachTarget, error) {
+		return attachTarget{Socket: "sockR", Remote: true, Host: "far.example"}, nil
+	}
+	press(t, ws, 'j', 13)
+	if want := "print only: marvel attach aae/one --cluster far"; ws.status != want {
+		t.Errorf("status %q, want %q", ws.status, want)
+	}
+}
+
+func TestSingleNamedClusterFailureHintCarriesTheCluster(t *testing.T) {
+	ws := statusRig(t, []api.Session{{Workspace: "aae", Name: "dup", PaneID: "%5"}})
+	ws.cluster = "beta"
+	rec := newHandoffRec()
+	ws.term = rec
+	ws.exec = func(argv []string) error { rec.ran(argv); return errors.New("boom") }
+	press(t, ws, 'j', 13)
+	if want := "marvel attach aae/dup --cluster beta"; !strings.Contains(ws.status, want) {
+		t.Errorf("failure status %q does not contain %q", ws.status, want)
+	}
+}
+
+// A row that names its own cluster keeps it, whatever the watch was given.
+func TestARowsOwnClusterWinsOverTheWatchsCluster(t *testing.T) {
+	ws := statusRig(t, []api.Session{{Cluster: "alpha", Workspace: "aae", Name: "dup", PaneID: "%5"}})
+	ws.cluster = "beta"
+	press(t, ws, 'j', 13)
+	if want := "plan: marvel attach aae/dup --cluster alpha"; ws.status != want {
+		t.Errorf("status %q, want %q", ws.status, want)
+	}
+}
