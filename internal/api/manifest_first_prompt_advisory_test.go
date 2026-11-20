@@ -28,6 +28,11 @@ func TestFirstPromptAdvisories(t *testing.T) {
 		want  []string
 	}{
 		{
+			name:  "an explicit mode of interactive with neither prompt nor handoff starts idle",
+			roles: []ManifestRole{firstPromptRole("sup", "claude", RuntimeMode("interactive"), "", nil)},
+			want:  []string{`team crew role sup: interactive role declares neither runtime.prompt nor shift.handoff, so a fresh seat of this role starts idle at an empty prompt (marvel#391)`},
+		},
+		{
 			name:  "claude with a prompt says nothing",
 			roles: []ManifestRole{firstPromptRole("sup", "claude", RuntimeModeInteractive, "start here", nil)},
 		},
@@ -107,6 +112,13 @@ func TestFirstPromptRefusals(t *testing.T) {
 		roles []ManifestRole
 		want  []string
 	}{
+		{
+			// mode = "interactive" is a value a manifest may write, and it
+			// means the same as no mode at all.
+			name:  "an explicit mode of interactive is refused like the default",
+			roles: []ManifestRole{firstPromptRole("rev", "codex", RuntimeMode("interactive"), "review it", nil)},
+			want:  []string{refusal("rev", "codex")},
+		},
 		{
 			name:  "claude with a prompt is accepted",
 			roles: []ManifestRole{firstPromptRole("sup", "claude", RuntimeModeInteractive, "start here", nil)},

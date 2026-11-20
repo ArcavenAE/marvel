@@ -48,3 +48,37 @@ name = "crew"
 		t.Errorf("a refused apply committed %d teams", len(teams))
 	}
 }
+
+// The same refusal holds when the manifest writes mode = "interactive": that
+// value means the same as no mode, and apply must not read it as headless.
+func TestApplyRefusesRuntimePromptWhenModeIsWrittenInteractive(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	d := newHandlerDaemon(t)
+	resp := applyManifest(t, d, `
+[workspace]
+name = "test-first-prompt-mode"
+
+[[team]]
+name = "crew"
+
+  [[team.role]]
+  name = "rev"
+  replicas = 1
+
+    [team.role.runtime]
+    image = "codex"
+    command = "codex"
+    mode = "interactive"
+    prompt = "review the open pull requests"
+`)
+	if resp.Error == "" {
+		t.Fatal("apply accepted runtime.prompt on a codex role written mode = \"interactive\"")
+	}
+	if !strings.Contains(resp.Error, "role rev") {
+		t.Errorf("refusal %q does not name role rev", resp.Error)
+	}
+}
