@@ -272,6 +272,12 @@ type Daemon struct {
 	afterRootLock func() (fallback string, err error)
 	fallback      string
 
+	// accountSeriesDir and accountSeriesRetention are Options.AccountSeriesDir
+	// and Options.AccountSeriesRetention. Start attaches the series to the
+	// directory once it holds the root lock.
+	accountSeriesDir       string
+	accountSeriesRetention time.Duration
+
 	// reexec replaces the process image. Defaults to syscall.Exec; tests
 	// override it to assert the pre-exec contract without actually
 	// handing the process over.
@@ -338,6 +344,15 @@ type Options struct {
 	// timeout without a 10-minute wait) via the daemon's --shift-timeout
 	// flag or MARVEL_SHIFT_TIMEOUT. See aae-orc-sape / ArcavenAE/marvel#88.
 	ShiftTimeout time.Duration
+	// AccountSeriesDir, when non-empty, is the directory the account series
+	// keeps its day files in (one JSONL file per UTC day). The daemon reads the
+	// last eight days back when it starts, so quota readings survive a restart.
+	// Empty keeps the series in memory only, as tests that build a daemon
+	// directly do. The CLI sets it to <home>/state/account-series.
+	AccountSeriesDir string
+	// AccountSeriesRetention is how long a day file is kept. Zero or less means
+	// api.DefaultPersistRetention, 90 days.
+	AccountSeriesRetention time.Duration
 	// Reclaim makes the startup reconcile pass destroy marvel-* tmux
 	// state this daemon does not own, rather than leaving it running and
 	// reporting it. The zero value is the ratified default (leave alone).
@@ -536,6 +551,9 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		leafLossCause: leafLossCause,
 		rootLockPath:  opts.RootLock,
 		afterRootLock: opts.AfterRootLock,
+
+		accountSeriesDir:       opts.AccountSeriesDir,
+		accountSeriesRetention: opts.AccountSeriesRetention,
 	}
 	teamCtrl.Suspended = d.clusterSuspended
 	driver.SetSuspendGate(d.clusterSuspended)
@@ -664,6 +682,16 @@ func (d *Daemon) Start(socketPath string) (err error) {
 				log.Printf("start: the after-lock hook failed: %v", herr)
 			}
 			d.fallback = fb
+		}
+	}
+
+	// The series directory is read and pruned only by the daemon that holds the
+	// root: one that lost the lock above never reaches it. Readings that cannot
+	// be kept are not worth refusing to start over; the series still answers
+	// from memory.
+	if d.accountSeriesDir != "" {
+		if err := d.accountSeries.Attach(d.accountSeriesDir, d.accountSeriesRetention, time.Now()); err != nil {
+			log.Printf("warning: account series not persisted: %v", err)
 		}
 	}
 

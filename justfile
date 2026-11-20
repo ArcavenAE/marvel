@@ -22,6 +22,10 @@ test:
 test-race:
     go test ./... -race -v
 
+# Rewrite docs/reference from the cobra command tree
+reference:
+    go test ./cmd/marvel -run TestCommittedCommandReferenceMatchesTheTree -update-reference -count=1
+
 # Format code
 fmt:
     gofumpt -w .

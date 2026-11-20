@@ -86,6 +86,20 @@ ergonomic path from a desk number to a connected terminal. The verb is useful
 alone, from any shell and any script, so it comes first; the keymap sits on top
 of it.
 
+## Remote desks, and the ssh ruling
+
+For a desk on a remote cluster the verb prints
+`ssh -t <host> tmux -L <socket> attach -t %<desk>` and runs nothing. The Desk
+card lj44u-remote-attach-scope ruled that a remote desk is print-only for now.
+
+On 2026-11-19 the operator ruled that host-native ssh "is not on by default in
+macos, and we're not going to make it a requirement". The printed ssh line is
+therefore a convenience for a host where ssh already works, not a supported or
+required path. The same day the operator asked for a possible feature to be
+written down and gated, not built: a terminal over the existing `mrvl://`
+channel. It is in [[tmux-over-mrvl]]. Switchboard in access mode, managed by
+marvel as a service, "is still the ideal" and is not a priority right now.
+
 ## Not now
 
 Capture only. No verb, no keymap, no code. The bead (aae-orc-lj44u) tracks the

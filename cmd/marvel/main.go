@@ -340,6 +340,33 @@ func resolveShiftTimeout(flagVal time.Duration, flagChanged bool, env string) (t
 	return d, nil
 }
 
+// accountSeriesRetentionEnv seeds how long the daemon keeps its day files of
+// quota readings when --account-series-retention is not passed.
+const accountSeriesRetentionEnv = "MARVEL_ACCOUNT_SERIES_RETENTION"
+
+// resolveAccountSeriesRetention picks the retention for the account series
+// day files: the flag when the operator set it, else the environment variable
+// parsed as a Go duration, else zero, which the daemon reads as 90 days.
+func resolveAccountSeriesRetention(flagVal time.Duration, flagChanged bool, env string) (time.Duration, error) {
+	if flagChanged {
+		if flagVal < 0 {
+			return 0, fmt.Errorf("--account-series-retention must not be negative, got %s", flagVal)
+		}
+		return flagVal, nil
+	}
+	if env == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(env)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", accountSeriesRetentionEnv, env, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%s must not be negative, got %q", accountSeriesRetentionEnv, env)
+	}
+	return d, nil
+}
+
 func daemonCmd() *cobra.Command {
 	var mrvlAddr string
 	var listenSocket string
@@ -350,6 +377,7 @@ func daemonCmd() *cobra.Command {
 	var logMaxTotalMiB int
 	var stateBoltPath string
 	var shiftTimeout time.Duration
+	var accountSeriesRetention time.Duration
 	var reclaim bool
 
 	layout, _ := paths.Default()
@@ -425,6 +453,13 @@ Examples:
 			// the resolved layout and nothing else: no flag moves it, because
 			// moving it would let two daemons share a root. It sits in run/,
 			// which must exist before the daemon opens the lock file there.
+			seriesRetention, err := resolveAccountSeriesRetention(
+				accountSeriesRetention, cmd.Flags().Changed("account-series-retention"), os.Getenv(accountSeriesRetentionEnv),
+			)
+			if err != nil {
+				return err
+			}
+			seriesDir := accountSeriesDir(layout)
 			rootLock := ""
 			if layout.Home != "" {
 				if err := layout.EnsureRunDir(); err != nil {
@@ -440,6 +475,9 @@ Examples:
 				ShiftTimeout: shiftTO,
 				Reclaim:      reclaim,
 				Build:        thisBuild(),
+
+				AccountSeriesDir:       seriesDir,
+				AccountSeriesRetention: seriesRetention,
 			})
 			if err != nil {
 				return lockedStateHint(err, pidFilePath, cmd.Root())
@@ -520,6 +558,8 @@ Examples:
 		"bbolt L2 file for durable state (empty string disables persistence; daemon restart loses state and kills running agents per pre-L2 contract C12)")
 	cmd.Flags().DurationVar(&shiftTimeout, "shift-timeout", 0,
 		"abort and roll back a shift that has not reached readiness within this Go duration (0 uses the built-in 10m default; env "+shiftTimeoutEnv+" is the fallback when this flag is unset)")
+	cmd.Flags().DurationVar(&accountSeriesRetention, "account-series-retention", 0,
+		"keep the day files of quota readings this long (0 uses the default of 90 days; env "+accountSeriesRetentionEnv+" is the fallback when this flag is unset)")
 	// Log rotation / retention — bounds disk usage for --log-file.
 	// Motivated by desk Pi headroom (aae-orc-k0t, Skippy session-025/026).
 	// Zero for any of these disables the corresponding limit.
@@ -593,7 +633,7 @@ func daemonLogsCmd() *cobra.Command {
 		Short: "Print the daemon's recent log lines (over mrvl:// if --cluster is set)",
 		Long: `Fetch the daemon's in-memory log ring and print the most recent N lines.
 
-The ring is populated by every 'log.Printf' the daemon emits — RPC
+The ring is populated by every 'log.Printf' the daemon emits: RPC
 dispatch, session creation, health-check decisions, shifts, auth
 events. Lines survive as long as the daemon process does; the ring
 is bounded so memory stays flat.
@@ -1546,9 +1586,9 @@ func planCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "plan [workspace/team]",
 		Short: "Preview the convergence delta per team without spawning (dry run)",
-		Long: `Print the plan the next reconcile tick would enact — desired vs alive
+		Long: `Print the plan the next reconcile tick would enact: desired vs alive
 replica counts, sessions that would spawn, sessions that would scale down, and
-any hold (crash-loop backoff or admission refusal) — computed without applying
+any hold (crash-loop backoff or admission refusal), computed without applying
 it. No session is spawned or deleted, so this is a spawn-free way to inspect
 what the daemon is about to do.
 
@@ -2383,7 +2423,7 @@ Without flags, captures the visible area. -S with a negative value reaches
 into scrollback; an omitted -E defaults to the bottom of the visible area.
 
 Full-screen TUI harnesses (interactive claude and friends) run on the tmux
-alternate screen, which has no scrollback — captures of those sessions cap
+alternate screen, which has no scrollback, so captures of those sessions cap
 at the visible screen regardless of -S.
 
 A capture is what the program last painted, not necessarily what is on its

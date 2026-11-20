@@ -547,8 +547,8 @@ sleep 20
 ```
 
 The `-t` pane's own bottom line shows the human-facing half of the same
-feed ("Haiku 4.5 · CTX 13% · $0.04"); attach to it via the DESK column to
-drive it by hand.
+feed ("Haiku 4.5 · CTX 13% · $0.04"); attach to it via the DESK column (opt-in:
+`marvel get sessions --columns name,desk`) to drive it by hand.
 
 A verified run produced, across the three harnesses uniformly:
 `agent.session.started`, `agent.turn.started`, `agent.turn.completed` (with
