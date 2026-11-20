@@ -169,6 +169,21 @@ func TestCodexNamesTheRuntimeArgThatOverridesThePermissionMapping(t *testing.T) 
 		{[]string{"-c", `permissions={}`}, "-c permissions"},
 		{[]string{"-c", ` projects . x = 1`}, "-c projects . x"},
 		{[]string{"-c=default_permissions=wide"}, "-c default_permissions"},
+		// A quoted or upper-case first segment is refused too. codex 0.160.1 reads
+		// neither as the bare key (measured with codex sandbox on a local true: a
+		// wrong-typed value errors only for the bare lower-case key), but the
+		// check fails closed rather than lean on how codex splits a key.
+		{[]string{"-c", `"permissions".x=1`}, `-c "permissions".x`},
+		{[]string{"-c", `'permissions'.x=1`}, `-c 'permissions'.x`},
+		{[]string{"-c", `"projects".y.trust_level="trusted"`}, `-c "projects".y.trust_level`},
+		{[]string{`-c="permissions".x=1`}, `-c "permissions".x`},
+		{[]string{"--config", `"default_permissions"="x"`}, `--config "default_permissions"`},
+		{[]string{"-c", `"sandbox_mode"="danger-full-access"`}, `-c "sandbox_mode"`},
+		{[]string{"-c", `"profiles".p.sandbox_mode="danger-full-access"`}, `-c "profiles".p.sandbox_mode`},
+		{[]string{"-c", ` "approval_policy"="never"`}, `-c "approval_policy"`},
+		{[]string{"-c", `PROJECTS.y=1`}, "-c PROJECTS.y"},
+		{[]string{"-c", `Default_Permissions="x"`}, "-c Default_Permissions"},
+		{[]string{"-c", `SANDBOX_MODE="x"`}, "-c SANDBOX_MODE"},
 		{[]string{"-c", `sandbox_workspace_write.network_access=true`}, "-c sandbox_workspace_write.network_access"},
 		{[]string{"-c", ` sandbox_mode = "read-only"`}, "-c sandbox_mode"},
 		{[]string{"--model", "gpt-x", "-s", "read-only"}, "-s"},
@@ -210,6 +225,7 @@ func TestCodexNamesTheRuntimeArgThatOverridesThePermissionMapping(t *testing.T) 
 		{"-c", `projectsx=1`},
 		{"-c", `default_permission=1`},
 		{"-c", `tui.projects=1`},
+		{"-c", `model."projects"=1`},
 		{"--search", "--no-alt-screen"},
 	} {
 		if got := c.OverridingArg(args); got != "" {
