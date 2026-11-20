@@ -95,6 +95,8 @@ release:
     ## marvel v{{.Version}}
 
     Agent orchestration control plane.
+
+    These are unfinished, and opt-in behind `--experimental`: `marvel run` with `--mode`, `--prompt-file`, `--env` or `--name`, and `marvel wait`. They carry no compatibility promise and may change in any release.
   footer: |
     **Full Changelog**: https://github.com/arcavenae/marvel/compare/{{ .PreviousTag }}...{{ .Tag }}
 

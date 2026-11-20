@@ -171,3 +171,36 @@ func TestFirstPromptRefusals(t *testing.T) {
 		})
 	}
 }
+
+// The refusal decides by AdapterName, and apply stores that same name as the
+// role's Runtime.Name, which is what the adapter registry resolves at spawn. So
+// a role with no image and command = "claude" is claude to the check and to the
+// spawn alike, and a command path is generic to both.
+func TestApplyStoresTheNameTheFirstPromptCheckDecidesBy(t *testing.T) {
+	t.Parallel()
+	m := &Manifest{
+		Workspace: ManifestWorkspace{Name: "acme"},
+		Teams: []ManifestTeam{{Name: "crew", Roles: []ManifestRole{
+			{Name: "bare", Replicas: 1, Runtime: ManifestRuntime{Command: "claude", Prompt: "go"}},
+			{Name: "path", Replicas: 1, Runtime: ManifestRuntime{Command: "/usr/local/bin/claude", Prompt: "go"}},
+			{Name: "image", Replicas: 1, Runtime: ManifestRuntime{Image: "claude", Command: "/opt/wrap/run", Prompt: "go"}},
+		}}},
+	}
+	store := NewStore()
+	if err := m.Apply(store); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	team, err := store.GetTeam("acme/crew")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"bare": "claude", "path": "/usr/local/bin/claude", "image": "claude"}
+	for _, r := range team.Roles {
+		if r.Runtime.Name != want[r.Name] {
+			t.Errorf("role %s: stored Runtime.Name = %q, want %q", r.Name, r.Runtime.Name, want[r.Name])
+		}
+	}
+	if got := m.FirstPromptRefusals(); len(got) != 1 || !strings.Contains(got[0], "role path") {
+		t.Errorf("refusals = %q, want exactly role path", got)
+	}
+}

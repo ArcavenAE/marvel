@@ -156,7 +156,9 @@ func TestEnterPlansFromTheStatusTheWatchFetched(t *testing.T) {
 	r.keys <- 'j'
 	r.keys <- 'j'
 	r.keys <- 13
-	r.frameWith(t, "plan: tmux -L sockT attach -t %101")
+	r.frameWith(t, "plan: marvel attach ")
+	r.keys <- 'i'
+	r.frameWith(t, "tmux: tmux -L sockT attach -t %101")
 }
 
 func TestEnterSaysWhenTheWatchHasNoDaemonStatus(t *testing.T) {

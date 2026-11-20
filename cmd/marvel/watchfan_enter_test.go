@@ -197,9 +197,15 @@ func TestFanEnterDoesNotSayNoDaemonToResolveAgainst(t *testing.T) {
 func TestFanEnterOnALocalRowGivesARunPlan(t *testing.T) {
 	f := startStFake(t, stRows())
 	clusterConfig(t, config.Cluster{Name: "a", Socket: f.sock})
-	frame := startFanEnter(t, "a").enter()
-	if !strings.Contains(frame, "plan: ") || !strings.Contains(frame, fakeTmuxSocket) {
-		t.Errorf("a local row should give a run plan naming the cluster's tmux socket %q:\n%s", fakeTmuxSocket, frame)
+	rig := startFanEnter(t, "a")
+	frame := rig.enter()
+	if !strings.Contains(frame, "plan: marvel attach ") {
+		t.Errorf("a local row should give a run plan as a marvel attach line:\n%s", frame)
+	}
+	rig.keys <- 'i'
+	raw := rig.frameWith("the tmux command", func(f string) bool { return strings.Contains(f, "tmux: ") })
+	if !strings.Contains(raw, fakeTmuxSocket) {
+		t.Errorf("the i key should show the command naming the cluster's tmux socket %q:\n%s", fakeTmuxSocket, raw)
 	}
 }
 

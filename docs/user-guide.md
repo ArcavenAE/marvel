@@ -817,7 +817,10 @@ Live-updating dashboard. Sort by pressing keys: `c` (context %), `p`
 (CPU), `m` (memory), `n` (name), `r` (runtime), `R` (role), `g`
 (generation), `t` (team). `j` and `k`, or the down and up arrow keys, move the cursor.
 Enter opens the selected session; on a remote cluster's row it prints the
-attach command and runs nothing. Press `?` for the full key list, `q` to quit.
+attach command and runs nothing. The status line under the table shows the
+`marvel attach` command for the session, with `--cluster` for a row from
+another cluster or when the watch was given one `--cluster`, and `i` shows the tmux command behind it. Press `?` for the
+full key list, `q` to quit.
 
 To leave an opened session without stopping its agent, press Ctrl-B, then d.
 Typing exit or Ctrl-D in the session stops the agent. The keys differ a little
@@ -1052,6 +1055,8 @@ handoff does not start the shift, and the seat has to write the handoff again. I
 marker, or the role declares no handoff path, marvel records
 `team.shift-handoff-missing` and leaves the seat running; the team's supervisor
 decides whether to call `marvel shift`.
+
+A seat that marvel restarts after a crash or a failed health check also starts with `MARVEL_PREDECESSOR` naming the seat it replaces, so its bus shim resumes where that seat stopped and the mail waiting for it is delivered; without the name, the mail waited until it expired.
 
 While the request stays escalated, marvel tells the supervisor again, backing
 off so a request nobody decides does not send one notice a window for days. The

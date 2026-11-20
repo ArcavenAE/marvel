@@ -281,8 +281,11 @@ func TestSelectionHeldWithItsClusterAcrossResortAndRefresh(t *testing.T) {
 		t.Fatalf("after re-sort and refresh selected %+v ok=%v, want the beta row", s, ok)
 	}
 	press(t, ws, 13)
-	if want := "plan: tmux -L sock-beta attach -t %5"; ws.status != want {
+	if want := "plan: marvel attach aae/dup --cluster beta"; ws.status != want {
 		t.Errorf("status %q, want %q", ws.status, want)
+	}
+	if want := "tmux -L sock-beta attach -t %5"; ws.detail != want {
+		t.Errorf("detail %q, want %q", ws.detail, want)
 	}
 
 	// The beta row goes; the alpha row with the same workspace and name stays.
@@ -335,9 +338,12 @@ func TestEnterShowsPlanOnStatusLineOnly(t *testing.T) {
 		ws := selRig(t, selRows(3))
 		ws.target = targetOnSocket("sockA")
 		press(t, ws, 'j', 'j', key) // seat01, pane %101
-		want := "plan: tmux -L sockA attach -t %101"
+		want := "plan: marvel attach aae/seat01"
 		if ws.status != want {
 			t.Errorf("key %d: status %q, want %q", key, ws.status, want)
+		}
+		if raw := "tmux -L sockA attach -t %101"; ws.detail != raw {
+			t.Errorf("key %d: detail %q, want %q", key, ws.detail, raw)
 		}
 		if frame := frameOf(ws); !strings.Contains(frame, want) {
 			t.Errorf("key %d: the plan is not on the status line of the frame:\n%s", key, frame)
@@ -360,8 +366,11 @@ func TestEnterRevalidatesBeforeRun(t *testing.T) {
 	ws.apply(watchData{sessions: rows, at: watchT0.Add(time.Second)})
 
 	press(t, ws, 13)
-	if want := "plan: tmux -L sockA attach -t %131"; ws.status != want {
-		t.Errorf("status %q, want %q (the session's own desk, never the old %%101)", ws.status, want)
+	if want := "plan: marvel attach aae/seat01"; ws.status != want {
+		t.Errorf("status %q, want %q", ws.status, want)
+	}
+	if want := "tmux -L sockA attach -t %131"; ws.detail != want {
+		t.Errorf("detail %q, want %q (the session's own desk, never the old %%101)", ws.detail, want)
 	}
 
 	// The session loses its pane: nothing is planned and the status says why.
@@ -392,13 +401,19 @@ func TestMultiClusterEnterUsesRowsOfThatCluster(t *testing.T) {
 	if got := selectedName(ws); got != "two" {
 		t.Fatalf("selected %q, want two", got)
 	}
-	if want := "plan: tmux -L sockB attach -t %23"; ws.status != want {
-		t.Errorf("Enter on a beta row: status %q, want %q (desk 23 is on both clusters)", ws.status, want)
+	if want := "plan: marvel attach aae/two --cluster beta"; ws.status != want {
+		t.Errorf("Enter on a beta row: status %q, want %q", ws.status, want)
+	}
+	if want := "tmux -L sockB attach -t %23"; ws.detail != want {
+		t.Errorf("Enter on a beta row: detail %q, want %q (desk 23 is on both clusters)", ws.detail, want)
 	}
 
 	press(t, ws, 'k', 13)
-	if want := "plan: tmux -L sockA attach -t %23"; ws.status != want {
+	if want := "plan: marvel attach aae/one --cluster alpha"; ws.status != want {
 		t.Errorf("Enter on an alpha row: status %q, want %q", ws.status, want)
+	}
+	if want := "tmux -L sockA attach -t %23"; ws.detail != want {
+		t.Errorf("Enter on an alpha row: detail %q, want %q", ws.detail, want)
 	}
 }
 
@@ -409,9 +424,12 @@ func TestEnterOnRemoteRowPrintsAndRunsNothing(t *testing.T) {
 		return attachTarget{Socket: "sockR", Remote: true, Host: "far.example"}, nil
 	}
 	press(t, ws, 'j', 13)
-	want := "print only: ssh -t far.example tmux -L sockR attach -t %7"
+	want := "print only: marvel attach aae/one --cluster far"
 	if ws.status != want {
 		t.Errorf("status %q, want %q", ws.status, want)
+	}
+	if raw := "ssh -t far.example tmux -L sockR attach -t %7"; ws.detail != raw {
+		t.Errorf("detail %q, want %q", ws.detail, raw)
 	}
 }
 

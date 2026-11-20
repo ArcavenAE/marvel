@@ -37,6 +37,29 @@ func commandReference(root *cobra.Command) map[string]string {
 	return pages
 }
 
+// referenceHome is the marvel home the reference is generated under. It is
+// short, so its socket path is inside the 104-byte limit, and it is replaced
+// with "~/.marvel" in the pages. Flag defaults read $MARVEL_HOME when the tree
+// is built, and a long home (a temp dir under a long TMPDIR, a long HOME) makes
+// the daemon drop its path defaults, so the tree is built under this one
+// whatever the generating process has set.
+const referenceHome = "/marvel-reference-home"
+
+// newReferenceRoot builds the command tree the reference is generated from,
+// with $MARVEL_HOME pinned to referenceHome while the flags are defined.
+func newReferenceRoot() *cobra.Command {
+	prev, had := os.LookupEnv(paths.HomeEnv)
+	_ = os.Setenv(paths.HomeEnv, referenceHome)
+	defer func() {
+		if had {
+			_ = os.Setenv(paths.HomeEnv, prev)
+		} else {
+			_ = os.Unsetenv(paths.HomeEnv)
+		}
+	}()
+	return newRootCmd()
+}
+
 // normalizeHome writes the generating process's marvel home as "~/.marvel" and
 // the running user's home directory as "~". Some flag defaults are computed
 // from the marvel home (the daemon socket, log and pidfile paths), which is
@@ -47,6 +70,7 @@ func commandReference(root *cobra.Command) map[string]string {
 // symlink-resolved form of each is replaced too, since a temp directory can be
 // reached by two spellings on macOS.
 func normalizeHome(s string) string {
+	s = replaceRoot(s, referenceHome, "~/.marvel")
 	if layout, err := paths.Default(); err == nil {
 		s = replaceRoot(s, layout.Home, "~/.marvel")
 	}
