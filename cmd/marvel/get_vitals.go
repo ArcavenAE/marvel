@@ -138,18 +138,21 @@ func cpuText(sec float64) string {
 // and its share of a core over the last 30 minutes (a dash until it has been
 // watched that long).
 func printOrphans(w io.Writer, orphans []hostvitals.Orphan) error {
-	if _, err := fmt.Fprintf(w, "orphans:\n  %-8s %-18s %-10s %-20s %-21s %-12s %s\n", "PID", "NAME", "REASON", "SESSION", "MARKED", "CPU SINCE", "SHARE"); err != nil {
+	if _, err := fmt.Fprintf(w, "orphans:\n  %-8s %-18s %-10s %-32s %-21s %-12s %s\n", "PID", "NAME", "REASON", "SESSION", "MARKED", "CPU SINCE", "SHARE"); err != nil {
 		return err
 	}
 	for _, o := range orphans {
 		session, share := o.Session, "-"
+		if session == "" && o.ClaimedSession != "" {
+			session = o.ClaimedSession + " (claimed)"
+		}
 		if session == "" {
 			session = "-"
 		}
 		if o.Share != nil {
 			share = fmt.Sprintf("%.0f%%", *o.Share*100)
 		}
-		if _, err := fmt.Fprintf(w, "  %-8d %-18s %-10s %-20s %-21s %-12s %s\n", o.PID, o.Name, o.Reason, session, o.MarkedAt.UTC().Format(time.RFC3339), cpuText(o.CPUSecondsSinceMarked), share); err != nil {
+		if _, err := fmt.Fprintf(w, "  %-8d %-18s %-10s %-32s %-21s %-12s %s\n", o.PID, o.Name, o.Reason, session, o.MarkedAt.UTC().Format(time.RFC3339), cpuText(o.CPUSecondsSinceMarked), share); err != nil {
 			return err
 		}
 	}

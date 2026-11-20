@@ -88,8 +88,9 @@ type orphanEntry struct {
 // under the sampler's lock.
 type orphanTracker struct {
 	// tree holds, by pid, the elapsed seconds of every process that was a seat
-	// root or below one on the last pass.
+	// root or below one on the last pass, and root the seat root it was under.
 	tree map[int]float64
+	root map[int]int
 	// marked holds the orphans.
 	marked map[int]*orphanEntry
 	// probed holds, by pid, the elapsed seconds when its marker was last read,
@@ -114,7 +115,7 @@ type orphanView struct {
 // tracker keeps its state across the gap.
 func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) orphanView {
 	if t.tree == nil {
-		t.tree, t.marked, t.probed = map[int]float64{}, map[int]*orphanEntry{}, map[int]float64{}
+		t.tree, t.root, t.marked, t.probed = map[int]float64{}, map[int]int{}, map[int]*orphanEntry{}, map[int]float64{}
 	}
 	byPID := make(map[int]Proc, len(procs))
 	children := make(map[int][]int, len(procs))
@@ -139,7 +140,11 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 			continue
 		}
 		if at, ok := t.tree[p.PID]; ok && p.ElapsedSeconds+reuseSlack >= at {
-			t.mark(now, p, ReasonSeatTree, "")
+			session := ""
+			if src.RootSession != nil {
+				session = src.RootSession(t.root[p.PID])
+			}
+			t.mark(now, p, ReasonSeatTree, session, "")
 			continue
 		}
 		if src.Marker == nil {
@@ -150,14 +155,14 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 		}
 		t.probed[p.PID] = p.ElapsedSeconds
 		if m, err := src.Marker(p.PID); err == nil && m.Marvel() {
-			t.mark(now, p, ReasonMarker, m.Session)
+			t.mark(now, p, ReasonMarker, "", m.Session)
 		}
 	}
 
-	t.tree = map[int]float64{}
+	t.tree, t.root = map[int]float64{}, map[int]int{}
 	if src.Roots != nil {
-		var walk func(pid int)
-		walk = func(pid int) {
+		var walk func(pid, root int)
+		walk = func(pid, root int) {
 			p, ok := byPID[pid]
 			if !ok {
 				return
@@ -165,13 +170,13 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 			if _, seen := t.tree[pid]; seen {
 				return
 			}
-			t.tree[pid] = p.ElapsedSeconds
+			t.tree[pid], t.root[pid] = p.ElapsedSeconds, root
 			for _, c := range children[pid] {
-				walk(c)
+				walk(c, root)
 			}
 		}
 		for _, root := range src.Roots() {
-			walk(root)
+			walk(root, root)
 		}
 	}
 
@@ -215,9 +220,9 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 }
 
 // mark records a new orphan with the CPU it has now.
-func (t *orphanTracker) mark(now time.Time, p Proc, reason, session string) {
+func (t *orphanTracker) mark(now time.Time, p Proc, reason, session, claimed string) {
 	t.marked[p.PID] = &orphanEntry{
-		orphan:    Orphan{PID: p.PID, Name: p.Name, Reason: reason, Session: session, MarkedAt: now},
+		orphan:    Orphan{PID: p.PID, Name: p.Name, Reason: reason, Session: session, ClaimedSession: claimed, MarkedAt: now},
 		cpuAtMark: p.CPUSeconds, cpu: p.CPUSeconds, elapsed: p.ElapsedSeconds,
 	}
 }

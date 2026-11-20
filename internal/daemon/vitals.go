@@ -46,6 +46,19 @@ func (d *Daemon) wireOrphanSources() {
 			return d.sampledPids()
 		},
 		Marker: d.readMarker,
+		// The seat's own key, from the store: the one name an orphan carries
+		// that the daemon vouches for.
+		RootSession: func(pid int) string {
+			if d.store == nil {
+				return ""
+			}
+			for _, s := range d.store.ListSessions() {
+				if s.PID == pid && s.State.CountsAsAlive() {
+					return s.Key()
+				}
+			}
+			return ""
+		},
 	})
 }
 
