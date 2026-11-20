@@ -1407,8 +1407,9 @@ Secret-looking Env values show as (redacted), as in the team document.
 
 With -w, get sessions is a live view. j and k, or the down and up arrow keys, move
 the cursor. Enter opens the selected session; on a remote cluster's row it
-prints the attach command and runs nothing. To leave a session without stopping
-its agent, press Ctrl-B, then d; typing exit or Ctrl-D in it stops the agent.
+prints the attach command and runs nothing. The status line shows the marvel
+attach command for the session; i shows the tmux command behind it. To leave a
+session without stopping its agent, press Ctrl-B, then d; typing exit or Ctrl-D in it stops the agent.
 Inside tmux the keys differ: see marvel attach --help. The column letters listed
 under ? sort, ? lists every key, q quits.`,
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -3373,6 +3374,11 @@ type watchSort struct {
 	// fetch answers, and wantRefresh asks the loop for that fetch.
 	pending      *attachPlan
 	pendingLabel string
+	// pendingShort is the marvel attach line of the pending plan, for the
+	// failure message. detail is the raw tmux command of the plan Enter last
+	// resolved, which the i key shows; it is dropped when the cursor moves.
+	pendingShort string
+	detail       string
 	// drainKeys discards the keys the loop's parser still holds. The loop sets
 	// it; openPending calls it with the reader parked.
 	drainKeys   func()
@@ -3899,6 +3905,7 @@ func renderWatchFrame(ws *watchSort, interval time.Duration, now time.Time) stri
 		fmt.Fprintf(&buf, "    Enter              open the selected session (a remote cluster's row prints the command)\n")
 		fmt.Fprintf(&buf, "                       Leave it with Ctrl-B, then d: the agent keeps running.\n")
 		fmt.Fprintf(&buf, "                       exit or Ctrl-D in it stops the agent. See marvel attach --help\n")
+		fmt.Fprintf(&buf, "    i                  show the tmux command of the last Enter (the status line shows marvel attach)\n")
 		fmt.Fprintf(&buf, "\n")
 		fmt.Fprintf(&buf, "    ?  toggle help    q  quit\n")
 		fmt.Fprintf(&buf, "\n")

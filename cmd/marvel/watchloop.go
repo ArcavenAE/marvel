@@ -53,6 +53,8 @@ func handleWatchKey(ws *watchSort, key byte) (quit, redraw bool) {
 		toggleSort(ws, "rate", true)
 	case '?':
 		ws.showHelp = !ws.showHelp
+	case 'i':
+		ws.showDetail()
 	case 'j', 'k', 13, 10:
 		if ws.showHelp {
 			return false, false

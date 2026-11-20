@@ -791,7 +791,10 @@ Live-updating dashboard. Sort by pressing keys: `c` (context %), `p`
 (CPU), `m` (memory), `n` (name), `r` (runtime), `R` (role), `g`
 (generation), `t` (team). `j` and `k`, or the down and up arrow keys, move the cursor.
 Enter opens the selected session; on a remote cluster's row it prints the
-attach command and runs nothing. Press `?` for the full key list, `q` to quit.
+attach command and runs nothing. The status line under the table shows the
+`marvel attach` command for the session, with `--cluster` for a row from
+another cluster, and `i` shows the tmux command behind it. Press `?` for the
+full key list, `q` to quit.
 
 To leave an opened session without stopping its agent, press Ctrl-B, then d.
 Typing exit or Ctrl-D in the session stops the agent. The keys differ a little
