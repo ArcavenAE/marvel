@@ -40,18 +40,12 @@ func TestFirstPromptAdvisories(t *testing.T) {
 			roles: []ManifestRole{firstPromptRole("job", "codex", RuntimeModeHeadless, "run it", nil), firstPromptRole("job2", "claude", RuntimeModeHeadless, "", nil)},
 		},
 		{
-			name:  "codex with a prompt: the prompt is not delivered yet",
+			name:  "codex with a prompt: refused at apply, so no advisory",
 			roles: []ManifestRole{firstPromptRole("rev", "codex", RuntimeModeInteractive, "review it", nil)},
-			want:  []string{`team crew role rev: interactive runtime "codex" cannot take runtime.prompt as a first message yet, so the prompt is not delivered; advisory only, and it narrows as first-prompt support lands for more harnesses (marvel#391)`},
 		},
 		{
-			name:  "opencode, forestage and simulator are reported the same way",
+			name:  "opencode, forestage and simulator with a prompt are refused at apply, so no advisory",
 			roles: []ManifestRole{firstPromptRole("a", "opencode", RuntimeModeInteractive, "p", nil), firstPromptRole("b", "forestage", RuntimeModeInteractive, "p", nil), firstPromptRole("c", "simulator", RuntimeModeInteractive, "p", nil)},
-			want: []string{
-				`team crew role a: interactive runtime "opencode" cannot take runtime.prompt as a first message yet, so the prompt is not delivered; advisory only, and it narrows as first-prompt support lands for more harnesses (marvel#391)`,
-				`team crew role b: interactive runtime "forestage" cannot take runtime.prompt as a first message yet, so the prompt is not delivered; advisory only, and it narrows as first-prompt support lands for more harnesses (marvel#391)`,
-				`team crew role c: interactive runtime "simulator" cannot take runtime.prompt as a first message yet, so the prompt is not delivered; advisory only, and it narrows as first-prompt support lands for more harnesses (marvel#391)`,
-			},
 		},
 		{
 			name:  "an interactive role with no prompt and no handoff starts idle",
@@ -73,12 +67,10 @@ func TestFirstPromptAdvisories(t *testing.T) {
 			// path or a command with arguments gets the generic adapter and no prompt.
 			name:  "a command path with no image is not claude to the adapter registry",
 			roles: []ManifestRole{{Name: "sup", Replicas: 1, Runtime: ManifestRuntime{Command: "/usr/local/bin/claude", Mode: RuntimeModeInteractive, Prompt: "go"}}},
-			want:  []string{`team crew role sup: interactive runtime "/usr/local/bin/claude" cannot take runtime.prompt as a first message yet, so the prompt is not delivered; advisory only, and it narrows as first-prompt support lands for more harnesses (marvel#391)`},
 		},
 		{
 			name:  "a command with arguments and no image is not claude to the adapter registry",
 			roles: []ManifestRole{{Name: "sup", Replicas: 1, Runtime: ManifestRuntime{Command: "claude --flag", Mode: RuntimeModeInteractive, Prompt: "go"}}},
-			want:  []string{`team crew role sup: interactive runtime "claude --flag" cannot take runtime.prompt as a first message yet, so the prompt is not delivered; advisory only, and it narrows as first-prompt support lands for more harnesses (marvel#391)`},
 		},
 		{
 			name:  "the bare command claude with no image is claude",
@@ -96,6 +88,73 @@ func TestFirstPromptAdvisories(t *testing.T) {
 			got := m.FirstPromptAdvisories()
 			if strings.Join(got, "\n") != strings.Join(tt.want, "\n") {
 				t.Errorf("advisories =\n%q\nwant\n%q", got, tt.want)
+			}
+		})
+	}
+}
+
+// An interactive role that declares runtime.prompt on a runtime that cannot
+// deliver it is refused at apply, naming the role and the runtime (Desk i260-1,
+// which supersedes D6 for this case). Only claude takes a first message for
+// now; the runtime test narrows as codex (T2) and opencode (T3) support lands.
+func TestFirstPromptRefusals(t *testing.T) {
+	t.Parallel()
+	refusal := func(role, runtime string) string {
+		return `team crew role ` + role + `: interactive runtime "` + runtime + `" cannot take runtime.prompt as a first message, so apply refuses it instead of starting a seat that never gets its prompt (marvel#391)`
+	}
+	tests := []struct {
+		name  string
+		roles []ManifestRole
+		want  []string
+	}{
+		{
+			name:  "claude with a prompt is accepted",
+			roles: []ManifestRole{firstPromptRole("sup", "claude", RuntimeModeInteractive, "start here", nil)},
+		},
+		{
+			name:  "an interactive role with no prompt is not refused",
+			roles: []ManifestRole{firstPromptRole("rev", "codex", RuntimeModeInteractive, "", nil)},
+		},
+		{
+			name:  "a headless role carries its request in runtime.prompt and is never refused",
+			roles: []ManifestRole{firstPromptRole("job", "codex", RuntimeModeHeadless, "run it", nil)},
+		},
+		{
+			name:  "codex with a prompt is refused",
+			roles: []ManifestRole{firstPromptRole("rev", "codex", RuntimeModeInteractive, "review it", nil)},
+			want:  []string{refusal("rev", "codex")},
+		},
+		{
+			name:  "opencode, forestage and simulator are refused the same way",
+			roles: []ManifestRole{firstPromptRole("a", "opencode", RuntimeModeInteractive, "p", nil), firstPromptRole("b", "forestage", RuntimeModeInteractive, "p", nil), firstPromptRole("c", "simulator", RuntimeModeInteractive, "p", nil)},
+			want:  []string{refusal("a", "opencode"), refusal("b", "forestage"), refusal("c", "simulator")},
+		},
+		{
+			name:  "a command path with no image is not claude to the adapter registry",
+			roles: []ManifestRole{{Name: "sup", Replicas: 1, Runtime: ManifestRuntime{Command: "/usr/local/bin/claude", Mode: RuntimeModeInteractive, Prompt: "go"}}},
+			want:  []string{refusal("sup", "/usr/local/bin/claude")},
+		},
+		{
+			name:  "a command with arguments and no image is not claude to the adapter registry",
+			roles: []ManifestRole{{Name: "sup", Replicas: 1, Runtime: ManifestRuntime{Command: "claude --flag", Mode: RuntimeModeInteractive, Prompt: "go"}}},
+			want:  []string{refusal("sup", "claude --flag")},
+		},
+		{
+			name:  "the bare command claude with no image is claude",
+			roles: []ManifestRole{{Name: "sup", Replicas: 1, Runtime: ManifestRuntime{Command: "claude", Mode: RuntimeModeInteractive, Prompt: "go"}}},
+		},
+		{
+			name:  "an image wins over the command",
+			roles: []ManifestRole{{Name: "sup", Replicas: 1, Runtime: ManifestRuntime{Image: "claude", Command: "/opt/wrap/run", Mode: RuntimeModeInteractive, Prompt: "go"}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := &Manifest{Teams: []ManifestTeam{{Name: "crew", Roles: tt.roles}}}
+			got := m.FirstPromptRefusals()
+			if strings.Join(got, "\n") != strings.Join(tt.want, "\n") {
+				t.Errorf("refusals =\n%q\nwant\n%q", got, tt.want)
 			}
 		})
 	}

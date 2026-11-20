@@ -832,6 +832,12 @@ func (m *Manifest) FirstPromptAdvisories() []string {
 	return out
 }
 
+// FirstPromptRefusals lists the interactive roles that declare runtime.prompt on
+// a runtime that cannot deliver it.
+func (m *Manifest) FirstPromptRefusals() []string {
+	return nil
+}
+
 // MaxAgeAdvisories lists the interactive single-replica roles that declare no
 // max-age shift trigger, so a seat of the role has no age bound
 // (docs/design/host-health-guard.md section 4.4 item 1). It is advisory and
