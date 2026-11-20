@@ -1,12 +1,33 @@
 # Companies: installed definition libraries, and the cast pinned to one
 
-Status: design, for a ruling. Nothing here is built.
+Status: design, for a ruling. Revised 2026-11-20, after the first recommendation lapsed on 2026-11-08 and was sent back for revision. The readers are built and nothing calls them yet: `internal/company` decodes `company.toml` and recipe files, resolves a pin, runs the launch checks and computes the tree hash. No manifest key, verb or launch path uses it. Sections "What changed since 2026-11-01" and "What is now understood" are new; the rest is the 2026-11-01 design with the changes those sections name.
 
 ## Why
 
 A team's roles today get their prompts from whatever a launch script reads at spawn. marvel cannot say which library a running team came from, at which version, or whether two teams on one cluster run the same text. Rolling a library forward or back means editing files on each host, and any seat or person can change those files in place. This design gives marvel a native object for the library, the **company**. Each team pins one version. Only a tool writes the files a cast is drawn from, and seats get a working copy with a digest back to its source. marvel reads, pins and records, and installs nothing from outside, so it still works with nothing but its own binary.
 
 Vocabulary (ruled): a **company** is a library of team, workflow and agent definitions. The **cast** is the set of teams running on one cluster, each drawn from a company. "Pack" is not a marvel word.
+
+## What changed since 2026-11-01
+
+Read at marvel main 41c8dff1.
+
+| change | where | what it means here |
+|---|---|---|
+| The company and recipe schema | `docs/design/company-recipe-schema.md` (#1346) | The keys of `company.toml`, the two library kinds (`definitions`, `recipes`), the recipe format and the refusal table are written down. This design points at it and does not restate it. |
+| Strict decoders | `internal/company/company.go`, `recipe.go` (#1351) | `DecodeCompany` and `DecodeRecipe` read the schema and refuse what it refuses. |
+| The pin resolver and the launch checks | `internal/company/resolve.go`, `check.go` (#1359) | `Resolve` turns a pin into a library through an `Env` the caller supplies; `Check` runs the per-launch checks (definition present, status, recipe fit). Nothing calls either yet (`internal/company/doc.go`). |
+| The tree hash | `internal/company/treehash.go`, with the worked vector below as a test | The v1 definition below is code, and an installer can be checked against it. |
+| A per-role sandbox profile | `sandbox_profile` on a role (`internal/api/manifest.go`), launch under `sandbox-exec` (#1260); example profiles for opencode (#1494, #1497) | E1 no longer needs a new launch path. marvel already launches a role under a profile; E1 becomes the deny rules for company roots that marvel adds to the profile it applies. |
+| Teams mix harnesses | claude, codex, opencode and goose seats run in one team today | A recipe per role, pinned beside the company, is how a team says which harness and model each seat uses. |
+
+## What is now understood
+
+- **A library may carry more than marvel reads.** `Check` reads `company.toml` and `roles/<id>.md` relative to the version folder, and checks that each `templates/<name>.txt` a recipe's prompt names is a regular file there (refusal N6, `internal/company/check.go`); it lists nothing else, so a release folder can hold other content beside them (for example the source tree and the scripts its own launcher uses). marvel ignores what it does not name. A library can therefore ship one folder, one version and one tree hash for every reader, instead of a separate marvel-only package.
+- **A package store is already a valid root.** A store laid out `<store>/<name>/<version>/` with a `current` link, staging entries starting with `.`, and other content beside it, fits "Stores and roots" as written. Adding such a store with `marvel config companies add` is the whole integration. The installer needs no marvel code, and marvel needs no installer code.
+- **A company can be generated.** A library built from someone else's release (a generator plus a pinned upstream version, writing one definition per seat) is still a company: `company.toml` lists its definitions and records the upstream in `source`. marvel neither knows nor checks how it was built, only the hash of what is installed.
+- **The per-team pin is what lets two versions run side by side.** Two teams on one cluster can pin two versions of the same library, and moving one never moves the other. Nothing global changes on an upgrade.
+- **Knowing which company a team runs is the blocker for the cast view.** `marvel get cast` (#946) cannot be built until a team records the `name@version` it launched from, which is the first wiring step below.
 
 ## Three tiers
 
@@ -26,8 +47,7 @@ A reference copy is installed from the master at a version. A working copy is de
 - Roots are read from config, never from the environment, so a daemon started by launchd or systemd resolves the same paths as a shell. marvel reads the key **at each apply and each launch**, so an added or removed root applies to the next one, with no restart. A running session is not affected.
 - **What marvel skips:** any entry whose name starts with `.` (an installer's staging and lock files), any `<version>` without a `company.toml`, and any `<name>` with no such version. A root can therefore be a general package store holding other content.
 - **Ambiguity:** a name held in two roots is refused, for an exact pin and for a name-only pin alike, naming both roots. marvel never picks one.
-- marvel refuses a root that is inside, or contains, a `marvel cp` jail (`docs/design/marvel-cp.md`), so the file channel can never write a reference copy.
-the same set of paths, read the same way, is the one marvel cp refuses.
+- marvel refuses a root that is inside, or contains, a `marvel cp` jail (`docs/design/marvel-cp.md`), so the file channel can never write a reference copy. The same set of paths, read the same way, is the one `marvel cp` refuses.
 
 ### Layout of a version
 
@@ -117,6 +137,19 @@ scope = "marvel"                                  # a parameter, not a role
 
 marvel writes reference copies only in its own store, and only the builtin. It has no `install`, `fetch` or `activate` for outside content: another library comes from an installer that owns its own store (sideshow `docs/marvel-company-target.md`). Unpacking a tree into a root by hand is not a supported install; such a tree has no owning tool, and on a host using E2 the owner cannot write the store anyway.
 
+## Build order
+
+Each step is its own PR, red test first, and lands before the next one starts. The tests are in the next-but-one section.
+
+1. **Wire the pins.** `company` and `recipes` keys on a team in the manifest; at launch, `Resolve` and `Check`; the resolved `name@version` and tree hash recorded on the session. A role with neither key launches as today.
+2. **Roots by command.** `companies.roots` in the client config, `marvel config companies add|remove`, read at each apply and launch.
+3. **The views.** `marvel get companies`, `marvel describe company`, and `marvel get cast` (#946).
+4. **The builtin.** Embed and materialize `builtin/<marvel version>/`, and `marvel company export builtin`.
+5. **E1.** Add deny-write rules for every root and every other session's working copy to the profile a session launches under.
+6. **Working copies.** `origin.json` and the mismatch report in `describe session` and `doctor`.
+
+Steps 1 to 3 give a team a pinned library and a view of it. Steps 4 to 6 can follow in any order.
+
 ## What it replaces
 
 Launch scripts that read a library at spawn and pass the slice in `--append-system-prompt`. With a company pinned, the claude adapter passes the rendered definition as its one system prompt (the same single-prompt rule as today, claude.go). Wrapper commands stay supported for anything else they do.
@@ -142,7 +175,8 @@ Launch scripts that read a library at spawn and pass the slice in `--append-syst
 ## Open for the ruling
 
 1. Name-only pins as the default for fleet teams, with exact pins for experiments and rollback. I recommend this; it is what removes the per-host edit.
-2. E1 on by default for every session marvel launches. I recommend it: without it, write ownership is convention.
+2. E1 on by default for every session marvel launches, once step 5 lands. I recommend it: without it, write ownership is convention. Since #1260 it is a set of rules added to the launch profile, not a new launch path.
 3. E2 per host, the owner's choice.
+4. The build order above, starting with step 1. I recommend it: step 1 is the smallest change that makes a team's library visible, and #946 waits on it.
 
-This recommendation is valid until 2026-11-08; the architect re-checks it then.
+This recommendation is valid until 2026-12-04, or until a manifest key for `company` or `recipes` lands, whichever comes first. The architect re-checks it then.
