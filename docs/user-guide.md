@@ -793,7 +793,7 @@ Live-updating dashboard. Sort by pressing keys: `c` (context %), `p`
 Enter opens the selected session; on a remote cluster's row it prints the
 attach command and runs nothing. The status line under the table shows the
 `marvel attach` command for the session, with `--cluster` for a row from
-another cluster, and `i` shows the tmux command behind it. Press `?` for the
+another cluster or when the watch was given one `--cluster`, and `i` shows the tmux command behind it. Press `?` for the
 full key list, `q` to quit.
 
 To leave an opened session without stopping its agent, press Ctrl-B, then d.

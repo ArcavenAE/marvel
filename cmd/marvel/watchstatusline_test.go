@@ -176,3 +176,17 @@ func TestARowsOwnClusterWinsOverTheWatchsCluster(t *testing.T) {
 		t.Errorf("status %q, want %q", ws.status, want)
 	}
 }
+
+// The live screen takes the name from --cluster, and only when the flag was typed.
+func TestWatchScreenTakesTheClusterFromTheFlag(t *testing.T) {
+	oldName, oldGiven := clusterName, clusterFlagGiven
+	t.Cleanup(func() { clusterName, clusterFlagGiven = oldName, oldGiven })
+	clusterName, clusterFlagGiven = "beta", true
+	if got := newWatchScreen(nil, false, false).cluster; got != "beta" {
+		t.Errorf("cluster = %q with --cluster beta, want beta", got)
+	}
+	clusterName, clusterFlagGiven = "", false
+	if got := newWatchScreen(nil, false, false).cluster; got != "" {
+		t.Errorf("cluster = %q with no --cluster, want empty", got)
+	}
+}

@@ -3984,6 +3984,9 @@ func newWatchState(cols []sessionColumn) *watchSort {
 func newWatchScreen(cols []sessionColumn, explicit, noTrunc bool) *watchSort {
 	ws := newWatchState(cols)
 	ws.explicit, ws.noTrunc, ws.showHeader = explicit, noTrunc, true
+	if clusterFlagGiven {
+		ws.cluster = clusterName
+	}
 	return ws
 }
 
