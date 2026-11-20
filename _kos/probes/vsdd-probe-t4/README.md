@@ -22,4 +22,7 @@ python3 -I -B -m unittest discover -s _kos/probes/vsdd-probe-t4 -p 'test_*.py'
 python3 -I -B _kos/probes/vsdd-probe-t4/canary_scan.py --hash SHA256 --tree RUN_DIR --git REPO
 ```
 
-Exit 0 means no hit, 1 a hit, 2 a usage error.
+Exit 0 means no hit and everything was read, 1 a hit, 2 a usage error, and 3 no hit but something
+could not be read (a missing root, a directory that cannot be listed, a file that cannot be
+opened, a git failure). A scan that could not read everything never exits 0, because it proves
+nothing about what it did not read.

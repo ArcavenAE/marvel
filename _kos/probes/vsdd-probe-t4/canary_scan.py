@@ -10,7 +10,10 @@ Roots: a directory tree or a file (--tree), and a git repository (--git), where
 every object reachable from every ref is read (`git rev-list --all --objects`
 into `git cat-file --batch`). It reads only. The report gives each hit's file
 or object and offset, the windows scanned and the bytes read. No content is
-printed. Exit 0 for no hit, 1 for a hit, 2 for a usage error.
+printed. Exit 0 for no hit and nothing unreadable, 1 for a hit, 2 for a usage error, and 3
+when there was no hit but something could not be read (a missing root, a directory that
+cannot be listed, a file that cannot be opened, a git failure): such a scan proves nothing
+about what it did not read, so it never exits 0.
 
 Standard library only. Usage:
   python3 -I -B canary_scan.py --hash SHA256 [--hash SHA256 ...] [--tree PATH ...] [--git REPO ...]
@@ -73,7 +76,12 @@ def _file_chunks(path):
 
 def scan_tree(root, targets):
     rep = {"hits": [], "files": 0, "bytes": 0, "windows": 0, "unreadable": []}
-    paths = [root] if os.path.isfile(root) else [os.path.join(d, n) for d, _, ns in os.walk(root) for n in sorted(ns)]
+    if not os.path.isfile(root) and not os.path.isdir(root):
+        rep["unreadable"].append(root)
+        return rep
+    bad = []
+    paths = [root] if os.path.isfile(root) else [os.path.join(d, n) for d, _, ns in os.walk(root, onerror=bad.append) for n in sorted(ns)]
+    rep["unreadable"] += [e.filename for e in bad]
     for p in paths:
         if os.path.islink(p) or not os.path.isfile(p):
             continue
@@ -148,10 +156,17 @@ def main(argv):
         print("canary_scan: need at least one valid --hash (64 hex) and at least one --tree or --git", file=sys.stderr)
         return 2
     reports = [dict(root=r, kind="tree", **scan_tree(r, targets)) for r in a.tree]
-    reports += [dict(root=r, kind="git", **scan_git(r, targets)) for r in a.git]
+    for r in a.git:
+        try:
+            reports.append(dict(root=r, kind="git", **scan_git(r, targets)))
+        except (subprocess.CalledProcessError, OSError, ValueError):
+            # git said no (not a repository, a failed read): the root counts as unreadable; git's own text is not printed
+            reports.append({"root": r, "kind": "git", "hits": [], "unreadable": [r]})
     total = sum(len(r["hits"]) for r in reports)
-    print(json.dumps({"targets": sorted(t[:12] for t in targets), "hit_count": total, "roots": reports}, indent=2))
-    return 1 if total else 0
+    unreadable = sum(len(r["unreadable"]) + r.get("missing", 0) for r in reports)
+    print(json.dumps({"targets": sorted(t[:12] for t in targets), "hit_count": total,
+                      "unreadable_count": unreadable, "roots": reports}, indent=2))
+    return 1 if total else (3 if unreadable else 0)
 
 
 if __name__ == "__main__":
