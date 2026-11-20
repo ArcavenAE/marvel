@@ -809,7 +809,7 @@ func takesFirstPrompt(adapter string) bool { return adapter == "claude" }
 
 // FirstPromptRefusals lists the interactive roles that declare runtime.prompt on
 // a runtime that cannot deliver it as a first message, so the seat would start
-// and never get its prompt (marvel#391, Desk i260-1, which supersedes the
+// and never get its prompt (marvel#391, aae-orc-3nzxx, which supersedes the
 // advisory D6 of docs/design/interactive-first-prompt.md set for this case).
 // Apply refuses them. Headless roles carry runtime.prompt as their one request
 // and are never listed.

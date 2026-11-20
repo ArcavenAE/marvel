@@ -9,7 +9,7 @@ import (
 
 // A role that declares runtime.prompt on a runtime that cannot deliver it is
 // refused at apply, before anything commits, and the refusal names the role
-// and the runtime (Desk i260-1). The advisory the daemon used to log is gone
+// and the runtime (aae-orc-3nzxx). The advisory the daemon used to log is gone
 // for this case.
 func TestApplyRefusesRuntimePromptOnAnInteractiveCodexRole(t *testing.T) {
 	// The runtime pre-flight runs first and needs the command on PATH; a stub

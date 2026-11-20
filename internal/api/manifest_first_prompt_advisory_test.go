@@ -94,7 +94,7 @@ func TestFirstPromptAdvisories(t *testing.T) {
 }
 
 // An interactive role that declares runtime.prompt on a runtime that cannot
-// deliver it is refused at apply, naming the role and the runtime (Desk i260-1,
+// deliver it is refused at apply, naming the role and the runtime (aae-orc-3nzxx,
 // which supersedes D6 for this case). Only claude takes a first message for
 // now; the runtime test narrows as codex (T2) and opencode (T3) support lands.
 func TestFirstPromptRefusals(t *testing.T) {
