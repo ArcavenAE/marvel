@@ -29,17 +29,17 @@ The four closes:
 | arm B pack | `1.0.0-rc.25.arm-b.2`, pack file manifest sha256 `ec207f9c7a02874ccee507061576e1934cef231f0bd15ae36953c0851eaef979` | `vsdd-probe-t6/README.md`, Versions |
 | patch (`apply_patch.py`) sha256 | `9c372d0c3ba2465ad3b02afedc90355269fa2c523ebecbea1b6c96da7a8b2b6b` | T6 README |
 | shim sha256 | `3123d3a458b0189f6afb68bb3533161d37bcf76491394d5dd6ff10f2d65142b2` | T6 README |
-| harness build and absolute path | FILL: `claude --version` and `command -v claude` in a probe-socket pane, auto-update off | step 0 |
-| model id per role | FILL: the full ids that the factory's `sonnet` and `opus` aliases resolve to, read in smoke; `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL` and `--model` on every orchestrator-agent session | brief s6, s11 |
+| harness build and absolute path | Claude Code 2.1.329, read in a pane of the probe tmux socket on 2026-11-20: `claude --version` prints `2.1.329 (Claude Code)`, and `command -v claude` prints the `claude` on the host's user PATH, a symlink to the 2.1.329 entry of Claude Code's versions directory. `DISABLE_AUTOUPDATER=1` was set in the pane. | step 0 |
+| model id per role | `sonnet` resolves to `claude-sonnet-5-5` and `opus` to `claude-opus-5-5`, read from the `model` attribute of the `api_request` events of the step-0 smoke run on 2026-11-20; `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL` and `--model` on every orchestrator-agent session | brief s6, s11 |
 | TTL | `CLAUDE_CODE_PROMPT_CACHE_TTL=5m`, `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=5m`; `FORCE_PROMPT_CACHING_5M` and `ENABLE_PROMPT_CACHING_1H` unset | brief s6 |
 | permission mode | `auto`, as `--permission-mode` in both arms; classifier requests metered from OTEL | R4 |
-| account | the Enterprise login (operator, 2026-11-20), the probe host's default login. Recorded by label and by the sha256 of the `claude auth status` lines that name the login method, account and organization, FILL at step 0, never by a credential | brief s6 |
+| account | the Enterprise login (operator, 2026-11-20), the probe host's default login. Recorded by label and by the sha256 of the `claude auth status` lines that name the login method, account and organization, never by a credential. Step 0, 2026-11-20: subscription type `enterprise`, sha256 `5c23875659109759a73ce9ac7bcd13aa29ae9274af3dc3df3b3a4ee0ed49ed6d` of the four `claude auth status` JSON lines `authMethod`, `email`, `orgId` and `orgName`, in that order, each line as printed | brief s6 |
 | probe host | corporate | ruling vsdd-c6-host |
-| marvel commit and tmux version | FILL: `marvel version` of the probe daemon; `tmux -L <probe socket> -V`, 3.5 or later | step 0 |
+| marvel commit and tmux version | the probe daemon reports `marvel 0.1.0-alpha.20261119.082809.d22405c (alpha)`, commit `d22405cb8abb62532b6a031b924374de61966263`; `tmux -L <probe socket> -V` prints `tmux 3.7c` | step 0 |
 | analysis | `compare.py` at the marvel sha this file freezes with: alpha 0.05, seed 1, resamples 10000; coverage sims 1000, seed 7, resamples 500, sigma_block 0.2, sigma_run 0.2, rho 0.5 | `vsdd-probe-t7`; values as in its example input |
 | price table | `vsdd-probe-t2/prices.json` at the same sha | brief s11 |
 | env, both arms | `BASH_DEFAULT_TIMEOUT_MS=600000`, `BASH_MAX_TIMEOUT_MS=600000`, `CLAUDE_CODE_FORK_SUBAGENT=0`, `DISABLE_AUTOUPDATER=1`, `CLAUDE_CODE_ENABLE_TELEMETRY=1`; subagent depth 3 and concurrency 20; `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_AUTO_BACKGROUND_TIMEOUT_MS` unset; agent teams off | brief s6 |
-| OTLP collector | FILL: endpoint on the probe host, passed by `--env` and `runtime.env` | brief S10 |
+| OTLP collector | `http://127.0.0.1:14318`, OTLP over HTTP with JSON bodies (`OTEL_EXPORTER_OTLP_PROTOCOL=http/json`), a localhost-only listener that writes each POST to a file in scratch; passed by `--env` and `runtime.env`. The step-0 smoke run produced `api_request` events with `query_source` for its main session (`sdk`) and its subagent (`agent:builtin:general-purpose`). | brief S10 |
 
 ## 3. Project, seed and suite
 
@@ -89,8 +89,8 @@ Each axis gets its own verdict, Holm-adjusted (R2, s9.4).
 | cache read and write tokens by TTL class per accepted story, with read share | 20%, ruled by the operator 2026-11-20 |
 | scenario pass rate per run | 10 percentage points, ruled by the operator 2026-11-20 |
 | adversary passes per story | 20%, ruled by the operator 2026-11-20 |
-| compactions per run, and steps re-run or skipped after one | reported, no verdict proposed (open with the operator; ruled before the filling commit) |
-| limit stops per arm | reported, no verdict proposed (open with the operator; ruled before the filling commit) |
+| compactions per run, and steps re-run or skipped after one | reported, no verdict proposed (operator 2026-11-20, verbatim "M report the numbers") |
+| limit stops per arm | reported, no verdict proposed (operator 2026-11-20, verbatim "M report the numbers") |
 
 Every axis is also reported per phase and per wave width. The cost sensitivities sit beside the cost axis: the hub wait row removed, and first-attempt acceptance only.
 
@@ -102,7 +102,7 @@ Every axis is also reported per phase and per wave width. The cost sensitivities
 - **8.5:** intent-to-treat, with the fidelity, blind, drift and budget stops and the ceiling, as the brief states them.
 - **8.6:** wall clock runs from the first send to verified completion of the final state commit.
 
-**Quota on the Enterprise login (replaces s8.3's headroom and window lines, and s11's quota line):**
+**Quota on the Enterprise login (the operator's Enterprise-account ruling of 2026-11-20; replaces s8.3's headroom and window lines, and s11's quota line):**
 
 The Enterprise login sends no weekly reading (the measurement recorded in section 2 of marvel#1501, an open design document; the operator's ruling of 2026-11-20 to build that meter is not built). So:
 
@@ -129,7 +129,9 @@ The brief's rule (s6, "Inter-run gap") reads: "no session on the account, on any
    - **Other sessions on the account.** A prompt cache matches a prefix, in the order tools, then system, then messages. Fleet seats carry MCP tools and their own system prompts and agents; probe sessions run `--agent vsdd-orchestrator` without those tools. So a fleet session is unlikely to warm a probe prefix. This is inferred, so it is measured, not assumed (the calibration below), and every run's read-back still checks it.
 3. **Rate limits shared with other load.** The brief already treats throttling as unpinnable: "rate-limit and overload retries per session, and the seconds spent in them ... reported per run; speed is also reported net of throttle time" (s6, Throttling). Other Enterprise load can add throttle time and noise to wall clock and throughput.
 
-**Replacement (the lighter form), open with the operator; ruled before the filling commit:**
+**Replacement (the lighter form), ruled by the operator 2026-11-20, verbatim "could this reliably be achieved more quickly with a model toggle? otherwise light":**
+
+The toggle was answered as not reliable for cache isolation and as changing what the probe measures (protocol author, 2026-11-20), so the lighter form stands (director, 2026-11-20).
 
 - **Kept:** the 65-minute gap after the probe's own last request, before every run.
 - **Kept:** the per-run read-back. A run whose first-request cache read exceeds the S14 cold reference is flagged. It is counted in the main analysis and left out of a sensitivity analysis, which is the brief's existing rule for any read-back that disagrees.
@@ -140,7 +142,7 @@ The brief's rule (s6, "Inter-run gap") reads: "no session on the account, on any
 
   Both are reported beside wall clock and throughput.
 - **Stop:** unchanged. A limit message during a run is a limit stop (counted, intent-to-treat), and one before a block's first run voids the block.
-- **Dropped** (open with the operator; ruled before the filling commit): the requirement that no other session on the account makes requests. No team moves for a run.
+- **Dropped** (operator 2026-11-20, verbatim "could this reliably be achieved more quickly with a model toggle? otherwise light"): the requirement that no other session on the account makes requests. No team moves for a run. The toggle answer is recorded under the Replacement heading above.
 
 **Effect on validity.**
 
