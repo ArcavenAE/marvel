@@ -39,8 +39,18 @@ var codexPostureFlags = []string{
 // whatever -s says, finding-049) and the ones that pick or define a
 // permissions profile (default_permissions, permissions, permissions.*). The
 // dotted keys match on their whole first segment, with spaces around the dot
-// allowed as TOML does. Other keys, such as model, are left alone.
+// allowed as TOML does. A key is matched in any case, and a key whose first
+// segment is quoted is named whole. Other keys, such as model, are left alone.
 func codexPostureKey(key string) bool {
+	key = strings.TrimSpace(key)
+	// A quoted first segment is refused whole. In TOML "permissions".x is the
+	// key permissions.x, and codex 0.160.1 was measured to read neither that
+	// nor an upper-case first segment as the bare key, but the check does not
+	// lean on how codex splits a key: it fails closed on either.
+	if strings.HasPrefix(key, `"`) || strings.HasPrefix(key, "'") {
+		return true
+	}
+	key = strings.ToLower(key)
 	head := key
 	if i := strings.IndexByte(key, '.'); i >= 0 {
 		head = strings.TrimSpace(key[:i])
