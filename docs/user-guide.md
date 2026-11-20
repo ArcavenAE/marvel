@@ -128,6 +128,27 @@ exits immediately). The canonical set:
 
 An empty `permissions` means "unset"; the adapter's own default applies.
 
+**On a codex role,** only two modes map. `plan` launches codex read-only with
+approvals set to never, and `auto` launches it workspace-write with approvals
+set to never. An unset `permissions` adds nothing. The other four modes and
+`dangerous_permissions` are refused when you apply the manifest, until a probe
+of the pinned codex version settles them. A role that declares one fails its
+next apply until you move the sandbox and approval flags into `runtime.args`.
+Codex lets a trusted project write whatever its sandbox flag says, so `plan`
+is read-only only in a directory that is not listed in `workspace.trusted_folders`.
+
+A codex role that sets `permissions` may not also carry a `runtime.args` flag
+that changes the sandbox or approval posture, because codex reads the later
+flag and the role would run wider than its mode says. Apply refuses `-s`,
+`--sandbox`, `-a`, `--ask-for-approval`, `-p`, `--profile`, `--add-dir`,
+`--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--full-auto`, `--approve-for-me`,
+and a `-c` or `--config` override of any key that starts with `sandbox` or
+`approval`, or of `profile`, `profiles.*`, `permissions_profile`, `projects`,
+`projects.*`, `default_permissions`, `permissions` or `permissions.*` in any
+case, or any key whose first segment is not a bare key (letters, digits,
+`_` and `-`), such as a quoted one, and names the flag. With `permissions` unset,
+`runtime.args` stays open.
+
 **`dangerous_permissions` is separate.** The boolean `dangerous_permissions:
 true` appends `--dangerously-skip-permissions`, which removes the permission
 model entirely rather than choosing a mode within it. It is orthogonal to

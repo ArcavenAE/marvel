@@ -1621,6 +1621,13 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		return daemonrpc.Response{Error: "apply manifest: " + strings.Join(refusals, "; ")}
 	}
 
+	// Pre-flight: a role whose harness has no ruled mapping for its permissions
+	// is refused here, since it would run with the harness defaults and nobody
+	// would be told (marvel#385).
+	if refusals := m.PermissionRefusals(d.sessMgr.RolePermissionRefusal); len(refusals) > 0 {
+		return daemonrpc.Response{Error: "apply manifest: " + strings.Join(refusals, "; ")}
+	}
+
 	// Pre-flight: runtime.prompt on an interactive role whose runtime cannot
 	// take a first message would start a seat that never gets its prompt, with
 	// no error, so it is refused here (marvel#391).

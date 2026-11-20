@@ -1882,6 +1882,33 @@ func (m *Manager) CanOfferHandoffToolRole(r api.ManifestRole) bool {
 	return ok && o.OffersHandoffTool()
 }
 
+// RolePermissionRefusal reports why a role's permissions cannot be mapped to
+// its harness's flags, or "" when they can, or when the harness maps none and
+// leaves permissions to the role's own command. It is the manifest-side
+// answer apply asks for before it accepts a role.
+func (m *Manager) RolePermissionRefusal(r api.ManifestRole) string {
+	name := r.Runtime.Image
+	if name == "" {
+		name = r.Runtime.Command
+	}
+	pm, ok := m.adapters.Resolve(name).(runtime.PermissionMapper)
+	if !ok {
+		return ""
+	}
+	if _, refusal := pm.MapPermissions(r.Permissions, r.DangerousPermissions, r.Runtime.Mode == api.RuntimeModeHeadless); refusal != "" {
+		return refusal
+	}
+	// With permissions unset the role's args stay open. With a mode set, a
+	// runtime.args flag that moves the sandbox or approval posture would win
+	// over the mapped flags, so the role would run wider than it reads.
+	if r.Permissions != "" {
+		if flag := pm.OverridingArg(r.Runtime.Args); flag != "" {
+			return fmt.Sprintf("permissions %q cannot be combined with the runtime.args flag %q, which would override the sandbox or approval posture the mode maps to; drop one of them", r.Permissions, flag)
+		}
+	}
+	return ""
+}
+
 // streams reports whether the launch wants a stream pipe: the adapter can
 // stream, the launch is of a streaming shape, and a stream directory is set.
 func (m *Manager) streams(adapter runtime.Adapter, lctx *runtime.LaunchContext) bool {
