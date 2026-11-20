@@ -1191,7 +1191,7 @@ func TestValidateManifestPermissionModes(t *testing.T) {
 		}
 	}
 
-	valid := []string{"acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"}
+	valid := []string{"acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan", "workspaceNetwork"}
 	for _, mode := range valid {
 		mode := mode
 		t.Run("valid/"+mode, func(t *testing.T) {
