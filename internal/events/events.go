@@ -11,6 +11,7 @@ package events
 
 import (
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -839,7 +840,13 @@ func (r *Ring) Emit(ev Event) {
 	// session sets its own, since the session is gone from the index by then.
 	if ev.Task == "" && ev.Session != "" {
 		if fn := r.taskOf.Load(); fn != nil {
-			ev.Task = (*fn)(ev.Session)
+			// The index is keyed "workspace/name". A site that names the
+			// session by its bare name carries the workspace in its own field.
+			key := ev.Session
+			if !strings.Contains(key, "/") && ev.Workspace != "" {
+				key = ev.Workspace + "/" + key
+			}
+			ev.Task = (*fn)(key)
 		}
 	}
 	r.mu.Lock()
