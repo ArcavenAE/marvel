@@ -149,8 +149,9 @@ flag and the role would run wider than its mode says. Apply refuses `-s`,
 `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--full-auto`, `--approve-for-me`,
 and a `-c` or `--config` override of any key that starts with `sandbox` or
 `approval`, or of `profile`, `profiles.*`, `permissions_profile`, `projects`,
-`projects.*`, `default_permissions`, `permissions` or `permissions.*`, and names
-the flag. With `permissions` unset,
+`projects.*`, `default_permissions`, `permissions` or `permissions.*` in any
+case, or any key whose first segment is not a bare key (letters, digits,
+`_` and `-`), such as a quoted one, and names the flag. With `permissions` unset,
 `runtime.args` stays open.
 
 **`dangerous_permissions` is separate.** The boolean `dangerous_permissions:
