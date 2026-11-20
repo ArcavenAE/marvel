@@ -4,13 +4,16 @@ Every token here is made up for the test. The scanner is given only the sha256
 of a token, so the tests build the hash from a fixture token and never hold a
 real canary or the preimage of any real hash.
 """
+import contextlib
 import hashlib
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -150,6 +153,82 @@ class Unreadable(unittest.TestCase):
                 os.chmod(locked, 0o700)
             self.assertEqual(rep["unreadable"], [locked])
             self.assertEqual(rep["files"], 1)
+
+
+class GitOutcomes(unittest.TestCase):
+    """Every --git outcome prints its JSON, and a hit found before a failure still wins (review of ef54b755)."""
+
+    def git(self, repo, *args, stdin=None):
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": repo, "GIT_CONFIG_NOSYSTEM": "1"}
+        r = subprocess.run(["git", "-C", repo, "-c", "init.defaultBranch=main"] + list(args), input=stdin,
+                           capture_output=True, env=env, check=True)
+        return r.stdout.decode().strip()
+
+    def run_cli(self, *args):
+        return subprocess.run([sys.executable, "-I", "-B", os.path.join(HERE, "canary_scan.py")] + list(args),
+                              capture_output=True)
+
+    def test_a_git_scan_with_a_hit_prints_the_hit_and_exits_1(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.git(d, "init", "-q")
+            blob = self.git(d, "hash-object", "-w", "--stdin", stdin=("note " + TOKEN + "\n").encode())
+            self.git(d, "update-ref", "refs/factory-artifacts/notes", blob)
+            r = self.run_cli("--hash", h(TOKEN), "--git", d)
+            self.assertEqual(r.returncode, 1, r.stderr[-300:])
+            self.assertIn(b'"hit_count": 1', r.stdout)
+            self.assertNotIn(b"Traceback", r.stderr)
+            self.assertNotIn(TOKEN.encode(), r.stdout + r.stderr)
+
+    def test_a_clean_git_scan_prints_its_report_and_exits_0(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.git(d, "init", "-q")
+            blob = self.git(d, "hash-object", "-w", "--stdin", stdin=b"no token here\n")
+            self.git(d, "update-ref", "refs/factory-artifacts/clean", blob)
+            r = self.run_cli("--hash", h(TOKEN), "--git", d)
+            self.assertEqual(r.returncode, 0, r.stderr[-300:])
+            self.assertIn(b'"unreadable_count": 0', r.stdout)
+
+    def failing_after_a_hit(self, d):
+        """A tree holding a-hit (the token) then b-boom (a blob the stub cannot read). The tree is
+        listed first, then its blobs in name order, so the hit is read before the failure."""
+        self.git(d, "init", "-q")
+        a = self.git(d, "hash-object", "-w", "--stdin", stdin=("note " + TOKEN + "\n").encode())
+        b = self.git(d, "hash-object", "-w", "--stdin", stdin=b"BOOM\n")
+        tree = self.git(d, "mktree", stdin=("100644 blob %s\ta-hit\n100644 blob %s\tb-boom\n" % (a, b)).encode())
+        self.git(d, "update-ref", "refs/factory-artifacts/tree", tree)
+        real = canary_scan._scan_chunks
+
+        def fake(chunks, targets):
+            data = b"".join(chunks)
+            if b"BOOM" in data:
+                raise OSError("simulated cat-file failure")
+            return real([data], targets)
+        return fake
+
+    def test_a_failure_after_a_hit_keeps_the_hit_and_marks_the_root_unreadable(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake = self.failing_after_a_hit(d)
+            try:
+                with mock.patch.object(canary_scan, "_scan_chunks", fake):
+                    rep = canary_scan.scan_git(d, {h(TOKEN)})
+            except OSError:  # the old code let the failure escape and the hit with it
+                rep = {}
+            self.assertEqual(len(rep.get("hits", [])), 1)
+            self.assertEqual(rep.get("unreadable"), [d])
+
+    def test_a_failure_after_a_hit_still_exits_1(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake = self.failing_after_a_hit(d)
+            out = io.StringIO()
+            try:
+                with mock.patch.object(canary_scan, "_scan_chunks", fake), contextlib.redirect_stdout(out):
+                    rc = canary_scan.main(["--hash", h(TOKEN), "--git", d])
+            except Exception as e:  # the old code raised here
+                rc = "raised " + type(e).__name__
+            self.assertEqual(rc, 1)
+            report = json.loads(out.getvalue() or "{}")
+            self.assertEqual(report.get("hit_count"), 1)
+            self.assertEqual(report.get("unreadable_count"), 1)
 
 
 class Cli(unittest.TestCase):
