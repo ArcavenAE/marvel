@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 // procRoot is a variable so tests can point the walk at a fixture tree.
@@ -60,4 +61,41 @@ func readProcesses() ([]entry, error) {
 		entries = append(entries, e)
 	}
 	return entries, nil
+}
+
+// readProcessesWide is readProcesses plus the command name, elapsed time and
+// CPU time per process, from the same /proc files (docs/design/host-vitals.md
+// section 2). Elapsed is the uptime minus the process's start time.
+func readProcessesWide() ([]entry, []Proc, error) {
+	entries, err := readProcesses()
+	if err != nil {
+		return nil, nil, err
+	}
+	up, uerr := os.ReadFile(procRoot + "/uptime")
+	uptime, perr := parseUptime(string(up))
+	if uerr != nil || perr != nil {
+		return nil, nil, fmt.Errorf("procstat: read %s/uptime", procRoot)
+	}
+	procs := make([]Proc, 0, len(entries))
+	for _, e := range entries {
+		raw, rerr := os.ReadFile(procRoot + "/" + strconv.Itoa(e.pid) + "/stat")
+		if rerr != nil {
+			continue
+		}
+		name, start, serr := parseProcStatWide(string(raw))
+		if serr != nil {
+			continue
+		}
+		elapsed := uptime - float64(start)/clockTicksPerSecond
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		procs = append(procs, Proc{
+			PID: e.pid, PPID: e.ppid, RSSBytes: e.rssBytes,
+			Elapsed: time.Duration(elapsed * float64(time.Second)),
+			CPUTime: time.Duration(float64(e.cpuTicks) / clockTicksPerSecond * float64(time.Second)),
+			Name:    name,
+		})
+	}
+	return entries, procs, nil
 }

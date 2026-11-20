@@ -82,6 +82,12 @@ const clockTicksPerSecond = 100.0
 type Sampler struct {
 	prev   map[int]uint64
 	prevAt time.Time
+
+	// wantTable asks the next Sample for the wide table; table and haveTable
+	// hold what that Sample kept until Table hands it over.
+	wantTable bool
+	table     []Proc
+	haveTable bool
 }
 
 // NewSampler returns a sampler with no history. Its first Sample call
@@ -95,10 +101,21 @@ func NewSampler() *Sampler {
 // being omitted, so callers can tell "measured, nothing there" from
 // "not measured".
 func (s *Sampler) Sample(roots []int) (map[int]Sample, error) {
+	want := s.wantTable
+	s.wantTable, s.table, s.haveTable = false, nil, false
 	if len(roots) == 0 {
 		return nil, nil
 	}
-	entries, err := readProcesses()
+	var entries []entry
+	var err error
+	if want {
+		var table []Proc
+		if entries, table, err = readWide(); err == nil {
+			s.table, s.haveTable = table, true
+		}
+	} else {
+		entries, err = readNarrow()
+	}
 	if err != nil {
 		return nil, err
 	}

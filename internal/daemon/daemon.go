@@ -37,6 +37,7 @@ import (
 	"github.com/arcavenae/marvel/internal/panemenu"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/pidfile"
+	"github.com/arcavenae/marvel/internal/procstat"
 	"github.com/arcavenae/marvel/internal/service"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/suspend"
@@ -105,6 +106,10 @@ type Daemon struct {
 	// config turns it on, and metricsPass drives it every VitalsEvery passes.
 	vitals     *hostvitals.Sampler
 	vitalsPass int
+	// readTable reads the process table once, for a vitals pass on which the
+	// metrics pass read none (no seat has a pid). It is nil until the sampler
+	// is built, and a nil reader leaves the process vitals a gap.
+	readTable func() ([]procstat.Proc, error)
 
 	// composerClient reports whether a workspace is a client one, whose
 	// panes the COMPOSER column never reads, or an error when its manifest

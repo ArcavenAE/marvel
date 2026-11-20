@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/daemonrpc"
@@ -66,10 +68,62 @@ func printVitals(w io.Writer, snap hostvitals.Snapshot, now time.Time) error {
 			}
 		}
 	}
+	if len(snap.Top) > 0 {
+		if err := printTop(w, snap.Top); err != nil {
+			return err
+		}
+	}
 	for _, g := range snap.Gaps {
 		if _, err := fmt.Fprintf(w, "GAP %s: %s (docs/design/host-vitals.md section %s)\n", g.Vital, g.Reason, g.Section); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// printTop writes the top processes by RSS: pid, parent, RSS, elapsed time, CPU
+// time and command name. The name is the command name only.
+func printTop(w io.Writer, top []hostvitals.Proc) error {
+	if _, err := fmt.Fprintf(w, "top processes by RSS:\n  %-8s %-8s %-10s %-10s %-8s %s\n", "PID", "PPID", "RSS", "ELAPSED", "CPU", "NAME"); err != nil {
+		return err
+	}
+	for _, p := range top {
+		if _, err := fmt.Fprintf(w, "  %-8d %-8d %-10s %-10s %-8s %s\n", p.PID, p.PPID, rssText(p.RSSBytes), spanText(p.ElapsedSeconds), cpuText(p.CPUSeconds), p.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rssText prints bytes as GiB at a GiB or more, else as whole MiB.
+func rssText(b uint64) string {
+	if b >= 1<<30 {
+		return fmt.Sprintf("%.1f GiB", float64(b)/(1<<30))
+	}
+	return fmt.Sprintf("%d MiB", b>>20)
+}
+
+// spanText prints seconds as days, hours, minutes and seconds from the largest
+// nonzero unit down: 90061 is 1d1h1m1s and 59 is 59s.
+func spanText(sec float64) string {
+	n := int64(sec)
+	d, h, m, s := n/86400, n%86400/3600, n%3600/60, n%60
+	switch {
+	case d > 0:
+		return fmt.Sprintf("%dd%dh%dm%ds", d, h, m, s)
+	case h > 0:
+		return fmt.Sprintf("%dh%dm%ds", h, m, s)
+	case m > 0:
+		return fmt.Sprintf("%dm%ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
+}
+
+// cpuText prints CPU time: under a minute as seconds with up to two decimals,
+// otherwise as a span.
+func cpuText(sec float64) string {
+	if sec < 60 {
+		return strconv.FormatFloat(math.Round(sec*100)/100, 'f', -1, 64) + "s"
+	}
+	return spanText(sec)
 }

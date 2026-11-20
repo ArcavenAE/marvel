@@ -167,9 +167,9 @@ jobs:
     # tested on macOS as well as Linux, so a move that behaves differently on
     # darwin fails here instead of on an operator's machine (aae-orc-xe1pw).
     # internal/toolchain/restructure_macos_test.go keeps this list and the
-    # plan's packages in step. It also runs internal/childproof, whose
-    # darwin reader has a test of its own that no other job builds; the
-    # job name stays so the check name does not change.
+    # plan's packages in step. It also runs internal/childproof and
+    # internal/procstat, whose darwin readers have tests of their own that no
+    # other job builds; the job name stays so the check name does not change.
     name: Restructure tests (macOS)
     runs-on: macos-latest
     steps:
@@ -235,6 +235,7 @@ jobs:
             ./internal/tmux/tmuxtest/... \
             ./internal/tmux/tmuxtest/fake/... \
             ./internal/childproof/... \
+            ./internal/procstat/... \
             > "${RUNNER_TEMP}/restructure-tests.json"
           scripts/no-skips.sh "${RUNNER_TEMP}/restructure-tests.json" \
             github.com/arcavenae/marvel/internal/daemon \
@@ -246,7 +247,8 @@ jobs:
             github.com/arcavenae/marvel/internal/session \
             github.com/arcavenae/marvel/internal/tmux/tmuxtest \
             github.com/arcavenae/marvel/internal/tmux/tmuxtest/fake \
-            github.com/arcavenae/marvel/internal/childproof
+            github.com/arcavenae/marvel/internal/childproof \
+            github.com/arcavenae/marvel/internal/procstat
 
   goreleaser-check:
     # The stable pipeline has never run, so its config is checked here on every

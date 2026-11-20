@@ -8,3 +8,8 @@ package procstat
 func readProcesses() ([]entry, error) {
 	return nil, ErrUnsupported
 }
+
+// readProcessesWide has no implementation here either.
+func readProcessesWide() ([]entry, []Proc, error) {
+	return nil, nil, ErrUnsupported
+}

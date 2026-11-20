@@ -32,6 +32,7 @@ type Snapshot struct {
 	At         *time.Time  `json:"at,omitempty"`
 	Reading    Reading     `json:"reading"`
 	Thresholds []Threshold `json:"thresholds,omitempty"`
+	Top        []Proc      `json:"top_processes,omitempty"`
 	Gaps       []Gap       `json:"gaps,omitempty"`
 }
 
@@ -43,8 +44,6 @@ const notSampled = "not sampled yet"
 // line here.
 func gaps() []Gap {
 	return []Gap{
-		{Vital: "fseventsd RSS", Section: "2", Reason: notSampled},
-		{Vital: "process RSS", Section: "2", Reason: notSampled},
 		{Vital: "orphan CPU", Section: "2.1", Reason: notSampled},
 		{Vital: "SSD wear", Section: "2", Reason: notSampled},
 	}
@@ -60,6 +59,7 @@ func (s *Sampler) Snapshot() Snapshot {
 	snap := Snapshot{Enabled: true, Gaps: gaps()}
 	s.mu.Lock()
 	have, r, at := s.have, s.latest, s.latestAt.UTC()
+	procsOK, top, fsev, fseen := s.procsOK, append([]Proc(nil), s.top...), s.fseventsdRSS, s.fseventsdSeen
 	s.mu.Unlock()
 	if !have {
 		return snap
@@ -67,7 +67,10 @@ func (s *Sampler) Snapshot() Snapshot {
 	snap.Sampled = true
 	snap.At = &at
 	snap.Reading = r
-	snap.Thresholds = []Threshold{swapThreshold(r), pressureThreshold(r)}
+	snap.Thresholds = []Threshold{swapThreshold(r), pressureThreshold(r), fseventsdThreshold(procsOK, fsev, fseen), processThreshold(procsOK, top)}
+	if len(top) > 0 {
+		snap.Top = top
+	}
 	return snap
 }
 
@@ -119,3 +122,44 @@ func levelName(l int) string {
 
 // gib formats bytes as GiB with one decimal.
 func gib(b uint64) string { return fmt.Sprintf("%.1f GiB", float64(b)/(1<<30)) }
+
+// noTable is the detail of a process vital with no process table to read.
+const noTable = "the process table was not read"
+
+// fseventsdThreshold reports the summed fseventsd RSS against its line. The
+// vital is darwin only, so elsewhere it is a gap that says so.
+func fseventsdThreshold(ok bool, rss uint64, seen bool) Threshold {
+	t := Threshold{Name: "fseventsd RSS", Line: fmt.Sprintf("over %d GiB", FseventsdCrossBytes>>30)}
+	switch {
+	case hostOS != "darwin":
+		t.State, t.Detail = "gap", "darwin only: fseventsd is a macOS process"
+	case !ok:
+		t.State, t.Detail = "gap", noTable
+	case !seen:
+		t.State, t.Detail = "under", "no fseventsd process"
+	default:
+		t.State, t.Detail = "under", gib(rss)
+		if rss > FseventsdCrossBytes {
+			t.State = "over"
+		}
+	}
+	return t
+}
+
+// processThreshold reports the largest process's RSS against its line, naming
+// it by command name and pid.
+func processThreshold(ok bool, top []Proc) Threshold {
+	t := Threshold{Name: "process RSS", Line: fmt.Sprintf("over %d GiB", ProcessRSSCrossBytes>>30)}
+	switch {
+	case !ok:
+		t.State, t.Detail = "gap", noTable
+	case len(top) == 0:
+		t.State, t.Detail = "under", "no processes read"
+	default:
+		t.State, t.Detail = "under", procDetail(top[0])
+		if top[0].RSSBytes > ProcessRSSCrossBytes {
+			t.State = "over"
+		}
+	}
+	return t
+}

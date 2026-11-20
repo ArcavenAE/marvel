@@ -143,8 +143,6 @@ func TestSnapshotGapsNameTheirDesignSections(t *testing.T) {
 		got = append(got, [2]string{g.Vital, g.Section})
 	}
 	want := [][2]string{
-		{"fseventsd RSS", "2"},
-		{"process RSS", "2"},
 		{"orphan CPU", "2.1"},
 		{"SSD wear", "2"},
 	}
