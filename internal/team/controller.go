@@ -2171,6 +2171,10 @@ func (c *Controller) restartSession(sess *api.Session, t *api.Team, role *api.Ro
 	sess.State = api.SessionFailed
 	if err := c.sessMgr.Delete(sess.Key()); err != nil {
 		log.Printf("health: delete session %s for restart: %v", sess.Key(), err)
+	} else {
+		// The row is gone, so the replacement cannot read its predecessor
+		// from it: keep the key for the spawn loop (marvel#1402).
+		c.keepRestartPredecessor(t, role.Name, sess.Generation, sess.Key())
 	}
 	// Reconciler sees actual<desired on its next pass but holds off on
 	// recreating until BackoffUntil elapses (set by noteCrashAndBackoff

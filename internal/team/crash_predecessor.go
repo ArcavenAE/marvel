@@ -117,6 +117,30 @@ func (c *Controller) crashPredecessorTaken(t *api.Team, role string, generation 
 	c.crashPending[pk] = rest
 }
 
+// keepRestartPredecessor records the key of a seat a health restart just
+// deleted, so the replacement the reconciler spawns after the backoff names it.
+// A crash leaves its row until the spawn loop reads it; a health restart
+// deletes the row at once, so the key goes to the pending list here, where the
+// spawn loop reads it with the crashed keys (marvel#1402).
+func (c *Controller) keepRestartPredecessor(t *api.Team, role string, generation int64, key string) {
+	pk := pendingKey(t, role, generation)
+	c.crashMu.Lock()
+	defer c.crashMu.Unlock()
+	if slices.Contains(c.crashPending[pk], key) {
+		return
+	}
+	if c.crashPending == nil {
+		c.crashPending = map[crashPendingKey][]string{}
+	}
+	pending := append(slices.Clone(c.crashPending[pk]), key)
+	sort.SliceStable(pending, func(i, j int) bool {
+		a, _ := seatIndex(pending[i])
+		b, _ := seatIndex(pending[j])
+		return a < b
+	})
+	c.crashPending[pk] = pending
+}
+
 // dropCrashPending forgets a role's pending keys: the role wants no spawn, so
 // no replacement is coming for them.
 func (c *Controller) dropCrashPending(t *api.Team, role string, generation int64) {
