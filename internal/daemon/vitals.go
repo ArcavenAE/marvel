@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/hostvitals"
 )
 
@@ -39,4 +40,9 @@ func (d *Daemon) vitalsTick() {
 		d.vitals.Sample()
 	}
 	d.vitalsPass++
+}
+
+// handleHostVitals answers host.vitals.
+func (d *Daemon) handleHostVitals() daemonrpc.Response {
+	return daemonrpc.Response{Error: "host.vitals is not built"}
 }

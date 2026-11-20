@@ -9,6 +9,7 @@ package hostvitals
 
 import (
 	"sync"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/events"
 )
@@ -53,6 +54,8 @@ type Sampler struct {
 	enabled bool
 	read    func() Reading
 	emit    events.Emitter
+	// now is the clock the sample time comes from; a test sets it.
+	now func() time.Time
 
 	mu       sync.Mutex
 	latest   Reading
@@ -63,7 +66,7 @@ type Sampler struct {
 // New returns a sampler. read is the host reader (Read on a real host). A
 // sampler built with enabled false never calls read and never emits.
 func New(enabled bool, read func() Reading, emit events.Emitter) *Sampler {
-	return &Sampler{enabled: enabled, read: read, emit: emit}
+	return &Sampler{enabled: enabled, read: read, emit: emit, now: time.Now}
 }
 
 // Enabled reports whether the sampler was turned on.
