@@ -5,7 +5,13 @@ package runtime
 // harness has no ruled mapping for the mode, and args is then nil.
 type PermissionMapper interface {
 	MapPermissions(mode string, dangerous, headless bool) (args []string, refusal string)
+	// OverridingArg returns the first of a role's own runtime.args that would
+	// change the sandbox or approval posture the mapped flags set, or "".
+	OverridingArg(args []string) string
 }
+
+// OverridingArg is a stub until the check is written.
+func (c *Codex) OverridingArg(_ []string) string { return "" }
 
 // MapPermissions maps a codex role's permissions for the rows the operator
 // ruled (Desk card i260f-3): unset adds nothing; plan is read-only and never

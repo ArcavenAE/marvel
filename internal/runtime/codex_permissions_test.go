@@ -129,3 +129,55 @@ func TestCodexPrepareAddsNoFlagsForARefusedMode(t *testing.T) {
 		t.Errorf("command = %q, want %q", res.Command, want)
 	}
 }
+
+// A role that sets permissions and also carries a flag that changes the
+// sandbox or approval posture would run wider than it reads: the mapped flags
+// go first and codex takes the later one. OverridingArg names the first such
+// flag, in the forms codex accepts (separate value, =value, attached short
+// value), and ignores flags that leave the posture alone.
+func TestCodexNamesTheRuntimeArgThatOverridesThePermissionMapping(t *testing.T) {
+	t.Parallel()
+	c := &Codex{}
+	over := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-s", "danger-full-access"}, "-s"},
+		{[]string{"--sandbox", "danger-full-access"}, "--sandbox"},
+		{[]string{"--sandbox=danger-full-access"}, "--sandbox=danger-full-access"},
+		{[]string{"-sdanger-full-access"}, "-sdanger-full-access"},
+		{[]string{"-a", "on-request"}, "-a"},
+		{[]string{"--ask-for-approval", "never"}, "--ask-for-approval"},
+		{[]string{"--ask-for-approval=never"}, "--ask-for-approval=never"},
+		{[]string{"--dangerously-bypass-approvals-and-sandbox"}, "--dangerously-bypass-approvals-and-sandbox"},
+		{[]string{"--full-auto"}, "--full-auto"},
+		{[]string{"--approve-for-me"}, "--approve-for-me"},
+		{[]string{"--add-dir", "/work"}, "--add-dir"},
+		{[]string{"-p", "wide"}, "-p"},
+		{[]string{"--profile", "wide"}, "--profile"},
+		{[]string{"-c", `sandbox_mode="danger-full-access"`}, "-c sandbox_mode"},
+		{[]string{"--config", `approval_policy="never"`}, "--config approval_policy"},
+		{[]string{"--config=approval_policy=\"never\""}, "--config approval_policy"},
+		{[]string{"-c", `sandbox_workspace_write.network_access=true`}, "-c sandbox_workspace_write.network_access"},
+		{[]string{"-c", ` sandbox_mode = "read-only"`}, "-c sandbox_mode"},
+		{[]string{"--model", "gpt-x", "-s", "read-only"}, "-s"},
+	}
+	for _, tc := range over {
+		if got := c.OverridingArg(tc.args); got != tc.want {
+			t.Errorf("OverridingArg(%q) = %q, want %q", tc.args, got, tc.want)
+		}
+	}
+	for _, args := range [][]string{
+		nil,
+		{"--model", "gpt-x"},
+		{"-m", "gpt-x", "--json", "--skip-git-repo-check"},
+		{"-C", "/work", "--ephemeral"},
+		{"-c", `model="o3"`},
+		{"-c", `sandbox_permissions=["disk-full-read-access"]`},
+		{"--search", "--no-alt-screen"},
+	} {
+		if got := c.OverridingArg(args); got != "" {
+			t.Errorf("OverridingArg(%q) = %q, want none", args, got)
+		}
+	}
+}
