@@ -93,6 +93,8 @@ func TestApplyRefusesAPermissionsRoleWhoseArgsOverrideIt(t *testing.T) {
 		{`permissions = "plan"`, `["-c", "approval_policy=\"never\""]`, "-c approval_policy"},
 		{`permissions = "plan"`, `["-c", "sandbox_permissions=[\"disk-full-read-access\"]"]`, "-c sandbox_permissions"},
 		{`permissions = "auto"`, `["-c", "profile=\"wide\""]`, "-c profile"},
+		{`permissions = "auto"`, `["--yolo"]`, "--yolo"},
+		{`permissions = "plan"`, `["-c=sandbox_mode=danger-full-access"]`, "-c sandbox_mode"},
 	} {
 		t.Run(tc.line+" "+tc.args, func(t *testing.T) {
 			d := newHandlerDaemon(t)

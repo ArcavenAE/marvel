@@ -172,6 +172,11 @@ func TestCodexNamesTheRuntimeArgThatOverridesThePermissionMapping(t *testing.T) 
 		{[]string{"-c", `profile="wide"`}, "-c profile"},
 		{[]string{"-c", `profiles.wide.sandbox_mode="danger-full-access"`}, "-c profiles.wide.sandbox_mode"},
 		{[]string{"--config", `permissions_profile="wide"`}, "--config permissions_profile"},
+		// codex's hidden alias of the bypass flag, and the -c=key=value form.
+		{[]string{"--yolo"}, "--yolo"},
+		{[]string{"-c=sandbox_mode=danger-full-access"}, "-c sandbox_mode"},
+		{[]string{"-c=sandbox_workspace_write.network_access=true"}, "-c sandbox_workspace_write.network_access"},
+		{[]string{"--config", "sandbox_mode"}, "--config sandbox_mode"},
 	}
 	for _, tc := range over {
 		if got := c.OverridingArg(tc.args); got != tc.want {
@@ -184,6 +189,11 @@ func TestCodexNamesTheRuntimeArgThatOverridesThePermissionMapping(t *testing.T) 
 		{"-m", "gpt-x", "--json", "--skip-git-repo-check"},
 		{"-C", "/work", "--ephemeral"},
 		{"-c", `model="o3"`},
+		{"-c=model=o3"},
+		{"-c="},
+		{"-c"},
+		{"--config"},
+		{"--config="},
 		{"-c", `model_provider="x"`},
 		{"-c", `model_reasoning_effort="high"`},
 		{"--search", "--no-alt-screen"},
