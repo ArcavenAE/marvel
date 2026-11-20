@@ -37,6 +37,11 @@ func commandReference(root *cobra.Command) map[string]string {
 	return pages
 }
 
+// newReferenceRoot builds the command tree the reference is generated from.
+func newReferenceRoot() *cobra.Command {
+	return newRootCmd()
+}
+
 // normalizeHome writes the generating process's marvel home as "~/.marvel" and
 // the running user's home directory as "~". Some flag defaults are computed
 // from the marvel home (the daemon socket, log and pidfile paths), which is
