@@ -75,6 +75,9 @@ func snapshotResponse(t *testing.T, s hostvitals.Snapshot) daemonrpc.Response {
 
 // sampledSnapshot is a snapshot with swap over its line, the process vitals, two
 // processes in the top list and the two vitals not sampled yet.
+// orphanShare is the 30 minute share of the first orphan in the canned snapshot.
+var orphanShare = 0.97
+
 func sampledSnapshot() hostvitals.Snapshot {
 	at := time.Date(2026, 11, 20, 21, 55, 0, 0, time.UTC)
 	return hostvitals.Snapshot{
@@ -87,13 +90,17 @@ func sampledSnapshot() hostvitals.Snapshot {
 			{Name: "memory pressure", Line: "no line", State: "none", Detail: "level 1, 41% free"},
 			{Name: "fseventsd RSS", Line: "over 4 GiB", State: "under", Detail: "0.0 GiB"},
 			{Name: "process RSS", Line: "over 20 GiB", State: "over", Detail: "job (pid 41) 21.0 GiB"},
+			{Name: "orphan CPU", Line: "over 90% of a core for 30 minutes", State: "over", Detail: "tmux (pid 101) 97% over 30 minutes"},
 		},
 		Top: []hostvitals.Proc{
 			{PID: 41, PPID: 1, RSSBytes: 21 << 30, ElapsedSeconds: 90061, CPUSeconds: 3.5, Name: "job"},
 			{PID: 7, PPID: 1, RSSBytes: 2 << 30, ElapsedSeconds: 59, CPUSeconds: 0.25, Name: "Acme Helper"},
 		},
+		Orphans: []hostvitals.Orphan{
+			{PID: 101, Name: "tmux", Reason: hostvitals.ReasonSeatTree, Session: "aae/seat-1", MarkedAt: time.Date(2026, 11, 20, 20, 0, 0, 0, time.UTC), CPUSecondsSinceMarked: 7200, Share: &orphanShare},
+			{PID: 102, Name: "Acme Helper", Reason: hostvitals.ReasonMarker, MarkedAt: time.Date(2026, 11, 20, 21, 50, 0, 0, time.UTC), CPUSecondsSinceMarked: 12.5},
+		},
 		Gaps: []hostvitals.Gap{
-			{Vital: "orphan CPU", Section: "2.1", Reason: "not sampled yet"},
 			{Vital: "SSD wear", Section: "2", Reason: "not sampled yet"},
 		},
 	}
@@ -121,7 +128,7 @@ func TestGetVitalsTextShowsSampleThresholdsAndGaps(t *testing.T) {
 		"swap used", "over 50% of total", "over",
 		"memory pressure",
 		"fseventsd RSS", "process RSS", "job (pid 41) 21.0 GiB",
-		"GAP orphan CPU", "section 2.1",
+		"orphan CPU", "over 90% of a core for 30 minutes", "GAP SSD wear", "section 2",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("output lacks %q:\n%s", want, text)
@@ -142,7 +149,7 @@ func TestGetVitalsJSON(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("output is not a snapshot: %v\n%s", err, out.String())
 	}
-	if !got.Sampled || len(got.Thresholds) != 4 || len(got.Gaps) != 2 || len(got.Top) != 2 {
+	if !got.Sampled || len(got.Thresholds) != 5 || len(got.Gaps) != 1 || len(got.Top) != 2 || len(got.Orphans) != 2 {
 		t.Errorf("snapshot = %+v, want the daemon's record", got)
 	}
 }
@@ -271,9 +278,37 @@ func TestGetVitalsHasNoGapLineForASampledVital(t *testing.T) {
 	if !strings.Contains(out.String(), "top processes by RSS") {
 		t.Errorf("output lacks the top list that replaces them:\n%s", out.String())
 	}
-	for _, bad := range []string{"GAP fseventsd RSS", "GAP process RSS"} {
+	for _, bad := range []string{"GAP fseventsd RSS", "GAP process RSS", "GAP orphan CPU"} {
 		if strings.Contains(out.String(), bad) {
 			t.Errorf("output has %q:\n%s", bad, out.String())
 		}
+	}
+}
+
+// The orphans are listed with their pid, command name, reason, session, CPU
+// since marking and the 30 minute share; a share not yet watched long enough
+// prints as a dash, not as zero.
+func TestGetVitalsShowsTheOrphans(t *testing.T) {
+	socket, _ := vitalsFakeDaemon(t, snapshotResponse(t, sampledSnapshot()))
+	pointAt(t, socket)
+
+	var out bytes.Buffer
+	if err := getVitals(&out, ""); err != nil {
+		t.Fatalf("getVitals: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{"orphans:", "PID", "NAME", "REASON", "SESSION", "MARKED", "CPU", "SHARE", "101", "tmux", "seat tree", "aae/seat-1", "97%", "2h0m0s", "102", "Acme Helper", "marker", "12.5s"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output lacks %q:\n%s", want, text)
+		}
+	}
+	var line string
+	for _, l := range strings.Split(text, "\n") {
+		if strings.Contains(l, "Acme Helper") && strings.Contains(l, "marker") {
+			line = l
+		}
+	}
+	if line == "" || !strings.HasSuffix(strings.TrimSpace(line), "-") {
+		t.Errorf("the unwatched orphan's share does not end in a dash: %q", line)
 	}
 }

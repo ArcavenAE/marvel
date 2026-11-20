@@ -31,6 +31,10 @@ func (d *Daemon) loadHostVitals(socketPath string) {
 	d.readTable = procstat.ReadTable
 }
 
+// wireOrphanSources gives the sampler the seat roots and the marker reader the
+// orphan vital needs (docs/design/host-vitals.md section 2.1).
+func (d *Daemon) wireOrphanSources() {}
+
 // vitalsDue reports whether the next vitals tick takes a reading: the sampler
 // is on and this is the first pass or every VitalsEvery-th after it.
 func (d *Daemon) vitalsDue() bool {

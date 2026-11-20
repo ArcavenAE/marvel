@@ -33,6 +33,7 @@ type Snapshot struct {
 	Reading    Reading     `json:"reading"`
 	Thresholds []Threshold `json:"thresholds,omitempty"`
 	Top        []Proc      `json:"top_processes,omitempty"`
+	Orphans    []Orphan    `json:"orphans,omitempty"`
 	Gaps       []Gap       `json:"gaps,omitempty"`
 }
 
