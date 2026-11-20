@@ -71,6 +71,15 @@ class ScanBytes(unittest.TestCase):
         self.assertEqual(windows, 2)
 
 
+class ScanChunks(unittest.TestCase):
+    def test_a_token_cut_by_a_chunk_boundary_is_found_at_its_stream_offset(self):
+        data = ("pad " + TOKEN + " end").encode()
+        for cut in (5, 12, 20, 35):
+            hits, windows, nbytes = canary_scan._scan_chunks([data[:cut], data[cut:]], {h(TOKEN)})
+            self.assertEqual(hits, [(4, h(TOKEN))], cut)
+            self.assertEqual((windows, nbytes), (1, len(data)), cut)
+
+
 class ScanFiles(unittest.TestCase):
     def test_a_tree_is_walked_and_the_report_names_file_and_offset_and_prints_no_content(self):
         with tempfile.TemporaryDirectory() as d:
@@ -82,7 +91,7 @@ class ScanFiles(unittest.TestCase):
             rep = canary_scan.scan_tree(d, {h(TOKEN)})
             self.assertEqual(len(rep["hits"]), 1)
             self.assertTrue(rep["hits"][0]["where"].endswith(os.path.join("sub", "agents", "a.jsonl")))
-            self.assertEqual(rep["hits"][0]["offset"], 8)
+            self.assertEqual(rep["hits"][0]["offset"], len('{"t": "'))
             self.assertEqual(rep["files"], 2)
             self.assertGreater(rep["bytes"], 0)
             self.assertNotIn(TOKEN, json.dumps(rep))
