@@ -20,6 +20,7 @@ marvel run <command> [args...] [flags]
       --prompt-file string   file holding the prompt a headless run carries (experimental)
       --role string          role name (default "adhoc")
       --script string        Lua script path
+      --task string          the bd ticket or ask the session works on (its id, no spaces, up to 128 characters); the fleet's form of a2a.task.id, shown in get sessions -o json and carried in the session's events
       --team string          team name (default "adhoc")
       --workdir string       directory the session runs in; default the current directory
       --workspace string     workspace name (default "default")

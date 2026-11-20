@@ -1383,7 +1383,10 @@ func (m *Manager) noteRefusal(sess *api.Session, key, reason string, kind events
 			Team:      sess.Team,
 			Role:      sess.Role,
 			Session:   sess.Name,
-			Message:   msg,
+			// The spawn path has already deleted the row, so the ring's
+			// lookup finds nothing; the event names its own task.
+			Task:    sess.Task,
+			Message: msg,
 		})
 	}
 }
@@ -2373,6 +2376,7 @@ func (m *Manager) dropSession(sess api.Session, message string) error {
 		Team:      sess.Team,
 		Role:      sess.Role,
 		Session:   key,
+		Task:      sess.Task,
 		Message:   message,
 	})
 	return nil

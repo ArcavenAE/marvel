@@ -40,6 +40,9 @@ type Store struct {
 	teams      map[string]*Team
 	endpoints  map[string]*Endpoint
 	policies   map[string]*Policy
+	// tasks indexes Session.Task by session key for TaskOf, which reads it
+	// without mu. Written under mu by CreateSession, rehydrate and DeleteSession.
+	tasks sync.Map
 	// rehydrateSkipped lists the stored rows daemon start left out for a name
 	// outside the name class (bolt_rehydrate_names.go).
 	rehydrateSkipped []string
@@ -413,6 +416,7 @@ func (s *Store) CreateSession(sess *Session) error {
 		return err
 	}
 	s.sessions[sess.Key()] = &c
+	s.noteTask(c.Key(), c.Task)
 	return nil
 }
 
@@ -517,6 +521,7 @@ func (s *Store) DeleteSession(key string) error {
 		return err
 	}
 	delete(s.sessions, key)
+	s.tasks.Delete(key)
 	s.forgetSpendLocked(key)
 	// A deleted seat's readiness goes with it: nothing is left to route to.
 	return s.deleteSeatDutiesLocked(key)

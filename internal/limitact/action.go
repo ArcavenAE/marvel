@@ -129,6 +129,15 @@ func (a *Action) Matched(sess api.Session, sample limitmenu.Sample, _ limitmenu.
 		a.mu.Unlock()
 		return
 	}
+	if !sess.Runtime.FirstRunAnswersOn() {
+		// The role opted out of first-run answers. The limit is still set and
+		// reported by the source; only the key is withheld.
+		a.announced[key] = true
+		a.mu.Unlock()
+		a.emit(sess, events.KindLimitMenuRefused, events.SeverityWarning,
+			fmt.Sprintf("limit menu not answered: this role declares runtime.first_run_answers = false (sample %s); nothing was sent", sample.Version))
+		return
+	}
 	if a.blocked[key] {
 		a.announced[key] = true
 		a.mu.Unlock()

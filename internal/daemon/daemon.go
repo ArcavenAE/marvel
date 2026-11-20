@@ -443,6 +443,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	if evRing == nil {
 		evRing = events.NewRing(events.DefaultCapacity)
 	}
+	evRing.SetTaskResolver(store.TaskOf)
 	sessMgr.Events = evRing
 	teamCtrl.Events = evRing
 	tm := timing.NewRegistry(evRing, time.Now)
@@ -1627,6 +1628,13 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		return daemonrpc.Response{Error: "apply manifest: " + strings.Join(refusals, "; ")}
 	}
 
+	// Pre-flight: runtime.prompt on an interactive role whose runtime cannot
+	// take a first message would start a seat that never gets its prompt, with
+	// no error, so it is refused here (marvel#391).
+	if refusals := m.FirstPromptRefusals(); len(refusals) > 0 {
+		return daemonrpc.Response{Error: "apply manifest: " + strings.Join(refusals, "; ")}
+	}
+
 	// Pre-flight: a team name held by another workspace would commit, spawn,
 	// and then break bus-auth rendering cluster-wide (marvel#319).
 	if err := m.ValidateTeamNames(d.store.ListTeams()); err != nil {
@@ -2364,6 +2372,9 @@ func (d *Daemon) handleRun(params json.RawMessage) daemonrpc.Response {
 	if p.Name != "" && !runNamePattern.MatchString(p.Name) {
 		return daemonrpc.Response{Error: fmt.Sprintf("invalid session name %q (letters, digits, dot, dash and underscore; no leading dash)", p.Name)}
 	}
+	if p.Task != "" && !api.ValidTask(p.Task) {
+		return daemonrpc.Response{Error: fmt.Sprintf("invalid task %q (a bd id or an ask id: 1 to 128 graphic characters, no spaces)", p.Task)}
+	}
 
 	// Placement is checked before anything is created, so a refused run leaves no
 	// workspace or session behind.
@@ -2407,6 +2418,7 @@ func (d *Daemon) handleRun(params json.RawMessage) daemonrpc.Response {
 		Role:      p.Role,
 		Runtime:   rt,
 		WorkDir:   workDir,
+		Task:      p.Task,
 	}
 
 	if err := d.sessMgr.Create(sess); err != nil {

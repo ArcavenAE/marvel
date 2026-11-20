@@ -271,17 +271,47 @@ owns its own command line, so marvel exports the composed text as
 `MARVEL_FIRST_PROMPT` and the wrapper can pass it on. Only the claude adapter
 does either today; a codex or opencode successor gets no first message.
 
-`apply` refuses nothing on this. The daemon writes an advisory to its log, not
-to the output of `marvel work`, for each of these:
+`apply` refuses an interactive role that declares `runtime.prompt` on a harness
+that cannot take it as a first message (only claude does today), and the
+refusal names the team, the role and the runtime. Remove the `runtime.prompt`
+line or use a harness that takes one. The refusal lifts for codex and opencode
+when their first-message support lands. A headless role keeps `runtime.prompt`
+as its one request and is never refused.
 
-- an interactive role declares `runtime.prompt` on a harness that cannot take
-  it as a first message yet (only claude does), so the prompt is not delivered;
-- an interactive role declares neither `runtime.prompt` nor `shift.handoff`, so
-  a fresh seat of it starts idle at an empty prompt.
+The one thing `apply` still only advises on is an interactive role that
+declares neither `runtime.prompt` nor `shift.handoff`: the daemon writes a line
+to its log, not to the output of `marvel work`, saying that a fresh seat of it
+starts idle at an empty prompt.
 
 Each spawn records `session.first-prompt` with the source of its first message
 and its byte length, never the text. The event records what marvel passed, not
 what the harness took.
+
+### Answers to a harness's first-run screens
+
+A seat can stop at a screen nobody is watching: a usage-limit menu, a setup
+prompt, an update notice. marvel keeps one table of such screens, each with the
+pattern that finds it and what marvel does there, one fixed key or nothing
+(the seat is parked for a person). The table holds one row today, the claude
+usage-limit menu, which marvel answers with option 2, "Wait here, then continue
+automatically". That row acts only where a captured sample of the menu and a
+measurement of the key exist for the harness version, and none ships yet, so
+nothing is sent until one does. Every other screen joins the table in its own
+change, once its capture exists.
+
+The answers are on by default. A role turns them off with
+`runtime.first_run_answers = false`:
+
+```toml
+[team.role.runtime]
+first_run_answers = false
+```
+
+With it off, marvel still finds the limit menu and sets the seat's limit, and
+it sends no key; the event log says once per limit that the role opted out. A
+TOML value that is not a bool is refused when the manifest is read. YAML reads
+its own boolean words, such as `"no"`, as false, the same as for
+`successor_prompt`.
 
 ### A periodic prompt for an interactive seat
 
@@ -742,6 +772,33 @@ the key and not the value, because marvel owns that namespace.
 marvel does not turn telemetry on, name an exporter or set an endpoint. With
 telemetry off the attribute does nothing; turning it on stays the host's
 choice. opencode, crush and the generic adapter are not stamped.
+
+### Task key
+
+A session can carry a task key: the id of the bd ticket or the ask it works
+on, such as `aae-orc-p0xrm` or `I-100`. It is the fleet's form of the A2A
+attribute `a2a.task.id`. The key is optional, one to 128 characters with no
+spaces, and it is set when the session is created and does not change.
+
+Set it on a role in the manifest, and every session of that role carries it:
+
+```toml
+[[team.role]]
+name = "builder"
+task = "aae-orc-p0xrm"
+```
+
+or on a one-off session:
+
+```bash
+marvel run --task I-100 claude
+```
+
+`marvel get sessions -o json` shows it as `task` on each session that has one,
+and omits the field on the rest. Every event that names a session carries the
+same `task`, including the session's `session.created` and `session.deleted`;
+`marvel events` prints it as `[task <id>]` at the end of the message. The table
+has no column for it, and marvel does not check that the ticket or ask exists.
 
 ### Watch mode
 

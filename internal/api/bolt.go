@@ -329,6 +329,7 @@ func (s *Store) rehydrate() error {
 				sess.SpendFresh, sess.SpendCacheRead, sess.SpendCacheWrite = fresh, read, write
 			}
 			s.sessions[sess.Key()] = &sess
+			s.noteTask(sess.Key(), sess.Task)
 			return nil
 		}); err != nil {
 			return err

@@ -157,6 +157,9 @@ type ManifestRole struct {
 	// WorkDir is where this role's sessions run. Relative values resolve
 	// against workspace.root only.
 	WorkDir string `toml:"workdir,omitempty" yaml:"workdir,omitempty"`
+	// Task is the task key (a bd id or an ask id) this role's sessions carry,
+	// copied onto each at spawn. Optional; see Session.Task.
+	Task string `toml:"task,omitempty" yaml:"task,omitempty"`
 	// ContainerImage is the image this role's seats run in when the workspace's
 	// placement resolves to container. Required then: a container seat with no
 	// image is refused, never given a default.
@@ -271,6 +274,9 @@ type ManifestRuntime struct {
 	// SuccessorPrompt = false turns off the fixed first message a successor
 	// gets. Unset leaves it on. See api.Runtime.SuccessorPrompt.
 	SuccessorPrompt *bool `toml:"successor_prompt,omitempty" yaml:"successor_prompt,omitempty"`
+	// FirstRunAnswers = false turns off marvel's answers to the harness's
+	// first-run and setup screens for this role. Unset leaves them on.
+	FirstRunAnswers *bool `toml:"first_run_answers,omitempty" yaml:"first_run_answers,omitempty"`
 	// PromptArtifactSha256 is the hash of the prompt artifact the role library
 	// projected this role from, 64 hex characters. marvel does not produce it;
 	// it carries the value into the seat stamp as marvel.prompt_artifact.sha256
@@ -548,6 +554,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			if r.SandboxProfile != "" && !ValidSandboxProfile(r.SandboxProfile) {
 				return nil, fmt.Errorf("parse manifest: team %q role %q: sandbox_profile %q is not a clean absolute path", t.Name, r.Name, r.SandboxProfile)
 			}
+			if r.Task != "" && !ValidTask(r.Task) {
+				return nil, fmt.Errorf("parse manifest: team %q role %q: task %q is not a task key (1 to %d graphic characters, no spaces)", t.Name, r.Name, r.Task, maxTaskLen)
+			}
 			if r.Policy != "" && !policyNames[r.Policy] {
 				return nil, fmt.Errorf("parse manifest: team[%d].role[%d] references undefined policy %q", i, j, r.Policy)
 			}
@@ -801,29 +810,47 @@ func (m *Manifest) ShiftHeadroomAdvisories() []string {
 	return out
 }
 
-// FirstPromptAdvisories lists the interactive roles whose first prompt will not
-// happen as declared (marvel#391, docs/design/interactive-first-prompt.md D6):
-// a role that declares runtime.prompt on a runtime that cannot take it as a
-// first message, and a role that declares neither runtime.prompt nor a
-// shift.handoff, so a fresh seat of it starts at an empty prompt. It is
-// advisory, not a refusal, because existing manifests carry runtime.prompt on
-// interactive roles today and a refusal would fail their next re-apply. Only
-// claude takes the prompt for now (T1); the runtime test narrows as codex and
-// opencode support lands (T2, T3). Headless roles are never reported.
+// takesFirstPrompt reports whether the adapter picked for a runtime name takes
+// runtime.prompt as the first message of an interactive seat. Only claude does
+// for now (T1); codex (T2) and opencode (T3) join here when their support lands,
+// which lifts the apply refusal for them.
+func takesFirstPrompt(adapter string) bool { return adapter == "claude" }
+
+// FirstPromptRefusals lists the interactive roles that declare runtime.prompt on
+// a runtime that cannot deliver it as a first message, so the seat would start
+// and never get its prompt (marvel#391, aae-orc-3nzxx, which supersedes the
+// advisory D6 of docs/design/interactive-first-prompt.md set for this case).
+// Apply refuses them. Headless roles carry runtime.prompt as their one request
+// and are never listed.
+func (m *Manifest) FirstPromptRefusals() []string {
+	var out []string
+	for _, t := range m.Teams {
+		for _, r := range t.Roles {
+			if r.Runtime.Mode == RuntimeModeHeadless || r.Runtime.Prompt == "" {
+				continue
+			}
+			if name := r.Runtime.AdapterName(); !takesFirstPrompt(name) {
+				out = append(out, fmt.Sprintf("team %s role %s: interactive runtime %q cannot take runtime.prompt as a first message, so apply refuses it instead of starting a seat that never gets its prompt (marvel#391)",
+					t.Name, r.Name, name))
+			}
+		}
+	}
+	return out
+}
+
+// FirstPromptAdvisories lists the interactive roles whose fresh seat starts at
+// an empty prompt: a role that declares neither runtime.prompt nor a
+// shift.handoff (marvel#391, docs/design/interactive-first-prompt.md D6). It is
+// advisory, not a refusal. A role whose runtime.prompt cannot be delivered is
+// refused instead, by FirstPromptRefusals. Headless roles are never reported.
 func (m *Manifest) FirstPromptAdvisories() []string {
 	var out []string
 	for _, t := range m.Teams {
 		for _, r := range t.Roles {
-			if r.Runtime.Mode != RuntimeModeInteractive {
+			if r.Runtime.Mode == RuntimeModeHeadless || r.Runtime.Prompt != "" {
 				continue
 			}
-			switch name := r.Runtime.AdapterName(); {
-			case r.Runtime.Prompt != "":
-				if name != "claude" {
-					out = append(out, fmt.Sprintf("team %s role %s: interactive runtime %q cannot take runtime.prompt as a first message yet, so the prompt is not delivered; advisory only, and it narrows as first-prompt support lands for more harnesses (marvel#391)",
-						t.Name, r.Name, name))
-				}
-			case r.Shift == nil || r.Shift.Handoff == "":
+			if r.Shift == nil || r.Shift.Handoff == "" {
 				out = append(out, fmt.Sprintf("team %s role %s: interactive role declares neither runtime.prompt nor shift.handoff, so a fresh seat of this role starts idle at an empty prompt (marvel#391)",
 					t.Name, r.Name))
 			}
@@ -1175,6 +1202,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				Mode:                 mr.Runtime.Mode,
 				Prompt:               mr.Runtime.Prompt,
 				SuccessorPrompt:      mr.Runtime.SuccessorPrompt,
+				FirstRunAnswers:      mr.Runtime.FirstRunAnswers,
 				ContextWindow:        mr.Runtime.ContextWindow,
 				ContextFeed:          mr.Runtime.ContextFeed,
 				PromptArtifactSha256: mr.Runtime.PromptArtifactSha256,
@@ -1201,6 +1229,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
 				ContainerImage:       mr.ContainerImage,
 				SandboxProfile:       mr.SandboxProfile,
+				Task:                 mr.Task,
 				SettingsSources:      mr.SettingsSources,
 				Writes:               normalizeWrites(mr.Writes),
 			}

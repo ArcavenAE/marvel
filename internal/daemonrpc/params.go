@@ -100,6 +100,8 @@ type RunParams struct {
 	Prompt string            `json:"prompt,omitempty"`
 	Env    map[string]string `json:"env,omitempty"`
 	Name   string            `json:"name,omitempty"`
+	// Task is the task key the session works on (a bd id or an ask id).
+	Task string `json:"task,omitempty"`
 }
 
 // ShiftParams asks for a rolling shift of a team.
