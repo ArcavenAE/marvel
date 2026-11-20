@@ -28,19 +28,52 @@ func (d *Daemon) loadHostVitals(socketPath string) {
 		on = hostVitalsEnabled(cfg.ClusterForSocket(socketPath))
 	}
 	d.vitals = hostvitals.New(on, hostvitals.Read, d.events)
+	d.readTable = procstat.ReadTable
 }
 
-// vitalsTick is called once per metrics pass and takes a reading on the first
-// pass and on every VitalsEvery-th one after it. It reads and reports; no
-// reading is passed to anything that spawns, signals or refuses.
-func (d *Daemon) vitalsTick() {
+// vitalsDue reports whether the next vitals tick takes a reading: the sampler
+// is on and this is the first pass or every VitalsEvery-th after it.
+func (d *Daemon) vitalsDue() bool {
+	return d.vitals.Enabled() && d.vitalsPass%VitalsEvery == 0
+}
+
+// vitalsTick is vitalsTickWith with no process table in hand.
+func (d *Daemon) vitalsTick() { d.vitalsTickWith(nil, false) }
+
+// vitalsTickWith is called once per metrics pass and takes a reading on the
+// first pass and on every VitalsEvery-th one after it. table is the wide
+// process table the metrics pass read, when it read one (a seat had a pid):
+// the vitals reuse it and make no read of their own. With none in hand, the
+// vitals pass reads one itself, once, which is the design's one ps a minute on
+// a host with no seat (docs/design/host-vitals.md section 2.2); a daemon with
+// no reader, or a read that fails, leaves the process vitals a gap. It reads
+// and reports; no reading is passed to anything that spawns, signals or
+// refuses.
+func (d *Daemon) vitalsTickWith(table []procstat.Proc, ok bool) {
 	if !d.vitals.Enabled() {
 		return
 	}
 	if d.vitalsPass%VitalsEvery == 0 {
-		d.vitals.Sample()
+		if !ok && d.readTable != nil {
+			if t, err := d.readTable(); err == nil {
+				table, ok = t, true
+			}
+		}
+		d.vitals.SampleProcs(vitalsProcs(table), ok)
 	}
 	d.vitalsPass++
+}
+
+// vitalsProcs converts the process table to the sampler's own type.
+func vitalsProcs(table []procstat.Proc) []hostvitals.Proc {
+	out := make([]hostvitals.Proc, 0, len(table))
+	for _, p := range table {
+		out = append(out, hostvitals.Proc{
+			PID: p.PID, PPID: p.PPID, RSSBytes: uint64(max(p.RSSBytes, 0)),
+			ElapsedSeconds: p.Elapsed.Seconds(), CPUSeconds: p.CPUTime.Seconds(), Name: p.Name,
+		})
+	}
+	return out
 }
 
 // handleHostVitals answers host.vitals from the sampler's memory: the latest
@@ -50,11 +83,3 @@ func (d *Daemon) vitalsTick() {
 func (d *Daemon) handleHostVitals() daemonrpc.Response {
 	return respond(d.vitals.Snapshot())
 }
-
-// vitalsDue reports whether the next vitals tick takes a reading: the sampler
-// is on and this is the first pass or every VitalsEvery-th after it.
-func (d *Daemon) vitalsDue() bool { return false }
-
-// vitalsTickWith is vitalsTick with the process table the metrics pass read,
-// when it read one.
-func (d *Daemon) vitalsTickWith(_ []procstat.Proc, _ bool) { d.vitalsTick() }

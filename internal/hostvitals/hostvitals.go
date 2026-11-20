@@ -61,57 +61,76 @@ type Sampler struct {
 	latest   Reading
 	latestAt time.Time
 	have     bool
-	swapOver bool
+
+	// The process table of the latest sample: whether it could be read, the
+	// top processes by RSS and the summed RSS of the fseventsd processes.
+	procsOK       bool
+	top           []Proc
+	fseventsdRSS  uint64
+	fseventsdSeen bool
+
+	// over holds, per vital, whether its last reading was over its line.
+	over map[string]bool
 }
 
 // New returns a sampler. read is the host reader (Read on a real host). A
 // sampler built with enabled false never calls read and never emits.
 func New(enabled bool, read func() Reading, emit events.Emitter) *Sampler {
-	return &Sampler{enabled: enabled, read: read, emit: emit, now: time.Now}
+	return &Sampler{enabled: enabled, read: read, emit: emit, now: time.Now, over: map[string]bool{}}
 }
 
 // Enabled reports whether the sampler was turned on.
 func (s *Sampler) Enabled() bool { return s != nil && s.enabled }
 
-// Sample takes one reading, keeps it, and reports a swap crossing or clear if
-// the reading moved to the other side of the line since the last one that had
-// a swap figure. A reading with no swap figure is a gap: it changes neither
-// the standing state nor the events.
-func (s *Sampler) Sample() {
+// Sample takes one reading with no process table: the process vitals read as a
+// gap. It is SampleProcs(nil, false).
+func (s *Sampler) Sample() { s.SampleProcs(nil, false) }
+
+// SampleProcs takes one reading, keeps it with the process table the caller
+// read, and reports a crossing or a clear for each vital that moved to the
+// other side of its line since the last reading that had a figure for it. A
+// vital with no figure (no swap figure, no process table) is a gap: it changes
+// neither the standing state nor the events. ok is false when the table could
+// not be read.
+func (s *Sampler) SampleProcs(procs []Proc, ok bool) {
 	if !s.Enabled() {
 		return
 	}
 	r := s.read()
+	top, fsev, fseen := summarize(procs)
 
 	s.mu.Lock()
 	s.latest, s.have = r, true
 	s.latestAt = s.now()
-	var kind events.Kind
-	var msg string
-	if r.SwapOK {
-		over := r.swapOver()
+	s.procsOK, s.top, s.fseventsdRSS, s.fseventsdSeen = ok, nil, 0, false
+	if ok {
+		s.top, s.fseventsdRSS, s.fseventsdSeen = top, fsev, fseen
+	}
+	var out []events.Event
+	move := func(vital string, over bool, crossed, cleared, detail string) {
+		was := s.over[vital]
+		s.over[vital] = over
 		switch {
-		case over && !s.swapOver:
-			kind, msg = events.KindHostVitalsCrossed, "host swap over its line"
-		case !over && s.swapOver:
-			kind, msg = events.KindHostVitalsCleared, "host swap back under its line"
+		case over && !was:
+			out = append(out, events.Event{Kind: events.KindHostVitalsCrossed, Severity: events.SeverityWarning, Message: crossed + ": " + detail})
+		case !over && was:
+			out = append(out, events.Event{Kind: events.KindHostVitalsCleared, Severity: events.SeverityInfo, Message: cleared + ": " + detail})
 		}
-		s.swapOver = over
+	}
+	if r.SwapOK {
+		move("swap", r.swapOver(), "host swap over its line", "host swap back under its line", swapDetail(r))
+	}
+	if ok && hostOS == "darwin" {
+		move("fseventsd", fsev > FseventsdCrossBytes, "fseventsd RSS over its line", "fseventsd RSS back under its line", gib(fsev))
+	}
+	if ok && len(top) > 0 {
+		move("process", top[0].RSSBytes > ProcessRSSCrossBytes, "process RSS over its line", "process RSS back under its line", procDetail(top[0]))
 	}
 	s.mu.Unlock()
 
-	if kind == "" {
-		return
+	for _, e := range out {
+		events.Emit(s.emit, e)
 	}
-	sev := events.SeverityInfo
-	if kind == events.KindHostVitalsCrossed {
-		sev = events.SeverityWarning
-	}
-	events.Emit(s.emit, events.Event{
-		Kind:     kind,
-		Severity: sev,
-		Message:  msg + ": " + swapDetail(r),
-	})
 }
 
 // Latest returns the most recent reading, and false before the first sample.

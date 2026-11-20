@@ -1,7 +1,10 @@
 package procstat
 
 import (
+	"os"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -184,5 +187,63 @@ func TestSamplerWithNoRootsKeepsNoTable(t *testing.T) {
 	}
 	if narrow != 1 || wide != 1 {
 		t.Errorf("the sample after it: %d narrow and %d wide reads in all, want 1 and 1 (the request was spent)", narrow, wide)
+	}
+}
+
+// The Linux fields come from /proc/<pid>/stat: the name between the first '('
+// and the last ')', which can hold both, and the start time in ticks.
+func TestParseProcStatWide(t *testing.T) {
+	const line = "4242 (Acme (worker) 1) S 1 4242 4242 0 -1 4194560 100 0 0 0 7 3 0 0 20 0 1 0 987654 10485760 2560 18446744073709551615"
+	name, start, err := parseProcStatWide(line)
+	if err != nil || name != "Acme (worker) 1" || start != 987654 {
+		t.Errorf("parseProcStatWide = %q, %d, %v; want %q, 987654, nil", name, start, err, "Acme (worker) 1")
+	}
+	if _, _, err := parseProcStatWide("1 (x) S 1"); err == nil {
+		t.Error("a short stat line did not fail")
+	}
+	if _, _, err := parseProcStatWide("no parens here"); err == nil {
+		t.Error("a line with no comm did not fail")
+	}
+}
+
+func TestParseUptime(t *testing.T) {
+	if got, err := parseUptime("12345.67 98765.43\n"); err != nil || got != 12345.67 {
+		t.Errorf("parseUptime = %v, %v; want 12345.67", got, err)
+	}
+	if _, err := parseUptime(""); err == nil {
+		t.Error("an empty uptime did not fail")
+	}
+}
+
+// ReadTable reads the real process table of the host the test runs on. Where
+// the table cannot be read (a sandbox that refuses the setuid ps), it skips.
+// Names are command names only: no path separator, nothing after the
+// executable.
+func TestReadTableOnThisHost(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("no process table reader on " + runtime.GOOS)
+	}
+	procs, err := ReadTable()
+	if err != nil {
+		t.Skipf("the process table cannot be read here: %v", err)
+	}
+	var self *Proc
+	for i := range procs {
+		p := &procs[i]
+		if strings.Contains(p.Name, "/") {
+			t.Errorf("pid %d: name %q holds a path separator", p.PID, p.Name)
+		}
+		if p.Elapsed < 0 || p.CPUTime < 0 {
+			t.Errorf("pid %d: negative elapsed %v or CPU time %v", p.PID, p.Elapsed, p.CPUTime)
+		}
+		if p.PID == os.Getpid() {
+			self = p
+		}
+	}
+	if self == nil {
+		t.Fatalf("this test process (pid %d) is not in a table of %d processes", os.Getpid(), len(procs))
+	}
+	if self.RSSBytes <= 0 || self.Name == "" || self.PPID <= 0 {
+		t.Errorf("this process = %+v, want an RSS, a name and a parent", *self)
 	}
 }

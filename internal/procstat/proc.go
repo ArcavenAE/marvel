@@ -78,3 +78,34 @@ func parseProcIO(data string) (readBytes, writeBytes int64, err error) {
 	}
 	return readBytes, writeBytes, nil
 }
+
+// parseProcStatWide reads the two more fields the vitals table wants from
+// /proc/<pid>/stat: the command name in parentheses (field 2) and the start
+// time in clock ticks since boot (field 22). The name is cut at the first '('
+// and the last ')', since it can hold both.
+func parseProcStatWide(data string) (name string, startTicks uint64, err error) {
+	open, end := strings.Index(data, "("), strings.LastIndex(data, ")")
+	if open < 0 || end < open {
+		return "", 0, fmt.Errorf("procstat: no comm field")
+	}
+	f := strings.Fields(data[end+1:])
+	// Field 22 sits at index 19 once state (field 3) is index 0.
+	const startIndex = 19
+	if len(f) <= startIndex {
+		return "", 0, fmt.Errorf("procstat: short stat line (%d fields after comm)", len(f))
+	}
+	start, err := strconv.ParseUint(f[startIndex], 10, 64)
+	if err != nil {
+		return "", 0, fmt.Errorf("procstat: starttime: %w", err)
+	}
+	return data[open+1 : end], start, nil
+}
+
+// parseUptime reads the first field of /proc/uptime, seconds since boot.
+func parseUptime(data string) (float64, error) {
+	f := strings.Fields(data)
+	if len(f) == 0 {
+		return 0, fmt.Errorf("procstat: empty uptime")
+	}
+	return strconv.ParseFloat(f[0], 64)
+}

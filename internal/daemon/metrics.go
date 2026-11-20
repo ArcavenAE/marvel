@@ -44,7 +44,19 @@ type metricsHold struct{ skipped bool }
 // baseline, and publishes nothing, because its CPU delta would span the whole
 // pause; the next pass publishes.
 func (d *Daemon) metricsPass(sampler *procstat.Sampler, h *metricsHold) {
-	d.vitalsTick()
+	// On a vitals pass the sampler reads the wide process table, so the vitals
+	// reuse the one read the pass already makes while a seat has a pid. The
+	// vitals tick comes after the sampling, to take that table.
+	if d.vitalsDue() {
+		sampler.WantTable()
+	}
+	d.sampleMetrics(sampler, h)
+	table, ok := sampler.Table()
+	d.vitalsTickWith(table, ok)
+}
+
+// sampleMetrics is the sampling half of a metrics pass.
+func (d *Daemon) sampleMetrics(sampler *procstat.Sampler, h *metricsHold) {
 	if d.clusterSuspended() {
 		h.skipped = true
 		return

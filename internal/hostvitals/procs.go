@@ -1,6 +1,10 @@
 package hostvitals
 
-import "runtime"
+import (
+	"fmt"
+	"runtime"
+	"sort"
+)
 
 // Proc is one process in the top-by-RSS list. Name is the command name only,
 // never its arguments.
@@ -26,8 +30,31 @@ const (
 // hostOS is the platform the fseventsd vital applies to; a test sets it.
 var hostOS = runtime.GOOS
 
-// SampleProcs takes one reading like Sample and also keeps the process table
-// the caller read. ok is false when the table could not be read.
-func (s *Sampler) SampleProcs(procs []Proc, ok bool) {
-	s.Sample()
+// summarize returns the top processes by RSS, biggest first and a tie to the
+// lower pid, capped at TopProcesses, and the summed RSS of the processes named
+// fseventsd with whether any was seen.
+func summarize(procs []Proc) (top []Proc, fseventsd uint64, seen bool) {
+	for _, p := range procs {
+		if p.Name == "fseventsd" {
+			fseventsd += p.RSSBytes
+			seen = true
+		}
+	}
+	top = append([]Proc(nil), procs...)
+	sort.SliceStable(top, func(i, j int) bool {
+		if top[i].RSSBytes != top[j].RSSBytes {
+			return top[i].RSSBytes > top[j].RSSBytes
+		}
+		return top[i].PID < top[j].PID
+	})
+	if len(top) > TopProcesses {
+		top = top[:TopProcesses]
+	}
+	return top, fseventsd, seen
+}
+
+// procDetail names a process by command name and pid, with its RSS. Never its
+// arguments.
+func procDetail(p Proc) string {
+	return fmt.Sprintf("%s (pid %d) %s", p.Name, p.PID, gib(p.RSSBytes))
 }

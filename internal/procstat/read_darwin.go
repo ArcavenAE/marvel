@@ -21,3 +21,15 @@ func readProcesses() ([]entry, error) {
 	}
 	return parsePS(string(out)), nil
 }
+
+// readProcessesWide is readProcesses with three more columns: elapsed time,
+// CPU time and the command, in the same single ps. comm is last because an
+// executable path can hold spaces; only its last path element is kept.
+func readProcessesWide() ([]entry, []Proc, error) {
+	out, err := exec.Command("ps", "-A", "-o", "pid=,ppid=,pcpu=,rss=,etime=,time=,comm=").Output()
+	if err != nil {
+		return nil, nil, fmt.Errorf("procstat: ps: %w", err)
+	}
+	entries, procs := parsePSWide(string(out))
+	return entries, procs, nil
+}
