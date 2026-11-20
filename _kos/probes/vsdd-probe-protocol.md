@@ -131,6 +131,8 @@ The brief's rule (s6, "Inter-run gap") reads: "no session on the account, on any
 
 **Replacement (the lighter form), ruled by the operator 2026-11-20, verbatim "could this reliably be achieved more quickly with a model toggle? otherwise light":**
 
+The toggle was answered as not reliable for cache isolation and as changing what the probe measures (protocol author, 2026-11-20), so the lighter form stands (director, 2026-11-20).
+
 - **Kept:** the 65-minute gap after the probe's own last request, before every run.
 - **Kept:** the per-run read-back. A run whose first-request cache read exceeds the S14 cold reference is flagged. It is counted in the main analysis and left out of a sensitivity analysis, which is the brief's existing rule for any read-back that disagrees.
 - **Calibration, once, before the pilot.** S14 is run with the fleet's Enterprise seats live, on every host, as they normally run. If both seats' first-request reads stay at the cold level, other load does not contaminate the probe's cache, and the lighter form stands. If they read materially warm, the full window is needed, and it goes to the operator with its cost.
@@ -140,7 +142,7 @@ The brief's rule (s6, "Inter-run gap") reads: "no session on the account, on any
 
   Both are reported beside wall clock and throughput.
 - **Stop:** unchanged. A limit message during a run is a limit stop (counted, intent-to-treat), and one before a block's first run voids the block.
-- **Dropped** (operator 2026-11-20, verbatim "could this reliably be achieved more quickly with a model toggle? otherwise light"): the requirement that no other session on the account makes requests. No team moves for a run.
+- **Dropped** (operator 2026-11-20, verbatim "could this reliably be achieved more quickly with a model toggle? otherwise light"): the requirement that no other session on the account makes requests. No team moves for a run. The toggle answer is recorded under the Replacement heading above.
 
 **Effect on validity.**
 
