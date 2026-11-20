@@ -1,13 +1,16 @@
 # The marvel tour, recorded with VHS (https://github.com/charmbracelet/vhs).
 # Run it from the repository root, inside a scratch container or VM, after
 # `just build`: it starts a real daemon and real sessions on the simulator.
+# The one-off session near the end runs `claude`, so the machine needs the
+# claude CLI, already logged in; the rest of the tour needs no login.
 #   vhs docs/media/tour.tape
-# The beats match docs/tour.md. Outputs: the mp4 and the four stills are
-# published; the text dump is only for checking the frames before they are
+# The beats match docs/tour.md, plus a closing one-off session. Outputs: the mp4, the four stills and the
+# plain-text transcript beside them. The text file is what a step-through page
+# can read; it is also the quick way to check the frames before they are
 # committed. The README gif comes from docs/media/hero.tape.
 
 Output docs/media/tour.mp4
-Output out/tour.txt
+Output docs/media/tour.txt
 
 Set Shell bash
 Set Width 1300
@@ -80,6 +83,15 @@ Sleep 20s
 Type "clear" Enter
 Type "marvel events" Enter
 Sleep 8s
+
+# 2:15 a one-off session, and the command that opens its pane
+Type "clear" Enter
+Type "marvel run claude" Enter
+Sleep 5s
+Type "marvel get sessions --columns name,desk" Enter
+Sleep 3s
+Type "marvel attach --print $(marvel get sessions --columns name,desk | awk '/^run-/ {print $2; exit}')" Enter
+Sleep 5s
 
 # 2:20 tear it down (the watch is closed first, so it does not print a reconnect warning)
 Hide
