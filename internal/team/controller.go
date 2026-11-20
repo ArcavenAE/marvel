@@ -1563,6 +1563,7 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 				Generation: plan.Generation,
 				Runtime:    role.Runtime,
 				WorkDir:    c.placement(t, role),
+				Task:       role.Task,
 				Firing:     plan.Firing,
 			}
 			if i < len(preds) {
@@ -2678,6 +2679,7 @@ func (c *Controller) shiftLaunch(t *api.Team, role *api.Role) {
 				Generation: t.Generation,
 				Runtime:    role.Runtime,
 				WorkDir:    c.placement(t, role),
+				Task:       role.Task,
 			}
 			if i < len(predecessors) {
 				sess.Predecessor = predecessors[len(predecessors)-1-i].Key()

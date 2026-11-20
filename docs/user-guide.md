@@ -754,6 +754,33 @@ marvel does not turn telemetry on, name an exporter or set an endpoint. With
 telemetry off the attribute does nothing; turning it on stays the host's
 choice. opencode, crush and the generic adapter are not stamped.
 
+### Task key
+
+A session can carry a task key: the id of the bd ticket or the ask it works
+on, such as `aae-orc-p0xrm` or `I-100`. It is the fleet's form of the A2A
+attribute `a2a.task.id`. The key is optional, one to 128 characters with no
+spaces, and it is set when the session is created and does not change.
+
+Set it on a role in the manifest, and every session of that role carries it:
+
+```toml
+[[team.role]]
+name = "builder"
+task = "aae-orc-p0xrm"
+```
+
+or on a one-off session:
+
+```bash
+marvel run --task I-100 claude
+```
+
+`marvel get sessions -o json` shows it as `task` on each session that has one,
+and omits the field on the rest. Every event that names a session carries the
+same `task`, including the session's `session.created` and `session.deleted`;
+`marvel events` prints it as `[task <id>]` at the end of the message. The table
+has no column for it, and marvel does not check that the ticket or ask exists.
+
 ### Watch mode
 
 ```bash

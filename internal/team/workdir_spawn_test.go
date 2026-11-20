@@ -519,3 +519,27 @@ func TestPlacementRefusalSurvivesHoldsAndClearsOnlyOnSteadyOrScaleDown(t *testin
 		t.Errorf("refusals after a scale-down plan = %+v, want none", left)
 	}
 }
+
+// A role's task is copied onto its sessions at spawn, as its workdir is, so
+// the row and its events carry the ticket or ask the role's seats work on.
+func TestSpawnCopiesTheRolesTaskToTheSession(t *testing.T) {
+	skipIfNoTmux(t)
+	store, _, ctrl, cleanup := setup(t)
+	t.Cleanup(cleanup)
+	out := realDir(t)
+	with := cwdRecorder(t, out, "withtask", "")
+	with.Task = "aae-orc-p0xrm"
+	without := cwdRecorder(t, out, "notask", "")
+	createPlacedTeam(t, store, "test-task-spawn", realDir(t), "", []api.Role{with, without})
+	ctrl.ReconcileOnce()
+
+	for role, want := range map[string]string{"withtask": "aae-orc-p0xrm", "notask": ""} {
+		sessions := aliveSessions(store.ListSessionsByTeamRoleGeneration("test-task-spawn", "squad", role, 1))
+		if len(sessions) != 1 {
+			t.Fatalf("role %s: %d sessions, want 1", role, len(sessions))
+		}
+		if sessions[0].Task != want {
+			t.Errorf("role %s: Session.Task = %q, want %q", role, sessions[0].Task, want)
+		}
+	}
+}
