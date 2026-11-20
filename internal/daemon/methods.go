@@ -137,6 +137,10 @@ func init() {
 			Handle:   func(d *Daemon, p json.RawMessage, _ caller) daemonrpc.Response { return d.handleDaemonStatus() },
 			Starting: true,
 		},
+		daemonrpc.MethodHostVitals: {
+			Handle:   func(d *Daemon, p json.RawMessage, _ caller) daemonrpc.Response { return d.handleHostVitals() },
+			Starting: true,
+		},
 		daemonrpc.MethodDelete: {
 			Handle: func(d *Daemon, p json.RawMessage, _ caller) daemonrpc.Response { return d.handleDelete(p) },
 		},

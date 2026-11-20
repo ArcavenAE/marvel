@@ -33,6 +33,7 @@ const (
 	MethodGet               = "get"
 	MethodHandoffPut        = "handoff.put"
 	MethodHeartbeat         = "heartbeat"
+	MethodHostVitals        = "host.vitals"
 	MethodInject            = "inject"
 	MethodLogs              = "logs"
 	MethodOrphans           = "orphans"

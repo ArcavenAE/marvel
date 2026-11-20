@@ -25,6 +25,7 @@ import (
 //	W streams many responses on one connection
 var declaredSets = map[string]string{
 	daemonrpc.MethodDaemonStatus:      "S",
+	daemonrpc.MethodHostVitals:        "S",
 	daemonrpc.MethodSuspendStatus:     "S",
 	daemonrpc.MethodGet:               "SF",
 	daemonrpc.MethodDescribe:          "S",

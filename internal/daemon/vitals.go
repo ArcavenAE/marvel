@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/hostvitals"
 )
 
@@ -39,4 +40,12 @@ func (d *Daemon) vitalsTick() {
 		d.vitals.Sample()
 	}
 	d.vitalsPass++
+}
+
+// handleHostVitals answers host.vitals from the sampler's memory: the latest
+// reading, its time, each threshold with its state and each gap. It reads
+// nothing from the host and writes nothing, and a daemon whose sampler is off
+// or was never built answers the off snapshot, not an error.
+func (d *Daemon) handleHostVitals() daemonrpc.Response {
+	return respond(d.vitals.Snapshot())
 }
