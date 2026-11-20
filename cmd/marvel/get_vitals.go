@@ -73,6 +73,11 @@ func printVitals(w io.Writer, snap hostvitals.Snapshot, now time.Time) error {
 			return err
 		}
 	}
+	if len(snap.Orphans) > 0 {
+		if err := printOrphans(w, snap.Orphans); err != nil {
+			return err
+		}
+	}
 	for _, g := range snap.Gaps {
 		if _, err := fmt.Fprintf(w, "GAP %s: %s (docs/design/host-vitals.md section %s)\n", g.Vital, g.Reason, g.Section); err != nil {
 			return err
@@ -126,4 +131,27 @@ func cpuText(sec float64) string {
 		return strconv.FormatFloat(math.Round(sec*100)/100, 'f', -1, 64) + "s"
 	}
 	return spanText(sec)
+}
+
+// printOrphans writes the processes marked as orphans: pid, command name, why
+// it was marked, its MARVEL_SESSION marker, when, the CPU it has burned since
+// and its share of a core over the last 30 minutes (a dash until it has been
+// watched that long).
+func printOrphans(w io.Writer, orphans []hostvitals.Orphan) error {
+	if _, err := fmt.Fprintf(w, "orphans:\n  %-8s %-18s %-10s %-20s %-21s %-12s %s\n", "PID", "NAME", "REASON", "SESSION", "MARKED", "CPU SINCE", "SHARE"); err != nil {
+		return err
+	}
+	for _, o := range orphans {
+		session, share := o.Session, "-"
+		if session == "" {
+			session = "-"
+		}
+		if o.Share != nil {
+			share = fmt.Sprintf("%.0f%%", *o.Share*100)
+		}
+		if _, err := fmt.Fprintf(w, "  %-8d %-18s %-10s %-20s %-21s %-12s %s\n", o.PID, o.Name, o.Reason, session, o.MarkedAt.UTC().Format(time.RFC3339), cpuText(o.CPUSecondsSinceMarked), share); err != nil {
+			return err
+		}
+	}
+	return nil
 }

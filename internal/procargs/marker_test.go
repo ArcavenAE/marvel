@@ -181,3 +181,21 @@ func TestParseEnvironLookalikesAndEmpty(t *testing.T) {
 		t.Errorf("with the real variable: %+v, want Session real", m)
 	}
 }
+
+// A MARVEL_SESSION value is cut and its unprintable bytes replaced, so a hostile
+// value cannot carry a terminal escape sequence into get vitals or an event.
+func TestMarkerSessionIsPrintableAndBounded(t *testing.T) {
+	hostile := "\x1b[31mred\x07\x00tail\xff"
+	m, err := ParseProcargs2Marker(markerBuf([]string{"x"}, []string{"MARVEL_SESSION=" + hostile}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []byte(m.Session) {
+		if c < 0x20 || c > 0x7e {
+			t.Errorf("session %q holds the byte %#x, want printable ASCII only", m.Session, c)
+		}
+	}
+	if !strings.Contains(m.Session, "red") {
+		t.Errorf("session = %q, want the printable text kept", m.Session)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/hostvitals"
+	"github.com/arcavenae/marvel/internal/procargs"
 	"github.com/arcavenae/marvel/internal/procstat"
 )
 
@@ -29,11 +30,24 @@ func (d *Daemon) loadHostVitals(socketPath string) {
 	}
 	d.vitals = hostvitals.New(on, hostvitals.Read, d.events)
 	d.readTable = procstat.ReadTable
+	d.readMarker = procargs.ReadMarker
+	d.wireOrphanSources()
 }
 
 // wireOrphanSources gives the sampler the seat roots and the marker reader the
-// orphan vital needs (docs/design/host-vitals.md section 2.1).
-func (d *Daemon) wireOrphanSources() {}
+// orphan vital needs (docs/design/host-vitals.md section 2.1): the pane pid of
+// every live seat, and a reader that returns only a process's marvel marker.
+func (d *Daemon) wireOrphanSources() {
+	d.vitals.SetOrphanSources(hostvitals.OrphanSources{
+		Roots: func() []int {
+			if d.store == nil {
+				return nil
+			}
+			return d.sampledPids()
+		},
+		Marker: d.readMarker,
+	})
+}
 
 // vitalsDue reports whether the next vitals tick takes a reading: the sampler
 // is on and this is the first pass or every VitalsEvery-th after it.

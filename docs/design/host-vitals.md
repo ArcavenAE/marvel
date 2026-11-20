@@ -42,7 +42,7 @@ The target is a process whose parent is now launchd (parent pid 1) and whose anc
 
 1. Each pass keeps the parent map of the pass before.
 2. A process that was under a seat's pane tree or a test process last pass and has parent pid 1 now is marked as an orphan, with its pid, start time and resolved path (the identity of `host-health-guard.md` 4.3).
-3. A process already orphaned before the daemon started is matched by its arguments or environment through `internal/procargs`: a `MARVEL_SESSION` variable, or a marvel test socket or home prefix. Which markers are reliable for each case is to be measured before the build.
+3. A process already orphaned before the daemon started is matched by its arguments or environment through `internal/procargs`: a `MARVEL_SESSION` variable, or a marvel test socket or home prefix. The markers were ruled on the design's reasoning, not measured: a run under the run conditions could not produce one to read: the child listing works there, but the marvel tests that start seats fail early on the write-deny profile and leave nothing behind. Reading another process's environment is the same exposure as reading its arguments, so the sampler reads it through `procargs.ReadMarker`, which parses the buffer in memory and keeps two fields, the `MARVEL_SESSION` value (printable ASCII, 128 bytes at most) and a flag for a `MARVEL_SOCKET` or `MARVEL_HOME` that names a marvel test or harness path. It drops every other byte as it goes, reads a parentless process once, and never reads a process whose parent is not pid 1.
 4. The vital is CPU-hours since it was marked, from the `ps` CPU-time column, and the share of a core over the last 30 minutes.
 
 ### 2.2 Cost budget
