@@ -24,6 +24,7 @@ var codexPostureFlags = []string{
 	"-p", "--profile",
 	"--add-dir",
 	"--dangerously-bypass-approvals-and-sandbox",
+	"--yolo", // codex's hidden alias of the bypass flag
 	"--full-auto",
 	"--approve-for-me",
 }
@@ -69,7 +70,8 @@ func (c *Codex) OverridingArg(args []string) string {
 		case strings.HasPrefix(a, "--config="):
 			flag, val = "--config", strings.TrimPrefix(a, "--config=")
 		case strings.HasPrefix(a, "-c") && !strings.HasPrefix(a, "--") && len(a) > 2:
-			flag, val = "-c", a[2:]
+			// -c=key=value is accepted: drop one leading "=" before the key.
+			flag, val = "-c", strings.TrimPrefix(a[2:], "=")
 		}
 		if flag == "" {
 			continue

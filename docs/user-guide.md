@@ -141,7 +141,7 @@ A codex role that sets `permissions` may not also carry a `runtime.args` flag
 that changes the sandbox or approval posture, because codex reads the later
 flag and the role would run wider than its mode says. Apply refuses `-s`,
 `--sandbox`, `-a`, `--ask-for-approval`, `-p`, `--profile`, `--add-dir`,
-`--dangerously-bypass-approvals-and-sandbox`, `--full-auto`, `--approve-for-me`,
+`--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--full-auto`, `--approve-for-me`,
 and a `-c` or `--config` override of any key that starts with `sandbox` or
 `approval`, or of `profile`, `profiles.*` or `permissions_profile`, and names
 the flag. With `permissions` unset,
