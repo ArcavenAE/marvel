@@ -1,6 +1,7 @@
 package hostvitals
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -22,19 +23,21 @@ type orphanRig struct {
 	markers map[int]procargs.Marker
 	failing map[int]bool
 	reads   map[int]int
-	el      float64 // elapsed seconds of the process the feed helper drives
+	seat    map[int]string // the daemon's own record: root pid to the seat it belongs to
+	el      float64        // elapsed seconds of the process the feed helper drives
 }
 
 func newRig(t *testing.T) *orphanRig {
 	t.Helper()
 	r := &orphanRig{
 		t: t, rec: &recorder{}, now: time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC),
-		markers: map[int]procargs.Marker{}, failing: map[int]bool{}, reads: map[int]int{},
+		markers: map[int]procargs.Marker{}, failing: map[int]bool{}, reads: map[int]int{}, seat: map[int]string{},
 	}
 	r.s = New(true, func() Reading { return swapReading(1, 100) }, r.rec)
 	r.s.now = func() time.Time { return r.now }
 	r.s.SetOrphanSources(OrphanSources{
-		Roots: func() []int { return r.roots },
+		Roots:       func() []int { return r.roots },
+		RootSession: func(pid int) string { return r.seat[pid] },
 		Marker: func(pid int) (procargs.Marker, error) {
 			r.reads[pid]++
 			if r.failing[pid] {
@@ -127,11 +130,11 @@ func TestAnOrphanOlderThanTheDaemonIsMatchedByItsMarker(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("orphans = %+v, want pids 300 and 303 only", got)
 	}
-	if o := byPID[300]; o.Reason != ReasonMarker || o.Session != "aae/seat-1" || !o.MarkedAt.Equal(r.now) {
-		t.Errorf("pid 300 = %+v, want reason %q, session aae/seat-1, marked now", o, ReasonMarker)
+	if o := byPID[300]; o.Reason != ReasonMarker || o.ClaimedSession != "aae/seat-1" || o.Session != "" || !o.MarkedAt.Equal(r.now) {
+		t.Errorf("pid 300 = %+v, want reason %q, a claimed session aae/seat-1 and no session, marked now", o, ReasonMarker)
 	}
-	if o := byPID[303]; o.Reason != ReasonMarker || o.Session != "" {
-		t.Errorf("pid 303 = %+v, want a marker with no session (a marvel path only)", o)
+	if o := byPID[303]; o.Reason != ReasonMarker || o.Session != "" || o.ClaimedSession != "" {
+		t.Errorf("pid 303 = %+v, want a marker with no session of either kind (a marvel path only)", o)
 	}
 }
 
@@ -317,5 +320,46 @@ func TestOrphansAreCappedAndOrderedByCPU(t *testing.T) {
 	}
 	if got[0].PID != 1000+OrphansShown+4 || got[1].PID != 1000+OrphansShown+3 {
 		t.Errorf("order = %d, %d, want the most CPU first", got[0].PID, got[1].PID)
+	}
+}
+
+// An orphan found under a seat carries the seat's own name, from the daemon's
+// record, as Session; one matched only by its marker carries what the process
+// claims, as ClaimedSession, and never as Session, so the two cannot be taken
+// for one another in the data or in the JSON.
+func TestSeatTreeOrphanHasTheSeatsSessionAndMarkerOrphanOnlyAClaim(t *testing.T) {
+	r := newRig(t)
+	r.roots = []int{100}
+	r.seat[100] = "ws/seat-0"
+	r.markers[300] = procargs.Marker{Session: "ws/seat-0"}
+	r.pass(op(100, 50, "sh", 1, 600), op(101, 100, "tmux", 10, 600))
+	r.pass(op(100, 50, "sh", 1, 660), op(101, 1, "tmux", 12, 660), op(300, 1, "liar", 5, 9000))
+	byPID := map[int]Orphan{}
+	for _, o := range r.orphans() {
+		byPID[o.PID] = o
+	}
+	if o := byPID[101]; o.Reason != ReasonSeatTree || o.Session != "ws/seat-0" || o.ClaimedSession != "" {
+		t.Errorf("seat tree orphan = %+v, want Session ws/seat-0 and no claim", o)
+	}
+	if o := byPID[300]; o.Reason != ReasonMarker || o.Session != "" || o.ClaimedSession != "ws/seat-0" {
+		t.Errorf("marker orphan = %+v, want a claim of ws/seat-0 and no Session", o)
+	}
+	raw, err := json.Marshal(r.orphans())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		_, plain := row["session"]
+		_, claimed := row["claimed_session"]
+		if row["reason"] == ReasonMarker && (plain || !claimed) {
+			t.Errorf("marker row JSON = %v, want claimed_session and no session", row)
+		}
+		if row["reason"] == ReasonSeatTree && (!plain || claimed) {
+			t.Errorf("seat tree row JSON = %v, want session and no claimed_session", row)
+		}
 	}
 }

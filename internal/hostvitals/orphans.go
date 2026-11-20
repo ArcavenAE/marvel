@@ -33,9 +33,14 @@ type Orphan struct {
 	PID    int    `json:"pid"`
 	Name   string `json:"name"`
 	Reason string `json:"reason"`
-	// Session is the MARVEL_SESSION marker, when the process carries one.
-	Session  string    `json:"session,omitempty"`
-	MarkedAt time.Time `json:"marked_at"`
+	// Session is the seat the orphan was under, from the daemon's own record.
+	// It is set only for the seat tree reason.
+	Session string `json:"session,omitempty"`
+	// ClaimedSession is the MARVEL_SESSION the process says it has. It is
+	// untrusted text from the process, shown to clients, and nothing keys on it.
+	// It is set only for the marker reason.
+	ClaimedSession string    `json:"claimed_session,omitempty"`
+	MarkedAt       time.Time `json:"marked_at"`
 	// CPUSecondsSinceMarked is its CPU time now minus its CPU time when marked.
 	CPUSecondsSinceMarked float64 `json:"cpu_seconds_since_marked"`
 	// Share is its share of one core over the last OrphanWindow, nil until it
@@ -50,6 +55,9 @@ type OrphanSources struct {
 	Roots func() []int
 	// Marker reads a process's marvel marker (procargs.ReadMarker on a host).
 	Marker func(pid int) (procargs.Marker, error)
+	// RootSession names the seat that owns a root pid, from the daemon's own
+	// record. Nil, or an empty answer, leaves the session unnamed.
+	RootSession func(pid int) string
 }
 
 // SetOrphanSources gives the sampler its orphan sources. Without them no

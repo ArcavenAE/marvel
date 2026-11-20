@@ -54,7 +54,10 @@ func TestVitalsPassMarksTheOrphanOfASeat(t *testing.T) {
 	tickVitalsPass(d, []procstat.Proc{tableProc(100, 50, "sh"), tableProc(101, 1, "tmux")})
 	got := d.vitals.Snapshot().Orphans
 	if len(got) != 1 || got[0].PID != 101 || got[0].Reason != hostvitals.ReasonSeatTree {
-		t.Errorf("orphans = %+v, want pid 101 marked as a seat tree orphan", got)
+		t.Fatalf("orphans = %+v, want pid 101 marked as a seat tree orphan", got)
+	}
+	if want := d.store.ListSessions()[0].Key(); got[0].Session != want || got[0].ClaimedSession != "" {
+		t.Errorf("orphan session = %q, claimed %q, want the seat's own key %q and no claim", got[0].Session, got[0].ClaimedSession, want)
 	}
 }
 
@@ -71,7 +74,7 @@ func TestVitalsPassReadsTheMarkerOfAParentlessProcess(t *testing.T) {
 	})
 	tickVitalsPass(d, []procstat.Proc{tableProc(300, 1, "tmux"), tableProc(302, 1, "other"), tableProc(400, 5, "child")})
 	got := d.vitals.Snapshot().Orphans
-	if len(got) != 1 || got[0].PID != 300 || got[0].Session != "aae/seat-1" || got[0].Reason != hostvitals.ReasonMarker {
+	if len(got) != 1 || got[0].PID != 300 || got[0].ClaimedSession != "aae/seat-1" || got[0].Session != "" || got[0].Reason != hostvitals.ReasonMarker {
 		t.Errorf("orphans = %+v, want pid 300 matched by its marker", got)
 	}
 	for _, pid := range read {

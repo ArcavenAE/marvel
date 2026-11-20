@@ -98,7 +98,7 @@ func sampledSnapshot() hostvitals.Snapshot {
 		},
 		Orphans: []hostvitals.Orphan{
 			{PID: 101, Name: "tmux", Reason: hostvitals.ReasonSeatTree, Session: "aae/seat-1", MarkedAt: time.Date(2026, 11, 20, 20, 0, 0, 0, time.UTC), CPUSecondsSinceMarked: 7200, Share: &orphanShare},
-			{PID: 102, Name: "Acme Helper", Reason: hostvitals.ReasonMarker, MarkedAt: time.Date(2026, 11, 20, 21, 50, 0, 0, time.UTC), CPUSecondsSinceMarked: 12.5},
+			{PID: 102, Name: "Acme Helper", Reason: hostvitals.ReasonMarker, ClaimedSession: "other/seat", MarkedAt: time.Date(2026, 11, 20, 21, 50, 0, 0, time.UTC), CPUSecondsSinceMarked: 12.5},
 		},
 		Gaps: []hostvitals.Gap{
 			{Vital: "SSD wear", Section: "2", Reason: "not sampled yet"},
@@ -297,7 +297,7 @@ func TestGetVitalsShowsTheOrphans(t *testing.T) {
 		t.Fatalf("getVitals: %v", err)
 	}
 	text := out.String()
-	for _, want := range []string{"orphans:", "PID", "NAME", "REASON", "SESSION", "MARKED", "CPU", "SHARE", "101", "tmux", "seat tree", "aae/seat-1", "97%", "2h0m0s", "102", "Acme Helper", "marker", "12.5s"} {
+	for _, want := range []string{"orphans:", "PID", "NAME", "REASON", "SESSION", "MARKED", "CPU", "SHARE", "101", "tmux", "seat tree", "aae/seat-1", "97%", "2h0m0s", "102", "Acme Helper", "marker", "other/seat (claimed)", "12.5s"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("output lacks %q:\n%s", want, text)
 		}
@@ -310,5 +310,30 @@ func TestGetVitalsShowsTheOrphans(t *testing.T) {
 	}
 	if line == "" || !strings.HasSuffix(strings.TrimSpace(line), "-") {
 		t.Errorf("the unwatched orphan's share does not end in a dash: %q", line)
+	}
+}
+
+// The JSON labels a session the process only claims as claimed_session, and
+// keeps session for the seat the daemon itself found the orphan under.
+func TestGetVitalsJSONLabelsAClaimedSession(t *testing.T) {
+	socket, _ := vitalsFakeDaemon(t, snapshotResponse(t, sampledSnapshot()))
+	pointAt(t, socket)
+
+	var out bytes.Buffer
+	if err := getVitals(&out, "json"); err != nil {
+		t.Fatalf("getVitals json: %v", err)
+	}
+	var doc struct {
+		Orphans []map[string]any `json:"orphans"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil || len(doc.Orphans) != 2 {
+		t.Fatalf("orphans = %v, %v, want two", doc.Orphans, err)
+	}
+	seat, marker := doc.Orphans[0], doc.Orphans[1]
+	if seat["session"] != "aae/seat-1" || seat["claimed_session"] != nil {
+		t.Errorf("seat tree row = %v, want session aae/seat-1 and no claimed_session", seat)
+	}
+	if marker["claimed_session"] != "other/seat" || marker["session"] != nil {
+		t.Errorf("marker row = %v, want claimed_session other/seat and no session", marker)
 	}
 }
