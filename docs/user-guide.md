@@ -286,7 +286,9 @@ first_run_answers = false
 
 With it off, marvel still finds the limit menu and sets the seat's limit, and
 it sends no key; the event log says once per limit that the role opted out. A
-value that is not a bool is refused when the manifest is read.
+TOML value that is not a bool is refused when the manifest is read. YAML reads
+its own boolean words, such as `"no"`, as false, the same as for
+`successor_prompt`.
 
 ### A periodic prompt for an interactive seat
 
