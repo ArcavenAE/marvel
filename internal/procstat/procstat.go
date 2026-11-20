@@ -98,7 +98,7 @@ func (s *Sampler) Sample(roots []int) (map[int]Sample, error) {
 	if len(roots) == 0 {
 		return nil, nil
 	}
-	entries, err := readProcesses()
+	entries, err := readNarrow()
 	if err != nil {
 		return nil, err
 	}

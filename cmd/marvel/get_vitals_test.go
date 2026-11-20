@@ -73,7 +73,8 @@ func snapshotResponse(t *testing.T, s hostvitals.Snapshot) daemonrpc.Response {
 	return daemonrpc.Response{Result: data}
 }
 
-// sampledSnapshot is a snapshot with swap over its line and the four gaps.
+// sampledSnapshot is a snapshot with swap over its line, the process vitals, two
+// processes in the top list and the two vitals not sampled yet.
 func sampledSnapshot() hostvitals.Snapshot {
 	at := time.Date(2026, 11, 20, 21, 55, 0, 0, time.UTC)
 	return hostvitals.Snapshot{
@@ -84,10 +85,14 @@ func sampledSnapshot() hostvitals.Snapshot {
 		Thresholds: []hostvitals.Threshold{
 			{Name: "swap used", Line: "over 50% of total", State: "over", Detail: "6.0 GiB of 8.0 GiB (75%)"},
 			{Name: "memory pressure", Line: "no line", State: "none", Detail: "level 1, 41% free"},
+			{Name: "fseventsd RSS", Line: "over 4 GiB", State: "under", Detail: "0.0 GiB"},
+			{Name: "process RSS", Line: "over 20 GiB", State: "over", Detail: "job (pid 41) 21.0 GiB"},
+		},
+		Top: []hostvitals.Proc{
+			{PID: 41, PPID: 1, RSSBytes: 21 << 30, ElapsedSeconds: 90061, CPUSeconds: 3.5, Name: "job"},
+			{PID: 7, PPID: 1, RSSBytes: 2 << 30, ElapsedSeconds: 59, CPUSeconds: 0.25, Name: "Acme Helper"},
 		},
 		Gaps: []hostvitals.Gap{
-			{Vital: "fseventsd RSS", Section: "2", Reason: "not sampled yet"},
-			{Vital: "process RSS", Section: "2", Reason: "not sampled yet"},
 			{Vital: "orphan CPU", Section: "2.1", Reason: "not sampled yet"},
 			{Vital: "SSD wear", Section: "2", Reason: "not sampled yet"},
 		},
@@ -115,7 +120,8 @@ func TestGetVitalsTextShowsSampleThresholdsAndGaps(t *testing.T) {
 		"2026-11-20T21:55:00Z",
 		"swap used", "over 50% of total", "over",
 		"memory pressure",
-		"GAP", "fseventsd RSS", "orphan CPU", "section 2.1",
+		"fseventsd RSS", "process RSS", "job (pid 41) 21.0 GiB",
+		"GAP orphan CPU", "section 2.1",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("output lacks %q:\n%s", want, text)
@@ -136,7 +142,7 @@ func TestGetVitalsJSON(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("output is not a snapshot: %v\n%s", err, out.String())
 	}
-	if !got.Sampled || len(got.Thresholds) != 2 || len(got.Gaps) != 4 {
+	if !got.Sampled || len(got.Thresholds) != 4 || len(got.Gaps) != 2 || len(got.Top) != 2 {
 		t.Errorf("snapshot = %+v, want the daemon's record", got)
 	}
 }
@@ -229,5 +235,45 @@ func TestGetVitalsIsWiredIntoGet(t *testing.T) {
 	var snap hostvitals.Snapshot
 	if err := json.Unmarshal([]byte(out), &snap); err != nil || !snap.Sampled {
 		t.Errorf("-o json output is not the snapshot (err %v):\n%s", err, out)
+	}
+}
+
+// The top list shows each process's pid, parent, RSS, elapsed time, CPU time
+// and command name, with the name only and nothing after it.
+func TestGetVitalsShowsTheTopProcesses(t *testing.T) {
+	socket, _ := vitalsFakeDaemon(t, snapshotResponse(t, sampledSnapshot()))
+	pointAt(t, socket)
+
+	var out bytes.Buffer
+	if err := getVitals(&out, ""); err != nil {
+		t.Fatalf("getVitals: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{"top processes by RSS", "PID", "PPID", "RSS", "ELAPSED", "CPU", "NAME", "41", "21.0 GiB", "1d1h1m1s", "3.5s", "job", "Acme Helper", "59s"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Index(text, "job") > strings.Index(text, "Acme Helper") {
+		t.Errorf("the larger process is not listed first:\n%s", text)
+	}
+}
+
+// The vitals the build now samples are not gap lines in the table.
+func TestGetVitalsHasNoGapLineForASampledVital(t *testing.T) {
+	socket, _ := vitalsFakeDaemon(t, snapshotResponse(t, sampledSnapshot()))
+	pointAt(t, socket)
+
+	var out bytes.Buffer
+	if err := getVitals(&out, ""); err != nil {
+		t.Fatalf("getVitals: %v", err)
+	}
+	if !strings.Contains(out.String(), "top processes by RSS") {
+		t.Errorf("output lacks the top list that replaces them:\n%s", out.String())
+	}
+	for _, bad := range []string{"GAP fseventsd RSS", "GAP process RSS"} {
+		if strings.Contains(out.String(), bad) {
+			t.Errorf("output has %q:\n%s", bad, out.String())
+		}
 	}
 }

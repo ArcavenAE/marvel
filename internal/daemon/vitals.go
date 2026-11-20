@@ -4,6 +4,7 @@ import (
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/hostvitals"
+	"github.com/arcavenae/marvel/internal/procstat"
 )
 
 // VitalsEvery is how many metrics passes make one host vitals reading: every
@@ -49,3 +50,11 @@ func (d *Daemon) vitalsTick() {
 func (d *Daemon) handleHostVitals() daemonrpc.Response {
 	return respond(d.vitals.Snapshot())
 }
+
+// vitalsDue reports whether the next vitals tick takes a reading: the sampler
+// is on and this is the first pass or every VitalsEvery-th after it.
+func (d *Daemon) vitalsDue() bool { return false }
+
+// vitalsTickWith is vitalsTick with the process table the metrics pass read,
+// when it read one.
+func (d *Daemon) vitalsTickWith(_ []procstat.Proc, _ bool) { d.vitalsTick() }

@@ -32,6 +32,7 @@ type Snapshot struct {
 	At         *time.Time  `json:"at,omitempty"`
 	Reading    Reading     `json:"reading"`
 	Thresholds []Threshold `json:"thresholds,omitempty"`
+	Top        []Proc      `json:"top_processes,omitempty"`
 	Gaps       []Gap       `json:"gaps,omitempty"`
 }
 
