@@ -108,8 +108,15 @@ def _object_chunks(pipe, size):
 
 
 def scan_git(repo, targets):
-    rep = {"hits": [], "objects": 0, "bytes": 0, "windows": 0, "missing": 0}
-    rl = subprocess.run(["git", "-C", repo, "rev-list", "--all", "--objects"], capture_output=True, check=True)
+    """Scan every object reachable from every ref. It never raises on a git failure: the report
+    keeps every hit found so far and lists the repo under "unreadable", so a hit found before a
+    failure is not lost and a failure is not read as clean."""
+    rep = {"hits": [], "objects": 0, "bytes": 0, "windows": 0, "missing": 0, "unreadable": []}
+    try:
+        rl = subprocess.run(["git", "-C", repo, "rev-list", "--all", "--objects"], capture_output=True, check=True)
+    except (subprocess.CalledProcessError, OSError):
+        rep["unreadable"].append(repo)
+        return rep
     names = {}
     for line in rl.stdout.decode("utf-8", "replace").splitlines():
         sha, _, path = line.partition(" ")
@@ -118,6 +125,7 @@ def scan_git(repo, targets):
         lst.write(("\n".join(names) + "\n").encode() if names else b"")
         lst.seek(0)
         p = subprocess.Popen(["git", "-C", repo, "cat-file", "--batch"], stdin=lst, stdout=subprocess.PIPE)
+        failed = False
         try:
             while True:
                 head = p.stdout.readline()
@@ -135,10 +143,16 @@ def scan_git(repo, targets):
                 rep["windows"] += windows
                 where = "object " + sha + (" " + names[sha] if names.get(sha) else "")
                 rep["hits"] += [{"where": where, "offset": o, "target": t[:12]} for o, t in hits]
+        except (OSError, ValueError, IndexError):
+            failed = True
         finally:
             p.stdout.close()
-            if p.wait() != 0:
-                raise OSError("git cat-file failed")
+            if failed:
+                p.terminate()
+            if p.wait() != 0 and not failed:
+                failed = True
+        if failed:
+            rep["unreadable"].append(repo)
     return rep
 
 
@@ -156,12 +170,7 @@ def main(argv):
         print("canary_scan: need at least one valid --hash (64 hex) and at least one --tree or --git", file=sys.stderr)
         return 2
     reports = [dict(root=r, kind="tree", **scan_tree(r, targets)) for r in a.tree]
-    for r in a.git:
-        try:
-            reports.append(dict(root=r, kind="git", **scan_git(r, targets)))
-        except (subprocess.CalledProcessError, OSError, ValueError):
-            # git said no (not a repository, a failed read): the root counts as unreadable; git's own text is not printed
-            reports.append({"root": r, "kind": "git", "hits": [], "unreadable": [r]})
+    reports += [dict(root=r, kind="git", **scan_git(r, targets)) for r in a.git]
     total = sum(len(r["hits"]) for r in reports)
     unreadable = sum(len(r["unreadable"]) + r.get("missing", 0) for r in reports)
     print(json.dumps({"targets": sorted(t[:12] for t in targets), "hit_count": total,
