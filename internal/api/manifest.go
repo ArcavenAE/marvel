@@ -1178,6 +1178,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				Mode:                 mr.Runtime.Mode,
 				Prompt:               mr.Runtime.Prompt,
 				SuccessorPrompt:      mr.Runtime.SuccessorPrompt,
+				FirstRunAnswers:      mr.Runtime.FirstRunAnswers,
 				ContextWindow:        mr.Runtime.ContextWindow,
 				ContextFeed:          mr.Runtime.ContextFeed,
 				PromptArtifactSha256: mr.Runtime.PromptArtifactSha256,

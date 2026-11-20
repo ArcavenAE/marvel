@@ -20,5 +20,16 @@ type Row struct {
 	Answer  string
 }
 
-// Rows returns the table.
-func Rows() []Row { return nil }
+// Rows returns the table. It carries the usage-limit row only. Each further
+// screen joins it in its own change, once a capture of that screen exists on a
+// scratch harness at the version the fleet runs; a pattern is never written by
+// hand (internal/panestate/patterns/README.md).
+func Rows() []Row {
+	return []Row{{
+		ID:      "usage-limit",
+		Screen:  "claude usage-limit menu",
+		Pattern: "limitmenu samples (panemenu.Samples.Menus), matched by the pane-menu source",
+		Action:  ActionKey,
+		Answer:  "option 2, Wait here, then continue automatically (internal/limitact)",
+	}}
+}

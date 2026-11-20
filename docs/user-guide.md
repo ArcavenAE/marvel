@@ -264,6 +264,30 @@ Each spawn records `session.first-prompt` with the source of its first message
 and its byte length, never the text. The event records what marvel passed, not
 what the harness took.
 
+### Answers to a harness's first-run screens
+
+A seat can stop at a screen nobody is watching: a usage-limit menu, a setup
+prompt, an update notice. marvel keeps one table of such screens, each with the
+pattern that finds it and what marvel does there, one fixed key or nothing
+(the seat is parked for a person). The table holds one row today, the claude
+usage-limit menu, which marvel answers with option 2, "Wait here, then continue
+automatically". That row acts only where a captured sample of the menu and a
+measurement of the key exist for the harness version, and none ships yet, so
+nothing is sent until one does. Every other screen joins the table in its own
+change, once its capture exists.
+
+The answers are on by default. A role turns them off with
+`runtime.first_run_answers = false`:
+
+```toml
+[team.role.runtime]
+first_run_answers = false
+```
+
+With it off, marvel still finds the limit menu and sets the seat's limit, and
+it sends no key; the event log says once per limit that the role opted out. A
+value that is not a bool is refused when the manifest is read.
+
 ### A periodic prompt for an interactive seat
 
 A role can declare a cadence: a prompt that is due on a schedule, kept by marvel

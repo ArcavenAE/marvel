@@ -259,7 +259,9 @@ type Runtime struct {
 
 // FirstRunAnswersOn reports whether marvel answers the first-run screens of a
 // seat of this role. It is on unless the role declares first_run_answers = false.
-func (r Runtime) FirstRunAnswersOn() bool { return true }
+func (r Runtime) FirstRunAnswersOn() bool {
+	return r.FirstRunAnswers == nil || *r.FirstRunAnswers
+}
 
 // SuccessorPromptOn reports whether a session that replaces another gets
 // marvel's fixed successor first message. It is on unless the role declares
