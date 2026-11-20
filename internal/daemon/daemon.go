@@ -1620,6 +1620,13 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		return daemonrpc.Response{Error: "apply manifest: " + strings.Join(refusals, "; ")}
 	}
 
+	// Pre-flight: runtime.prompt on an interactive role whose runtime cannot
+	// take a first message would start a seat that never gets its prompt, with
+	// no error, so it is refused here (marvel#391).
+	if refusals := m.FirstPromptRefusals(); len(refusals) > 0 {
+		return daemonrpc.Response{Error: "apply manifest: " + strings.Join(refusals, "; ")}
+	}
+
 	// Pre-flight: a team name held by another workspace would commit, spawn,
 	// and then break bus-auth rendering cluster-wide (marvel#319).
 	if err := m.ValidateTeamNames(d.store.ListTeams()); err != nil {

@@ -111,16 +111,26 @@ not say it. This design has marvel hand the harness that first turn at launch.
     `source = skipped-resume` under D7. It does not refuse at apply: that would
     be a new gate, and D6's reasoning holds.
   - **opencode**: `--session` with `--prompt` is P3's question.
-- **D6. Apply says what will not happen.** Apply emits an advisory (not a
-  refusal) for:
+- **D6. Apply says what will not happen.** Two cases, one refusal and one
+  advisory:
   - an interactive role declaring `runtime.prompt` on a runtime that cannot
-    take a first message (generic, forestage, simulator);
-  - an interactive role with neither `runtime.prompt` nor a predecessor path,
-    saying that a fresh seat of that role starts idle.
+    take a first message (generic, forestage, simulator, and for now codex and
+    opencode) is refused at apply, naming the role and the runtime. A seat
+    that starts and never gets its prompt, with no error, is the failure the
+    refusal prevents. The operator ruled this on 2026-11-14, which supersedes
+    the advisory this section first set. The refusal lifts for codex when T2
+    lands and for opencode when T3 lands, through one function,
+    `takesFirstPrompt`; it stays for a runtime that never takes a first
+    message;
+  - an interactive role with neither `runtime.prompt` nor a predecessor path
+    gets an advisory, saying that a fresh seat of that role starts idle. It
+    stays an advisory: nothing was declared and lost, so there is no promise
+    to refuse.
 
-  It is an advisory because existing manifests carry `runtime.prompt` on
-  interactive roles today, and a refusal would fail their next re-apply. The
-  same judgement applied to the unresolved-window design (#667, ruling 2).
+  The first case no longer follows the unresolved-window design (#667, ruling
+  2), which kept an advisory so that a re-apply would not fail. The ruling
+  accepts that a manifest which declared an undeliverable prompt fails its next
+  apply until the line is removed.
 - **D7. Every spawn records which first prompt it got.** An event,
   `session.first-prompt`, with `source` = `role`, `successor`,
   `successor+role`, `wrapper-env`, `skipped-resume` or `none`, and the byte
@@ -144,7 +154,7 @@ not say it. This design has marvel hand the harness that first turn at launch.
 | T2 | codex interactive positional (D1, D4) | the same for codex; the codex home and env are unchanged | P2 |
 | T3 | opencode `--prompt` (D1, D4) | the same for opencode via `--prompt` | P3 |
 | T4 | successor first prompt (D2, D3) | a shift successor's first message names the predecessor; with `shift.handoff` declared it names the resolved path; with a bus it ends with the inbox line; without one it does not; `successor_prompt = false` leaves only the role prompt; a first spawn gets only the role prompt | T1 |
-| T5 | apply advisories (D6) | the two advisory cases each emit one line at apply and refuse nothing | |
+| T5 | apply refusal and advisory (D6) | an undeliverable `runtime.prompt` on an interactive role is refused at apply, naming the runtime; a role with neither prompt nor handoff emits one advisory line and is not refused | |
 | T6 | `session.first-prompt` event (D7) | each spawn emits exactly one, with the right source, and its message holds no prompt text | T1 |
 | T7 | resume composition (D5) | claude: args with `--resume <id>` and with `--continue` each launch with the resume flag and the first message both present. codex: `codex resume <id>` and `codex resume --last` each launch with the message as the one trailing positional; a bare `codex resume` launches with no message and emits `source = skipped-resume`; a role carrying `-c key=value` is not read as resuming and gets the message as on a fresh launch | T1, T2 |
 
