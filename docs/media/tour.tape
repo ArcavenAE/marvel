@@ -90,7 +90,7 @@ Type "marvel run claude" Enter
 Sleep 5s
 Type "marvel get sessions --columns name,desk" Enter
 Sleep 3s
-Type "marvel attach --print $(marvel get sessions --columns name,desk | awk '/^run-/ {print $2}')" Enter
+Type "marvel attach --print $(marvel get sessions --columns name,desk | awk '/^run-/ {print $2; exit}')" Enter
 Sleep 5s
 
 # 2:20 tear it down (the watch is closed first, so it does not print a reconnect warning)
