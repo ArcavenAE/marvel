@@ -32,6 +32,7 @@
             "Mode": "Mode",
             "Prompt": "Prompt",
             "SuccessorPrompt": true,
+            "FirstRunAnswers": true,
             "PromptArtifactSha256": "PromptArtifactSha256",
             "ContextWindow": 7,
             "ContextFeed": "ContextFeed",

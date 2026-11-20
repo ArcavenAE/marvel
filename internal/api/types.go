@@ -207,6 +207,10 @@ type Runtime struct {
 	// false. Nil, the default, leaves it on. See SuccessorPromptOn and
 	// docs/design/interactive-first-prompt.md D2 and D3.
 	SuccessorPrompt *bool `toml:"successor_prompt,omitempty"`
+	// FirstRunAnswers turns off marvel's answers to a harness's first-run and
+	// setup screens when it is false. Nil, the default, leaves them on. See
+	// FirstRunAnswersOn.
+	FirstRunAnswers *bool `toml:"first_run_answers,omitempty"`
 	// PromptArtifactSha256 is the hash of the prompt artifact the role library
 	// projected this role from, 64 lowercase hex characters, or empty. marvel
 	// only carries it: it is stamped as marvel.prompt_artifact.sha256, and a
@@ -251,6 +255,12 @@ type Runtime struct {
 	// Goose is the runtime.goose table, read only by the goose adapter. Nil
 	// means the role declared none.
 	Goose *GooseRuntime `toml:"goose,omitempty"`
+}
+
+// FirstRunAnswersOn reports whether marvel answers the first-run screens of a
+// seat of this role. It is on unless the role declares first_run_answers = false.
+func (r Runtime) FirstRunAnswersOn() bool {
+	return r.FirstRunAnswers == nil || *r.FirstRunAnswers
 }
 
 // SuccessorPromptOn reports whether a session that replaces another gets
