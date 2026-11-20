@@ -125,12 +125,17 @@ exits immediately). The canonical set:
 | `default` | Standard interactive prompting |
 | `dontAsk` | Suppress prompts |
 | `plan` | Plan first, approve before acting |
+| `workspaceNetwork` | Codex only: workspace-write sandbox with network access, approvals never |
 
 An empty `permissions` means "unset"; the adapter's own default applies.
 
-**On a codex role,** only two modes map. `plan` launches codex read-only with
+**On a codex role,** three modes map. `plan` launches codex read-only with
 approvals set to never, and `auto` launches it workspace-write with approvals
-set to never. An unset `permissions` adds nothing. The other four modes and
+set to never. `workspaceNetwork` launches it workspace-write with approvals
+set to never, network access on, and neither the `TMPDIR` directory nor `/tmp`
+writable; use it for a reviewer that runs `gh`. Only codex maps
+`workspaceNetwork`: apply refuses it on any other harness. An unset
+`permissions` adds nothing. The other four modes and
 `dangerous_permissions` are refused when you apply the manifest, until a probe
 of the pinned codex version settles them. A role that declares one fails its
 next apply until you move the sandbox and approval flags into `runtime.args`.

@@ -36,6 +36,9 @@ var canonicalPermissionModes = map[string]bool{
 	"default":           true,
 	"dontAsk":           true,
 	"plan":              true,
+	// workspaceNetwork is mapped by the codex adapter alone; apply refuses it
+	// on every other harness (see session.RolePermissionRefusal).
+	"workspaceNetwork": true,
 }
 
 // permissionModeList returns the canonical permission modes sorted and

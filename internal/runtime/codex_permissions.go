@@ -141,6 +141,7 @@ func (c *Codex) MapPermissions(mode string, dangerous, headless bool) ([]string,
 		return nil, codexRefusal("dangerous_permissions")
 	}
 	var sandbox string
+	var extra []string
 	switch mode {
 	case "":
 		return nil, ""
@@ -148,17 +149,36 @@ func (c *Codex) MapPermissions(mode string, dangerous, headless bool) ([]string,
 		sandbox = "read-only"
 	case "auto":
 		sandbox = "workspace-write"
+	case PermissionWorkspaceNetwork:
+		sandbox = "workspace-write"
+		extra = workspaceNetworkConfig
 	default:
 		return nil, codexRefusal("permissions " + `"` + mode + `"`)
 	}
+	args := append([]string{"-s", sandbox}, extra...)
 	if headless {
-		return []string{"-s", sandbox, "-c", `approval_policy="never"`}, ""
+		return append(args, "-c", `approval_policy="never"`), ""
 	}
-	return []string{"-s", sandbox, "-a", "never"}, ""
+	return append(args, "-a", "never"), ""
+}
+
+// PermissionWorkspaceNetwork is the permissions mode of a codex role that needs
+// the network from a workspace-write sandbox, a reviewer that runs gh for one.
+// Only codex maps it; every other harness refuses it at apply.
+const PermissionWorkspaceNetwork = "workspaceNetwork"
+
+// workspaceNetworkConfig is the config the mode adds to workspace-write: network
+// access on, and neither the TMPDIR directory nor /tmp writable. They are -c
+// keys under sandbox_workspace_write, so the override check names a role's own
+// copy of any of them.
+var workspaceNetworkConfig = []string{
+	"-c", "sandbox_workspace_write.network_access=true",
+	"-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+	"-c", "sandbox_workspace_write.exclude_slash_tmp=true",
 }
 
 func codexRefusal(what string) string {
-	return what + " has no ruled mapping on codex yet (only plan and auto do); set the sandbox and approval flags in runtime.args instead"
+	return what + " has no ruled mapping on codex yet (only plan, auto and workspaceNetwork do); set the sandbox and approval flags in runtime.args instead"
 }
 
 // codexPermissionArgs is the flags a launch's role permissions map to. A

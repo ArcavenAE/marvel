@@ -1893,6 +1893,11 @@ func (m *Manager) RolePermissionRefusal(r api.ManifestRole) string {
 	}
 	pm, ok := m.adapters.Resolve(name).(runtime.PermissionMapper)
 	if !ok {
+		// A mode only codex maps would otherwise reach this harness as an
+		// unknown --permission-mode, or be ignored.
+		if r.Permissions == runtime.PermissionWorkspaceNetwork {
+			return fmt.Sprintf("permissions %q is mapped by the codex adapter only; runtime %q has no mapping for it", r.Permissions, name)
+		}
 		return ""
 	}
 	if _, refusal := pm.MapPermissions(r.Permissions, r.DangerousPermissions, r.Runtime.Mode == api.RuntimeModeHeadless); refusal != "" {
