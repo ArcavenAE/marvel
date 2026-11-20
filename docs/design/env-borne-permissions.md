@@ -83,16 +83,16 @@ What the live role's value contains is not known: the scan read key names only. 
 
 Stored roles keep spawning. The spawn skips the lever and logs it (the same choice as the codex permissions mapping: an upgrade must not stop a running team), and the role is refused at its next apply, with a message naming the field to move to. Refusing stored roles at rehydrate stays director's decision after a warning period, as the ticket already says.
 
-The live-manifest scan, key names only, was run on 2026-11-20 as a read-only pass through the marvel CLI against one cluster's daemon (`marvel get teams -o json`, piped to a script that prints team, role and key name for the section 2 keys and nothing else; no value was printed, stored or sent). It read the desired state of 4 teams and 25 roles; 18 of those roles set some `runtime.env` key, and none sets a section 2 key. The repository scan is done too: no file in `examples/` or `docs/` sets one. The same script was run on two more clusters by whoever holds them. The scan is not complete: `marvel get teams` has no workspace selector, and the first cluster's read covered only two of its workspaces, the third's one, so a team in any other workspace was not read.
+The live-manifest scan, key names only, was run on 2026-11-20 as a read-only pass through the marvel CLI against one cluster's daemon (`marvel get teams -o json`, piped to a script that prints team, role and key name for the section 2 keys and nothing else; no value was printed, stored or sent). It read the desired state of 4 teams and 25 roles; 18 of those roles set some `runtime.env` key, and none sets a section 2 key. The repository scan is done too: no file in `examples/` or `docs/` sets one. The same script was run on two more clusters by whoever holds them. All live teams on the three clusters were read: `marvel get teams` is daemon-wide (it has no workspace selector because it needs none), and the first cluster's other workspaces hold no team, as the third cluster's other workspaces do not (checked against `marvel get sessions` and the per-workspace counts).
 
-In the workspaces read, the count of live roles that touch a lever is 0 of 25 on the first cluster, 1 of 53 on the second (one opencode reviewer role on another cluster sets `OPENCODE_CONFIG_CONTENT`) and 0 of 22 on the third, which is partly scanned. So refusing `GOOSE_MODE` and `OPENCODE_PERMISSION` changes no live manifest read so far, and the whole-config key needs the staged rule in section 5.1. One lead was checked: the opencode source comment calls a role env that names a lever "today's documented mail contract" (`opencode_config.go:105-107`), so a mail role might set one on purpose. The one live role found is an opencode reviewer, not a mail role; whether a mail role on the unscanned cluster sets one is not known. Either would move to the managed path in section 5.1.
+The count of live roles that touch a lever is 0 of 25 on the first cluster, 1 of 53 on the second (one opencode reviewer role on another cluster sets `OPENCODE_CONFIG_CONTENT`) and 0 of 22 on the third. So refusing `GOOSE_MODE` and `OPENCODE_PERMISSION` changes no live manifest, and the whole-config key needs the staged rule in section 5.1. One lead was checked: the opencode source comment calls a role env that names a lever "today's documented mail contract" (`opencode_config.go:105-107`), so a mail role might set one on purpose. The one live role found is an opencode reviewer, not a mail role; no mail role on any of the three sets one. A role that later needs one would move to the managed path in section 5.1.
 
 | scan | result |
 |---|---|
 | repository (`examples/`, `docs/`) | no role sets a table key |
-| live manifests, first cluster, 2026-11-20, in the workspaces read (two of the cluster's workspaces) | 4 teams, 25 roles, 18 with env, 0 set a table key |
+| live manifests, first cluster, 2026-11-20 | 4 teams, 25 roles, 18 with env, 0 set a table key |
 | live manifests, second cluster, 2026-11-20 | 14 teams, 53 roles, 50 with env, 1 sets a table key: one opencode reviewer role sets `OPENCODE_CONFIG_CONTENT` |
-| live manifests, third cluster, 2026-11-20, in the workspace read (one) | 2 teams, 22 roles, 22 with env, 0 set a table key; partly scanned |
+| live manifests, third cluster, 2026-11-20 | 2 teams, 22 roles, 22 with env, 0 set a table key |
 
 ## 7. What stays out of scope
 
@@ -119,7 +119,7 @@ Marvel owns the refusal and the table. No harness changes, no director change, n
 
 ## 10. Not measured, and open
 
-- **Live scan, partial:** three clusters read, but only the workspaces `marvel get teams` returned (two on the first, one on the third). It has no workspace selector, so workspaces it did not return are unread. A selector, or a read per workspace, would complete it.
+- **Live scan:** complete as of 2026-11-20 on the three clusters. A team added later is not covered; the apply refusal is what holds after that.
 - **Relocation keys:** `CODEX_HOME` and `XDG_CONFIG_HOME` are read from source comments only. Whether either moves a posture on the pinned harness versions is not measured here; a probe with no model call can settle it.
 - **claude and codex env levers:** none were found in marvel's source. That is a source reading, not a measurement of the harnesses; neither harness's documentation was read for an undocumented env key.
 - **Whether a generic `env_permissions` block is wanted** (section 3 recommends against it).
