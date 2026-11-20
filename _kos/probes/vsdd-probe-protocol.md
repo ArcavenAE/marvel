@@ -44,7 +44,7 @@ The four closes:
 ## 3. Project, seed and suite
 
 - **Test project:** the T3 freeze, tag `probe-t3-m2-freeze-r2`, commit `f51d2aa7deb8f9849786da4add60ca5e210e9793`. Brief tree `8fdef45ef84362de05ec72ae79fa490de38952fb`; `brief/product-brief.md` sha256 `ce6534bc6c3581ff274d9d501051e391e60242181b9768e169643ef7f437e164`.
-- **Acceptance suite:** suite tree `38faa64e8b7f4bb70113ff56e6ada51e2ae7bd81`, 9 files. Suite sha256 `274f9e798f8fed9268a684c66424f53de39ddbfbb12f7ece1c88d7d257b22d2f`, the sha256 of the sorted per-file sha256 listing. Values are from `tools/freeze.sh probe-t3-m2-freeze-r2`, read only on the suite's host, which is not the probe host. The suite stays on its no-remote host and is published after the series closes. After M4b's retag, the suite hash changes and is re-recorded with the tags-only diff.
+- **Acceptance suite:** suite tree `38faa64e8b7f4bb70113ff56e6ada51e2ae7bd81`, 9 files. Suite sha256 `274f9e798f8fed9268a684c66424f53de39ddbfbb12f7ece1c88d7d257b22d2f`, the sha256 of the sorted per-file sha256 listing. Values are from `tools/freeze.sh probe-t3-m2-freeze-r2`, read only on the suite's host, which is not the probe host. The suite is held in a private repository whose only collaborator is arcaven, at the same tag (operator Desk cards vsdd-suite-home and vsdd-suite-repo-create). It is published after the series closes. What keeps s9.1 true is that the probe host cannot read it: the probe host's gh login is not arcaven, checked with `gh api user --jq .login` at step 0 and before every run. After M4b's retag, the suite hash changes and is re-recorded with the tags-only diff.
 - **Seed snapshot sha:** FILL at M4, with its wave widths.
 - **Canary:** a random 32-hex token in every suite file (s9.2). Recorded only as its sha256, `e53954c4b15c979c9a019882d2a11511349e6c03824643a00b79f53b4f58dc9e`; the token itself is not written here.
 
@@ -58,7 +58,7 @@ A story whose scenarios in the probe acceptance suite all pass, run by the scori
 
 - **Where:** a host other than the probe host. The suite never reaches the probe host's disk, and no arm run has a read path to it.
 - **What it needs:**
-  - the suite's repository, at tag `probe-t3-m2-freeze-r2` (`f51d2aa7`) and later the M4b retag. Its path is given to the seat when it is cast and is never written in a tracked file;
+  - the suite's repository (section 3), at tag `probe-t3-m2-freeze-r2` (`f51d2aa7`) and later the M4b retag, read by a login that can see it;
   - each run's final commit, delivered read only as a git bundle or a fetch from the probe host, never as a path from the probe host back to the suite;
   - the run id and the seed's story ids for each run, and nothing from an arm's transcripts or story files.
 - **What it produces per run:** the clean-checkout result of every scenario, the run's `accepted` and `accepted_first_attempt` counts, and its scenario pass rate. These are the scoring fields of `compare.py`'s input. The cost fields come from `meter.py` on the probe host, and the finding writer joins the two and runs `compare.py`.
@@ -103,7 +103,7 @@ Every axis is also reported per phase and per wave width. The cost sensitivities
 
 **Quota on the Enterprise login (replaces s8.3's headroom and window lines, and s11's quota line):**
 
-The Enterprise login sends no weekly reading (marvel#1501 section 2; the operator's ruling of 2026-11-20 to build that meter is not built). So:
+The Enterprise login sends no weekly reading (the measurement recorded in section 2 of marvel#1501, an open design document; the operator's ruling of 2026-11-20 to build that meter is not built). So:
 
 - **Read instead:**
   - the probe's own token counts per class and its API-equivalent spend, per run and cumulative, from `meter.py cost` against the frozen price table;
@@ -147,7 +147,7 @@ The brief's rule (s6, "Inter-run gap") reads: "no session on the account, on any
 - **Wall clock and throughput:** other load adds variance, and could add bias if it differed between arms. The design limits the bias: the two runs of a block run back to back, the order alternates AB, BA, and speed is also reported net of throttle time, with the concurrent seat count beside it. The likely cost is wider intervals on the speed axes, so more of them may read (d), not distinguishable. The cost axis's power is unaffected.
 - **What would make it invalid:** the calibration showing warm first-request reads under live load. That is why the calibration comes first, and why its failure sends the full window to the operator instead of being run around.
 
-**The Enterprise login expiry.** The Enterprise login on the probe host expires 2026-11-29T04:07Z. No run starts unless its expected end (the pilot's longest run time plus margin) is before that time. A re-login is the operator's act, at a block boundary, never mid-block. The fairness read-back for "Auth" hashes the `claude auth status` lines that name the login method, account and organization, and records the expiry line in clear. A re-login that changes only the expiry is then not drift. A change to any hashed line is drift, and the series is void from that block.
+**The Enterprise login expiry.** The Enterprise login on the probe host expires 2026-11-29T04:07Z (director, 2026-11-20). No run starts unless its expected end (the pilot's longest run time plus margin) is before that time. A re-login is the operator's act, at a block boundary, never mid-block. The fairness read-back for "Auth" hashes the `claude auth status` lines that name the login method, account and organization, and records the expiry line in clear. A re-login that changes only the expiry is then not drift. A change to any hashed line is drift, and the series is void from that block.
 
 ## 7. Exclusions
 
