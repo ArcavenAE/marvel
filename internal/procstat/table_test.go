@@ -1,6 +1,7 @@
 package procstat
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"runtime"
@@ -215,6 +216,26 @@ func TestParseUptime(t *testing.T) {
 	}
 }
 
+// checkSlashName judges a name that holds a '/'. On darwin the name is the last
+// element of the executable path, so it never does. On Linux the name is the
+// kernel's comm, which can (kworker/R-rcu_gp, ksoftirqd/0, migration/0): it is
+// then required to equal /proc/<pid>/comm, so it was not cut or changed. A
+// process that exited before it could be read is skipped.
+func checkSlashName(t *testing.T, p Proc) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Errorf("pid %d: name %q holds a path separator", p.PID, p.Name)
+		return
+	}
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", p.PID))
+	if err != nil {
+		return
+	}
+	if got := strings.TrimSuffix(string(raw), "\n"); got != p.Name {
+		t.Errorf("pid %d: name %q, want the kernel's comm %q", p.PID, p.Name, got)
+	}
+}
+
 // ReadTable reads the real process table of the host the test runs on. Where
 // the table cannot be read (a sandbox that refuses the setuid ps), it skips.
 // Names are command names only: no path separator, nothing after the
@@ -231,7 +252,7 @@ func TestReadTableOnThisHost(t *testing.T) {
 	for i := range procs {
 		p := &procs[i]
 		if strings.Contains(p.Name, "/") {
-			t.Errorf("pid %d: name %q holds a path separator", p.PID, p.Name)
+			checkSlashName(t, *p)
 		}
 		if p.Elapsed < 0 || p.CPUTime < 0 {
 			t.Errorf("pid %d: negative elapsed %v or CPU time %v", p.PID, p.Elapsed, p.CPUTime)
@@ -245,5 +266,18 @@ func TestReadTableOnThisHost(t *testing.T) {
 	}
 	if self.RSSBytes <= 0 || self.Name == "" || self.PPID <= 0 {
 		t.Errorf("this process = %+v, want an RSS, a name and a parent", *self)
+	}
+}
+
+// A Linux comm can hold '/', and the reader keeps it whole: kernel thread names
+// are not paths, so cutting at the last '/' would turn kworker/R-rcu_gp into
+// R-rcu_gp.
+func TestParseProcStatWideKeepsASlashInTheName(t *testing.T) {
+	for _, want := range []string{"kworker/R-rcu_gp", "ksoftirqd/0", "migration/0", "pr/ttyS0"} {
+		line := "12 (" + want + ") I 2 0 0 0 -1 69238880 0 0 0 0 0 0 0 0 0 -20 1 0 77 0 0 18446744073709551615"
+		name, start, err := parseProcStatWide(line)
+		if err != nil || name != want || start != 77 {
+			t.Errorf("parseProcStatWide(%q) = %q, %d, %v; want the whole name and start 77", want, name, start, err)
+		}
 	}
 }
