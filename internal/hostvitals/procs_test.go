@@ -219,3 +219,22 @@ func TestOnlyUnsampledVitalsRemainGapLines(t *testing.T) {
 		t.Errorf("gaps = %v, want %v", got, want)
 	}
 }
+
+// A sample at exactly each line is not a crossing: the event is strict, as the
+// threshold state is, so the line itself raises nothing.
+func TestASampleAtExactlyEachLineEmitsNoEvent(t *testing.T) {
+	old := hostOS
+	t.Cleanup(func() { hostOS = old })
+	hostOS = "darwin"
+
+	rec := &recorder{}
+	s := New(true, func() Reading { return swapReading(1, 100) }, rec)
+	s.SampleProcs([]Proc{pr(10, "fseventsd", FseventsdCrossBytes), pr(41, "job", ProcessRSSCrossBytes)}, true)
+	if len(rec.got) != 0 {
+		t.Errorf("events at exactly 4 GiB and 20 GiB = %v, want none", rec.kinds())
+	}
+	s.SampleProcs([]Proc{pr(10, "fseventsd", FseventsdCrossBytes+1), pr(41, "job", ProcessRSSCrossBytes+1)}, true)
+	if got := rec.kinds(); len(got) != 2 {
+		t.Errorf("one byte over each line, events = %v, want two crossed", got)
+	}
+}
