@@ -40,27 +40,46 @@ var codexPostureFlags = []string{
 // permissions profile (default_permissions, permissions, permissions.*). The
 // dotted keys match on their whole first segment, with spaces around the dot
 // allowed as TOML does. A key is matched in any case, and a key whose first
-// segment is quoted is named whole. Other keys, such as model, are left alone.
+// segment is not a TOML bare key (A-Z, a-z, 0-9, _ and -), a quoted one for
+// one, is named whole. An empty key names nothing. Other keys, such as model,
+// are left alone.
 func codexPostureKey(key string) bool {
 	key = strings.TrimSpace(key)
-	// A quoted first segment is refused whole. In TOML "permissions".x is the
-	// key permissions.x, and codex 0.160.1 was measured to read neither that
-	// nor an upper-case first segment as the bare key, but the check does not
-	// lean on how codex splits a key: it fails closed on either.
-	if strings.HasPrefix(key, `"`) || strings.HasPrefix(key, "'") {
-		return true
+	// An empty key names nothing: codex rejects -c =x as an empty key.
+	if key == "" {
+		return false
 	}
-	key = strings.ToLower(key)
 	head := key
 	if i := strings.IndexByte(key, '.'); i >= 0 {
 		head = strings.TrimSpace(key[:i])
 	}
+	// A first segment that is not a TOML bare key is refused whole. A quoted
+	// segment is the same key as the bare one in TOML, and an escaped or
+	// typographic quote, or a look-alike letter such as U+017F that lower-casing
+	// leaves alone, could be read the same way. codex 0.160.1 was measured (codex
+	// sandbox on a local true) to read none of them as the bare key, but the
+	// check does not lean on how codex splits a key: it fails closed on any
+	// segment outside A-Z, a-z, 0-9, _ and -.
+	for _, r := range head {
+		if !isTOMLBareKeyRune(r) {
+			return true
+		}
+	}
+	if head == "" {
+		return true
+	}
+	key, head = strings.ToLower(key), strings.ToLower(head)
 	switch head {
 	case "projects", "default_permissions", "permissions", "profiles":
 		return true
 	}
 	return strings.HasPrefix(key, "sandbox") || strings.HasPrefix(key, "approval") ||
 		key == "profile" || key == "permissions_profile"
+}
+
+// isTOMLBareKeyRune reports whether r may appear in a TOML bare key.
+func isTOMLBareKeyRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-'
 }
 
 // OverridingArg returns the first of a role's own runtime.args that would
