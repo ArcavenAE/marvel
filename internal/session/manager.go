@@ -1879,6 +1879,11 @@ func (m *Manager) CanOfferHandoffToolRole(r api.ManifestRole) bool {
 	return ok && o.OffersHandoffTool()
 }
 
+// RolePermissionRefusal is a stub until the check is written.
+func (m *Manager) RolePermissionRefusal(_ api.ManifestRole) string {
+	return ""
+}
+
 // streams reports whether the launch wants a stream pipe: the adapter can
 // stream, the launch is of a streaming shape, and a stream directory is set.
 func (m *Manager) streams(adapter runtime.Adapter, lctx *runtime.LaunchContext) bool {
