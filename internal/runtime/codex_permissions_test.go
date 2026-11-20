@@ -158,6 +158,17 @@ func TestCodexNamesTheRuntimeArgThatOverridesThePermissionMapping(t *testing.T) 
 		{[]string{"-c", `sandbox_mode="danger-full-access"`}, "-c sandbox_mode"},
 		{[]string{"--config", `approval_policy="never"`}, "--config approval_policy"},
 		{[]string{"--config=approval_policy=\"never\""}, "--config approval_policy"},
+		// A trusted project is writable whatever -s says (finding-049), and a
+		// default or inline permissions profile layers its own posture.
+		{[]string{"-c", `projects."/work".trust_level="trusted"`}, `-c projects."/work".trust_level`},
+		{[]string{"--config", `projects."/work".trust_level="trusted"`}, `--config projects."/work".trust_level`},
+		{[]string{"-c", `projects={}`}, "-c projects"},
+		{[]string{"-c", `default_permissions="wide"`}, "-c default_permissions"},
+		{[]string{"-c", `permissions.wide.network.enabled=true`}, "-c permissions.wide.network.enabled"},
+		{[]string{"--config=permissions.wide.filesystem={}"}, "--config permissions.wide.filesystem"},
+		{[]string{"-c", `permissions={}`}, "-c permissions"},
+		{[]string{"-c", ` projects . x = 1`}, "-c projects . x"},
+		{[]string{"-c=default_permissions=wide"}, "-c default_permissions"},
 		{[]string{"-c", `sandbox_workspace_write.network_access=true`}, "-c sandbox_workspace_write.network_access"},
 		{[]string{"-c", ` sandbox_mode = "read-only"`}, "-c sandbox_mode"},
 		{[]string{"--model", "gpt-x", "-s", "read-only"}, "-s"},
@@ -196,6 +207,9 @@ func TestCodexNamesTheRuntimeArgThatOverridesThePermissionMapping(t *testing.T) 
 		{"--config="},
 		{"-c", `model_provider="x"`},
 		{"-c", `model_reasoning_effort="high"`},
+		{"-c", `projectsx=1`},
+		{"-c", `default_permission=1`},
+		{"-c", `tui.projects=1`},
 		{"--search", "--no-alt-screen"},
 	} {
 		if got := c.OverridingArg(args); got != "" {
