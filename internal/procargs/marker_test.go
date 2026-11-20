@@ -118,3 +118,66 @@ func TestParseEnvironKeepsOnlyTheMarker(t *testing.T) {
 		t.Errorf("empty environ gave %+v", z)
 	}
 }
+
+// Only the exact variable name counts: a name that merely contains MARVEL_SESSION
+// at either end, or that extends it, sets no Session. The same environment with
+// the real variable added is the positive control.
+func TestParseProcargs2MarkerIgnoresLookalikeNames(t *testing.T) {
+	lookalikes := []string{"MARVEL_SESSIONS=x", "XMARVEL_SESSION=x", "MARVEL_SESSION_ID=x", "marvel_session=x", "MARVEL_SESSION", "MARVEL_HOMES=/tmp/marvel-test-home-1"}
+	m, err := ParseProcargs2Marker(markerBuf([]string{"x"}, lookalikes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Marvel() || m.Session != "" || m.MarvelPath {
+		t.Errorf("lookalike names gave %+v, want the zero marker", m)
+	}
+	m, err = ParseProcargs2Marker(markerBuf([]string{"x"}, append(lookalikes, "MARVEL_SESSION=real")))
+	if err != nil || m.Session != "real" {
+		t.Errorf("with the real variable added: %+v, %v, want Session real", m, err)
+	}
+}
+
+// A MARVEL_SESSION=... string in the argument list is an argument, not the
+// environment, and sets nothing.
+func TestParseProcargs2MarkerIgnoresArgv(t *testing.T) {
+	argv := []string{"tmux", "MARVEL_SESSION=fake", "MARVEL_HOME=/tmp/marvel-test-home-1/.marvel"}
+	m, err := ParseProcargs2Marker(markerBuf(argv, []string{"PATH=/usr/bin"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Marvel() || m.Session != "" || m.MarvelPath {
+		t.Errorf("argv text gave %+v, want the zero marker", m)
+	}
+	m, err = ParseProcargs2Marker(markerBuf(argv, []string{"PATH=/usr/bin", "MARVEL_SESSION=real"}))
+	if err != nil || m.Session != "real" {
+		t.Errorf("with the real variable in the environment: %+v, %v, want Session real", m, err)
+	}
+}
+
+// An empty MARVEL_SESSION is no marker: a seat always has an identity, so a
+// variable that is set but empty does not mark a process as marvel's. An empty
+// MARVEL_HOME or MARVEL_SOCKET is no path mark either.
+func TestParseProcargs2MarkerEmptyValueIsNoMarker(t *testing.T) {
+	m, err := ParseProcargs2Marker(markerBuf([]string{"x"}, []string{"MARVEL_SESSION=", "MARVEL_HOME=", "MARVEL_SOCKET="}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Marvel() {
+		t.Errorf("empty values gave %+v, want no marker", m)
+	}
+	m, err = ParseProcargs2Marker(markerBuf([]string{"x"}, []string{"MARVEL_SESSION=", "MARVEL_SESSION=real"}))
+	if err != nil || m.Session != "real" {
+		t.Errorf("an empty then a real MARVEL_SESSION: %+v, %v, want Session real", m, err)
+	}
+}
+
+// The same three rules hold for /proc/<pid>/environ.
+func TestParseEnvironLookalikesAndEmpty(t *testing.T) {
+	none := "MARVEL_SESSIONS=x\x00XMARVEL_SESSION=x\x00MARVEL_SESSION=\x00MARVEL_HOME=\x00"
+	if m := ParseEnviron([]byte(none)); m.Marvel() {
+		t.Errorf("lookalikes and empty values gave %+v, want no marker", m)
+	}
+	if m := ParseEnviron([]byte(none + "MARVEL_SESSION=real\x00")); m.Session != "real" {
+		t.Errorf("with the real variable: %+v, want Session real", m)
+	}
+}
