@@ -181,6 +181,18 @@ func TestCodexNamesTheRuntimeArgThatOverridesThePermissionMapping(t *testing.T) 
 		{[]string{"-c", `"sandbox_mode"="danger-full-access"`}, `-c "sandbox_mode"`},
 		{[]string{"-c", `"profiles".p.sandbox_mode="danger-full-access"`}, `-c "profiles".p.sandbox_mode`},
 		{[]string{"-c", ` "approval_policy"="never"`}, `-c "approval_policy"`},
+		// Any first segment that is not a TOML bare key (A-Z, a-z, 0-9, _ and -)
+		// is refused: an escaped quote, typographic quotes, and a look-alike
+		// letter such as U+017F (the long s), which lower-casing leaves alone.
+		{[]string{"-c", `\"permissions\".x=1`}, `-c \"permissions\".x`},
+		{[]string{"-c", "\u201cpermissions\u201d.x=1"}, "-c \u201cpermissions\u201d.x"},
+		{[]string{"-c", "\u2018projects\u2019.y=1"}, "-c \u2018projects\u2019.y"},
+		{[]string{"-c", "\u017fandbox_mode=\"danger-full-access\""}, "-c \u017fandbox_mode"},
+		{[]string{"-c", ".permissions=1"}, "-c .permissions"},
+		// A quoted empty key is not the empty key: codex ignores ""=x and
+		// rejects a bare "" (measured), but the check names it as non-bare.
+		{[]string{"-c", `""=x`}, `-c ""`},
+		{[]string{"-c", "per missions.x=1"}, "-c per missions.x"},
 		{[]string{"-c", `PROJECTS.y=1`}, "-c PROJECTS.y"},
 		{[]string{"-c", `Default_Permissions="x"`}, "-c Default_Permissions"},
 		{[]string{"-c", `SANDBOX_MODE="x"`}, "-c SANDBOX_MODE"},
@@ -226,6 +238,8 @@ func TestCodexNamesTheRuntimeArgThatOverridesThePermissionMapping(t *testing.T) 
 		{"-c", `default_permission=1`},
 		{"-c", `tui.projects=1`},
 		{"-c", `model."projects"=1`},
+		{"-c", `model_provider="x"`},
+		{"-c", "=x"},
 		{"--search", "--no-alt-screen"},
 	} {
 		if got := c.OverridingArg(args); got != "" {
