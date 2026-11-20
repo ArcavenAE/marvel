@@ -32,6 +32,33 @@ func TestRingStampsTheTaskOfTheEventsSession(t *testing.T) {
 	}
 }
 
+// Some emission sites name the session by its bare name and carry the
+// workspace in its own field. The store indexes tasks by "workspace/name", so
+// the ring builds that key before the lookup. A name that already has a
+// workspace part is looked up as given.
+func TestRingStampsTheTaskOfABareSessionName(t *testing.T) {
+	r := NewRing(8)
+	r.SetTaskResolver(func(session string) string {
+		if session == "w/a" {
+			return "I-100"
+		}
+		return ""
+	})
+	Emit(r, Event{Kind: KindSessionCreated, Workspace: "w", Session: "a"})
+	Emit(r, Event{Kind: KindSessionCreated, Workspace: "w", Session: "w/a"})
+	Emit(r, Event{Kind: KindSessionCreated, Session: "a"})
+	got := r.Snapshot(Filter{}, 0)
+	want := []string{"I-100", "I-100", ""}
+	if len(got) != len(want) {
+		t.Fatalf("%d events, want %d", len(got), len(want))
+	}
+	for i, ev := range got {
+		if ev.Task != want[i] {
+			t.Errorf("event %d: Task = %q, want %q", i, ev.Task, want[i])
+		}
+	}
+}
+
 func TestEventTaskIsOmittedWhenEmpty(t *testing.T) {
 	b, err := json.Marshal(Event{Kind: KindSessionCreated, Session: "w/a"})
 	if err != nil {
