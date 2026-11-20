@@ -271,6 +271,9 @@ type ManifestRuntime struct {
 	// SuccessorPrompt = false turns off the fixed first message a successor
 	// gets. Unset leaves it on. See api.Runtime.SuccessorPrompt.
 	SuccessorPrompt *bool `toml:"successor_prompt,omitempty" yaml:"successor_prompt,omitempty"`
+	// FirstRunAnswers = false turns off marvel's answers to the harness's
+	// first-run and setup screens for this role. Unset leaves them on.
+	FirstRunAnswers *bool `toml:"first_run_answers,omitempty" yaml:"first_run_answers,omitempty"`
 	// PromptArtifactSha256 is the hash of the prompt artifact the role library
 	// projected this role from, 64 hex characters. marvel does not produce it;
 	// it carries the value into the seat stamp as marvel.prompt_artifact.sha256
