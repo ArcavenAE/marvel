@@ -58,18 +58,19 @@ func drainKeysFrom(keys <-chan byte) func() {
 // come back whatever the child did. The view then shows "refreshing..." until
 // a fresh fetch answers, and the selection stays on its session by identity.
 func (ws *watchSort) openPending() {
-	p, label := ws.pending, ws.pendingLabel
-	ws.pending, ws.pendingLabel = nil, ""
+	p, label, short := ws.pending, ws.pendingLabel, ws.pendingShort
+	ws.pending, ws.pendingLabel, ws.pendingShort = nil, "", ""
+	hint := " (" + short + "; press i for the tmux command)"
 	if p == nil {
 		return
 	}
 	if ws.exec == nil {
-		ws.status = "cannot open " + label + ": no way to run the command here"
+		ws.status = "cannot open " + label + ": no way to run the command here" + hint
 		return
 	}
 	if isShortChild(p.Argv) {
 		if err := ws.exec(p.Argv); err != nil {
-			ws.status = "cannot open " + label + ": " + err.Error()
+			ws.status = "cannot open " + label + ": " + err.Error() + hint
 			return
 		}
 		ws.status = ""
@@ -94,7 +95,7 @@ func (ws *watchSort) openPending() {
 	ws.term.Unpark()
 	switch {
 	case err != nil:
-		ws.status = "cannot open " + label + ": " + err.Error()
+		ws.status = "cannot open " + label + ": " + err.Error() + hint
 	case rawErr != nil:
 		ws.status = "cannot restore the terminal: " + rawErr.Error()
 	default:

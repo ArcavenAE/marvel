@@ -106,6 +106,7 @@ func (ws *watchSort) cursorKey(key byte) bool {
 	s := rows[cur]
 	ws.sel = watchSelection{set: true, cluster: s.Cluster, workspace: s.Workspace, name: s.Name}
 	ws.status = ""
+	ws.detail = ""
 	return true
 }
 
@@ -146,10 +147,13 @@ func (ws *watchSort) enter() {
 		fail(err)
 		return
 	}
-	line := quoteArgv(plan.Argv)
+	// The status line shows the command an operator would type; the raw tmux
+	// argv, with its socket path and pane id, is behind the i key.
+	line := shortAttachLine(s, ws.cluster)
+	ws.detail = quoteArgv(plan.Argv)
 	if plan.Exec && ws.term != nil {
 		p := plan
-		ws.pending, ws.pendingLabel = &p, label
+		ws.pending, ws.pendingLabel, ws.pendingShort = &p, label, line
 	}
 	switch {
 	case plan.Exec:
@@ -159,6 +163,34 @@ func (ws *watchSort) enter() {
 	default:
 		ws.status = "print only: " + line
 	}
+}
+
+// shortAttachLine is the marvel attach command for a session: its key, and its
+// cluster when the row has one. The session key is used, not the pane id,
+// because a pane id changes when the seat restarts.
+//
+// A row's own cluster wins. A watch given one --cluster is not a fan-out, so its
+// rows carry none, and watchCluster is the name it was given; without it the
+// pasted line would resolve against whatever cluster the other shell has.
+func shortAttachLine(s api.Session, watchCluster string) string {
+	argv := []string{"marvel", "attach", s.Workspace + "/" + s.Name}
+	cluster := s.Cluster
+	if cluster == "" {
+		cluster = watchCluster
+	}
+	if cluster != "" {
+		argv = append(argv, "--cluster", cluster)
+	}
+	return quoteArgv(argv)
+}
+
+// showDetail puts the raw tmux command of the last plan on the status line.
+func (ws *watchSort) showDetail() {
+	if ws.detail == "" {
+		ws.status = "no plan to show: press Enter on a session first"
+		return
+	}
+	ws.status = "tmux: " + ws.detail
 }
 
 // watchTargetFor is the target resolver the single-cluster watch installs.

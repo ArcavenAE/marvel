@@ -127,8 +127,9 @@ Secret-looking Env values show as (redacted), as in the team document.
 
 With -w, get sessions is a live view. j and k, or the down and up arrow keys, move
 the cursor. Enter opens the selected session; on a remote cluster's row it
-prints the attach command and runs nothing. To leave a session without stopping
-its agent, press Ctrl-B, then d; typing exit or Ctrl-D in it stops the agent.
+prints the attach command and runs nothing. The status line shows the marvel
+attach command for the session; i shows the tmux command behind it. To leave a
+session without stopping its agent, press Ctrl-B, then d; typing exit or Ctrl-D in it stops the agent.
 Inside tmux the keys differ: see marvel attach --help. The column letters listed
 under ? sort, ? lists every key, q quits.
 
