@@ -43,7 +43,7 @@ Choice for the operator or director, stated as a recommendation: keep the per-ad
 
 ## 4. Where the value lives
 
-A posture value is not bearer material. By the audience test (`SOUL.md` section 3) it means nothing to any third party: it is a setting that only the harness on this host reads, and marvel can revoke or re-mint it by changing a field. So it needs no operator store and no new at-rest place. It lives where the rest of the role lives, in the manifest and the daemon's store, and reaches the seat as env only at spawn, built by the adapter, in memory. The one file marvel writes for it is the per-seat private config that already exists (opencode's block, goose's private home), mode 0600, swept with the seat.
+A posture value is not bearer material. By the audience test (`SOUL.md` section 3) it means nothing to any third party: it is a setting that only the harness on this host reads, and marvel can revoke or re-mint it by changing a field. So it needs no operator store and no new at-rest place. It lives where the rest of the role lives, in the manifest and the daemon's store, and reaches the seat as env only at spawn, built by the adapter, in memory. The one file marvel writes for it is in goose's private home, which already exists, mode 0600, swept with the seat; opencode's block reaches the seat as env once ticket 6 lands.
 
 If a harness ever takes a credential through the same env key as a posture, the credential half follows ADR-009 and its 2026-10-19 amendment: in memory while running, at rest only in the operator's store, brokered by helper pointer. This design adds no case of that today.
 
