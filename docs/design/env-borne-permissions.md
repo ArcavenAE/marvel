@@ -1,7 +1,7 @@
 # Env-borne permissions: marvel brokers them, a manifest env line does not
 
 - **Status:** proposed, 2026-11-20. Design only, no code. The tickets in section 9 are not filed.
-- **Pins:** marvel main 41c8dff1. Nothing was installed or run to write this; every row of section 2 is read from marvel's own source, and what no source settles is in section 10.
+- **Pins:** marvel main 95ecf74b. Nothing was installed or run to write this; every row of section 2 is read from marvel's own source, and what no source settles is in section 10.
 - **Ticket:** aae-orc-iyun3, the env-lever half.
 
 ## 1. Why, and the ruling
@@ -18,7 +18,7 @@ A key counts when the harness reads its permission posture, or the file that hol
 
 | harness | key | what it does | source |
 |---|---|---|---|
-| goose | `GOOSE_MODE` | the permission mode; goose's default is `auto`, which allows every tool | `internal/runtime/goose_posture.go:24` |
+| goose | `GOOSE_MODE` | the permission mode; goose's default is `auto`, which allows every tool | `_kos/probes/brief-goose-adapter.md:43` |
 | opencode | `OPENCODE_PERMISSION` | the permission block | `internal/runtime/opencode_config.go:27` |
 | opencode | `OPENCODE_CONFIG_CONTENT` | a whole config, which can carry a permission block | `internal/runtime/opencode_config.go:27` |
 | claude | none found | the posture is the `--permission-mode` flag and the projected settings file, both marvel's | `internal/runtime/claude.go` |
@@ -32,11 +32,12 @@ Credentials are a different class and stay where they are. `ANTHROPIC_API_KEY` a
 
 A role asks for a posture with a field, never with the env key.
 
-- **claude and codex:** the existing `permissions` field. Marvel maps it to flags; no env is involved.
+- **claude:** the existing `permissions` field. Marvel maps it to flags; no env is involved.
+- **codex:** the same field, once the codex permissions mapping lands (marvel#1532, unmerged: on main codex has no such mapping). It is flags; no env is involved.
 - **goose:** the existing `runtime.goose.posture`. The adapter writes `GOOSE_MODE` itself and already refuses a role env value that disagrees (`role-env-conflict`, `goose_posture.go:53`).
-- **opencode:** marvel writes the permission block itself (`openCodePermissionBlock`) and already owns the two levers; `openCodeRoleEnvConflict` names a role that sets one but `Prepare` does not call it yet (`opencode_config.go:105-107`).
+- **opencode:** marvel owns the two levers by name and has built the permission block (`openCodePermissionBlock`, built and tested, not yet projected: nothing outside tests calls it, and nothing sets `OPENCODE_PERMISSION` or `OPENCODE_CONFIG_CONTENT` today). `openCodeRoleEnvConflict` names a role that sets one but `Prepare` does not call it yet (`opencode_config.go:105-107`).
 
-So the brokered form already exists for goose and opencode as adapter-owned output. What is missing is the refusal of the casual form beside it, and one place where the per-adapter table is read. The proposal: extend the `PermissionMapper` interface (added by the codex permissions mapping, marvel#1532, so this waits on that merge) with `EnvLevers() []string`, the keys that adapter owns. The table in section 2 is then what each adapter returns, so adding a harness adds its keys in the same file that maps its flags, and a pin test (like `pinnedRoleEnvProbe` in `role_env_refusal_pin_test.go`) holds the set.
+So the brokered form exists for goose as adapter-owned output, and for opencode only as a built block that is not yet projected (ticket 6). What is missing is the refusal of the casual form beside it, and one place where the per-adapter table is read. The proposal: extend the `PermissionMapper` interface (added by the codex permissions mapping, marvel#1532, so this waits on that merge) with `EnvLevers() []string`, the keys that adapter owns. The table in section 2 is then what each adapter returns, so adding a harness adds its keys in the same file that maps its flags, and a pin test (like `pinnedRoleEnvProbe` in `role_env_refusal_pin_test.go`) holds the set.
 
 Choice for the operator or director, stated as a recommendation: keep the per-adapter fields (`permissions`, `runtime.goose.posture`) as the ask, and do not invent a generic `env_permissions` block. A generic block would be a second way to say what each field already says.
 
@@ -48,7 +49,7 @@ If a harness ever takes a credential through the same env key as a posture, the 
 
 ## 5. How the casual form is refused at apply
 
-`PermissionEnvRefusals(refuse)` beside `PermissionRefusals` in `internal/api`, with the same shape: an injected predicate (`Manager.RoleEnvLeverRefusal`) resolves the role's adapter and returns, for each `runtime.env` key the adapter owns, a refusal naming the team, the role, the key (never the value) and the field to use instead. Apply runs it in the same pre-flight block as `PermissionRefusals`, so one apply lists every such role and commits nothing.
+`PermissionEnvRefusals(refuse)` beside `PermissionRefusals` in `internal/api`, with the same shape: an injected predicate (`Manager.RoleEnvLeverRefusal`) resolves the role's adapter and returns, for each `runtime.env` key the adapter owns, a refusal naming the team, the role, the key (never the value) and the field to use instead. Apply runs it in the same pre-flight block as `PermissionRefusals` (which, with that pre-flight, comes from the unmerged marvel#1532, so this waits on it), so one apply lists every such role and commits nothing.
 
 - **Scope, ruled by director on the operator's note: every role whose adapter owns the key.** A scheduled, unsandboxed launch is not the only case; it is the strictest one of the same rule. The condition that came with the ruling is the managed path in section 5.1: a role that needs a lever on purpose gets a way to set it through marvel, not only a refusal.
 - **Per key.** `GOOSE_MODE` and `OPENCODE_PERMISSION` are refused outright: each carries nothing but a posture, and a declared field already says it. `OPENCODE_CONFIG_CONTENT` is not, because it carries a whole config and a live role sets it today (section 6); it follows the staged rule in section 5.1.
@@ -62,7 +63,7 @@ Refusing the env line is half of "managed or brokered". The other half is a way 
 
 **How a role declares the need.** A typed block on the role's runtime, beside `runtime.goose`, one per harness that owns a lever: `runtime.opencode.permission`, holding the permission rules the role wants in the harness's own shape (per tool, allow or deny, with patterns). It is a manifest field, so it is read at apply, stored with the role and visible in `marvel describe`; a raw env line is none of those. A role that needs a non-permission part of a config (`OPENCODE_CONFIG_CONTENT` carries a whole config) does not get it through this block; section 10 lists that as open.
 
-**How marvel sets the value at spawn.** The adapter renders the declared rules into the lever's value itself and merges them with its own floor, in memory, at spawn, and writes nothing else (section 4). For opencode that is `openCodePermissionBlock` extended: opencode reads the last match, so the order is: the floor's base (`"*":"deny"`), then the role's rules, then the floor's protective denies (the `.env` read denies, the `.git` and config edit denies, the private data-home glob) last, so a role's rule cannot loosen them. A role rule that names one of those protected patterns is refused at apply, naming the rule.
+**How marvel sets the value at spawn.** The adapter renders the declared rules into the lever's value itself and merges them with its own floor, in memory, at spawn, and writes nothing else (section 4). For opencode that is `openCodePermissionBlock` (not yet projected, ticket 6) extended: opencode reads the last match, so the order is: the floor's base (`"*":"deny"`), then the role's rules, then the floor's protective denies (the `.env` read denies, the `.git` and config edit denies, the private data-home glob) last, so a role's rule cannot loosen them. A role rule that names one of those protected patterns is refused at apply, naming the rule.
 
 **What the managed path does not permit.** `auto` on an unsandboxed headless launch stays refused (`openCodeLaunchRefusal`), whichever way it is asked for. A scheduled role keeps its existing refusals.
 
@@ -107,15 +108,16 @@ Marvel owns the refusal and the table. No harness changes, no director change, n
 ## 9. Tickets, flat, in build order, red first (not filed)
 
 1. `EnvLevers()` on the adapters that own one (goose, opencode), with a pin test of the set. Red: the set is empty, the test names `GOOSE_MODE`, `OPENCODE_PERMISSION`, `OPENCODE_CONFIG_CONTENT`.
-2. `PermissionEnvRefusals` and `Manager.RoleEnvLeverRefusal`, wired in apply after `PermissionRefusals`. Red: apply accepts `GOOSE_MODE` in a goose role's env.
+2. `PermissionEnvRefusals` and `Manager.RoleEnvLeverRefusal`, wired in apply after `PermissionRefusals` (waits on marvel#1532). Red: apply accepts `GOOSE_MODE` in a goose role's env.
 3. `mergeRoleEnv` skips an owned key and logs it. Red: a stored role's spawn env carries the lever.
 4. Opencode `Prepare` calls `openCodeRoleEnvConflict` (the half the source comment says is not wired).
 5. The scheduled-role read: `StoredScheduleRefusal` and `validateSchedule` include the lever. Red: a scheduled goose role with `GOOSE_MODE=auto` in env applies.
-6. `runtime.opencode.permission`: parse, validate against the floor, render into the lever at spawn. Red: a role that declares a rule loosening the secrets read deny applies.
-7. The transitional rule for `OPENCODE_CONFIG_CONTENT`: apply parses the value in memory and refuses a permission-bearing member. Red: a value with a `permission` member applies.
-8. `runtime.opencode.config`: the typed non-permission block, rendered with the permission block into the key at spawn.
-9. The refusal of the raw `OPENCODE_CONFIG_CONTENT` key, after the live role has moved (not before).
-10. The user guide names the refused keys, the field to use, and the managed path.
+6. Project the opencode permission block: `Prepare` renders `openCodePermissionBlock` into `OPENCODE_PERMISSION` for the seat, in memory, at spawn. Red: an opencode seat's env carries no `OPENCODE_PERMISSION` today.
+7. `runtime.opencode.permission`: parse, validate against the floor, render into the lever at spawn. Red: a role that declares a rule loosening the secrets read deny applies.
+8. The transitional rule for `OPENCODE_CONFIG_CONTENT`: apply parses the value in memory and refuses a permission-bearing member. Red: a value with a `permission` member applies.
+9. `runtime.opencode.config`: the typed non-permission block, rendered with the permission block into the key at spawn.
+10. The refusal of the raw `OPENCODE_CONFIG_CONTENT` key, after the live role has moved (not before).
+11. The user guide names the refused keys, the field to use, and the managed path.
 
 ## 10. Not measured, and open
 
