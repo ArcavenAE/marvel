@@ -142,8 +142,9 @@ that changes the sandbox or approval posture, because codex reads the later
 flag and the role would run wider than its mode says. Apply refuses `-s`,
 `--sandbox`, `-a`, `--ask-for-approval`, `-p`, `--profile`, `--add-dir`,
 `--dangerously-bypass-approvals-and-sandbox`, `--full-auto`, `--approve-for-me`,
-and a `-c` or `--config` override of `sandbox_mode`, `approval_policy` or any
-`sandbox_workspace_write` key, and names the flag. With `permissions` unset,
+and a `-c` or `--config` override of any key that starts with `sandbox` or
+`approval`, or of `profile`, `profiles.*` or `permissions_profile`, and names
+the flag. With `permissions` unset,
 `runtime.args` stays open.
 
 **`dangerous_permissions` is separate.** The boolean `dangerous_permissions:

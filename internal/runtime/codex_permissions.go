@@ -28,11 +28,16 @@ var codexPostureFlags = []string{
 	"--approve-for-me",
 }
 
-// codexPostureKeys are the -c config keys that do the same, by exact key or,
-// for sandbox_workspace_write, by table prefix.
+// codexPostureKey reports whether a -c config key can move the sandbox or
+// approval posture. It is fail-closed: any key that starts with sandbox or
+// approval counts (sandbox_mode, approval_policy, sandbox_workspace_write.*,
+// and the sandbox_permissions example in codex's own help), as does a profile
+// selection or definition (profile, profiles.*, permissions_profile), since a
+// profile layers a config that can set either posture. Other keys, such as
+// model, are left alone.
 func codexPostureKey(key string) bool {
-	return key == "sandbox_mode" || key == "approval_policy" ||
-		key == "sandbox_workspace_write" || strings.HasPrefix(key, "sandbox_workspace_write.")
+	return strings.HasPrefix(key, "sandbox") || strings.HasPrefix(key, "approval") ||
+		key == "profile" || strings.HasPrefix(key, "profiles.") || key == "permissions_profile"
 }
 
 // OverridingArg returns the first of a role's own runtime.args that would
