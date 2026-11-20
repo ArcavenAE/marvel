@@ -35,11 +35,15 @@ var restructurePackages = []string{
 // extraMacOSPackages are packages outside the restructure plan that the same
 // macOS job runs because they carry darwin-only code and tests that no other
 // job builds: internal/childproof reads a process's identity through
-// sysctl on darwin, and its read_darwin_test.go runs nowhere else. They are
-// held to the same gate as restructurePackages, but do not widen the plan's
-// list, which stays the packages the plan moves code between.
+// sysctl on darwin, and its read_darwin_test.go runs nowhere else; and
+// internal/procstat reads the process table through ps on darwin, and its
+// table_darwin_test.go, including the test that starts a child with a
+// rewritten argv[0], runs nowhere else. They are held to the same gate as
+// restructurePackages, but do not widen the plan's list, which stays the
+// packages the plan moves code between.
 var extraMacOSPackages = []string{
 	"internal/childproof",
+	"internal/procstat",
 }
 
 // modulePath prefixes a package directory to give the import path the skip
