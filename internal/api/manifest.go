@@ -817,7 +817,7 @@ func (m *Manifest) FirstPromptRefusals() []string {
 	var out []string
 	for _, t := range m.Teams {
 		for _, r := range t.Roles {
-			if r.Runtime.Mode != RuntimeModeInteractive || r.Runtime.Prompt == "" {
+			if r.Runtime.Mode == RuntimeModeHeadless || r.Runtime.Prompt == "" {
 				continue
 			}
 			if name := r.Runtime.AdapterName(); !takesFirstPrompt(name) {
@@ -838,7 +838,7 @@ func (m *Manifest) FirstPromptAdvisories() []string {
 	var out []string
 	for _, t := range m.Teams {
 		for _, r := range t.Roles {
-			if r.Runtime.Mode != RuntimeModeInteractive || r.Runtime.Prompt != "" {
+			if r.Runtime.Mode == RuntimeModeHeadless || r.Runtime.Prompt != "" {
 				continue
 			}
 			if r.Shift == nil || r.Shift.Handoff == "" {
