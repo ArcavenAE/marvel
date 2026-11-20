@@ -20,6 +20,19 @@ func find(th []Threshold, name string) (Threshold, bool) {
 	return Threshold{}, false
 }
 
+// The sample time is reported in UTC, whatever zone the host clock is in, so
+// the table and the JSON read alike.
+func TestSnapshotTimeIsUTC(t *testing.T) {
+	zone := time.FixedZone("west", -6*3600)
+	s := New(true, func() Reading { return swapReading(1, 100) }, nil)
+	s.now = clockAt(time.Date(2026, 11, 20, 16, 4, 31, 0, zone))
+	s.Sample()
+	got := s.Snapshot()
+	if got.At == nil || got.At.Location() != time.UTC || got.At.Hour() != 22 {
+		t.Errorf("At = %v, want 22:04:31 UTC", got.At)
+	}
+}
+
 // A sampler nobody turned on says so and shows nothing else: no sample, no
 // thresholds, no gaps, since there is nothing to be missing from.
 func TestSnapshotOfAnOffSampler(t *testing.T) {

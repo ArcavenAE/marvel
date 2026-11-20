@@ -59,7 +59,7 @@ func (s *Sampler) Snapshot() Snapshot {
 	}
 	snap := Snapshot{Enabled: true, Gaps: gaps()}
 	s.mu.Lock()
-	have, r, at := s.have, s.latest, s.latestAt
+	have, r, at := s.have, s.latest, s.latestAt.UTC()
 	s.mu.Unlock()
 	if !have {
 		return snap
