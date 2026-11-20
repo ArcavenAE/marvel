@@ -25,21 +25,21 @@ const SwapCrossPercent = 50
 type Reading struct {
 	// SwapOK is true when the host reported its swap. SwapTotal is 0 on a
 	// host with no swap configured.
-	SwapOK    bool
-	SwapUsed  uint64 // bytes
-	SwapTotal uint64 // bytes
+	SwapOK    bool   `json:"swap_ok"`
+	SwapUsed  uint64 `json:"swap_used"`  // bytes
+	SwapTotal uint64 `json:"swap_total"` // bytes
 
 	// KernelPressureOK is true on macOS, where the kernel reports a pressure
 	// level (1 normal, 2 warning, 4 critical) and the free share of memory
 	// behind the figure `memory_pressure` prints.
-	KernelPressureOK bool
-	PressureLevel    int
-	MemoryFreePct    int
+	KernelPressureOK bool `json:"kernel_pressure_ok"`
+	PressureLevel    int  `json:"pressure_level"`
+	MemoryFreePct    int  `json:"memory_free_pct"`
 
 	// PSIOK is true on Linux when /proc/pressure/memory is present. PSISomeAvg10
 	// is the share of the last 10 seconds in which some task stalled on memory.
-	PSIOK        bool
-	PSISomeAvg10 float64
+	PSIOK        bool    `json:"psi_ok"`
+	PSISomeAvg10 float64 `json:"psi_some_avg10"`
 }
 
 // swapOver reports whether the reading is over the swap line. A reading with
@@ -59,6 +59,7 @@ type Sampler struct {
 
 	mu       sync.Mutex
 	latest   Reading
+	latestAt time.Time
 	have     bool
 	swapOver bool
 }
@@ -84,6 +85,7 @@ func (s *Sampler) Sample() {
 
 	s.mu.Lock()
 	s.latest, s.have = r, true
+	s.latestAt = s.now()
 	var kind events.Kind
 	var msg string
 	if r.SwapOK {

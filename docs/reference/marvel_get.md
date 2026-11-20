@@ -1,10 +1,16 @@
 ## marvel get
 
-List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)
+List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, vitals)
 
 ### Synopsis
 
-List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets).
+List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, vitals).
+
+get vitals shows the daemon's latest host vitals sample (swap and memory pressure), its time,
+each threshold with its state, and a GAP line for each vital the design lists and the sampler
+does not hold yet. It reads the daemon's memory only, and -o json prints the same record as a
+document. It is diagnostic: nothing gates or acts on it. host vitals is off unless the cluster
+config sets host_vitals.
 
 AGE is the time since the session was created, as 45s, 9m, 2h9m or 3d4h; a - means
 the row has no creation time.

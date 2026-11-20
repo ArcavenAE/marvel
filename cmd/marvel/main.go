@@ -1283,8 +1283,14 @@ func getCmd() *cobra.Command {
 	var noTrunc, header, load, allClusters bool
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
-		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets)",
-		Long: `List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets).
+		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, vitals)",
+		Long: `List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, vitals).
+
+get vitals shows the daemon's latest host vitals sample (swap and memory pressure), its time,
+each threshold with its state, and a GAP line for each vital the design lists and the sampler
+does not hold yet. It reads the daemon's memory only, and -o json prints the same record as a
+document. It is diagnostic: nothing gates or acts on it. host vitals is off unless the cluster
+config sets host_vitals.
 
 AGE is the time since the session was created, as 45s, 9m, 2h9m or 3d4h; a - means
 the row has no creation time.
@@ -1434,6 +1440,21 @@ under ? sort, ? lists every key, q quits.`,
 					}
 				}
 				return runFanOutGet(cmd, names, columns, output, noTrunc, watching, interval, cmd.Flags().Changed("output"), load)
+			}
+			if args[0] == "vitals" {
+				switch {
+				case load:
+					return fmt.Errorf("--load applies to get teams only")
+				case watching:
+					return fmt.Errorf("get vitals does not support --watch")
+				case columns != "":
+					return fmt.Errorf("--columns applies to get sessions only")
+				}
+				format := ""
+				if cmd.Flags().Changed("output") {
+					format = output
+				}
+				return getVitals(cmd.OutOrStdout(), format)
 			}
 			if load {
 				switch {
