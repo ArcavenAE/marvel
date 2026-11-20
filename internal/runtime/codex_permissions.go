@@ -34,11 +34,23 @@ var codexPostureFlags = []string{
 // approval counts (sandbox_mode, approval_policy, sandbox_workspace_write.*,
 // and the sandbox_permissions example in codex's own help), as does a profile
 // selection or definition (profile, profiles.*, permissions_profile), since a
-// profile layers a config that can set either posture. Other keys, such as
-// model, are left alone.
+// profile layers a config that can set either posture. So do the keys that
+// trust a project (projects, projects.*; a trusted project is writable
+// whatever -s says, finding-049) and the ones that pick or define a
+// permissions profile (default_permissions, permissions, permissions.*). The
+// dotted keys match on their whole first segment, with spaces around the dot
+// allowed as TOML does. Other keys, such as model, are left alone.
 func codexPostureKey(key string) bool {
+	head := key
+	if i := strings.IndexByte(key, '.'); i >= 0 {
+		head = strings.TrimSpace(key[:i])
+	}
+	switch head {
+	case "projects", "default_permissions", "permissions", "profiles":
+		return true
+	}
 	return strings.HasPrefix(key, "sandbox") || strings.HasPrefix(key, "approval") ||
-		key == "profile" || strings.HasPrefix(key, "profiles.") || key == "permissions_profile"
+		key == "profile" || key == "permissions_profile"
 }
 
 // OverridingArg returns the first of a role's own runtime.args that would
