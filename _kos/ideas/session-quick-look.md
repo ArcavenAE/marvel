@@ -3,7 +3,7 @@
 - **Status:** idea (pre-hypothesis, no commitment). Notes only: nothing is built,
   and nothing here is a design decision. Open questions are listed as questions.
 - **Date:** 2026-11-19
-- **Origin:** the operator, in a message routed as ask I-637 (2026-11-19), quoted
+- **Origin:** the operator, in a message routed by director (2026-11-19), quoted
   below as written.
 - **Subject:** marvel (the `get sessions` watch view and `marvel capture`). Filed
   in the marvel graph per the subject test.
