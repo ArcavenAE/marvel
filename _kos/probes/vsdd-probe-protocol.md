@@ -2,11 +2,11 @@
 
 The protocol file of brief section 8 (`probe-vsdd-factory-as-marvel-team.md`), step M1. It fixes the question, the pins, the unit, the axes and their smallest effects, and the run rules before the pilot.
 
-Freezing: this file lands with FILL fields, values that can only be read on the probe host before the first smoke run ("step 0") or at M4. The commit that fills them is the frozen sha. Every run's marker records that sha, and any later change to this file starts a new series.
+Freezing: this file lands with FILL fields, values that can only be read on the probe host before the first smoke run ("step 0") or at M4. The frozen sha is the last commit to this file before the first run: the step-0 fill and any run-rule amendment ruled before the pilot. Every run's marker records that sha, and any change after the first run, other than the M4 seed-snapshot fill at line 53, starts a new series.
 
 What the freeze does not wait on, and what the pilot does: T2 (aae-orc-ou94x, the meter on live transcripts) and T6 (aae-orc-sbp9j, arm B's live tests and entry drill) are still open, and both wait on live runs. The freeze does not wait on them. The pilot does: it starts only after both close.
 
-Rulings this file applies: R1 to R4 as the brief records them; the probe host (corporate) and the Enterprise account, both ruled by the operator; the smallest effects in section 5, ruled by the operator on 2026-11-20. This file decides none of them.
+Rulings this file applies: R1 to R4 as the brief records them; the probe host (corporate) and the Enterprise account, both ruled by the operator; the smallest effects in section 5, ruled by the operator on 2026-11-20; the run-start check and the pinned tool surface in section 2, ruled by director on 2026-11-20. This file decides none of them.
 
 ## 1. The question and its four closes
 
@@ -39,7 +39,12 @@ The four closes:
 | analysis | `compare.py` at the marvel sha this file freezes with: alpha 0.05, seed 1, resamples 10000; coverage sims 1000, seed 7, resamples 500, sigma_block 0.2, sigma_run 0.2, rho 0.5 | `vsdd-probe-t7`; values as in its example input |
 | price table | `vsdd-probe-t2/prices.json` at the same sha | brief s11 |
 | env, both arms | `BASH_DEFAULT_TIMEOUT_MS=600000`, `BASH_MAX_TIMEOUT_MS=600000`, `CLAUDE_CODE_FORK_SUBAGENT=0`, `DISABLE_AUTOUPDATER=1`, `CLAUDE_CODE_ENABLE_TELEMETRY=1`; subagent depth 3 and concurrency 20; `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_AUTO_BACKGROUND_TIMEOUT_MS` unset; agent teams off | brief s6 |
+| tool surface | every probe session, both arms, runs with `--strict-mcp-config` and an explicit `--mcp-config`. The contents of that config: open with the operator; ruled before the pilot. Each run records the sha256 of the output of `claude mcp list` and of `claude plugin list` | director, 2026-11-20 |
 | OTLP collector | `http://127.0.0.1:14318`, OTLP over HTTP with JSON bodies (`OTEL_EXPORTER_OTLP_PROTOCOL=http/json`), a localhost-only listener that writes each POST to a file in scratch; passed by `--env` and `runtime.env`. The step-0 smoke run produced `api_request` events with `query_source` for its main session (`sdk`) and its subagent (`agent:builtin:general-purpose`). | brief S10 |
+
+**Run-start check (director, 2026-11-20).** At every run's start, before its first request, the run record holds the output of `claude --version`, the resolved target of `command -v claude`, and the sha256 of that target. If any of the three differs from its pin, the run is void before its first request. Step 0 recorded no sha256 of the target, so the pilot-start re-read below records it, and every later run compares with that record.
+
+**Pilot-start re-read (director, 2026-11-20).** The step-0 processes stop before the pilot, so at the pilot's start the step-0 live reads are run again on the probe host: the harness build and path, the model ids, the account hash, `marvel version` and `tmux -V` on the probe socket, and the OTLP endpoint. A value that differs from this file voids the run, as in the run-start check. The model ids can only be read from requests, so they are read from the `api_request` events of the first run, and a mismatch voids that run.
 
 ## 3. Project, seed and suite
 
