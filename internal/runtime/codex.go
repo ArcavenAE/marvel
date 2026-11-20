@@ -17,10 +17,12 @@ import (
 // interactive path does.
 //
 // Codex has no --append-system-prompt or --permission-mode equivalent, so
-// marvel identity travels only through the environment (baseEnv). Sandbox
-// and approval policy are the operator's to set through runtime.Args; the
-// adapter injects neither, to avoid widening a harness's authority by
-// default.
+// marvel identity travels only through the environment (baseEnv). A role's
+// permissions map to a sandbox and an approval flag for the two ruled rows
+// (plan and auto; see MapPermissions), and with permissions unset the adapter
+// injects neither, to avoid widening a harness's authority by default.
+// Sandbox and approval policy beyond those rows stay the operator's to set
+// through runtime.Args.
 type Codex struct{}
 
 func (c *Codex) Name() string { return "codex" }
@@ -111,10 +113,11 @@ func (c *Codex) Prepare(ctx *LaunchContext) (*LaunchResult, error) {
 		return nil, ErrNoCommand
 	}
 
-	args := make([]string, len(ctx.Session.Runtime.Args))
-	copy(args, ctx.Session.Runtime.Args)
+	headless := ctx.Session.Runtime.Mode == api.RuntimeModeHeadless
+	args := codexPermissionArgs(ctx, headless)
+	args = append(args, ctx.Session.Runtime.Args...)
 
-	if ctx.Session.Runtime.Mode != api.RuntimeModeHeadless {
+	if !headless {
 		// Interactive: launch codex as-is; the TUI owns the pane.
 		env := codexEnv(ctx)
 		stampSeat(ctx, env, "", "")

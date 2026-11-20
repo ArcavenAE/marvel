@@ -18,8 +18,11 @@ func TestPermissionRefusalsNameEveryRefusedRole(t *testing.T) {
 		},
 	}}}
 	refuse := func(r ManifestRole) string {
-		if r.Permissions == "default" || r.DangerousPermissions {
-			return "no mapping is ruled yet; set the flags in runtime.args"
+		switch {
+		case r.Permissions == "default":
+			return `permissions "default" has no ruled mapping; set the flags in runtime.args`
+		case r.DangerousPermissions:
+			return "dangerous_permissions has no ruled mapping; set the flags in runtime.args"
 		}
 		return ""
 	}
@@ -27,7 +30,7 @@ func TestPermissionRefusalsNameEveryRefusedRole(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("refusals = %q, want 2", got)
 	}
-	for _, w := range []string{"team crew", "role rev", `permissions = "default"`, `runtime "codex"`, "runtime.args"} {
+	for _, w := range []string{"team crew", "role rev", `permissions "default"`, `runtime "codex"`, "runtime.args"} {
 		if !strings.Contains(got[0], w) {
 			t.Errorf("first refusal %q does not contain %q", got[0], w)
 		}

@@ -128,6 +128,15 @@ exits immediately). The canonical set:
 
 An empty `permissions` means "unset"; the adapter's own default applies.
 
+**On a codex role,** only two modes map. `plan` launches codex read-only with
+approvals set to never, and `auto` launches it workspace-write with approvals
+set to never. An unset `permissions` adds nothing. The other four modes and
+`dangerous_permissions` are refused when you apply the manifest, until a probe
+of the pinned codex version settles them. A role that declares one fails its
+next apply until you move the sandbox and approval flags into `runtime.args`.
+Codex lets a trusted project write whatever its sandbox flag says, so `plan`
+is read-only only in a directory that is not listed in `workspace.trusted_folders`.
+
 **`dangerous_permissions` is separate.** The boolean `dangerous_permissions:
 true` appends `--dangerously-skip-permissions`, which removes the permission
 model entirely rather than choosing a mode within it. It is orthogonal to

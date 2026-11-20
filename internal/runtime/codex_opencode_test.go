@@ -105,6 +105,7 @@ func TestCodexPrepareInteractiveIsPlain(t *testing.T) {
 	c := &Codex{}
 	ctx := testContext()
 	ctx.Session.Runtime = api.Runtime{Name: "codex", Command: "codex", Args: []string{"--model", "gpt-5"}}
+	ctx.Role.Permissions = "" // unset adds no flags; the mapped rows are in codex_permissions_test.go
 	ctx.StreamPath = "/tmp/should-be-ignored.jsonl"
 	result, err := c.Prepare(ctx)
 	if err != nil {

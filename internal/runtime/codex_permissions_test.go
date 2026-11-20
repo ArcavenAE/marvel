@@ -9,11 +9,10 @@ import (
 )
 
 // codexPermCtx is a codex launch for one role permission, in the given mode.
-func codexPermCtx(mode string, dangerous bool, headless bool) *LaunchContext {
+func codexPermCtx(mode string, headless bool) *LaunchContext {
 	ctx := testContext()
 	ctx.Session.Runtime = api.Runtime{Name: "codex", Command: "codex", Args: []string{"--model", "gpt-x"}}
 	ctx.Role.Permissions = mode
-	ctx.Role.DangerousPermissions = dangerous
 	if headless {
 		ctx.Session.Runtime.Mode = api.RuntimeModeHeadless
 		ctx.Session.Runtime.Prompt = "say ok"
@@ -83,7 +82,7 @@ func TestCodexRefusesTheUnruledPermissionModesAndAddsNothingWhenUnset(t *testing
 // both launch forms, and the prompt stays last in the headless form.
 func TestCodexPrepareCarriesTheMappedFlagsAheadOfRuntimeArgs(t *testing.T) {
 	t.Parallel()
-	res, err := (&Codex{}).Prepare(codexPermCtx("plan", false, false))
+	res, err := (&Codex{}).Prepare(codexPermCtx("plan", false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +90,7 @@ func TestCodexPrepareCarriesTheMappedFlagsAheadOfRuntimeArgs(t *testing.T) {
 	if res.Command != want {
 		t.Errorf("interactive command = %q, want %q", res.Command, want)
 	}
-	res, err = (&Codex{}).Prepare(codexPermCtx("auto", false, true))
+	res, err = (&Codex{}).Prepare(codexPermCtx("auto", true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +107,7 @@ func TestCodexPrepareCarriesTheMappedFlagsAheadOfRuntimeArgs(t *testing.T) {
 // With permissions unset the launch is what it was before the mapping.
 func TestCodexPrepareWithPermissionsUnsetAddsNoFlags(t *testing.T) {
 	t.Parallel()
-	res, err := (&Codex{}).Prepare(codexPermCtx("", false, false))
+	res, err := (&Codex{}).Prepare(codexPermCtx("", false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +121,7 @@ func TestCodexPrepareWithPermissionsUnsetAddsNoFlags(t *testing.T) {
 // is apply's to make.
 func TestCodexPrepareAddsNoFlagsForARefusedMode(t *testing.T) {
 	t.Parallel()
-	res, err := (&Codex{}).Prepare(codexPermCtx("default", false, false))
+	res, err := (&Codex{}).Prepare(codexPermCtx("default", false))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1879,9 +1879,21 @@ func (m *Manager) CanOfferHandoffToolRole(r api.ManifestRole) bool {
 	return ok && o.OffersHandoffTool()
 }
 
-// RolePermissionRefusal is a stub until the check is written.
-func (m *Manager) RolePermissionRefusal(_ api.ManifestRole) string {
-	return ""
+// RolePermissionRefusal reports why a role's permissions cannot be mapped to
+// its harness's flags, or "" when they can, or when the harness maps none and
+// leaves permissions to the role's own command. It is the manifest-side
+// answer apply asks for before it accepts a role.
+func (m *Manager) RolePermissionRefusal(r api.ManifestRole) string {
+	name := r.Runtime.Image
+	if name == "" {
+		name = r.Runtime.Command
+	}
+	pm, ok := m.adapters.Resolve(name).(runtime.PermissionMapper)
+	if !ok {
+		return ""
+	}
+	_, refusal := pm.MapPermissions(r.Permissions, r.DangerousPermissions, r.Runtime.Mode == api.RuntimeModeHeadless)
+	return refusal
 }
 
 // streams reports whether the launch wants a stream pipe: the adapter can

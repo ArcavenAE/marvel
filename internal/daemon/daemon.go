@@ -1620,6 +1620,13 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		return daemonrpc.Response{Error: "apply manifest: " + strings.Join(refusals, "; ")}
 	}
 
+	// Pre-flight: a role whose harness has no ruled mapping for its permissions
+	// is refused here, since it would run with the harness defaults and nobody
+	// would be told (marvel#385).
+	if refusals := m.PermissionRefusals(d.sessMgr.RolePermissionRefusal); len(refusals) > 0 {
+		return daemonrpc.Response{Error: "apply manifest: " + strings.Join(refusals, "; ")}
+	}
+
 	// Pre-flight: a team name held by another workspace would commit, spawn,
 	// and then break bus-auth rendering cluster-wide (marvel#319).
 	if err := m.ValidateTeamNames(d.store.ListTeams()); err != nil {
