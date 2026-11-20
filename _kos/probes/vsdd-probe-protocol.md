@@ -2,7 +2,7 @@
 
 The protocol file of brief section 8 (`probe-vsdd-factory-as-marvel-team.md`), step M1. It fixes the question, the pins, the unit, the axes and their smallest effects, and the run rules before the pilot.
 
-Freezing: this file lands with FILL fields, values that can only be read on the probe host before the first smoke run ("step 0") or at M4. The commit that fills them is the frozen sha. Every run's marker records that sha, and any later change to this file starts a new series.
+Freezing: this file lands with FILL fields, values that can only be read on the probe host before the first smoke run ("step 0") or at M4. The frozen sha is the last commit to this file before the first run: the step-0 fill and any run-rule amendment ruled before the pilot. Every run's marker records that sha, and any change after the first run starts a new series.
 
 What the freeze does not wait on, and what the pilot does: T2 (aae-orc-ou94x, the meter on live transcripts) and T6 (aae-orc-sbp9j, arm B's live tests and entry drill) are still open, and both wait on live runs. The freeze does not wait on them. The pilot does: it starts only after both close.
 
