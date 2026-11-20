@@ -36,7 +36,7 @@ The four closes:
 | account | the Enterprise login (operator, 2026-11-20), the probe host's default login. Recorded by label and by the sha256 of the `claude auth status` lines that name the login method, account and organization, FILL at step 0, never by a credential | brief s6 |
 | probe host | corporate | ruling vsdd-c6-host |
 | marvel commit and tmux version | FILL: `marvel version` of the probe daemon; `tmux -L <probe socket> -V`, 3.5 or later | step 0 |
-| analysis | `compare.py` at the marvel sha this file freezes with: alpha 0.05, seed 1, resamples 10000; coverage sims 1000, seed 7 | `vsdd-probe-t7`; values as in its example input |
+| analysis | `compare.py` at the marvel sha this file freezes with: alpha 0.05, seed 1, resamples 10000; coverage sims 1000, seed 7, resamples 500, sigma_block 0.2, sigma_run 0.2, rho 0.5 | `vsdd-probe-t7`; values as in its example input |
 | price table | `vsdd-probe-t2/prices.json` at the same sha | brief s11 |
 | env, both arms | `BASH_DEFAULT_TIMEOUT_MS=600000`, `BASH_MAX_TIMEOUT_MS=600000`, `CLAUDE_CODE_FORK_SUBAGENT=0`, `DISABLE_AUTOUPDATER=1`, `CLAUDE_CODE_ENABLE_TELEMETRY=1`; subagent depth 3 and concurrency 20; `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_AUTO_BACKGROUND_TIMEOUT_MS` unset; agent teams off | brief s6 |
 | OTLP collector | FILL: endpoint on the probe host, passed by `--env` and `runtime.env` | brief S10 |
@@ -72,6 +72,7 @@ A story whose scenarios in the probe acceptance suite all pass, run by the scori
 - **Reading the exit status:**
   - 0 means no hit and everything was read;
   - 1 means a hit: a canary hit counts the run as zero accepted (section 7);
+  - 2 means a usage error, so the scan did not run: it is re-run, and never read as clean;
   - 3 means something could not be read, so the scan proves nothing and is re-run before the next run starts.
 - **The positive control:** the detector hash must be found in the smoke runs of both arms and in the fidelity run. If it is not, the scan is broken and the probe stops.
 - **What travels:** only the 64-character canary hash goes to the probe host, by bus message, and only a small report comes back. The check is exact, as the brief's canary is: a token embedded in a longer hex run is found, and a token split by a line break or changed by one character is not.
@@ -88,8 +89,8 @@ Each axis gets its own verdict, Holm-adjusted (R2, s9.4).
 | cache read and write tokens by TTL class per accepted story, with read share | 20%, ruled by the operator 2026-11-20 |
 | scenario pass rate per run | 10 percentage points, ruled by the operator 2026-11-20 |
 | adversary passes per story | 20%, ruled by the operator 2026-11-20 |
-| compactions per run, and steps re-run or skipped after one | reported, no verdict proposed |
-| limit stops per arm | reported, no verdict proposed |
+| compactions per run, and steps re-run or skipped after one | reported, no verdict proposed (open with the operator; ruled before the filling commit) |
+| limit stops per arm | reported, no verdict proposed (open with the operator; ruled before the filling commit) |
 
 Every axis is also reported per phase and per wave width. The cost sensitivities sit beside the cost axis: the hub wait row removed, and first-attempt acceptance only.
 
@@ -128,7 +129,7 @@ The brief's rule (s6, "Inter-run gap") reads: "no session on the account, on any
    - **Other sessions on the account.** A prompt cache matches a prefix, in the order tools, then system, then messages. Fleet seats carry MCP tools and their own system prompts and agents; probe sessions run `--agent vsdd-orchestrator` without those tools. So a fleet session is unlikely to warm a probe prefix. This is inferred, so it is measured, not assumed (the calibration below), and every run's read-back still checks it.
 3. **Rate limits shared with other load.** The brief already treats throttling as unpinnable: "rate-limit and overload retries per session, and the seconds spent in them ... reported per run; speed is also reported net of throttle time" (s6, Throttling). Other Enterprise load can add throttle time and noise to wall clock and throughput.
 
-**Replacement (the lighter form):**
+**Replacement (the lighter form), open with the operator; ruled before the filling commit:**
 
 - **Kept:** the 65-minute gap after the probe's own last request, before every run.
 - **Kept:** the per-run read-back. A run whose first-request cache read exceeds the S14 cold reference is flagged. It is counted in the main analysis and left out of a sensitivity analysis, which is the brief's existing rule for any read-back that disagrees.
@@ -139,7 +140,7 @@ The brief's rule (s6, "Inter-run gap") reads: "no session on the account, on any
 
   Both are reported beside wall clock and throughput.
 - **Stop:** unchanged. A limit message during a run is a limit stop (counted, intent-to-treat), and one before a block's first run voids the block.
-- **Dropped:** the requirement that no other session on the account makes requests. No team moves for a run.
+- **Dropped** (open with the operator; ruled before the filling commit): the requirement that no other session on the account makes requests. No team moves for a run.
 
 **Effect on validity.**
 
