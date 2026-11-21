@@ -86,6 +86,11 @@ func TestGetVitalsAllClustersShowsAnUnreadableClusterAsAGap(t *testing.T) {
 	if gapAt < 0 {
 		t.Fatalf("no stdout line begins %q:\nstdout:\n%s\nstderr:\n%s", gapPrefix, out, errOut)
 	}
+	// The gap line is the only line that begins "cluster h:", so no reading
+	// sits under a header of its own before it.
+	if n := strings.Count("\n"+out, "\ncluster h:"); n != 1 {
+		t.Errorf("%d lines begin %q, want exactly 1:\nstdout:\n%s", n, "cluster h:", out)
+	}
 	for _, l := range lines[gapAt+1:] {
 		if strings.HasPrefix(l, "cluster ") {
 			break
