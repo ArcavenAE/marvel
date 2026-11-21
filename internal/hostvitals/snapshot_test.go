@@ -2,7 +2,6 @@ package hostvitals
 
 import (
 	"encoding/json"
-	"reflect"
 	"testing"
 	"time"
 )
@@ -129,24 +128,13 @@ func TestSnapshotMemoryPressureHasNoLine(t *testing.T) {
 	}
 }
 
-// Each vital the design lists and the sampler does not hold yet is a gap
-// line naming its design section, so the build that adds the vital removes
-// the line. The order is the design's table order.
-func TestSnapshotGapsNameTheirDesignSections(t *testing.T) {
+// Weekly SSD wear is out of scope (docs/design/host-vitals.md, Scope), so the
+// snapshot carries no gap line for it, and no other gap line is left.
+func TestSnapshotHasNoGapLines(t *testing.T) {
 	s := New(true, func() Reading { return swapReading(1, 100) }, nil)
 	s.Sample()
-	var got [][2]string
 	for _, g := range s.Snapshot().Gaps {
-		if g.Reason == "" {
-			t.Errorf("gap %q has no reason", g.Vital)
-		}
-		got = append(got, [2]string{g.Vital, g.Section})
-	}
-	want := [][2]string{
-		{"SSD wear", "2"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("gaps = %v, want %v", got, want)
+		t.Errorf("snapshot has a gap line for %q (section %s), want none", g.Vital, g.Section)
 	}
 }
 
@@ -163,10 +151,13 @@ func TestSnapshotJSONKeys(t *testing.T) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"enabled", "sampled", "at", "reading", "thresholds", "gaps"} {
+	for _, k := range []string{"enabled", "sampled", "at", "reading", "thresholds"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("JSON has no %q key: %s", k, raw)
 		}
+	}
+	if _, ok := m["gaps"]; ok {
+		t.Errorf("JSON has a gaps key with no gap to report: %s", raw)
 	}
 	ths, _ := m["thresholds"].([]any)
 	if len(ths) == 0 {

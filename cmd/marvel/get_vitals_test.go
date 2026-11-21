@@ -101,7 +101,7 @@ func sampledSnapshot() hostvitals.Snapshot {
 			{PID: 102, Name: "Acme Helper", Reason: hostvitals.ReasonMarker, ClaimedSession: "other/seat", MarkedAt: time.Date(2026, 11, 20, 21, 50, 0, 0, time.UTC), CPUSecondsSinceMarked: 12.5},
 		},
 		Gaps: []hostvitals.Gap{
-			{Vital: "SSD wear", Section: "2", Reason: "not sampled yet"},
+			{Vital: "example vital", Section: "2", Reason: "not sampled yet"},
 		},
 	}
 }
@@ -128,7 +128,7 @@ func TestGetVitalsTextShowsSampleThresholdsAndGaps(t *testing.T) {
 		"swap used", "over 50% of total", "over",
 		"memory pressure",
 		"fseventsd RSS", "process RSS", "job (pid 41) 21.0 GiB",
-		"orphan CPU", "over 90% of a core for 30 minutes", "GAP SSD wear", "section 2",
+		"orphan CPU", "over 90% of a core for 30 minutes", "GAP example vital", "section 2",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("output lacks %q:\n%s", want, text)
@@ -335,5 +335,24 @@ func TestGetVitalsJSONLabelsAClaimedSession(t *testing.T) {
 	}
 	if marker["claimed_session"] != "other/seat" || marker["session"] != nil {
 		t.Errorf("marker row = %v, want claimed_session other/seat and no session", marker)
+	}
+}
+
+// A snapshot with no gap reports nothing about gaps: no GAP line and no SSD
+// wear line, since weekly SSD wear is out of scope.
+func TestGetVitalsPrintsNoGapLineWhenThereIsNone(t *testing.T) {
+	snap := sampledSnapshot()
+	snap.Gaps = nil
+	socket, _ := vitalsFakeDaemon(t, snapshotResponse(t, snap))
+	pointAt(t, socket)
+
+	var out bytes.Buffer
+	if err := getVitals(&out, ""); err != nil {
+		t.Fatalf("getVitals: %v", err)
+	}
+	for _, bad := range []string{"GAP", "SSD wear"} {
+		if strings.Contains(out.String(), bad) {
+			t.Errorf("output has %q:\n%s", bad, out.String())
+		}
 	}
 }
