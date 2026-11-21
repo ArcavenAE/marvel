@@ -51,8 +51,8 @@ func TestSnapshotBeforeTheFirstSample(t *testing.T) {
 	if len(got.Thresholds) != 0 {
 		t.Errorf("thresholds before a sample = %+v, want none", got.Thresholds)
 	}
-	if len(got.Gaps) == 0 {
-		t.Error("no gaps before the first sample, want the design-listed vitals not held yet")
+	if len(got.Gaps) != 0 {
+		t.Errorf("gaps before the first sample = %+v, want none", got.Gaps)
 	}
 }
 
@@ -169,14 +169,20 @@ func TestSnapshotJSONKeys(t *testing.T) {
 			t.Errorf("threshold has no %q key: %v", k, first)
 		}
 	}
-	gaps, _ := m["gaps"].([]any)
-	if len(gaps) == 0 {
-		t.Fatalf("no gaps in %s", raw)
+	// The gap type keeps its key names for a gap a later build adds.
+	raw, err = json.Marshal(Snapshot{Gaps: []Gap{{Vital: "v", Section: "2", Reason: "r"}}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	g0, _ := gaps[0].(map[string]any)
+	var withGap struct {
+		Gaps []map[string]any `json:"gaps"`
+	}
+	if err := json.Unmarshal(raw, &withGap); err != nil || len(withGap.Gaps) != 1 {
+		t.Fatalf("a snapshot with one gap marshalled to %s (err %v)", raw, err)
+	}
 	for _, k := range []string{"vital", "section", "reason"} {
-		if _, ok := g0[k]; !ok {
-			t.Errorf("gap has no %q key: %v", k, g0)
+		if _, ok := withGap.Gaps[0][k]; !ok {
+			t.Errorf("gap has no %q key: %v", k, withGap.Gaps[0])
 		}
 	}
 }

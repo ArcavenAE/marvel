@@ -1,6 +1,6 @@
 # Host vitals: a per-host sampler in marvel
 
-Proposal, 2026-11-02, scope revised 2026-11-21. Code read at marvel `a007c4a6`. Built so far: the swap and memory pressure readings, the cluster `host_vitals` switch (off by default), the in-memory latest sample, the swap crossing events, the widened `ps` pass with the fseventsd and process-RSS vitals, the orphan CPU vital, and `marvel get vitals` (`internal/hostvitals`). Deferred: the `host.vitals` bus envelope and the OTel gauges. Out of scope: the weekly `smartctl` read.
+Proposal, 2026-11-02, scope revised 2026-11-21. Code read at marvel `a007c4a6`. Built so far: the swap and memory pressure readings, the cluster `host_vitals` switch (off by default), the in-memory latest sample, the swap crossing events, the widened `ps` pass with the fseventsd and process-RSS vitals, the orphan CPU vital, and `marvel get vitals` (`internal/hostvitals`, `internal/daemon/vitals.go`, `cmd/marvel/get_vitals.go`), which prints no gap line for SSD wear. Deferred: the `host.vitals` bus envelope and the OTel gauges. Out of scope: the weekly `smartctl` read.
 
 ## Scope
 
