@@ -73,14 +73,26 @@ func TestGetVitalsAllClustersShowsAnUnreadableClusterAsAGap(t *testing.T) {
 	if !strings.Contains(out, "swap used") {
 		t.Errorf("the answering cluster's reading is missing:\n%s", out)
 	}
-	var gap string
-	for _, l := range strings.Split(out+"\n"+errOut, "\n") {
-		if strings.Contains(l, "h") && strings.Contains(l, string(outcomeNoAnswer)) {
-			gap = l
+	// The gap is its own line in stdout, begun by the cluster's name and the
+	// outcome, and no vitals reading follows it for that cluster.
+	const gapPrefix = "cluster h: GAP " + string(outcomeNoAnswer) + ":"
+	lines := strings.Split(out, "\n")
+	gapAt := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, gapPrefix) {
+			gapAt = i
 		}
 	}
-	if gap == "" {
-		t.Errorf("no line names cluster h and outcome %q:\nstdout:\n%s\nstderr:\n%s", outcomeNoAnswer, out, errOut)
+	if gapAt < 0 {
+		t.Fatalf("no stdout line begins %q:\nstdout:\n%s\nstderr:\n%s", gapPrefix, out, errOut)
+	}
+	for _, l := range lines[gapAt+1:] {
+		if strings.HasPrefix(l, "cluster ") {
+			break
+		}
+		if strings.TrimSpace(l) != "" {
+			t.Errorf("a reading follows the gap line for cluster h: %q\nstdout:\n%s", l, out)
+		}
 	}
 }
 
