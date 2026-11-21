@@ -1434,6 +1434,9 @@ under ? sort, ? lists every key, q quits.`,
 			if err != nil {
 				return err
 			}
+			if fan && args[0] == "vitals" {
+				return runFanOutVitals(cmd, names, output, cmd.Flags().Changed("output"), watching, columns, load)
+			}
 			if fan {
 				interval, err := time.Duration(0), error(nil)
 				if watching {
@@ -1503,7 +1506,7 @@ under ? sort, ? lists every key, q quits.`,
 			return getResources(args[0], cols, headerText, fitOptions{width: terminalWidth(), explicit: explicit, noTrunc: noTrunc})
 		},
 	}
-	cmd.Flags().BoolVar(&allClusters, "all-clusters", false, "with get sessions: read every cluster in the client config, in parallel, each under its own 10 s timer")
+	cmd.Flags().BoolVar(&allClusters, "all-clusters", false, "with get sessions or get vitals: read every cluster in the client config, in parallel, each under its own 10 s timer")
 	cmd.Flags().BoolVar(&load, "load", false, "with get teams: one row per team with seats, mean ACTIVE% and limited seats")
 	cmd.Flags().BoolVar(&noTrunc, "no-trunc", false, "print RUNTIME and WORKDIR in full instead of cutting them to fit")
 	f := cmd.Flags().VarPF(newOptionalString(&watchSec), "watch", "w", "watch sessions (optional: seconds, default 2)")

@@ -343,8 +343,8 @@ func fanOutKeyColumn() sessionColumn {
 func clusterSet(resource string, all bool) (names []string, fan bool, err error) {
 	isSessions := resource == "sessions" || resource == "session"
 	list := strings.Contains(clusterName, ",")
-	if (all || list) && !isSessions {
-		return nil, false, errors.New("--cluster with a list and --all-clusters apply to get sessions only; name one cluster")
+	if (all || list) && !isSessions && resource != "vitals" {
+		return nil, false, errors.New("--cluster with a list and --all-clusters apply to get sessions and get vitals only; name one cluster")
 	}
 	if all && clusterFlagGiven {
 		return nil, false, errors.New("--all-clusters and --cluster cannot be combined")
