@@ -47,7 +47,10 @@ func (d *Daemon) wireOrphanSources() {
 		},
 		Marker: d.readMarker,
 		// The seat's own key, from the store: the one name an orphan carries
-		// that the daemon vouches for.
+		// that the daemon vouches for. It answers for a live session only and
+		// "" for one that is dead or deleted; the sampler asks while the seat's
+		// pane is a root in the table and keeps the answer, so a seat that dies
+		// later does not lose its orphans' key.
 		RootSession: func(pid int) string {
 			if d.store == nil {
 				return ""
