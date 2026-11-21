@@ -33,6 +33,7 @@ type Snapshot struct {
 	Reading    Reading     `json:"reading"`
 	Thresholds []Threshold `json:"thresholds,omitempty"`
 	Top        []Proc      `json:"top_processes,omitempty"`
+	Orphans    []Orphan    `json:"orphans,omitempty"`
 	Gaps       []Gap       `json:"gaps,omitempty"`
 }
 
@@ -44,7 +45,6 @@ const notSampled = "not sampled yet"
 // line here.
 func gaps() []Gap {
 	return []Gap{
-		{Vital: "orphan CPU", Section: "2.1", Reason: notSampled},
 		{Vital: "SSD wear", Section: "2", Reason: notSampled},
 	}
 }
@@ -60,6 +60,7 @@ func (s *Sampler) Snapshot() Snapshot {
 	s.mu.Lock()
 	have, r, at := s.have, s.latest, s.latestAt.UTC()
 	procsOK, top, fsev, fseen := s.procsOK, append([]Proc(nil), s.top...), s.fseventsdRSS, s.fseventsdSeen
+	orphans := s.orphans
 	s.mu.Unlock()
 	if !have {
 		return snap
@@ -67,9 +68,12 @@ func (s *Sampler) Snapshot() Snapshot {
 	snap.Sampled = true
 	snap.At = &at
 	snap.Reading = r
-	snap.Thresholds = []Threshold{swapThreshold(r), pressureThreshold(r), fseventsdThreshold(procsOK, fsev, fseen), processThreshold(procsOK, top)}
+	snap.Thresholds = []Threshold{swapThreshold(r), pressureThreshold(r), fseventsdThreshold(procsOK, fsev, fseen), processThreshold(procsOK, top), orphanThreshold(procsOK, orphans)}
 	if len(top) > 0 {
 		snap.Top = top
+	}
+	if len(orphans.list) > 0 {
+		snap.Orphans = append([]Orphan(nil), orphans.list...)
 	}
 	return snap
 }
@@ -159,6 +163,24 @@ func processThreshold(ok bool, top []Proc) Threshold {
 		t.State, t.Detail = "under", procDetail(top[0])
 		if top[0].RSSBytes > ProcessRSSCrossBytes {
 			t.State = "over"
+		}
+	}
+	return t
+}
+
+// orphanThreshold reports the orphan CPU vital: under with no orphans or none
+// over the line, over naming the worst one, or a gap when no table was read.
+func orphanThreshold(ok bool, v orphanView) Threshold {
+	t := Threshold{Name: "orphan CPU", Line: fmt.Sprintf("over %d%% of a core for %d minutes", int(OrphanShare*100), int(OrphanWindow/time.Minute))}
+	switch {
+	case !ok:
+		t.State, t.Detail = "gap", noTable
+	case v.over:
+		t.State, t.Detail = "over", v.detail
+	default:
+		t.State, t.Detail = "under", v.detail
+		if t.Detail == "" {
+			t.Detail = "no orphans"
 		}
 	}
 	return t

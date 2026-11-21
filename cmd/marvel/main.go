@@ -1287,8 +1287,9 @@ func getCmd() *cobra.Command {
 		Long: `List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, vitals).
 
 get vitals shows the daemon's latest host vitals sample (swap, memory pressure, fseventsd RSS and
-the largest process's RSS), its time, each threshold with its state, the top processes by RSS
-(command name only, never arguments), and a GAP line for each vital the design lists and the
+the largest process's RSS, orphan CPU), its time, each threshold with its state, the top processes by
+RSS (command name only, never arguments), the orphans (processes that lost their marvel parent),
+and a GAP line for each vital the design lists and the
 sampler does not hold yet. It reads the daemon's memory only, and -o json prints the same record as a
 document. It is diagnostic: nothing gates or acts on it. host vitals is off unless the cluster
 config sets host_vitals.

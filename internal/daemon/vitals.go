@@ -4,6 +4,7 @@ import (
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/hostvitals"
+	"github.com/arcavenae/marvel/internal/procargs"
 	"github.com/arcavenae/marvel/internal/procstat"
 )
 
@@ -29,6 +30,39 @@ func (d *Daemon) loadHostVitals(socketPath string) {
 	}
 	d.vitals = hostvitals.New(on, hostvitals.Read, d.events)
 	d.readTable = procstat.ReadTable
+	d.readMarker = procargs.ReadMarker
+	d.wireOrphanSources()
+}
+
+// wireOrphanSources gives the sampler the seat roots and the marker reader the
+// orphan vital needs (docs/design/host-vitals.md section 2.1): the pane pid of
+// every live seat, and a reader that returns only a process's marvel marker.
+func (d *Daemon) wireOrphanSources() {
+	d.vitals.SetOrphanSources(hostvitals.OrphanSources{
+		Roots: func() []int {
+			if d.store == nil {
+				return nil
+			}
+			return d.sampledPids()
+		},
+		Marker: d.readMarker,
+		// The seat's own key, from the store: the one name an orphan carries
+		// that the daemon vouches for. It answers for a live session only and
+		// "" for one that is dead or deleted; the sampler asks while the seat's
+		// pane is a root in the table and keeps the answer, so a seat that dies
+		// later does not lose its orphans' key.
+		RootSession: func(pid int) string {
+			if d.store == nil {
+				return ""
+			}
+			for _, s := range d.store.ListSessions() {
+				if s.PID == pid && s.State.CountsAsAlive() {
+					return s.Key()
+				}
+			}
+			return ""
+		},
+	})
 }
 
 // vitalsDue reports whether the next vitals tick takes a reading: the sampler

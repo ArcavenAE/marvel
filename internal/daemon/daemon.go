@@ -37,6 +37,7 @@ import (
 	"github.com/arcavenae/marvel/internal/panemenu"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/pidfile"
+	"github.com/arcavenae/marvel/internal/procargs"
 	"github.com/arcavenae/marvel/internal/procstat"
 	"github.com/arcavenae/marvel/internal/service"
 	"github.com/arcavenae/marvel/internal/session"
@@ -110,6 +111,8 @@ type Daemon struct {
 	// metrics pass read none (no seat has a pid). It is nil until the sampler
 	// is built, and a nil reader leaves the process vitals a gap.
 	readTable func() ([]procstat.Proc, error)
+	// readMarker reads a process's marvel marker for the orphan vital.
+	readMarker func(pid int) (procargs.Marker, error)
 
 	// composerClient reports whether a workspace is a client one, whose
 	// panes the COMPOSER column never reads, or an error when its manifest

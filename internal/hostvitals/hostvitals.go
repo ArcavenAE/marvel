@@ -69,6 +69,12 @@ type Sampler struct {
 	fseventsdRSS  uint64
 	fseventsdSeen bool
 
+	// The orphan vital: the sources it reads, the tracker that keeps state
+	// across passes (touched by SampleProcs alone), and the view Snapshot reads.
+	orphanSrc OrphanSources
+	orph      orphanTracker
+	orphans   orphanView
+
 	// over holds, per vital, whether its last reading was over its line.
 	over map[string]bool
 }
@@ -98,6 +104,13 @@ func (s *Sampler) SampleProcs(procs []Proc, ok bool) {
 	}
 	r := s.read()
 	top, fsev, fseen := summarize(procs)
+	s.mu.Lock()
+	src := s.orphanSrc
+	s.mu.Unlock()
+	var ov orphanView
+	if ok {
+		ov = s.orph.update(s.now(), procs, src)
+	}
 
 	s.mu.Lock()
 	s.latest, s.have = r, true
@@ -105,6 +118,7 @@ func (s *Sampler) SampleProcs(procs []Proc, ok bool) {
 	s.procsOK, s.top, s.fseventsdRSS, s.fseventsdSeen = ok, nil, 0, false
 	if ok {
 		s.top, s.fseventsdRSS, s.fseventsdSeen = top, fsev, fseen
+		s.orphans = ov
 	}
 	var out []events.Event
 	move := func(vital string, over bool, crossed, cleared, detail string) {
@@ -125,6 +139,9 @@ func (s *Sampler) SampleProcs(procs []Proc, ok bool) {
 	}
 	if ok && len(top) > 0 {
 		move("process", top[0].RSSBytes > ProcessRSSCrossBytes, "process RSS over its line", "process RSS back under its line", procDetail(top[0]))
+	}
+	if ok {
+		move("orphan", ov.over, "orphan CPU over its line", "orphan CPU back under its line", ov.detail)
 	}
 	s.mu.Unlock()
 

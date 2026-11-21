@@ -206,15 +206,15 @@ func TestAGapChangesNeitherTheStateNorTheEvents(t *testing.T) {
 	}
 }
 
-// The two vitals this build samples are no longer gap lines; the two it does
-// not sample still are, each with its design section.
+// Every vital this build samples is no longer a gap line; the one it does not
+// sample still is, with its design section.
 func TestOnlyUnsampledVitalsRemainGapLines(t *testing.T) {
 	s := sampleProcs(t, []Proc{pr(1, "x", oneGiB)}, true)
 	var got []string
 	for _, g := range s.Snapshot().Gaps {
 		got = append(got, g.Vital+" "+g.Section)
 	}
-	want := []string{"orphan CPU 2.1", "SSD wear 2"}
+	want := []string{"SSD wear 2"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("gaps = %v, want %v", got, want)
 	}
