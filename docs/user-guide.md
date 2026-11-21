@@ -755,8 +755,8 @@ marvel does not write a director entry for a claude seat. For codex it seeds
 passes no MCP configuration at all: its claude adapter projects policy settings
 and `--setting-sources`, and nothing about MCP servers. A claude seat reaches
 the bus only if the role's own command or your Claude configuration gives it the
-director server. The recommended way is a launcher that passes the server
-inline; the operator's own Claude configuration can also hold it.
+director server. Two ways work today; the first, a launcher that passes the
+server inline, is the one to use.
 
 **Recommended: the role command is a launcher that passes the server inline.** The launcher
 ends in `exec claude ... --strict-mcp-config --mcp-config '<json>'`, where the
@@ -791,9 +791,9 @@ loads MCP servers recorded under `projects.<directory>.mcpServers` in its own
 user config file, for the directory a seat starts in (the layout is described in
 `docs/design/seat-bootstrap.md`, which checked it against one Claude Code
 release). A director entry there reaches any claude seat started in that
-directory. marvel neither writes nor reads it. This is the operator's choice for
-their own sessions, and not a step a seat or a newcomer is asked to take; the
-entry would need the same `env` values as above for the shim to know the seat.
+directory. marvel neither writes nor reads it. It is your own Claude
+configuration, something you may choose to keep, and never a step that a seat,
+a role or a lab kit asks a user to take.
 
 `marvel doctor` checks one thing here. A role names the shim if it sets a
 `DIRECTOR_` key in its `runtime.env`, or has `director-mcp` or
