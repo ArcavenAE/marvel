@@ -359,6 +359,44 @@ not set `DIRECTOR_ROLE`: in director's shim that variable makes a session a
 holder of the role's inbox, so a role that wants role mail declares it in its
 own `runtime.env`.
 
+#### The exact form of a session name
+
+`MARVEL_SESSION` is the session name, and nothing else: no workspace prefix.
+The name is `<team>-<role>-g<generation>-<index>`, built from the team name, the
+role name, the team's generation (a shift raises it by one) and an index that is
+counted per team, role and generation. The index starts at 0 and is one more
+than the highest index already stored for that team, role and generation.
+
+```
+MARVEL_SESSION=demo-team-builder-g4-1
+```
+
+That is team `demo-team`, role `builder`, generation 4, index 1.
+`MARVEL_WORKSPACE` carries the workspace on its own (`dev`). The two are joined
+with a slash only in the session's key, `<workspace>/<name>`, which is how the
+store names a session (`dev/demo-team-builder-g4-1`).
+
+`MARVEL_PREDECESSOR` is the key, not the name, of the session the seat replaces,
+so it does carry the workspace prefix. It is set only on a successor (a shift,
+a wake, a restart after a crash) and left unset on a first spawn.
+
+```
+MARVEL_PREDECESSOR=dev/demo-team-builder-g3-1
+```
+
+`{session}` in a role's `handoff` path is the session name as `MARVEL_SESSION`
+shows it, without the workspace. A name that is not exactly one path element is
+refused, so the value cannot steer the path out of its directory.
+
+```
+handoff = "~/.marvel-handoffs/{session}.md"
+# for the seat above: ~/.marvel-handoffs/demo-team-builder-g4-1.md
+```
+
+A tool that needs to tell one seat from another by these values compares whole
+strings. It does not split a name on `-`, because a team or role name may
+contain one.
+
 ### A policy that reads a settings file
 
 A `[[policy]]` is a named Claude Code settings fragment that marvel projects into
