@@ -269,6 +269,38 @@ idea, mechanism 1).
   router such as liteLLM expects. Reported separately; a registry that detects
   a router backend should not ship before that list covers it.
 
+## 6a. Prior art: a provider switcher's breaker and failover rule (2026-11-21)
+
+Recorded so that whoever first proposes moving work between backends starts from these rules, not from a retry loop. marvel has no failover and no circuit breaker today (a grep for circuit breaker, half-open or failover in its Go code finds nothing), so nothing here is a ticket.
+
+**What cc-switch does** (farion1231/cc-switch, MIT, read at commit `2c084ec752a985fa77470facc14cad76ee67e8e1`, design only; paths under `src-tauri/src/`):
+
+- **A per-provider circuit breaker** with closed, open and half-open states. The half-open probe permit is returned on drop (`proxy/circuit_breaker.rs:111-131`).
+- **An untyped failure count.** `record_failure` takes no error kind (`:273`). The breaker reopens on a timer, 60 seconds by default, that the user can configure and change at runtime (`:56`, `:68`, `:157`). Against a quota wall that resets in hours, that spends a probe each period on an answer already known.
+- **One account-boundary rule.** Codex Official cards never take part in provider retry, because "reusing that request against another account card would cross the account boundary" (`proxy/provider_router.rs:21-26`). It covers that one card type only.
+
+**Rules for marvel, if failover is ever proposed:**
+
+1. **Failover never crosses a credential principal on its own.** Whether work may move to another person's account, or between one person's own subscriptions when one hits its cap, is a ruling for the operator under SOUL section 3 and the vendor's terms, not a routing choice. This matches section 5's note that the backend choice is a custody decision.
+2. **An agent session moved between backends resumes from a checkpoint and never replays.** cc-switch retries a single HTTP request. A marvel session has already made tool calls, commits and bus posts, and replaying it duplicates them.
+   - **Planned stop:** section 5's "Move an agent to another backend" row already uses a shift with handoff, started while headroom remains, which is the checkpoint.
+   - **Unclean stop:** failover follows a failure, which is the stop where no handoff gets written. So after one, the successor reconciles from durable state and reports any side effects since the last checkpoint as unknown. It never redoes them.
+3. **A breaker trips on an error kind, not a count.**
+   - **`rate_limit`:** holds open until the account window's reset time, which marvel already stores (`internal/api/account.go:138`). With no fresh window reading, it uses the timer and never assumes a reset.
+   - **`server_error`:** uses a timer and a half-open probe.
+   - **`invalid_request`:** a defect in the request, not the backend. It never trips a breaker.
+   - **`authentication_failed` and `oauth_org_not_allowed`:** close only by a human act (SOUL section 8).
+
+**First tests for whoever proposes failover** (named here, not filed):
+
+- `TestFailoverRefusesCrossPrincipalMoveWithoutARuling`
+- `TestMovedSessionResumesWithoutReplayingToolCalls`
+- `TestRateLimitStaysOpenUntilResetsAt`
+- `TestStaleWindowFallsBackToTheTimer`
+- `TestInvalidRequestNeverTripsTheBreaker`
+
+A related property is tracked as #1555: a seat can take a credential or a model from the user's own settings layer, whichever tool wrote it there. Any failover design depends on #1555 being closed first.
+
 ## 7. Open questions and a first probe
 
 1. **PAIR (answered 2026-09-25; see the top).** What stays open: can marvel
