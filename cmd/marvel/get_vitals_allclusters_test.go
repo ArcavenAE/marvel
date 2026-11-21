@@ -169,17 +169,21 @@ func TestGetVitalsAllClustersFlagRules(t *testing.T) {
 	cases := []struct {
 		name string
 		args []string
+		want string
 	}{
-		{"watch", []string{"get", "vitals", "--all-clusters", "--watch"}},
-		{"yaml", []string{"get", "vitals", "--all-clusters", "-o", "yaml"}},
-		{"columns", []string{"get", "vitals", "--all-clusters", "--columns", "key"}},
-		{"cluster with all", []string{"get", "vitals", "--all-clusters", "--cluster", "a"}},
-		{"socket with all", []string{"get", "vitals", "--all-clusters", "--socket", "/nonexistent"}},
+		{"watch", []string{"get", "vitals", "--all-clusters", "--watch"}, "get vitals does not support --watch"},
+		{"yaml", []string{"get", "vitals", "--all-clusters", "-o", "yaml"}, "-o yaml is not supported"},
+		{"columns", []string{"get", "vitals", "--all-clusters", "--columns", "key"}, "--columns applies to get sessions only"},
+		{"cluster with all", []string{"get", "vitals", "--all-clusters", "--cluster", "a"}, "--all-clusters and --cluster cannot be combined"},
+		{"socket with all", []string{"get", "vitals", "--all-clusters", "--socket", "/nonexistent"}, "--socket and --identity name one daemon"},
 	}
 	for _, c := range cases {
 		code, _, stderr := runFanGet(t, c.args...)
 		if code != 1 {
 			t.Errorf("%s: exit = %d, want 1\n%s", c.name, code, stderr)
+		}
+		if !strings.Contains(stderr, c.want) {
+			t.Errorf("%s: stderr lacks the intended refusal %q:\n%s", c.name, c.want, stderr)
 		}
 	}
 	if a.conns() != 0 {
@@ -196,8 +200,12 @@ func TestAllClustersStillRefusedForOtherReads(t *testing.T) {
 		t.Fatalf("control, get vitals --all-clusters: exit = %d, want 0\n%s", code, stderr)
 	}
 	for _, res := range []string{"teams", "workspaces", "endpoints", "policies"} {
-		if code, _, stderr := runFanGet(t, "get", res, "--all-clusters"); code != 1 {
+		code, _, stderr := runFanGet(t, "get", res, "--all-clusters")
+		if code != 1 {
 			t.Errorf("get %s --all-clusters: exit = %d, want 1\n%s", res, code, stderr)
+		}
+		if want := "apply to get sessions and get vitals only"; !strings.Contains(stderr, want) {
+			t.Errorf("get %s --all-clusters: stderr lacks the intended refusal %q:\n%s", res, want, stderr)
 		}
 	}
 }

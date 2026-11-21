@@ -148,7 +148,7 @@ marvel get <resource-type> [flags]
 ### Options
 
 ```
-      --all-clusters              with get sessions: read every cluster in the client config, in parallel, each under its own 10 s timer
+      --all-clusters              with get sessions or get vitals: read every cluster in the client config, in parallel, each under its own 10 s timer
       --columns string            sessions columns, comma-separated and in order (overrides display.session_columns); names: workspace, team, role, generation, name, state, health, composer, pane, context, cpu, rss, desk, runtime, llm, workdir, tout, rate, last-active, last-turn, age, active, tin, cr, cw, prompt, hit, spec, account, 5h, 7d, 5h-reset, 7d-reset, read, backend, cred, home, login, cluster, key, cost, wide, acct, service, rest
       --header                    print the daemon header above the sessions table even when stdout is not a terminal
       --load                      with get teams: one row per team with seats, mean ACTIVE% and limited seats
