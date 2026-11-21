@@ -1,6 +1,15 @@
 # Host vitals: a per-host sampler in marvel
 
-Proposal, 2026-11-02. Code read at marvel `8587651a`. Built so far: the swap and memory pressure readings, the cluster `host_vitals` switch (off by default), the in-memory latest sample, and the swap crossing events (`internal/hostvitals`). Not yet built: the widened `ps` pass and the orphan, fseventsd and process-RSS vitals, the weekly `smartctl` read, the `host.vitals` bus envelope, the OTel gauges, and `marvel get vitals`.
+Proposal, 2026-11-02, scope revised 2026-11-21. Code read at marvel `a007c4a6`. Built so far: the swap and memory pressure readings, the cluster `host_vitals` switch (off by default), the in-memory latest sample, the swap crossing events, the widened `ps` pass with the fseventsd and process-RSS vitals, the orphan CPU vital, and `marvel get vitals` (`internal/hostvitals`). Deferred: the `host.vitals` bus envelope and the OTel gauges. Out of scope: the weekly `smartctl` read.
+
+## Scope
+
+marvel samples only what tells whether this host can still carry the fleet, and what marvel itself left behind.
+
+- **In:** swap and memory pressure; CPU of leftover processes; the top 10 processes by memory, from the process list marvel already reads; and fseventsd, kept as the last named-daemon watch, with no more named daemons after it.
+- **In, but small:** measuring the leftover marker on a real leftover, after aae-orc-tmvgv. Until then the markers in section 2.1 rest on design reasoning.
+- **Deferred:** the `host.vitals` bus message, until director#470 is reworked to read it; and the OTel gauges, until marvel exports OTel for its seats (available, never required).
+- **Out:** weekly SSD wear (`smartctl`). It is hardware health, and trends across hosts belong to critic.
 
 - **Author:** the architect seat, team arcaven.
 - **Asked by:** the operator, relayed by director, 2026-11-02.
@@ -21,7 +30,7 @@ This is the direction the operator approved:
 |---|---|---|
 | sample | marvel, on every host it runs on | reads the vitals once a minute, serves them, emits them |
 | consume and decide | director | receives the events and decides what reaches the operator. director#470 is still open and still proposes a sampler outside marvel; under this split it would be reworked from sampling to consuming, and it has not been yet. |
-| trend | critic, from outside | growth per day and wear per week, across hosts and over weeks |
+| trend | critic, from outside | growth per day, across hosts and over weeks |
 
 marvel never decides what is worth a person's attention, and director never reads a host's process table. Each part is useful without the others (section 6).
 
@@ -34,7 +43,6 @@ marvel never decides what is worth a person's attention, and director never read
 | the top processes by RSS | the `ps` pass `RunMetrics` already runs (`internal/procstat`), widened | top 10, with pid, parent, elapsed time, CPU time and command name |
 | fseventsd RSS | the same rows, by command name | darwin only; a GAP line on linux |
 | orphaned CPU | the same rows, across passes | section 2.1 |
-| SSD wear, weekly | `smartctl -a` on the boot disk, once a week: Percentage Used and Data Units Written | a GAP line when smartmontools is absent; it never installs it |
 
 ### 2.1 The orphan case
 
@@ -51,15 +59,15 @@ The budget is one process-table read a minute. The design spends less than that.
 
 - `RunMetrics` already runs `ps -A -o pid=,ppid=,pcpu=,rss=` once per pass, every 5 s (`internal/procstat/read_darwin.go`, `MetricsInterval` in `internal/daemon/daemon.go`): 12 execs a minute today.
 - The vitals read takes every twelfth pass and adds three columns to the same call (elapsed time, CPU time, command name). That is no new exec, and a few tens of KB more output once a minute on a host with about 900 processes.
-- Swap and pressure are sysctl calls in the daemon's own process. smartctl is one exec a week.
+- Swap and pressure are sysctl calls in the daemon's own process.
 - **A host with no seats.** As the code stands at `1ffe3872`, the metrics pass returns before it runs `ps` when no live session has a pid (`SampleMetricsOnce`, `internal/daemon/metrics.go`), and `Sampler.Sample` returns early when it is given no roots (`internal/procstat/procstat.go`). So on an enabled host with no seats, a sampler that only rode the pass would read nothing. The build does not skip the reading: on the vitals pass, when the metrics pass ran no `ps`, the vitals read runs it once itself. A host with no seats then costs one `ps` a minute, the budget above, and a host with a live seat costs nothing beyond today.
 - For scale: on the busiest host, a root capture measured about 827 tmux client starts a minute (#1214). Attributing them to the reconcile loop's per-pane `tmux list-panes` comes from reading the code on that issue, not from a measurement. A standalone sampler at one `ps` a minute would add about 0.12% to that. Riding the existing pass adds nothing.
 
 ## 3. Output
 
-- **A bus event.** Once a minute, one small `host.vitals` envelope per host: the readings, and the thresholds over their line. It goes through marvel's existing bus publisher (`internal/bus`) where a bus is configured. The subject is for director#470 to name once it is reworked to consume; it is still open.
+- **A bus event (deferred until director#470 is reworked to read it).** Once a minute, one small `host.vitals` envelope per host: the readings, and the thresholds over their line. It goes through marvel's existing bus publisher (`internal/bus`) where a bus is configured. The subject is for director#470 to name once it is reworked to consume; it is still open.
 - **marvel's own events ring.** Only crossings, not every sample: `host.vitals.crossed` when a threshold is first passed, and `host.vitals.cleared` when it is no longer passed. `marvel events` shows them without a bus.
-- **OTel metrics, where enabled.** One gauge per vital (`marvel.host.swap_used_bytes`, `marvel.host.memory_pressure_level`, `marvel.host.process_rss_bytes` for the top processes, `marvel.host.orphan_cpu_seconds`, `marvel.host.ssd_percentage_used`), per SOUL section 6: always available, never mandatory. marvel's OTel package today has one gauge, used only by the simulator (`internal/otel/metrics.go`), so exporting from the daemon is new work.
+- **OTel metrics, where enabled.** One gauge per vital (`marvel.host.swap_used_bytes`, `marvel.host.memory_pressure_level`, `marvel.host.process_rss_bytes` for the top processes, `marvel.host.orphan_cpu_seconds`), deferred until marvel exports OTel for its seats, per SOUL section 6: always available, never mandatory. marvel's OTel package today has one gauge, used only by the simulator (`internal/otel/metrics.go`), so exporting from the daemon is new work.
 - **`marvel get vitals`.** The latest sample, its time, each threshold with its state, and each GAP line. `-o json` for scripts. It reads daemon memory only; the samples are not written to bolt (section 7).
 
 ## 4. Thresholds (provisional)
@@ -72,7 +80,6 @@ Each threshold below is a proposal, re-checked on 2026-11-16 against the first t
 | fseventsd RSS | over 4 GB | the flat hosts read 8 to 11 MB, so 4 GB is far outside normal and far below the 14 GB the busiest host held four weeks before its crash |
 | any process RSS | over 20 GB | the one-off job reached 54 GB; this host has 128 GB |
 | an orphan's CPU | over 90% of a core for more than 30 minutes | the #805 clients spun for three hours |
-| SSD wear | Percentage Used up 1 point or more in a week | a starting line, since no wear figure for these hosts is recorded yet; the first readings set the baseline |
 
 ## 5. No remediation
 
@@ -88,7 +95,7 @@ marvel never kills, restarts or signals a process because of a vital. A crossing
 
 - It writes no sample to bolt. Readings are stale the moment they are taken, the precedent `UpdateSessionMetrics` already follows (`internal/api/store.go`). This also keeps it out of the write volume #1214 is reducing.
 - It reads no file contents and does not walk a file tree.
-- It needs no root. Only `smartctl` may need extra rights on some disks, and when it cannot read, that is a GAP line.
+- It needs no root.
 - It replaces the interim report-only host script that `host-health-guard.md` 4.1 put outside marvel for v0.1, once this lands. Until then both may run.
 
 ## 8. What it would have caught
@@ -101,7 +108,6 @@ Using the incident timeline, in UTC:
 | the 54 GB job | any process over 20 GB | at the first minute it passed 20 GB, between its start at about 2026-10-30 21:56Z and the crash; its growth was not recorded, so the minute cannot be named | up to about 7 hours |
 | swap exhaustion | swap over 50% | likely before the first low-memory panel at 2026-10-31 03:21Z, since the panel means swap was near full; no swap reading survives from that night, so the minute cannot be named | likely more than the 92 minutes from the panel to the crash |
 | the stuck tmux clients | orphan over 90% for 30 minutes | 30 minutes into the spin | about 2.5 of the 3 hours |
-| SSD wear | up 1 point a week | not dated: no wear reading exists | none known |
 
 In each case the event reaches director, and director decides whether the operator is told. On the night of 2026-10-30 that is the difference between a decision made in time and a crash found the next morning.
 
@@ -120,7 +126,7 @@ Note added 2026-11-02, after review; the ruling is unchanged. "Zero new execs" h
 
 ## 10. Candidate requirements (provisional)
 
-- **HV-1** (provisional; source: incident, the operator's direction). marvel samples host vitals once a minute on every host where the cluster config turns it on. It adds no process exec beyond the pass `RunMetrics` already runs while a seat is live, at most one `ps` a minute while none is (section 2.2), and one weekly `smartctl`.
+- **HV-1** (provisional; source: incident, the operator's direction). marvel samples host vitals once a minute on every host where the cluster config turns it on. It adds no process exec beyond the pass `RunMetrics` already runs while a seat is live, at most one `ps` a minute while none is (section 2.2).
 - **HV-2** (provisional; source: HH-1, HH-3). A vital never causes marvel to signal, kill or restart a process.
 - **HV-3** (provisional; source: SOUL section 8). Every threshold is a declared constant and a diagnostic; none gates anything.
 - **HV-4** (provisional; source: SOUL section 2). With no director, the sampler and `marvel get vitals` work unchanged. With no marvel, director shows a GAP for that host.
