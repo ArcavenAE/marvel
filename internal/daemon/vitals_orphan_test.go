@@ -118,3 +118,19 @@ func TestLoadHostVitalsGivesTheDaemonItsMarkerReader(t *testing.T) {
 		t.Error("loadHostVitals left the marker reader nil")
 	}
 }
+
+// The seat dies between two vitals passes and leaves the store: its orphan still
+// carries the seat's key, which the sampler recorded while the seat was alive.
+func TestVitalsPassKeepsTheKeyOfASeatThatLeftTheStore(t *testing.T) {
+	d := orphanDaemon(t, func(int) (procargs.Marker, error) { return procargs.Marker{}, nil })
+	key := d.store.ListSessions()[0].Key()
+	tickVitalsPass(d, []procstat.Proc{tableProc(100, 50, "sh"), tableProc(101, 100, "tmux")})
+	if err := d.store.DeleteSession(key); err != nil {
+		t.Fatal(err)
+	}
+	tickVitalsPass(d, []procstat.Proc{tableProc(101, 1, "tmux")})
+	got := d.vitals.Snapshot().Orphans
+	if len(got) != 1 || got[0].PID != 101 || got[0].Session != key {
+		t.Errorf("orphans = %+v, want pid 101 carrying the dead seat's key %q", got, key)
+	}
+}

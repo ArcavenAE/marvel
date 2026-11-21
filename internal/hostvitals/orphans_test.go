@@ -363,3 +363,45 @@ func TestSeatTreeOrphanHasTheSeatsSessionAndMarkerOrphanOnlyAClaim(t *testing.T)
 		}
 	}
 }
+
+// The seat's key is recorded when the process is seen under the seat's pane, not
+// looked up when it is marked: by then the seat is usually gone, and an orphan of
+// a dead seat is the case the vital exists for.
+func TestSeatTreeOrphanKeepsTheKeyOfASeatThatDied(t *testing.T) {
+	r := newRig(t)
+	r.roots = []int{100}
+	r.seat[100] = "ws/seat-0"
+	r.pass(op(100, 50, "sh", 1, 600), op(101, 100, "tmux", 10, 600))
+
+	// The seat dies between the passes: it is no longer a root, the daemon's
+	// record no longer names it, and its pane process is gone from the table.
+	r.roots = nil
+	delete(r.seat, 100)
+	r.pass(op(101, 1, "tmux", 12, 660))
+
+	got := r.orphans()
+	if len(got) != 1 || got[0].PID != 101 || got[0].Reason != ReasonSeatTree {
+		t.Fatalf("orphans = %+v, want pid 101 marked by its seat tree", got)
+	}
+	if got[0].Session != "ws/seat-0" || got[0].ClaimedSession != "" {
+		t.Errorf("orphan = %+v, want the dead seat's key ws/seat-0 as Session and no claim", got[0])
+	}
+}
+
+// Two seats, one dies: each orphan carries its own seat's key.
+func TestSeatTreeOrphansCarryTheirOwnSeatsKeys(t *testing.T) {
+	r := newRig(t)
+	r.roots = []int{100, 200}
+	r.seat[100], r.seat[200] = "ws/seat-0", "ws/seat-1"
+	r.pass(op(100, 50, "sh", 1, 600), op(101, 100, "tmux", 1, 600), op(200, 50, "sh", 1, 600), op(201, 200, "tmux", 1, 600))
+	r.roots = []int{200}
+	delete(r.seat, 100)
+	r.pass(op(101, 1, "tmux", 2, 660), op(200, 50, "sh", 1, 660), op(201, 1, "tmux", 2, 660))
+	byPID := map[int]Orphan{}
+	for _, o := range r.orphans() {
+		byPID[o.PID] = o
+	}
+	if byPID[101].Session != "ws/seat-0" || byPID[201].Session != "ws/seat-1" {
+		t.Errorf("sessions = %q and %q, want ws/seat-0 and ws/seat-1", byPID[101].Session, byPID[201].Session)
+	}
+}
