@@ -17,7 +17,8 @@ type Threshold struct {
 
 // Gap is a vital the design lists and the sampler does not hold yet. Section
 // is the section of docs/design/host-vitals.md that names it, so the build
-// that adds the vital removes the line.
+// that adds the vital removes the line. The design lists none of that kind
+// today (weekly SSD wear is out of scope), so nothing fills Snapshot.Gaps.
 type Gap struct {
 	Vital   string `json:"vital"`
 	Section string `json:"section"`
@@ -37,18 +38,6 @@ type Snapshot struct {
 	Gaps       []Gap       `json:"gaps,omitempty"`
 }
 
-// notSampled is the reason every gap line carries today.
-const notSampled = "not sampled yet"
-
-// gaps are the vitals the design lists (section 2) and the sampler does not
-// hold yet, in the design's table order. A build that samples one removes its
-// line here.
-func gaps() []Gap {
-	return []Gap{
-		{Vital: "SSD wear", Section: "2", Reason: notSampled},
-	}
-}
-
 // Snapshot returns the sampler's state. It does not read the host. A sampler
 // that is off, or a nil one, answers the zero snapshot: enabled false and
 // nothing else.
@@ -56,7 +45,7 @@ func (s *Sampler) Snapshot() Snapshot {
 	if !s.Enabled() {
 		return Snapshot{}
 	}
-	snap := Snapshot{Enabled: true, Gaps: gaps()}
+	snap := Snapshot{Enabled: true}
 	s.mu.Lock()
 	have, r, at := s.have, s.latest, s.latestAt.UTC()
 	procsOK, top, fsev, fseen := s.procsOK, append([]Proc(nil), s.top...), s.fseventsdRSS, s.fseventsdSeen
