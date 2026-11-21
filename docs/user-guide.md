@@ -816,9 +816,10 @@ JSON names one server, `director`, whose command is the director shim and whose
 The launcher can add `DIRECTOR_CUE`, `DIRECTOR_PREDECESSOR` and, for a seat with
 a global address, `DIRECTOR_GLOBAL_DOMAIN`, `DIRECTOR_CLUSTER` and
 `DIRECTOR_GLOBAL_ROLE`. It takes the values from the environment marvel
-constructs for the seat (above), and writes them out because the shim also
-inherits the launcher's environment and the `env` map is merged over it, so the
-seat's own values win. `--strict-mcp-config` makes claude load only this
+constructs for the seat (above). The launcher derives `DIRECTOR_TEAM`,
+`DIRECTOR_WORKSPACE` and `NATS_URL` without exporting them (`cast-launch.sh`
+lines 39-41 in director), so the JSON `env` map is how they reach the shim.
+`--strict-mcp-config` makes claude load only this
 file, so no project-scoped entry adds a second director server. To point the
 launcher at a shim kept elsewhere, set the variable the launcher reads for its
 path (in director's launcher, `DIRECTOR_SHIM_BIN`, defaulting to `director-mcp`
