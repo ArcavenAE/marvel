@@ -2,7 +2,6 @@ package hostvitals
 
 import (
 	"encoding/json"
-	"reflect"
 	"testing"
 	"time"
 )
@@ -52,8 +51,8 @@ func TestSnapshotBeforeTheFirstSample(t *testing.T) {
 	if len(got.Thresholds) != 0 {
 		t.Errorf("thresholds before a sample = %+v, want none", got.Thresholds)
 	}
-	if len(got.Gaps) == 0 {
-		t.Error("no gaps before the first sample, want the design-listed vitals not held yet")
+	if len(got.Gaps) != 0 {
+		t.Errorf("gaps before the first sample = %+v, want none", got.Gaps)
 	}
 }
 
@@ -129,24 +128,13 @@ func TestSnapshotMemoryPressureHasNoLine(t *testing.T) {
 	}
 }
 
-// Each vital the design lists and the sampler does not hold yet is a gap
-// line naming its design section, so the build that adds the vital removes
-// the line. The order is the design's table order.
-func TestSnapshotGapsNameTheirDesignSections(t *testing.T) {
+// Weekly SSD wear is out of scope (docs/design/host-vitals.md, Scope), so the
+// snapshot carries no gap line for it, and no other gap line is left.
+func TestSnapshotHasNoGapLines(t *testing.T) {
 	s := New(true, func() Reading { return swapReading(1, 100) }, nil)
 	s.Sample()
-	var got [][2]string
 	for _, g := range s.Snapshot().Gaps {
-		if g.Reason == "" {
-			t.Errorf("gap %q has no reason", g.Vital)
-		}
-		got = append(got, [2]string{g.Vital, g.Section})
-	}
-	want := [][2]string{
-		{"SSD wear", "2"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("gaps = %v, want %v", got, want)
+		t.Errorf("snapshot has a gap line for %q (section %s), want none", g.Vital, g.Section)
 	}
 }
 
@@ -163,10 +151,13 @@ func TestSnapshotJSONKeys(t *testing.T) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"enabled", "sampled", "at", "reading", "thresholds", "gaps"} {
+	for _, k := range []string{"enabled", "sampled", "at", "reading", "thresholds"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("JSON has no %q key: %s", k, raw)
 		}
+	}
+	if _, ok := m["gaps"]; ok {
+		t.Errorf("JSON has a gaps key with no gap to report: %s", raw)
 	}
 	ths, _ := m["thresholds"].([]any)
 	if len(ths) == 0 {
@@ -178,14 +169,20 @@ func TestSnapshotJSONKeys(t *testing.T) {
 			t.Errorf("threshold has no %q key: %v", k, first)
 		}
 	}
-	gaps, _ := m["gaps"].([]any)
-	if len(gaps) == 0 {
-		t.Fatalf("no gaps in %s", raw)
+	// The gap type keeps its key names for a gap a later build adds.
+	raw, err = json.Marshal(Snapshot{Gaps: []Gap{{Vital: "v", Section: "2", Reason: "r"}}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	g0, _ := gaps[0].(map[string]any)
+	var withGap struct {
+		Gaps []map[string]any `json:"gaps"`
+	}
+	if err := json.Unmarshal(raw, &withGap); err != nil || len(withGap.Gaps) != 1 {
+		t.Fatalf("a snapshot with one gap marshalled to %s (err %v)", raw, err)
+	}
 	for _, k := range []string{"vital", "section", "reason"} {
-		if _, ok := g0[k]; !ok {
-			t.Errorf("gap has no %q key: %v", k, g0)
+		if _, ok := withGap.Gaps[0][k]; !ok {
+			t.Errorf("gap has no %q key: %v", k, withGap.Gaps[0])
 		}
 	}
 }
