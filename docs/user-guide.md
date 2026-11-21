@@ -748,6 +748,61 @@ pushed the newest real record beyond the tail marvel reads. Occupancy
 only rises within a compaction generation, so a stale reading is safe
 where a zero one is not.
 
+### How a claude seat gets the director MCP server
+
+marvel does not write a director entry for a claude seat. For codex it seeds
+`[mcp_servers.director]` from your own codex config (see above); for claude it
+passes no MCP configuration at all: its claude adapter projects policy settings
+and `--setting-sources`, and nothing about MCP servers. A claude seat reaches
+the bus only if the role's own command or your Claude configuration gives it the
+director server. Two ways work today.
+
+**The role command is a launcher that passes the server inline.** The launcher
+ends in `exec claude ... --strict-mcp-config --mcp-config '<json>'`, where the
+JSON names one server, `director`, whose command is the director shim and whose
+`env` map carries the seat's identity. The shape, with placeholders:
+
+```json
+{"mcpServers":{"director":{
+  "command":"<path to the director-mcp shim>",
+  "env":{
+    "DIRECTOR_AGENT_ID":"<the seat's MARVEL_SESSION>",
+    "DIRECTOR_ROLE":"<the seat's MARVEL_ROLE>",
+    "DIRECTOR_TEAM":"<the seat's MARVEL_TEAM>",
+    "DIRECTOR_WORKSPACE":"<the seat's MARVEL_WORKSPACE>",
+    "NATS_URL":"<the bus url>"
+  }}}}
+```
+
+The launcher can add `DIRECTOR_CUE`, `DIRECTOR_PREDECESSOR` and, for a seat with
+a global address, `DIRECTOR_GLOBAL_DOMAIN`, `DIRECTOR_CLUSTER` and
+`DIRECTOR_GLOBAL_ROLE`. It takes the values from the environment marvel
+constructs for the seat (above), which is why they are written out and not left
+for the server to inherit. `--strict-mcp-config` makes claude load only this
+file, so no project-scoped entry adds a second director server. To point the
+launcher at a shim kept elsewhere, set the variable the launcher reads for its
+path (in director's launcher, `DIRECTOR_SHIM_BIN`, defaulting to `director-mcp`
+under `~/.director/bin`). `DIRECTOR_ROLE` is set here by the launcher, not by
+marvel, as the section on the seat's environment says.
+
+**Your Claude configuration holds a per-directory entry.** Claude Code also
+loads MCP servers recorded under `projects.<directory>.mcpServers` in its own
+user config file, for the directory a seat starts in (the layout is described in
+`docs/design/seat-bootstrap.md`, which checked it against one Claude Code
+release). A director entry there reaches any claude seat started in that
+directory. marvel neither writes nor reads it, so you add it by hand, and the
+entry needs the same `env` values as above if the shim is to know the seat.
+
+`marvel doctor` checks one thing here. A role names the shim if it sets a
+`DIRECTOR_` key in its `runtime.env`, or has `director-mcp` or
+`development-channels` in its command or args; if any role in the manifest does,
+doctor fails when `director-mcp` is not on `PATH`. It does not read your Claude configuration.
+
+`docs/design/seat-bootstrap.md` describes marvel projecting the server itself,
+from a `claude.director_mcp` entry in the cluster config, and skipping it when
+the role or your configuration already supplies one. That design is not built at
+this release (it is step SB-4M in that document), so do not rely on it.
+
 ### Seat identity in harness telemetry
 
 A harness's own telemetry says which harness session it came from and
