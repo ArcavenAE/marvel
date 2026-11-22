@@ -394,3 +394,28 @@ func TestRedactArgsTruncatesAfterRedacting(t *testing.T) {
 		t.Errorf("short args = %q, want \"sleep 9\" with no suffix", short)
 	}
 }
+
+// The crossing event and the vital's detail carry the pid, the name, the reason
+// and a count, never the arguments or the working directory: those appear only in
+// the orphan rows. A positional secret that redaction cannot see must stay out of
+// the event.
+func TestTheCrossingEventAndDetailCarryNoArgsOrCwd(t *testing.T) {
+	d := newDetailRig(t)
+	d.args[300] = []string{"/usr/local/bin/uploader", "s3cr3t-positional-value"}
+	d.cwd[300] = "/srv/private-job-dir"
+	d.busy(40)
+	o := findOrphan(d.orphans(), 300)
+	if o == nil || !strings.Contains(o.Args, "uploader") {
+		t.Fatalf("orphan = %+v, want pid 300 reported with its args in the row", o)
+	}
+	if len(d.rec.got) != 1 {
+		t.Fatalf("events = %v, want one crossing", d.rec.kinds())
+	}
+	for _, text := range []string{d.rec.got[0].Message, d.vital().Detail} {
+		for _, leak := range []string{"s3cr3t", "uploader", "private-job-dir", "/srv"} {
+			if strings.Contains(text, leak) {
+				t.Errorf("text %q carries %q, want pid, name, reason and count only", text, leak)
+			}
+		}
+	}
+}
