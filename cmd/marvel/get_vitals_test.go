@@ -375,18 +375,18 @@ func TestGetVitalsShowsTheUnattributedOrphansArgsCwdAndAge(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("%d lines, want a header, the unattributed row, its detail line and the seat tree row:\n%s", len(lines), out.String())
+	if len(lines) != 5 {
+		t.Fatalf("%d lines, want the title, the header, the unattributed row, its detail line and the seat tree row:\n%s", len(lines), out.String())
 	}
-	if !strings.Contains(lines[1], "unattributed") || !strings.Contains(lines[1], "4242") {
-		t.Errorf("row = %q, want pid 4242 and the reason", lines[1])
+	if !strings.Contains(lines[2], "unattributed") || !strings.Contains(lines[2], "4242") {
+		t.Errorf("row = %q, want pid 4242 and the reason", lines[2])
 	}
 	for _, want := range []string{"args: /bin/zsh -c loop --token <redacted>", "cwd: /srv/job", "age: 1d12h0m0s"} {
-		if !strings.Contains(lines[2], want) {
-			t.Errorf("detail line = %q, want %q", lines[2], want)
+		if !strings.Contains(lines[3], want) {
+			t.Errorf("detail line = %q, want %q", lines[3], want)
 		}
 	}
-	hdr, seat := lines[0], lines[3]
+	hdr, seat := lines[1], lines[4]
 	if strings.Index(hdr, "SESSION") != strings.Index(seat, "aae/seat-1") {
 		t.Errorf("the SESSION column does not line up with the seat tree row:\n%s\n%s", hdr, seat)
 	}

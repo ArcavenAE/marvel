@@ -101,6 +101,9 @@ type orphanEntry struct {
 	cpu       float64
 	elapsed   float64
 	hist      []cpuPoint
+	// detailed is set once the arguments and directory of an unattributed
+	// process have been read.
+	detailed bool
 }
 
 // orphanTracker is the sampler's memory across vitals passes. It is touched
@@ -166,16 +169,17 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 			t.mark(now, p, ReasonSeatTree, t.key[p.PID], "")
 			continue
 		}
-		if src.Marker == nil {
-			continue
+		if src.Marker != nil {
+			if _, done := t.probed[p.PID]; !done {
+				t.probed[p.PID] = p.ElapsedSeconds
+				if m, err := src.Marker(p.PID); err == nil && m.Marvel() {
+					t.mark(now, p, ReasonMarker, "", m.Session)
+					continue
+				}
+			}
 		}
-		if _, done := t.probed[p.PID]; done {
-			continue
-		}
-		t.probed[p.PID] = p.ElapsedSeconds
-		if m, err := src.Marker(p.PID); err == nil && m.Marvel() {
-			t.mark(now, p, ReasonMarker, "", m.Session)
-		}
+		// No seat tree and no marker: tracked, and listed once it is over the line.
+		t.mark(now, p, ReasonUnattributed, "", "")
 	}
 
 	t.tree, t.key = map[int]float64{}, map[int]string{}
@@ -205,17 +209,34 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 
 	view := orphanView{}
 	var worst *Orphan
+	unattributed := 0
 	for pid, e := range t.marked {
 		p := byPID[pid]
 		e.cpu, e.elapsed = p.CPUSeconds, p.ElapsedSeconds
 		e.orphan.Name = p.Name
 		e.hist = append(e.hist, cpuPoint{at: now, cpu: p.CPUSeconds})
 		share := e.share(now)
+		over := share != nil && *share > OrphanShare
+		if e.orphan.Reason == ReasonUnattributed {
+			// A parentless process nobody vouches for is a report, so it is listed
+			// only over the line, and its arguments are read once, at the crossing.
+			if !over {
+				continue
+			}
+			unattributed++
+			if !e.detailed {
+				e.detailed = true
+				if src.Detail != nil {
+					e.orphan.Args, e.orphan.Cwd = detailText(src.Detail(pid))
+				}
+			}
+			e.orphan.AgeSeconds = e.elapsed
+		}
 		o := e.orphan
 		o.CPUSecondsSinceMarked = e.cpu - e.cpuAtMark
 		o.Share = share
 		view.list = append(view.list, o)
-		if share != nil && *share > OrphanShare && (worst == nil || *share > *worst.Share) {
+		if over && (worst == nil || *share > *worst.Share) {
 			w := o
 			worst = &w
 		}
@@ -231,6 +252,9 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 		view.over = true
 		view.detail = fmt.Sprintf("%s (pid %d) %.0f%% of a core over %d minutes, %s of CPU since marked",
 			worst.Name, worst.PID, *worst.Share*100, int(OrphanWindow/time.Minute), hours(worst.CPUSecondsSinceMarked))
+		if unattributed > 0 {
+			view.detail += fmt.Sprintf("; %d unattributed over the line", unattributed)
+		}
 	case len(view.list) == 0:
 		view.detail = "no orphans"
 	default:
