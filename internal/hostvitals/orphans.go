@@ -102,8 +102,9 @@ type orphanEntry struct {
 	elapsed   float64
 	hist      []cpuPoint
 	// detailed is set once the arguments and directory of an unattributed
-	// process have been read.
+	// process have been read for good; tries counts the reads made.
 	detailed bool
+	tries    int
 }
 
 // orphanTracker is the sampler's memory across vitals passes. It is touched
@@ -277,10 +278,16 @@ func (t *orphanTracker) readDetails(list []Orphan, src OrphanSources) {
 		e := t.marked[o.PID]
 		if !e.detailed && reads < MaxDetailReadsPerPass {
 			reads++
-			e.detailed = true
+			e.tries++
 			e.orphan.Args, e.orphan.Cwd = detailText(src.Detail(o.PID))
+			// A read that failed for a passing reason (an lsof timeout, a process
+			// that just exited) says unknown and is tried again on a later pass, up
+			// to MaxDetailTries. A read that worked, or one refused for permission,
+			// is final.
+			unknown := e.orphan.Args == textUnknown || e.orphan.Cwd == textUnknown
+			e.detailed = !unknown || e.tries >= MaxDetailTries
 		}
-		if e.detailed {
+		if e.tries > 0 {
 			o.Args, o.Cwd = e.orphan.Args, e.orphan.Cwd
 		} else {
 			o.Args, o.Cwd = "pending", "pending"

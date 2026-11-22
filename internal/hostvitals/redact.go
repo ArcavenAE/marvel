@@ -50,6 +50,10 @@ func RedactArgs(args []string) string {
 			a = headerRE.ReplaceAllString(a, "${1}"+redacted)
 		case strings.Contains(a, "="):
 			a = assignRE.ReplaceAllString(a, "${1}"+redacted)
+			// --header=Name: value, a header after the first equals sign.
+			if i := strings.Index(a, "="); i >= 0 && headerRE.MatchString(a[i+1:]) {
+				a = a[:i+1] + headerRE.ReplaceAllString(a[i+1:], "${1}"+redacted)
+			}
 		case flagRE.MatchString(a) && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-"):
 			out = append(out, a, redacted)
 			i++
@@ -94,9 +98,12 @@ const (
 // working directory that cannot be read for any other reason is "unknown".
 func detailText(d ProcDetail) (args, cwd string) {
 	perm := errors.Is(d.ArgsErr, fs.ErrPermission) || errors.Is(d.CwdErr, fs.ErrPermission)
-	if d.ArgsErr != nil {
+	switch {
+	case d.ArgsErr != nil && errors.Is(d.ArgsErr, fs.ErrPermission):
 		args = textUnreadable
-	} else {
+	case d.ArgsErr != nil:
+		args = textUnknown
+	default:
 		args = RedactArgs(d.Args)
 	}
 	switch {

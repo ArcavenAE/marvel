@@ -429,6 +429,9 @@ func TestTheCrossingEventAndDetailCarryNoArgsOrCwd(t *testing.T) {
 func TestDetailReadsAreBoundedPerPassAndLimitedToShownRows(t *testing.T) {
 	d := newDetailRig(t)
 	n := OrphansShown + 10
+	for i := 0; i < n; i++ {
+		d.cwd[5000+i] = "/srv/job"
+	}
 	cpu, el := 5000.0, 130000.0
 	feed := func() {
 		var procs []Proc
