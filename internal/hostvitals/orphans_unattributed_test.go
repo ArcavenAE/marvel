@@ -419,3 +419,59 @@ func TestTheCrossingEventAndDetailCarryNoArgsOrCwd(t *testing.T) {
 		}
 	}
 }
+
+// Many processes crossing the line on one pass are not all read on that pass:
+// at most MaxDetailReadsPerPass reads a pass, the rest read "pending" and are
+// finished on later passes, and a process that is over the line but below the
+// cap of listed rows is never read at all.
+func TestDetailReadsAreBoundedPerPassAndLimitedToShownRows(t *testing.T) {
+	d := newDetailRig(t)
+	n := OrphansShown + 10
+	cpu, el := 5000.0, 130000.0
+	feed := func() {
+		var procs []Proc
+		for i := 0; i < n; i++ {
+			procs = append(procs, op(5000+i, 1, "zsh", cpu+float64(i), el))
+		}
+		d.pass(procs...)
+		cpu, el = cpu+58, el+60
+	}
+	for i := 0; i < 31; i++ {
+		feed()
+	}
+	total := func() int {
+		sum := 0
+		for _, c := range d.reads {
+			sum += c
+		}
+		return sum
+	}
+	if got := total(); got > MaxDetailReadsPerPass {
+		t.Fatalf("%d reads on the pass the %d processes crossed, want at most %d", got, n, MaxDetailReadsPerPass)
+	}
+	pending := 0
+	for _, o := range d.orphans() {
+		if o.Args == "pending" && o.Cwd == "pending" {
+			pending++
+		}
+	}
+	if pending != OrphansShown-MaxDetailReadsPerPass {
+		t.Errorf("%d rows read pending, want %d", pending, OrphansShown-MaxDetailReadsPerPass)
+	}
+	for i := 0; i < 10; i++ {
+		feed()
+	}
+	if got := total(); got != OrphansShown {
+		t.Errorf("%d reads after the rows settled, want exactly %d (one per shown row, none for the %d below the cap)", got, OrphansShown, n-OrphansShown)
+	}
+	for pid, c := range d.reads {
+		if c > 1 {
+			t.Errorf("pid %d was read %d times, want once", pid, c)
+		}
+	}
+	for _, o := range d.orphans() {
+		if o.Args == "pending" {
+			t.Errorf("pid %d still reads pending after 10 passes", o.PID)
+		}
+	}
+}

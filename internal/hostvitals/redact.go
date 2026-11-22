@@ -11,6 +11,10 @@ import (
 // MaxArgsBytes is how many bytes of a process's arguments a report keeps.
 const MaxArgsBytes = 120
 
+// MaxDetailReadsPerPass caps how many processes have their arguments and
+// directory read on one pass.
+const MaxDetailReadsPerPass = 5
+
 const redacted = "<redacted>"
 
 // secretName matches a name that suggests a secret value. It is matched on
