@@ -219,17 +219,11 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 		over := share != nil && *share > OrphanShare
 		if e.orphan.Reason == ReasonUnattributed {
 			// A parentless process nobody vouches for is a report, so it is listed
-			// only over the line, and its arguments are read once, at the crossing.
+			// only over the line, and its arguments are read once it is a shown row.
 			if !over {
 				continue
 			}
 			unattributed++
-			if !e.detailed {
-				e.detailed = true
-				if src.Detail != nil {
-					e.orphan.Args, e.orphan.Cwd = detailText(src.Detail(pid))
-				}
-			}
 			e.orphan.AgeSeconds = e.elapsed
 		}
 		o := e.orphan
@@ -263,7 +257,35 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 	if len(view.list) > OrphansShown {
 		view.list = view.list[:OrphansShown]
 	}
+	t.readDetails(view.list, src)
 	return view
+}
+
+// readDetails reads the arguments and directory of the unattributed rows that
+// will be shown, once each, at most MaxDetailReadsPerPass on one pass, in list
+// order. A shown row not yet read says "pending" and is read on a later pass.
+func (t *orphanTracker) readDetails(list []Orphan, src OrphanSources) {
+	if src.Detail == nil {
+		return
+	}
+	reads := 0
+	for i := range list {
+		o := &list[i]
+		if o.Reason != ReasonUnattributed {
+			continue
+		}
+		e := t.marked[o.PID]
+		if !e.detailed && reads < MaxDetailReadsPerPass {
+			reads++
+			e.detailed = true
+			e.orphan.Args, e.orphan.Cwd = detailText(src.Detail(o.PID))
+		}
+		if e.detailed {
+			o.Args, o.Cwd = e.orphan.Args, e.orphan.Cwd
+		} else {
+			o.Args, o.Cwd = "pending", "pending"
+		}
+	}
 }
 
 // mark records a new orphan with the CPU it has now.

@@ -48,11 +48,7 @@ func (d *Daemon) wireOrphanSources() {
 		Marker: d.readMarker,
 		// The arguments and working directory of an unattributed process, read
 		// once when it first crosses the orphan CPU line.
-		Detail: func(pid int) hostvitals.ProcDetail {
-			args, argsErr := procargs.Read(pid)
-			cwd, cwdErr := procargs.Cwd(pid)
-			return hostvitals.ProcDetail{Args: args, ArgsErr: argsErr, Cwd: cwd, CwdErr: cwdErr}
-		},
+		Detail: hostDetailReaders().read,
 		// The seat's own key, from the store: the one name an orphan carries
 		// that the daemon vouches for. It answers for a live session only and
 		// "" for one that is dead or deleted; the sampler asks while the seat's
