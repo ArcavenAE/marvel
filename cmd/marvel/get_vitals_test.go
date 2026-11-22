@@ -356,3 +356,58 @@ func TestGetVitalsPrintsNoGapLineWhenThereIsNone(t *testing.T) {
 		}
 	}
 }
+
+// An unattributed orphan gets a second short line under its row with its
+// arguments (already redacted by the sampler), its working directory and its
+// age. The columns still line up under the widest reason, and the rows of the
+// other reasons print no second line.
+func TestGetVitalsShowsTheUnattributedOrphansArgsCwdAndAge(t *testing.T) {
+	share := 0.97
+	orphans := []hostvitals.Orphan{
+		{
+			PID: 4242, Name: "zsh", Reason: hostvitals.ReasonUnattributed, MarkedAt: time.Date(2026, 11, 20, 20, 0, 0, 0, time.UTC), CPUSecondsSinceMarked: 7200, Share: &share,
+			Args: "/bin/zsh -c loop --token <redacted>", Cwd: "/srv/job", AgeSeconds: 129600,
+		},
+		{PID: 101, Name: "tmux", Reason: hostvitals.ReasonSeatTree, Session: "aae/seat-1", MarkedAt: time.Date(2026, 11, 20, 20, 0, 0, 0, time.UTC), CPUSecondsSinceMarked: 10, Share: &share},
+	}
+	var out bytes.Buffer
+	if err := printOrphans(&out, orphans); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("%d lines, want a header, the unattributed row, its detail line and the seat tree row:\n%s", len(lines), out.String())
+	}
+	if !strings.Contains(lines[1], "unattributed") || !strings.Contains(lines[1], "4242") {
+		t.Errorf("row = %q, want pid 4242 and the reason", lines[1])
+	}
+	for _, want := range []string{"args: /bin/zsh -c loop --token <redacted>", "cwd: /srv/job", "age: 1d12h0m0s"} {
+		if !strings.Contains(lines[2], want) {
+			t.Errorf("detail line = %q, want %q", lines[2], want)
+		}
+	}
+	hdr, seat := lines[0], lines[3]
+	if strings.Index(hdr, "SESSION") != strings.Index(seat, "aae/seat-1") {
+		t.Errorf("the SESSION column does not line up with the seat tree row:\n%s\n%s", hdr, seat)
+	}
+}
+
+// The JSON of an unattributed orphan carries args, cwd and age_seconds; the
+// other reasons leave the three keys out.
+func TestUnattributedOrphanJSONCarriesArgsCwdAndAge(t *testing.T) {
+	b, err := json.Marshal(hostvitals.Orphan{PID: 1, Reason: hostvitals.ReasonUnattributed, Args: "zsh", Cwd: "/srv/job", AgeSeconds: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"args":"zsh"`, `"cwd":"/srv/job"`, `"age_seconds":60`, `"reason":"unattributed"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("json %s lacks %s", b, want)
+		}
+	}
+	b, _ = json.Marshal(hostvitals.Orphan{PID: 2, Reason: hostvitals.ReasonMarker})
+	for _, bad := range []string{"args", "cwd", "age_seconds"} {
+		if strings.Contains(string(b), bad) {
+			t.Errorf("marker orphan json %s carries %s", b, bad)
+		}
+	}
+}

@@ -26,6 +26,8 @@ const (
 	ReasonSeatTree = "seat tree"
 	// ReasonMarker: it already had parent pid 1 when first seen, and its environment carries a marvel marker.
 	ReasonMarker = "marker"
+	// ReasonUnattributed: it has parent pid 1, no seat-tree history and no marker.
+	ReasonUnattributed = "unattributed"
 )
 
 // Orphan is a process that lost its marvel ancestry, and what it has burned since.
@@ -46,6 +48,19 @@ type Orphan struct {
 	// Share is its share of one core over the last OrphanWindow, nil until it
 	// has been watched that long.
 	Share *float64 `json:"share_30m,omitempty"`
+	// Args, Cwd and AgeSeconds are set only for the unattributed reason.
+	Args       string  `json:"args,omitempty"`
+	Cwd        string  `json:"cwd,omitempty"`
+	AgeSeconds float64 `json:"age_seconds,omitempty"`
+}
+
+// ProcDetail is what a source returns about one process: its exact arguments
+// and working directory, or the error that kept it from reading each.
+type ProcDetail struct {
+	Args    []string
+	ArgsErr error
+	Cwd     string
+	CwdErr  error
 }
 
 // OrphanSources tells the sampler what it cannot read from the process table:
@@ -61,6 +76,8 @@ type OrphanSources struct {
 	// never asks again for a seat that has died. Nil, or an empty answer, leaves
 	// the session unnamed.
 	RootSession func(pid int) string
+	// Detail reads the arguments and working directory of a process.
+	Detail func(pid int) ProcDetail
 }
 
 // SetOrphanSources gives the sampler its orphan sources. Without them no
