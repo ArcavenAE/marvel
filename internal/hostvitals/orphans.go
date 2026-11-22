@@ -26,6 +26,8 @@ const (
 	ReasonSeatTree = "seat tree"
 	// ReasonMarker: it already had parent pid 1 when first seen, and its environment carries a marvel marker.
 	ReasonMarker = "marker"
+	// ReasonUnattributed: it has parent pid 1, no seat-tree history and no marker.
+	ReasonUnattributed = "unattributed"
 )
 
 // Orphan is a process that lost its marvel ancestry, and what it has burned since.
@@ -46,6 +48,19 @@ type Orphan struct {
 	// Share is its share of one core over the last OrphanWindow, nil until it
 	// has been watched that long.
 	Share *float64 `json:"share_30m,omitempty"`
+	// Args, Cwd and AgeSeconds are set only for the unattributed reason.
+	Args       string  `json:"args,omitempty"`
+	Cwd        string  `json:"cwd,omitempty"`
+	AgeSeconds float64 `json:"age_seconds,omitempty"`
+}
+
+// ProcDetail is what a source returns about one process: its exact arguments
+// and working directory, or the error that kept it from reading each.
+type ProcDetail struct {
+	Args    []string
+	ArgsErr error
+	Cwd     string
+	CwdErr  error
 }
 
 // OrphanSources tells the sampler what it cannot read from the process table:
@@ -61,6 +76,8 @@ type OrphanSources struct {
 	// never asks again for a seat that has died. Nil, or an empty answer, leaves
 	// the session unnamed.
 	RootSession func(pid int) string
+	// Detail reads the arguments and working directory of a process.
+	Detail func(pid int) ProcDetail
 }
 
 // SetOrphanSources gives the sampler its orphan sources. Without them no
@@ -84,6 +101,10 @@ type orphanEntry struct {
 	cpu       float64
 	elapsed   float64
 	hist      []cpuPoint
+	// detailed is set once the arguments and directory of an unattributed
+	// process have been read for good; tries counts the reads made.
+	detailed bool
+	tries    int
 }
 
 // orphanTracker is the sampler's memory across vitals passes. It is touched
@@ -149,16 +170,17 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 			t.mark(now, p, ReasonSeatTree, t.key[p.PID], "")
 			continue
 		}
-		if src.Marker == nil {
-			continue
+		if src.Marker != nil {
+			if _, done := t.probed[p.PID]; !done {
+				t.probed[p.PID] = p.ElapsedSeconds
+				if m, err := src.Marker(p.PID); err == nil && m.Marvel() {
+					t.mark(now, p, ReasonMarker, "", m.Session)
+					continue
+				}
+			}
 		}
-		if _, done := t.probed[p.PID]; done {
-			continue
-		}
-		t.probed[p.PID] = p.ElapsedSeconds
-		if m, err := src.Marker(p.PID); err == nil && m.Marvel() {
-			t.mark(now, p, ReasonMarker, "", m.Session)
-		}
+		// No seat tree and no marker: tracked, and listed once it is over the line.
+		t.mark(now, p, ReasonUnattributed, "", "")
 	}
 
 	t.tree, t.key = map[int]float64{}, map[int]string{}
@@ -188,17 +210,28 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 
 	view := orphanView{}
 	var worst *Orphan
+	unattributed := 0
 	for pid, e := range t.marked {
 		p := byPID[pid]
 		e.cpu, e.elapsed = p.CPUSeconds, p.ElapsedSeconds
 		e.orphan.Name = p.Name
 		e.hist = append(e.hist, cpuPoint{at: now, cpu: p.CPUSeconds})
 		share := e.share(now)
+		over := share != nil && *share > OrphanShare
+		if e.orphan.Reason == ReasonUnattributed {
+			// A parentless process nobody vouches for is a report, so it is listed
+			// only over the line, and its arguments are read once it is a shown row.
+			if !over {
+				continue
+			}
+			unattributed++
+			e.orphan.AgeSeconds = e.elapsed
+		}
 		o := e.orphan
 		o.CPUSecondsSinceMarked = e.cpu - e.cpuAtMark
 		o.Share = share
 		view.list = append(view.list, o)
-		if share != nil && *share > OrphanShare && (worst == nil || *share > *worst.Share) {
+		if over && (worst == nil || *share > *worst.Share) {
 			w := o
 			worst = &w
 		}
@@ -214,6 +247,9 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 		view.over = true
 		view.detail = fmt.Sprintf("%s (pid %d) %.0f%% of a core over %d minutes, %s of CPU since marked",
 			worst.Name, worst.PID, *worst.Share*100, int(OrphanWindow/time.Minute), hours(worst.CPUSecondsSinceMarked))
+		if unattributed > 0 {
+			view.detail += fmt.Sprintf("; %d unattributed over the line", unattributed)
+		}
 	case len(view.list) == 0:
 		view.detail = "no orphans"
 	default:
@@ -222,7 +258,41 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 	if len(view.list) > OrphansShown {
 		view.list = view.list[:OrphansShown]
 	}
+	t.readDetails(view.list, src)
 	return view
+}
+
+// readDetails reads the arguments and directory of the unattributed rows that
+// will be shown, once each, at most MaxDetailReadsPerPass on one pass, in list
+// order. A shown row not yet read says "pending" and is read on a later pass.
+func (t *orphanTracker) readDetails(list []Orphan, src OrphanSources) {
+	if src.Detail == nil {
+		return
+	}
+	reads := 0
+	for i := range list {
+		o := &list[i]
+		if o.Reason != ReasonUnattributed {
+			continue
+		}
+		e := t.marked[o.PID]
+		if !e.detailed && reads < MaxDetailReadsPerPass {
+			reads++
+			e.tries++
+			e.orphan.Args, e.orphan.Cwd = detailText(src.Detail(o.PID))
+			// A read that failed for a passing reason (an lsof timeout, a process
+			// that just exited) says unknown and is tried again on a later pass, up
+			// to MaxDetailTries. A read that worked, or one refused for permission,
+			// is final.
+			unknown := e.orphan.Args == textUnknown || e.orphan.Cwd == textUnknown
+			e.detailed = !unknown || e.tries >= MaxDetailTries
+		}
+		if e.tries > 0 {
+			o.Args, o.Cwd = e.orphan.Args, e.orphan.Cwd
+		} else {
+			o.Args, o.Cwd = "pending", "pending"
+		}
+	}
 }
 
 // mark records a new orphan with the CPU it has now.

@@ -136,9 +136,10 @@ func cpuText(sec float64) string {
 // printOrphans writes the processes marked as orphans: pid, command name, why
 // it was marked, its MARVEL_SESSION marker, when, the CPU it has burned since
 // and its share of a core over the last 30 minutes (a dash until it has been
-// watched that long).
+// watched that long). An unattributed orphan gets a second line with its
+// arguments, working directory and age.
 func printOrphans(w io.Writer, orphans []hostvitals.Orphan) error {
-	if _, err := fmt.Fprintf(w, "orphans:\n  %-8s %-18s %-10s %-32s %-21s %-12s %s\n", "PID", "NAME", "REASON", "SESSION", "MARKED", "CPU SINCE", "SHARE"); err != nil {
+	if _, err := fmt.Fprintf(w, "orphans:\n  %-8s %-18s %-12s %-32s %-21s %-12s %s\n", "PID", "NAME", "REASON", "SESSION", "MARKED", "CPU SINCE", "SHARE"); err != nil {
 		return err
 	}
 	for _, o := range orphans {
@@ -152,8 +153,13 @@ func printOrphans(w io.Writer, orphans []hostvitals.Orphan) error {
 		if o.Share != nil {
 			share = fmt.Sprintf("%.0f%%", *o.Share*100)
 		}
-		if _, err := fmt.Fprintf(w, "  %-8d %-18s %-10s %-32s %-21s %-12s %s\n", o.PID, o.Name, o.Reason, session, o.MarkedAt.UTC().Format(time.RFC3339), cpuText(o.CPUSecondsSinceMarked), share); err != nil {
+		if _, err := fmt.Fprintf(w, "  %-8d %-18s %-12s %-32s %-21s %-12s %s\n", o.PID, o.Name, o.Reason, session, o.MarkedAt.UTC().Format(time.RFC3339), cpuText(o.CPUSecondsSinceMarked), share); err != nil {
 			return err
+		}
+		if o.Reason == hostvitals.ReasonUnattributed {
+			if _, err := fmt.Fprintf(w, "           args: %s  cwd: %s  age: %s\n", o.Args, o.Cwd, spanText(o.AgeSeconds)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
