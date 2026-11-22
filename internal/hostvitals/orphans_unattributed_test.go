@@ -356,6 +356,8 @@ func TestRedactArgsHidesSecretValues(t *testing.T) {
 		{"key in a longer name", []string{"x", "--ssh-key", "k", "--keyfile=/p"}, "x --ssh-key <redacted> --keyfile=<redacted>"},
 		{"query string", []string{"curl", "https://h.example/p?user=u&token=abc&n=1"}, "curl https://h.example/p?user=u&token=<redacted>&n=1"},
 		{"header with a bearer", []string{"curl", "-H", "Authorization: Bearer abc.def"}, "curl -H Authorization: <redacted>"},
+		{"header after an equals sign", []string{"curl", "--header=Authorization: Bearer abc123"}, "curl --header=Authorization: <redacted>"},
+		{"key header after an equals sign", []string{"curl", "--header=X-Api-Key: v1"}, "curl --header=X-Api-Key: <redacted>"},
 		{"unrelated", []string{"sleep", "100", "--verbose", "--name=job"}, "sleep 100 --verbose --name=job"},
 		{"flag last with no value", []string{"tool", "--token"}, "tool --token"},
 		{"the value that follows is a flag", []string{"tool", "--key", "--other"}, "tool --key --other"},
@@ -473,5 +475,75 @@ func TestDetailReadsAreBoundedPerPassAndLimitedToShownRows(t *testing.T) {
 		if o.Args == "pending" {
 			t.Errorf("pid %d still reads pending after 10 passes", o.PID)
 		}
+	}
+}
+
+// flaky replaces the rig's detail source with one that fails the first n reads
+// of every pid with err, then succeeds, and counts the reads.
+func (d *detailRig) flaky(n int, argsErr, cwdErr error) {
+	d.s.SetOrphanSources(OrphanSources{
+		Detail: func(pid int) ProcDetail {
+			d.reads[pid]++
+			if d.reads[pid] <= n {
+				return ProcDetail{ArgsErr: argsErr, CwdErr: cwdErr}
+			}
+			return ProcDetail{Args: []string{"sleep", "9"}, Cwd: "/srv/job"}
+		},
+	})
+}
+
+// A read that fails for a passing reason, such as an lsof timeout, is tried
+// again on a later pass, and the row shows what the last try read.
+func TestADetailReadThatTimedOutIsRetriedOnALaterPass(t *testing.T) {
+	d := newDetailRig(t)
+	d.flaky(2, nil, errors.New("signal: killed"))
+	d.busy(40)
+	o := findOrphan(d.orphans(), 300)
+	if o == nil || o.Cwd != "/srv/job" || o.Args != "sleep 9" {
+		t.Fatalf("orphan = %+v, want the third read's cwd /srv/job and args", o)
+	}
+	if d.reads[300] != 3 {
+		t.Errorf("%d reads, want 3 (two failures, then one success, then no more)", d.reads[300])
+	}
+}
+
+// A read that keeps failing is tried MaxDetailTries times and no more, so a
+// process whose directory can never be read does not cost a read on every pass.
+func TestADetailReadThatKeepsFailingStopsAtTheLimit(t *testing.T) {
+	d := newDetailRig(t)
+	d.flaky(1000, nil, errors.New("signal: killed"))
+	d.busy(60)
+	o := findOrphan(d.orphans(), 300)
+	if o == nil || o.Cwd != "unknown" {
+		t.Fatalf("orphan = %+v, want cwd unknown", o)
+	}
+	if d.reads[300] != MaxDetailTries {
+		t.Errorf("%d reads, want exactly %d", d.reads[300], MaxDetailTries)
+	}
+}
+
+// A permission failure is final at once: another user's process is not retried.
+func TestAPermissionFailureIsNotRetried(t *testing.T) {
+	d := newDetailRig(t)
+	d.flaky(1000, fs.ErrPermission, fs.ErrPermission)
+	d.busy(60)
+	o := findOrphan(d.orphans(), 300)
+	if o == nil || o.Args != "unreadable" || o.Cwd != "unreadable" {
+		t.Fatalf("orphan = %+v, want both unreadable", o)
+	}
+	if d.reads[300] != 1 {
+		t.Errorf("%d reads, want 1", d.reads[300])
+	}
+}
+
+// Arguments that fail for a reason other than permission, such as a process that
+// exited between the listing and the read, read "unknown", not "unreadable".
+func TestArgumentsThatFailForAnotherReasonReadUnknown(t *testing.T) {
+	d := newDetailRig(t)
+	d.flaky(1000, errors.New("no such process"), errors.New("no such process"))
+	d.busy(40)
+	o := findOrphan(d.orphans(), 300)
+	if o == nil || o.Args != "unknown" || o.Cwd != "unknown" {
+		t.Errorf("orphan = %+v, want args and cwd unknown", o)
 	}
 }

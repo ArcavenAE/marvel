@@ -15,6 +15,10 @@ const MaxArgsBytes = 120
 // directory read on one pass.
 const MaxDetailReadsPerPass = 5
 
+// MaxDetailTries is how many times one process's detail is read when the read
+// fails for a reason other than permission, such as an lsof timeout.
+const MaxDetailTries = 3
+
 const redacted = "<redacted>"
 
 // secretName matches a name that suggests a secret value. It is matched on
