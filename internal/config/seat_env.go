@@ -19,6 +19,11 @@ type SeatEnv struct {
 	// Unset names variables removed from the pane, beside the session
 	// credentials the daemon always removes.
 	Unset []string `yaml:"unset,omitempty"`
+	// Secrets maps the name a role declares it needs (seat_secrets) to the
+	// environment variable that carries the value in a seat. The daemon keeps the
+	// variable out of the tmux server and out of every pane that does not
+	// declare it; a manifest names a need and never a value.
+	Secrets map[string]string `yaml:"secrets,omitempty"`
 }
 
 // ErrInvalidSeatEnv marks a seat_env block that names something that cannot be

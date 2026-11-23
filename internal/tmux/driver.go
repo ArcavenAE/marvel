@@ -385,6 +385,18 @@ func (d *Driver) SetSeatEnv(pathPrepend, unset []string) {
 	d.seatPrefix = seatEnvPrefixFor(unset)
 }
 
+// SetSeatSecretNames names the variables that carry a seat secret: they are
+// kept out of every tmux client's environment (so the server never holds them)
+// and out of every pane's, until the seat that declares the need is handed its
+// own. Set it before the driver is shared between goroutines.
+func (d *Driver) SetSeatSecretNames(names []string) {}
+
+// StripServerEnv removes the seat secret names from the global environment of a
+// tmux server that is already running, which may have been started by a process
+// that still carried them. Only names go on the argument list. A missing server
+// is not an error: there is nothing to strip.
+func (d *Driver) StripServerEnv() error { return nil }
+
 // SetExecTimeout sets the bound on one tmux invocation. Zero restores
 // DefaultExecTimeout. Set it before the driver is shared between goroutines.
 func (d *Driver) SetExecTimeout(t time.Duration) { d.execTimeout = t }
