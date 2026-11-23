@@ -3,6 +3,7 @@ package hostvitals
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/procargs"
@@ -99,6 +100,14 @@ func (s *Sampler) SetOrphanSources(src OrphanSources) {
 	s.mu.Unlock()
 }
 
+// SetOrphanExclude sets the bundle or executable paths whose processes are
+// never counted as orphans. Empty, the default, excludes nothing.
+func (s *Sampler) SetOrphanExclude(paths []string) {
+	s.mu.Lock()
+	s.orphanSrc.Exclude = append([]string(nil), paths...)
+	s.mu.Unlock()
+}
+
 // cpuPoint is a CPU time reading of one orphan.
 type cpuPoint struct {
 	at  time.Time
@@ -134,6 +143,12 @@ type orphanTracker struct {
 	// probed holds, by pid, the elapsed seconds when its marker was last read,
 	// so a parentless process is read once and not again until its pid is reused.
 	probed map[int]float64
+	// excluded holds, by pid, the elapsed seconds when a process was read as
+	// under an excluded path, so it is read once until its pid is reused.
+	excluded map[int]float64
+	// anc holds, by pid, the command names of its ancestors on the last pass,
+	// nearest first, so an orphan can show the chain it lost.
+	anc map[int][]string
 }
 
 // reuseSlack is how far a process's elapsed time may fall between passes
@@ -154,6 +169,7 @@ type orphanView struct {
 func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) orphanView {
 	if t.tree == nil {
 		t.tree, t.key, t.marked, t.probed = map[int]float64{}, map[int]string{}, map[int]*orphanEntry{}, map[int]float64{}
+		t.excluded = map[int]float64{}
 	}
 	byPID := make(map[int]Proc, len(procs))
 	children := make(map[int][]int, len(procs))
@@ -172,9 +188,17 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 			delete(t.probed, pid)
 		}
 	}
+	for pid, at := range t.excluded {
+		if p, ok := byPID[pid]; !ok || p.ElapsedSeconds+reuseSlack < at {
+			delete(t.excluded, pid)
+		}
+	}
 
 	for _, p := range procs {
 		if p.PPID != 1 || t.marked[p.PID] != nil {
+			continue
+		}
+		if t.isExcluded(p, src) {
 			continue
 		}
 		if at, ok := t.tree[p.PID]; ok && p.ElapsedSeconds+reuseSlack >= at {
@@ -194,6 +218,7 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 		t.mark(now, p, ReasonUnattributed, "", "")
 	}
 
+	t.anc = ancestorNames(byPID)
 	t.tree, t.key = map[int]float64{}, map[int]string{}
 	if src.Roots != nil {
 		var walk func(pid int, key string)
@@ -225,6 +250,7 @@ func (t *orphanTracker) update(now time.Time, procs []Proc, src OrphanSources) o
 	for pid, e := range t.marked {
 		p := byPID[pid]
 		e.cpu, e.elapsed = p.CPUSeconds, p.ElapsedSeconds
+		e.orphan.RSSBytes = p.RSSBytes
 		e.orphan.Name = p.Name
 		e.hist = append(e.hist, cpuPoint{at: now, cpu: p.CPUSeconds})
 		share := e.share(now)
@@ -309,7 +335,10 @@ func (t *orphanTracker) readDetails(list []Orphan, src OrphanSources) {
 // mark records a new orphan with the CPU it has now.
 func (t *orphanTracker) mark(now time.Time, p Proc, reason, session, claimed string) {
 	t.marked[p.PID] = &orphanEntry{
-		orphan:    Orphan{PID: p.PID, Name: p.Name, Reason: reason, Session: session, ClaimedSession: claimed, MarkedAt: now},
+		orphan: Orphan{
+			PID: p.PID, Name: p.Name, Reason: reason, Session: session, ClaimedSession: claimed, MarkedAt: now,
+			Parents: t.anc[p.PID], StartedAt: now.Add(-time.Duration(p.ElapsedSeconds * float64(time.Second))),
+		},
 		cpuAtMark: p.CPUSeconds, cpu: p.CPUSeconds, elapsed: p.ElapsedSeconds,
 	}
 }
@@ -339,3 +368,54 @@ func (e *orphanEntry) share(now time.Time) *float64 {
 
 // hours renders CPU seconds as hours with one decimal.
 func hours(sec float64) string { return fmt.Sprintf("%.1f h", sec/3600) }
+
+// ancestorNames maps each process with a parent in the table to the command
+// names of its ancestors, nearest first. The walk stops at pid 1, at a parent
+// missing from the table and at a cycle.
+func ancestorNames(byPID map[int]Proc) map[int][]string {
+	out := make(map[int][]string, len(byPID))
+	for pid, p := range byPID {
+		if p.PPID == 1 {
+			continue
+		}
+		var names []string
+		seen := map[int]bool{pid: true}
+		for at := p.PPID; at != 1 && !seen[at]; {
+			a, ok := byPID[at]
+			if !ok {
+				break
+			}
+			seen[at] = true
+			names = append(names, a.Name)
+			at = a.PPID
+		}
+		if len(names) > 0 {
+			out[pid] = names
+		}
+	}
+	return out
+}
+
+// isExcluded reports whether the process runs from a path on the exclude list.
+// It reads the arguments once per process, and only when a list is set.
+func (t *orphanTracker) isExcluded(p Proc, src OrphanSources) bool {
+	if len(src.Exclude) == 0 || src.Detail == nil {
+		return false
+	}
+	if _, done := t.excluded[p.PID]; done {
+		return true
+	}
+	d := src.Detail(p.PID)
+	if d.ArgsErr != nil || len(d.Args) == 0 {
+		return false
+	}
+	exe := d.Args[0]
+	for _, e := range src.Exclude {
+		e = strings.TrimRight(e, "/")
+		if e != "" && (exe == e || strings.HasPrefix(exe, e+"/")) {
+			t.excluded[p.PID] = p.ElapsedSeconds
+			return true
+		}
+	}
+	return false
+}

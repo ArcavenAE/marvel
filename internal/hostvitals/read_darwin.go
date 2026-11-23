@@ -11,7 +11,38 @@ import (
 // Read takes one reading of this host by sysctl in the daemon's own process.
 // Nothing is exec'd: the figures are the ones `sysctl vm.swapusage` and
 // `memory_pressure` print.
-func Read() Reading { return readWith(unix.SysctlRaw, unix.SysctlUint32) }
+func Read() Reading {
+	r := readWith(unix.SysctlRaw, unix.SysctlUint32)
+	readExtras(&r, unix.SysctlRaw)
+	return r
+}
+
+// readExtras adds physical memory (hw.memsize) and the compressor swapper's
+// cumulative swap-in count (vm.compressor.swapper.swapins_total). A sysctl the
+// host does not answer leaves its field zero.
+func readExtras(r *Reading, raw func(string, ...int) ([]byte, error)) {
+	if b, err := raw("hw.memsize"); err == nil {
+		if v, ok := nativeUint(b); ok {
+			r.MemTotal = v
+		}
+	}
+	if b, err := raw("vm.compressor.swapper.swapins_total"); err == nil {
+		if v, ok := nativeUint(b); ok {
+			r.SwapIns, r.SwapInsOK = v, true
+		}
+	}
+}
+
+// nativeUint reads a 4 or 8 byte native-endian unsigned integer.
+func nativeUint(b []byte) (uint64, bool) {
+	switch len(b) {
+	case 4:
+		return uint64(binary.NativeEndian.Uint32(b)), true
+	case 8:
+		return binary.NativeEndian.Uint64(b), true
+	}
+	return 0, false
+}
 
 // readWith is Read with the two sysctl calls passed in, so a test can feed it.
 func readWith(raw func(string, ...int) ([]byte, error), u32 func(string) (uint32, error)) Reading {

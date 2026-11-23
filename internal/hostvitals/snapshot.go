@@ -2,6 +2,7 @@ package hostvitals
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -50,6 +51,13 @@ func (s *Sampler) Snapshot() Snapshot {
 	have, r, at := s.have, s.latest, s.latestAt.UTC()
 	procsOK, top, fsev, fseen := s.procsOK, append([]Proc(nil), s.top...), s.fseventsdRSS, s.fseventsdSeen
 	orphans := s.orphans
+	seats, seatRSS := s.seatCount, s.seatRSS
+	disk := append([]diskLine(nil), s.disk...)
+	var delta *uint64
+	if s.haveIns {
+		d := s.deltaIns
+		delta = &d
+	}
 	s.mu.Unlock()
 	if !have {
 		return snap
@@ -57,7 +65,10 @@ func (s *Sampler) Snapshot() Snapshot {
 	snap.Sampled = true
 	snap.At = &at
 	snap.Reading = r
-	snap.Thresholds = []Threshold{swapThreshold(r), pressureThreshold(r), fseventsdThreshold(procsOK, fsev, fseen), processThreshold(procsOK, top), orphanThreshold(procsOK, orphans)}
+	snap.Thresholds = []Threshold{
+		swapThresholdIns(r, delta), pressureThreshold(r), seatMemoryThreshold(procsOK, seats, seatRSS, r.MemTotal), diskThreshold(disk),
+		fseventsdThreshold(procsOK, fsev, fseen), processThreshold(procsOK, top), orphanThreshold(procsOK, orphans), orphanMemoryThreshold(procsOK, orphans),
+	}
 	if len(top) > 0 {
 		snap.Top = top
 	}
@@ -67,20 +78,34 @@ func (s *Sampler) Snapshot() Snapshot {
 	return snap
 }
 
-// swapThreshold reports the swap line against the reading.
-func swapThreshold(r Reading) Threshold {
+// swapThreshold reports the swap line against the reading, with no earlier
+// sample to take swap-ins against.
+func swapThreshold(r Reading) Threshold { return swapThresholdIns(r, nil) }
+
+// swapThresholdIns is swapThreshold with the swap-ins since the last sample,
+// when two samples carried the counter. Swap is shown as GiB used and swap-ins
+// as a count between samples; the line itself still reads a share of the total.
+func swapThresholdIns(r Reading, delta *uint64) Threshold {
 	t := Threshold{Name: "swap used", Line: fmt.Sprintf("over %d%% of total", SwapCrossPercent)}
 	switch {
 	case !r.SwapOK:
 		t.State, t.Detail = "gap", "the host gave no swap figure"
-	case r.SwapTotal == 0:
+	case r.SwapTotal == 0 && hostOS != "darwin":
 		t.State, t.Detail = "under", "no swap configured"
 	default:
 		t.State = "under"
 		if r.swapOver() {
 			t.State = "over"
 		}
-		t.Detail = fmt.Sprintf("%s of %s (%d%%)", gib(r.SwapUsed), gib(r.SwapTotal), r.SwapUsed*100/r.SwapTotal)
+		t.Detail = usedGiB(r.SwapUsed)
+		switch {
+		case !r.SwapInsOK:
+			t.Detail += "; swap-ins not available on this host"
+		case delta == nil:
+			t.Detail += "; swap-ins: first sample"
+		default:
+			t.Detail += fmt.Sprintf("; %d swap-ins since the last sample", *delta)
+		}
 	}
 	return t
 }
@@ -175,9 +200,96 @@ func orphanThreshold(ok bool, v orphanView) Threshold {
 	return t
 }
 
+// seatMemoryThreshold sums the seats' RSS against the host's physical memory.
+// The design names no line for it, so a figure shows with state none.
+func seatMemoryThreshold(ok bool, seats int, rss, total uint64) Threshold {
+	t := Threshold{Name: "seat memory", Line: "no line", State: "none"}
+	switch {
+	case !ok:
+		t.State, t.Detail = "gap", noTable
+	case total == 0:
+		t.Detail = fmt.Sprintf("%d seats, %s", seats, gib(rss))
+	default:
+		t.Detail = fmt.Sprintf("%d seats, %s of %s (%d%%)", seats, gib(rss), gib(total), rss*100/total)
+	}
+	return t
+}
+
+// orphanMemoryThreshold sums the RSS of the listed orphans, beside orphan CPU.
+func orphanMemoryThreshold(ok bool, v orphanView) Threshold {
+	t := Threshold{Name: "orphan memory", Line: "no line", State: "none"}
+	if !ok {
+		t.State, t.Detail = "gap", noTable
+		return t
+	}
+	if len(v.list) == 0 {
+		t.Detail = "no orphans"
+		return t
+	}
+	var rss uint64
+	for _, o := range v.list {
+		rss += o.RSSBytes
+	}
+	t.Detail = fmt.Sprintf("%d orphans, %s", len(v.list), gib(rss))
+	return t
+}
+
+// diskLine is one path's reading: its volume's size and free space, or the
+// reason it could not be read.
+type diskLine struct {
+	path        string
+	total, free uint64
+	err         error
+}
+
 // DiskStat reports the total and free bytes of the volume that holds path.
 type DiskStat func(path string) (total, free uint64, err error)
 
 // SetDiskPaths names the paths whose volumes the disk free vital reports, and
 // the reader for them.
-func (s *Sampler) SetDiskPaths(paths []string, stat DiskStat) {}
+func (s *Sampler) SetDiskPaths(paths []string, stat DiskStat) {
+	fixed := append([]string(nil), paths...)
+	s.SetDiskPathsFunc(func() []string { return fixed }, stat)
+}
+
+// SetDiskPathsFunc is SetDiskPaths with the paths asked for on each sample, for
+// a set that changes while the daemon runs.
+func (s *Sampler) SetDiskPathsFunc(paths func() []string, stat DiskStat) {
+	s.mu.Lock()
+	s.diskPaths, s.diskStat = paths, stat
+	s.mu.Unlock()
+}
+
+// readDisks stats each named path once.
+func readDisks(paths func() []string, stat DiskStat) []diskLine {
+	if paths == nil || stat == nil {
+		return nil
+	}
+	var out []diskLine
+	for _, p := range paths() {
+		l := diskLine{path: p}
+		l.total, l.free, l.err = stat(p)
+		out = append(out, l)
+	}
+	return out
+}
+
+// diskThreshold reports each path's volume. The design names no line for it.
+func diskThreshold(lines []diskLine) Threshold {
+	t := Threshold{Name: "disk free", Line: "no line", State: "none"}
+	if len(lines) == 0 {
+		t.State, t.Detail = "gap", "no path named to read"
+		return t
+	}
+	var parts []string
+	for _, l := range lines {
+		switch {
+		case l.err != nil || l.total == 0:
+			parts = append(parts, l.path+": unreadable")
+		default:
+			parts = append(parts, fmt.Sprintf("%s: %s free, %d%% used", l.path, gib(l.free), (l.total-min(l.free, l.total))*100/l.total))
+		}
+	}
+	t.Detail = strings.Join(parts, "; ")
+	return t
+}

@@ -21,7 +21,12 @@ func hostVitalsEnabled(cl *config.Cluster) bool {
 
 // hostVitalsOrphanExclude reads the cluster's host_vitals_orphan_exclude list.
 // No cluster entry, or an unset key, is the empty list.
-func hostVitalsOrphanExclude(cl *config.Cluster) []string { return nil }
+func hostVitalsOrphanExclude(cl *config.Cluster) []string {
+	if cl == nil {
+		return nil
+	}
+	return cl.HostVitalsOrphanExclude
+}
 
 // loadHostVitals builds the daemon's host vitals sampler from the cluster
 // entry whose socket is ours, found the way loadScheduleHistoryMax finds it
@@ -29,13 +34,47 @@ func hostVitalsOrphanExclude(cl *config.Cluster) []string { return nil }
 // error. A config that cannot be read at all leaves it off.
 func (d *Daemon) loadHostVitals(socketPath string) {
 	on := false
+	var exclude []string
 	if cfg, err := config.Load(); configLoadUsable(err) && cfg != nil {
-		on = hostVitalsEnabled(cfg.ClusterForSocket(socketPath))
+		cl := cfg.ClusterForSocket(socketPath)
+		on = hostVitalsEnabled(cl)
+		exclude = hostVitalsOrphanExclude(cl)
 	}
 	d.vitals = hostvitals.New(on, hostvitals.Read, d.events)
 	d.readTable = procstat.ReadTable
 	d.readMarker = procargs.ReadMarker
 	d.wireOrphanSources()
+	d.wireOrphanExclude(exclude)
+	d.wireDiskPaths()
+}
+
+// wireOrphanExclude gives the sampler the paths the cluster's config says are
+// never orphans. The list is empty unless the host sets it.
+func (d *Daemon) wireOrphanExclude(exclude []string) {
+	d.vitals.SetOrphanExclude(exclude)
+}
+
+// wireDiskPaths names the paths the disk free vital reads: marvel's own home
+// and the work directory of each team, so the volume that holds the seats'
+// checkouts shows beside the one that holds marvel's state.
+func (d *Daemon) wireDiskPaths() {
+	d.vitals.SetDiskPathsFunc(func() []string {
+		var paths []string
+		seen := map[string]bool{}
+		add := func(p string) {
+			if p != "" && !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+		add(d.home)
+		if d.store != nil {
+			for _, t := range d.store.ListTeams() {
+				add(t.WorkDir)
+			}
+		}
+		return paths
+	}, hostvitals.StatVolume)
 }
 
 // wireOrphanSources gives the sampler the seat roots and the marker reader the

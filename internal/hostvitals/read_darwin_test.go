@@ -70,3 +70,26 @@ func TestReadOnThisHost(t *testing.T) {
 		t.Errorf("pressure level %d, want 1 or more", r.PressureLevel)
 	}
 }
+
+func TestReadExtrasTakesMemsizeAndSwapIns(t *testing.T) {
+	le := func(n uint64) []byte { b := make([]byte, 8); binary.NativeEndian.PutUint64(b, n); return b }
+	raw := func(name string, _ ...int) ([]byte, error) {
+		switch name {
+		case "hw.memsize":
+			return le(48 << 30), nil
+		case "vm.compressor.swapper.swapins_total":
+			return le(600), nil
+		}
+		return nil, errors.New("unexpected " + name)
+	}
+	var r Reading
+	readExtras(&r, raw)
+	if r.MemTotal != 48<<30 || !r.SwapInsOK || r.SwapIns != 600 {
+		t.Errorf("extras = %+v, want 48 GiB and 600 swap-ins", r)
+	}
+	var none Reading
+	readExtras(&none, func(string, ...int) ([]byte, error) { return nil, errors.New("no") })
+	if none.MemTotal != 0 || none.SwapInsOK {
+		t.Errorf("extras on a host that answers nothing = %+v, want zero", none)
+	}
+}

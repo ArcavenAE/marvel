@@ -1,14 +1,15 @@
 package hostvitals
 
-import "strconv"
+import "fmt"
 
-// swapDetail renders the swap figure of a reading for an event message.
+// swapDetail renders the swap figure of a reading for an event message: used
+// GiB, never a share of a total that grows.
 func swapDetail(r Reading) string {
-	if r.SwapTotal == 0 {
+	if r.SwapTotal == 0 && hostOS != "darwin" {
 		return "no swap configured"
 	}
-	pct := r.SwapUsed * 100 / r.SwapTotal
-	return "used " + strconv.FormatUint(r.SwapUsed>>20, 10) + " MiB of " +
-		strconv.FormatUint(r.SwapTotal>>20, 10) + " MiB (" + strconv.FormatUint(pct, 10) + "%), line " +
-		strconv.Itoa(SwapCrossPercent) + "%"
+	return fmt.Sprintf("%s used, line %d%% of total", usedGiB(r.SwapUsed), SwapCrossPercent)
 }
+
+// usedGiB formats bytes as "<n.n> GiB used".
+func usedGiB(b uint64) string { return gib(b) + " used" }

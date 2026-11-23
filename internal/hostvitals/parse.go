@@ -59,3 +59,37 @@ func parsePSISomeAvg10(s string) (float64, bool) {
 	}
 	return 0, false
 }
+
+// parseMeminfoTotal reads MemTotal from /proc/meminfo in bytes; 0 when absent.
+func parseMeminfoTotal(s string) uint64 {
+	sc := bufio.NewScanner(strings.NewReader(s))
+	for sc.Scan() {
+		name, rest, found := strings.Cut(sc.Text(), ":")
+		if !found || name != "MemTotal" {
+			continue
+		}
+		f := strings.Fields(rest)
+		if len(f) == 0 {
+			return 0
+		}
+		v, err := strconv.ParseUint(f[0], 10, 64)
+		if err != nil {
+			return 0
+		}
+		return v * 1024
+	}
+	return 0
+}
+
+// parseVmstatSwapIns reads pswpin from /proc/vmstat.
+func parseVmstatSwapIns(s string) (uint64, bool) {
+	sc := bufio.NewScanner(strings.NewReader(s))
+	for sc.Scan() {
+		f := strings.Fields(sc.Text())
+		if len(f) == 2 && f[0] == "pswpin" {
+			v, err := strconv.ParseUint(f[1], 10, 64)
+			return v, err == nil
+		}
+	}
+	return 0, false
+}
