@@ -17,6 +17,9 @@ import (
 // block that does not check out is logged and reads as unset, so a typo in
 // seat_env costs the change and never the daemon.
 func (d *Daemon) loadSeatEnv(socketPath string) {
+	if d.driver == nil {
+		return
+	}
 	cfg, err := config.Load()
 	if !configLoadUsable(err) || cfg == nil {
 		return
@@ -30,17 +33,29 @@ func (d *Daemon) loadSeatEnv(socketPath string) {
 	if len(spec.PathPrepend) == 0 && len(spec.Unset) == 0 && len(spec.Secrets) == 0 {
 		return
 	}
+	cluster := "(none for this socket)"
+	if cl != nil {
+		cluster = cl.Name
+	}
 	d.driver.SetSeatEnv(spec.PathPrepend, spec.Unset)
-	log.Printf("seat env: cluster %s puts %d directories in front of PATH and removes %d more variables in every seat", cl.Name, len(spec.PathPrepend), len(spec.Unset))
+	if len(spec.PathPrepend) > 0 || len(spec.Unset) > 0 {
+		log.Printf("seat env: cluster %s puts %d directories in front of PATH and removes %d more variables in every seat", cluster, len(spec.PathPrepend), len(spec.Unset))
+	}
 	if vars := spec.SecretVars(); len(vars) > 0 {
-		// Names only, in the log and on the tmux argument list. Opt-in: a cluster
-		// that declares no secrets keeps every seat's environment as it was.
+		// Names only, in the log and on the tmux argument list. A cluster that
+		// writes secrets: {} keeps every seat's environment as it was.
 		d.driver.SetSeatSecretNames(vars)
-		if err := d.driver.StripServerEnv(); err != nil {
-			log.Printf("seat env: %v", err)
-		}
-		log.Printf("seat env: cluster %s keeps %d seat secret variable(s) out of the tmux server and every pane: %s", cl.Name, len(vars), strings.Join(vars, ", "))
-		d.captureSeatSecrets(cl.Name, spec)
+		// Off the start path: a tmux that does not answer must not hold the daemon
+		// back, and every pane carries its own env -u for these names meanwhile.
+		d.seatStrip.Add(1)
+		go func() {
+			defer d.seatStrip.Done()
+			if err := d.driver.StripServerEnv(); err != nil {
+				log.Printf("seat env: %v", err)
+			}
+		}()
+		log.Printf("seat env: cluster %s keeps %d seat secret variable(s) out of the tmux server and every pane: %s", cluster, len(vars), strings.Join(vars, ", "))
+		d.captureSeatSecrets(cluster, spec)
 		if d.sessMgr != nil {
 			dir := filepath.Join(filepath.Dir(socketPath), "seat-secrets")
 			if err := os.MkdirAll(dir, 0o700); err != nil {

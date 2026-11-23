@@ -1676,7 +1676,7 @@ func (m *Manager) wrapSeatSecrets(sess *api.Session, role api.Role, plan *launch
 		key := sess.Key()
 		go func() {
 			defer clear(value)
-			if err := h.Deliver(value, wait+5*time.Second); err != nil {
+			if err := h.Deliver(value, wait+time.Second); err != nil {
 				note := fmt.Sprintf("the seat starts without the secret %q: the pane did not read it in time", need)
 				log.Printf("session %s: %s", key, note)
 				_ = m.store.UpdateSession(key, func(live *api.Session) error {
