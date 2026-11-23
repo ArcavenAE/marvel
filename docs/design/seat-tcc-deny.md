@@ -46,7 +46,7 @@ The prepared seat command already runs under `sandbox-exec` when a role names `s
 
 A seat whose `workdir` lies under a denied folder (a user who keeps code in `~/Documents`) would fail every command. The seat's working directory is allowed back after the deny, so the later rule wins and the rest of the folder stays denied. Other trees a manifest names under a denied folder (a company directory, a settings file) are read by the daemon, which is not under the profile, so they are unaffected.
 
-Staging the profile is a guard, not containment, so a failure to stage it (the profile directory cannot be written, the command is not one simple command, the home is unknown) is logged and the seat starts without it. Refusing every seat over a nuisance guard is worse than a prompt. This is a decision the note makes on its own and the reviewer can reverse.
+Staging the profile is a guard, not containment, so a failure to stage it (the profile directory cannot be written, the command is not one simple command, the home is unknown) is logged and the seat starts without it. Refusing every seat over a nuisance guard is worse than a prompt. The failure is not silent: the reason is stored on the seat (`tcc_deny_note`) and `marvel doctor` prints a `WARN tcc-deny` line that names the seat and the reason. A test pins that the profile directory and the home both resolve on a normal install, so the path stays rare. A role that names its own `sandbox_profile` is not in this path: it already refuses to start when its profile cannot be staged.
 
 ## 5. Nesting: an inner `sandbox-exec` fails under an outer profile
 
@@ -149,11 +149,11 @@ The bar is that a marvel user does not face these prompts at all:
 
 1. **On by default.** On macOS every seat marvel launches gets the section 3 deny, with no setting for a new user to touch. `tcc_deny = false` exists, is off by default, and is named in the manifest reference.
 2. **Marvel's own code does not walk those folders either** (section 12).
-3. **Proof from seats marvel launches**, on the host that raised the prompts. It needs no new macOS user and no script run in a terminal, because a terminal would be the responsible app and not marvel. It runs after the build exists:
+3. **Proof from seats marvel launches**, on the host that raised the prompts. It needs no new macOS user and no script run in a terminal, because a terminal would be the responsible app and not marvel. It compares `tccd` log lines, not dialogs, because a stored answer can make a request silent while it is still logged. It runs after the build exists and after the person at that keyboard has answered the network-volume dialog they were already shown; if a dialog still appears, it is that one, and the report says so.
    - A **proof seat**, a role with the default deny, runs `du -x -sh ~`, `ls ~/Pictures ~/Music ~/Desktop` and `du -x -sh ~/OrbStack`, then marvel's own `marvel vitals`, `marvel doctor` and `marvel get sessions`.
-   - A **control seat**, a role with `tcc_deny = false`, runs `ls ~/Music` and nothing else. It is expected to raise one real prompt for `com.arcavenae.marvel`, so it runs only at a time the person at that keyboard has agreed to. If macOS already holds an answer for marvel and Music, no prompt appears and the control proves nothing; the control then names a folder class with no stored answer.
-   - Both read the `tccd` log from before the run: `log show --start "<time>" --style compact --predicate 'process == "tccd" AND eventMessage CONTAINS "com.arcavenae.marvel"'`, and count the `AUTHREQ_PROMPTING` lines.
-   - The pass is no new TCC prompt and no `AUTHREQ_PROMPTING` line for the proof seat's window, and at least one for the control's. The two windows are separate and each records its start time.
+   - A **control seat**, a role with `tcc_deny = false`, runs `ls ~/OrbStack` and nothing else. `~/OrbStack` is a network volume, so the control tests the network-volume class this change adds. It must log an `AUTHREQ_ATTRIBUTION` line for `com.arcavenae.marvel`, including when a stored "Don't Allow" answers the request without a dialog.
+   - Both read the `tccd` log from before the run: `log show --start "<time>" --style compact --predicate 'process == "tccd" AND eventMessage CONTAINS "com.arcavenae.marvel"'`, and keep every line.
+   - The pass is no `tccd` line for `com.arcavenae.marvel` in the proof seat's window, and at least one `AUTHREQ_ATTRIBUTION` line in the control's. The two windows are separate and each records its start time.
    - The roles to cast are two entries in one team, `tcc-proof` (default) and `tcc-control` (`tcc_deny = false`), each a shell seat that takes its commands from the person casting it. Casting them is a manifest change on the host, made outside this repository.
 4. **Release notes**, one line: "macOS seats no longer read the protected folders or network volumes, so a seat's `du` or `find` no longer raises a privacy prompt."
 
