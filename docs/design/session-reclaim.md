@@ -1,7 +1,7 @@
 # Session reclaim: finished sessions leave the default view over time
 
-- **Status:** design for review, 2026-11-23. Nothing here is built. Director
-  reads this note before any code PR; the build goes to a marvel builder.
+- **Status:** design, rulings made 2026-11-23 (section 5). Nothing here is
+  built; the build goes to a marvel builder, red tests first.
 - **Author:** the arcaven team's architect seat.
 - **Checked at:** marvel `origin/main` a7e5c202. Every line cite below is at
   that commit.
@@ -102,7 +102,7 @@ to the current firing (`OccupiesFiringSlot`,
 |---|---|---|
 | one-shot or probe | generation 0 (`marvel run`), or a headless role with no `schedule` block | 24h after it ended |
 | scheduled run | the row has a `Firing` | latest run: none (section 2.3); earlier runs: already deleted at the next firing |
-| standing role, crashed or failed | an interactive role's row in `crashed` or `failed` | 24h after doctor first reported it (section 2.4) |
+| standing role, crashed or failed | an interactive role's row in `crashed` or `failed` | 24h after it ended, and reported by doctor (section 2.4) |
 | headless exit 78 | `IsConfigError` (`internal/api/budget.go`) | never reclaimed; it waits for a person (ADR-010, exit 78 amendment) |
 
 A role named for one-shot work that runs as an interactive role is a standing
@@ -140,20 +140,20 @@ latest run. A crashed latest run therefore stays visible until the next firing,
 at most one schedule period. The daily role in section 0 is that case: it reads
 as crashed for up to a day, which is the signal working, not clutter.
 
-### 2.4 A crashed standing seat is reported before it is reclaimed
+### 2.4 A crashed standing seat is reported by doctor
 
 A crashed or failed row of a standing role is a failure someone may need to
-act on, so its retention clock does not start at `EndedAt`. It starts at
-`ReportedAt`, the first time `marvel doctor` listed it. Until then the row is
-never reclaimed, so a failure no one has looked at stays in the default view.
+act on. Its retention clock starts at `EndedAt`, like every other kind (ruled,
+section 5), and doctor reports it, so leaving the default view never hides it:
 
 - Doctor gains a `sessions` check: one WARN line per crashed, failed or
-  exit-78 row that is not reclaimed, with its age since `EndedAt`. It counts as
-  a warning, not a failure, so doctor's exit code is unchanged.
-- How `ReportedAt` gets written conflicts with doctor's "writes nothing"
-  contract, and is the ruling in section 5.
-- When an `introspect` command exists, it reads the same field and lists the
-  same rows.
+  exit-78 row that is not reclaimed, with its age since `EndedAt`, and one line
+  counting the reclaimed crashed and failed rows of standing roles, pointing at
+  `get sessions --all`. It counts as a warning, not a failure, so doctor's exit
+  code is unchanged.
+- Doctor stays a reader: the check writes nothing, and doctor's contract text
+  is unchanged.
+- When an `introspect` command exists, it lists the same rows the same way.
 
 ### 2.5 A hibernated team's finished rows stay until wake or delete
 
@@ -171,7 +171,7 @@ fleet's rule that a vital sign stays diagnostic and never becomes a gate by
 accretion:
 
 - no spawn, slot, budget, admission, shift or wake decision reads
-  `ReclaimedAt` or `ReportedAt`;
+  `ReclaimedAt`;
 - no command's exit code depends on whether a row was reclaimed;
 - doctor's new check warns and never fails;
 - reclaim never deletes, so turning it off (`"0"`) restores today's view.
@@ -195,7 +195,7 @@ Flat build tickets, in order. `after:` names what lands first.
   - the hibernated reader at 3d5h is not due while the mark is set, and is
     not due at 23h after wake;
   - exit 78 is never due;
-  - a standing crash with no `ReportedAt` is never due, and one reported 25h
+  - a standing crash that ended 23h ago is not due, and one that ended 25h
     ago is due.
 - **B3. The reclaim pass, in the controller's reconcile.** `internal/team`.
   after: B2. Red, in `internal/team/headless_completion_test.go` beside
@@ -212,12 +212,12 @@ Flat build tickets, in order. `after:` names what lands first.
   both, present under `--all` with `reclaimed` in its state cell, and
   `describe session` shows it. Keep `TestGetRegisterLeavesGetSessionsUnchanged`
   (`internal/daemon/register_get_test.go:138`) green.
-- **B5. Doctor's `sessions` check and `ReportedAt`.** `cmd/marvel/doctor.go`
-  beside `checkSeats`. after: B1 and the section 5 ruling. Red, in
-  `cmd/marvel/doctor_test.go` beside `TestDoctorSeatPaneWords` (`:261`): a
-  crashed standing row prints SKIP "pane state not read" and nothing else.
-  Green: it prints a WARN line naming the row and its age, doctor's exit code
-  is unchanged, and the row's `ReportedAt` is set in the way the ruling names.
+- **B5. Doctor's `sessions` check.** `cmd/marvel/doctor.go` beside
+  `checkSeats`. after: B1, B3. Red, in `cmd/marvel/doctor_test.go` beside
+  `TestDoctorSeatPaneWords` (`:261`): a crashed standing row prints SKIP "pane
+  state not read" and nothing else. Green: it prints a WARN line naming the row
+  and its age; a reclaimed crashed row is counted on the reclaimed line; doctor's
+  exit code is unchanged; and doctor writes nothing.
 - **B6. Hibernate and wake.** `internal/team/hibernate.go`. after: B3. Red: a
   finished row in a hibernated team, past its retention, is reclaimed. Green: it
   is not, while the mark is set; after wake it is reclaimed only once its
@@ -226,27 +226,17 @@ Flat build tickets, in order. `after:` names what lands first.
   cluster with `session_retention.oneshot = "0"` still reclaims. Green: it
   does not, and an unset key reads the default.
 
-## 5. Rulings needed (director, for the operator)
+## 5. Ruled 2026-11-23
 
-- **S1. How `ReportedAt` is written.** Options:
-  - (a) the daemon stamps it the first time it serves the row to a doctor read,
-    with doctor's own process still writing nothing;
-  - (b) an explicit verb, for example `marvel ack session <key>`, so only a
-    person starts the clock;
-  - (c) no stamp: the clock starts at `EndedAt`, and doctor keeps listing
-    reclaimed failures.
+The operator ruled on this note on 2026-11-23, relayed by director. The
+operator's words, verbatim: "I'm okay with 15 programs, they translate to a set of skills that can be scheduled or not. As for all the reset, yes, you're right update them as you describe and route".
 
-  Default: (a). It keeps "reported before reclaimed" without a manual step.
-  (b) can leave a row in view forever if no one acks it, which is the problem
-  this note is for. (c) moves the failure out of the view before anyone has
-  seen it. The cost of (a) is one line of doctor's contract text, which would
-  read "doctor's read is recorded by the daemon".
-- **S2. The retention defaults**, 24h for both kinds. Default: 24h.
-- **S3. A cap on reclaimed rows kept per role.** Default: no cap in this build;
+- **S1. When a crashed standing seat's clock starts.** Ruled: at `EndedAt`, as
+  for every kind, not at doctor's first report. Doctor, and introspect once it
+  exists, still report the row (section 2.4). No `ReportedAt` field is added.
+- **S2. The retention defaults.** Ruled: 24h for each kind.
+- **S3. A cap on reclaimed rows kept per role.** Ruled: no cap in this build;
   measure store growth after B3 lands, and propose a cap only if it is needed.
-
-This recommendation is valid until 2026-12-07; the architect will re-check it
-then.
 
 ## 6. Out of scope
 
@@ -262,8 +252,8 @@ then.
   `describe session`.
 - **SR-B (DESIGN):** reclaim never deletes a row and never changes replica-slot,
   firing-slot, budget or readiness decisions.
-- **SR-C (DESIGN):** a crashed or failed row of a standing role is never
-  reclaimed before doctor has reported it.
+- **SR-C (DESIGN):** a crashed or failed row of a standing role is reported by
+  doctor, before and after it is reclaimed.
 - **SR-D (DESIGN):** a headless exit 78 row is never reclaimed.
 - **SR-E (DESIGN):** no row of a hibernated or waking team is reclaimed, and
   retention after a wake counts from the wake.
