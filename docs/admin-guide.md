@@ -513,19 +513,31 @@ clusters:
   marvel always removes. A name has to be a plain variable name (letters,
   digits and `_`, not starting with a digit).
 - `secrets` maps a need a role can declare to the environment variable that
-  carries it, for example `bd: BEADS_DOLT_PASSWORD`. The block holds names and
-  never a value. Declaring a mapping keeps that variable out of the tmux server
-  the daemon starts, out of every tmux client it runs, and out of every pane
-  (`env -u` in the pane command), and removes it by name from a tmux server that
-  is already running (`tmux set-environment -g -u NAME`, a name and no value on
-  the argument list). **It is opt-in for now, and the default later.** Until the
-  hand-over that gives a seat its own value lands (a role field `seat_secrets`
-  and a FIFO read once by the pane), declaring a mapping strips the variable from
-  every seat, including seats that run `bd`. Do not declare it before that
-  release. A pane started before the daemon change keeps what it already had. A
-  server that is already running keeps the variable in its own process
-  environment until it is restarted; only its global environment table is
-  cleaned, which is what new panes read.
+  carries it. Left out, it is `bd: BEADS_DOLT_PASSWORD`; write `secrets: {}` to
+  opt out. The block holds names and never a value. The daemon reads each
+  variable once at start, removes it from its own environment and holds it in
+  memory only, and the variable is kept out of the tmux server the daemon starts,
+  out of every tmux client it runs, and out of every pane (`env -u` in the pane
+  command). A tmux server that is already running has the name removed from its
+  global environment (`tmux set-environment -g -u NAME`, a name and no value on
+  the argument list), which is what new panes read. A role gets the value only
+  when its manifest says so:
+
+  ```yaml
+  roles:
+    - name: builder
+      seat_secrets: [bd]
+  ```
+
+  The pane of such a seat reads the value once from a private FIFO (mode 0700
+  directory, removed after one write), so the value is on no command line and in
+  no file. A role that does not list the need never sees the variable, so a
+  seat that runs `bd` needs `seat_secrets: [bd]` in its role. If the cluster maps
+  nothing for a need, or the pane does not read in time, the seat starts without
+  the value and `marvel doctor` shows a `WARN seat-secret` line that names the
+  need. A restart of the daemon with `marvel upgrade` carries the held value in
+  memory across the reexec; if that fails the seat lacks it until an operator
+  restart. A pane started before the daemon change keeps what it already had.
 - The block is read when the daemon starts, so a change takes effect at the
   next daemon start and for seats started after it. Seats already running keep
   the environment they started with.

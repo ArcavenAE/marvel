@@ -143,12 +143,11 @@ before the strip. The proof is `ps -E` for the tmux server and for a pane of a
 seat that does not declare the need, printing key names only: the key is absent
 for that seat and present for one that declares `seat_secrets: [bd]`.
 
-Sequencing. The strip is opt-in in its own PR: nothing changes unless the
-cluster entry declares `seat_env.secrets`. The end state is a stripped password,
-so the PR that adds the hand-over (section 4.3) makes the strip the default for
-a cluster that has the mapping and the role field, and it does not merge without
-that change. Until then, declaring the mapping strips the variable from every
-seat, and the admin guide says so.
+Sequencing. The strip landed opt-in in its own PR. With the hand-over in place
+it is the default: a cluster whose `seat_env` has no `secrets` key maps
+`bd: BEADS_DOLT_PASSWORD`, and `secrets: {}` opts out. A role that runs `bd`
+lists `seat_secrets: [bd]`, so the manifests of those roles change in step with
+the merge of this default, and the merge waits for the operator's go.
 
 ## 5. What this does not do
 
