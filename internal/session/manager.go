@@ -1215,6 +1215,8 @@ func commitLaunchRecord(live, sess *api.Session, paneID string, pid int) {
 	// The hashes of the prompts this launch passed, kept for get session.
 	live.FirstPromptSha256 = sess.FirstPromptSha256
 	live.SystemPromptSha256 = sess.SystemPromptSha256
+	// Why this launch started without the privacy-folder deny, kept for doctor.
+	live.TCCDenyNote = sess.TCCDenyNote
 }
 
 // recordResume writes sess's entry in the resume journal
@@ -1732,6 +1734,11 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		// alone. It is not handed to the adapter as a profile in force, since it
 		// is not containment.
 		sbPlan = m.stageTCCOnly(sess)
+	} else if lctx.Placement != api.PlacementContainer && m.tccWanted(*role) {
+		// The deny is wanted and sandbox-exec is not there, so the seat starts
+		// without it and says so, the same as a staging failure.
+		sess.TCCDenyNote = "sandbox-exec is not at " + m.sandboxExecPath()
+		log.Printf("session %s: privacy-folder deny not applied: %s", sess.Key(), sess.TCCDenyNote)
 	}
 	lctx.CredentialHelper = m.CredentialHelper
 	if m.Bus != nil {

@@ -78,37 +78,55 @@ func tccDenyPaths(home string, mounts []string) []string {
 	return out
 }
 
-// tccDenyBlock renders the sandbox-exec rules. A path in allowBack that lies
-// under a denied path is allowed again after the deny, so the later rule wins:
-// a user who keeps code under ~/Documents still gets their working tree.
+// tccDenyBlock renders the sandbox-exec rules. It only ever denies. A path in
+// allowBack that lies under a denied path is carved out of that path's rule
+// with require-not, so a user who keeps code under ~/Documents still has their
+// working tree. A rule that allowed the tree back would be the later rule and
+// would lift a deny the role's own profile put on it, so the block allows
+// nothing: it never gives a seat more than its role's profile does.
 func tccDenyBlock(home string, mounts, allowBack []string) string {
 	denied := tccDenyPaths(home, mounts)
+	var carve []string
+	for _, a := range allowBack {
+		a = filepath.Clean(a)
+		if sbplPathSafe(a) {
+			carve = append(carve, a)
+		}
+	}
 	var b strings.Builder
 	b.WriteString("; marvel: deny the macOS privacy folders and network volumes (docs/design/seat-tcc-deny.md)\n")
 	b.WriteString("(deny file-read* file-write*")
 	for _, p := range denied {
-		fmt.Fprintf(&b, "\n  (subpath \"%s\")", p)
-	}
-	b.WriteString(")\n")
-	for _, a := range allowBack {
-		a = filepath.Clean(a)
-		if !sbplPathSafe(a) {
-			continue
-		}
-		for _, d := range denied {
-			if within(a, d) {
-				fmt.Fprintf(&b, "(allow file-read* file-write* (subpath \"%s\"))\n", a)
-				break
+		var out []string
+		for _, a := range carve {
+			if within(a, p) {
+				out = append(out, a)
 			}
 		}
+		if len(out) == 0 {
+			fmt.Fprintf(&b, "\n  (subpath \"%s\")", p)
+			continue
+		}
+		fmt.Fprintf(&b, "\n  (require-all (subpath \"%s\")", p)
+		for _, a := range out {
+			fmt.Fprintf(&b, " (require-not (subpath \"%s\"))", a)
+		}
+		b.WriteString(")")
 	}
+	b.WriteString(")\n")
 	return b.String()
 }
 
-// tccApplies reports whether this launch gets the deny: the manager switch is
-// on, the host is darwin, the role has not opted out, and sandbox-exec is there.
+// tccWanted reports whether this launch is meant to get the deny: the manager
+// switch is on, the host is darwin and the role has not opted out.
+func (m *Manager) tccWanted(role api.Role) bool {
+	return m.TCCDeny && m.goos() == "darwin" && role.TCCDenied()
+}
+
+// tccApplies reports whether this launch gets the deny: it is wanted and
+// sandbox-exec is there.
 func (m *Manager) tccApplies(role api.Role) bool {
-	if !m.TCCDeny || m.goos() != "darwin" || !role.TCCDenied() {
+	if !m.tccWanted(role) {
 		return false
 	}
 	info, err := os.Stat(m.sandboxExecPath())
