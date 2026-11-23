@@ -1319,7 +1319,7 @@ func (m *Manager) checkEnvPlaceholder(sess *api.Session) error {
 	why := fmt.Sprintf("env %s holds the literal %s, a redaction marker from a tracked copy of a manifest", strings.Join(keys, ", "), api.EnvPlaceholder)
 	msg := fmt.Sprintf("not started: %s/%s: %s; apply the manifest that holds the real values", sess.Team, sess.Role, why)
 	m.noteRefusal(sess, key, RefusalEnvPlaceholder, events.KindSessionPlacementRefused, "", msg)
-	return fmt.Errorf("refuse to start session %s: %s: %w", sess.Key(), why, ErrPlacementRefused)
+	return fmt.Errorf("refuse to start session %s: %s: %w", sess.Key(), why, ErrEnvPlaceholderRefused)
 }
 
 // harnessHomeRefusalSuffix keys the harness home refusal apart from the
@@ -2802,6 +2802,13 @@ type BusEnv interface {
 // caller can tell a placement refusal, which the manager already reports, from
 // any other spawn failure.
 var ErrPlacementRefused = errors.New("placement refused")
+
+// ErrEnvPlaceholderRefused is the placement refusal for a role env that holds
+// the redaction marker. It wraps ErrPlacementRefused, so every caller that
+// treats a refusal as a placement refusal still does, and a caller that must
+// tell it apart (it never clears by itself, unlike a missing directory) asks
+// errors.Is for this one.
+var ErrEnvPlaceholderRefused = fmt.Errorf("env placeholder: %w", ErrPlacementRefused)
 
 // checkExposure refuses a session for a role that writes a function its slot has
 // read. Every spawn path ends in Create, so this is the one place the ad-hoc run,

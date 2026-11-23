@@ -1579,7 +1579,11 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 			if err == nil && sess.Predecessor != "" {
 				c.crashPredecessorTaken(t, plan.Role, plan.Generation, sess.Predecessor)
 			}
-			if err != nil && errors.Is(err, session.ErrPlacementRefused) && role.Schedule != nil && plan.Firing != "" {
+			// Only a refusal that never clears by itself is recorded as a failed
+			// run: a missing directory or a busy harness home can clear on the
+			// next pass, and recording it would spend a retry or freeze a
+			// schedule that used to skip and try again.
+			if err != nil && errors.Is(err, session.ErrEnvPlaceholderRefused) && role.Schedule != nil && plan.Firing != "" {
 				c.recordRefusedFiring(t, role, sess, err)
 			}
 			if err != nil && !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) && !errors.Is(err, session.ErrSettingsFileRefused) {
