@@ -481,6 +481,9 @@ func checkSeats(r *doctorReport, in doctorInput) {
 		return
 	}
 	for _, s := range sessions {
+		if s.TCCDenyNote != "" {
+			r.line(statWarn, "tcc-deny", fmt.Sprintf("seat %s started without the privacy-folder deny: %s", s.Name, firstLine(s.TCCDenyNote)), "")
+		}
 		name := "seat " + s.Name
 		switch s.Pane {
 		case "prompt":
