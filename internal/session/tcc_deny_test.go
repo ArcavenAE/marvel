@@ -254,3 +254,56 @@ func TestNetworkMountsNeverNamesTheRootVolume(t *testing.T) {
 		}
 	}
 }
+
+// A seat that starts without the deny says so on its own record: the log line
+// is for the daemon's reader, the note is for `marvel doctor`, which names the
+// seat and the reason.
+func TestAFailedStagingIsRecordedOnTheSeat(t *testing.T) {
+	t.Parallel()
+	r := tccRig(t, api.Role{})
+	r.mgr.RealHome = "relative/home"
+	sess := r.session()
+	plan := r.mgr.planLaunch(sess)
+	if plan.sandbox != nil {
+		t.Fatalf("a seat with no known home was staged: %+v", plan.sandbox)
+	}
+	if sess.TCCDenyNote == "" {
+		t.Fatal("the seat started without the deny and carries no note")
+	}
+	if !strings.Contains(sess.TCCDenyNote, "home") {
+		t.Errorf("the note does not give the reason: %q", sess.TCCDenyNote)
+	}
+}
+
+// On a normal install the profile directory and the home both resolve, so the
+// fail-open path stays rare: the seat is staged and carries no note.
+func TestStagingResolvesOnANormalInstall(t *testing.T) {
+	t.Parallel()
+	r := tccRig(t, api.Role{})
+	if _, err := r.mgr.sandboxDir(); err != nil {
+		t.Fatalf("the profile directory does not resolve: %v", err)
+	}
+	if home, err := r.mgr.realHome(); err != nil || !filepath.IsAbs(home) {
+		t.Fatalf("the home does not resolve: %q, %v", home, err)
+	}
+	sess := r.session()
+	plan := r.mgr.planLaunch(sess)
+	if plan.sandbox == nil || plan.sandboxFail != nil {
+		t.Fatalf("a normal install did not stage the deny: %+v", plan)
+	}
+	if sess.TCCDenyNote != "" {
+		t.Errorf("a staged seat carries a note: %q", sess.TCCDenyNote)
+	}
+}
+
+// A re-plan that stages the deny must not carry the previous launch's note.
+func TestTheNoteDoesNotOutliveTheLaunchItDescribes(t *testing.T) {
+	t.Parallel()
+	r := tccRig(t, api.Role{})
+	sess := r.session()
+	sess.TCCDenyNote = "left over from an earlier launch"
+	_ = r.mgr.planLaunch(sess)
+	if sess.TCCDenyNote != "" {
+		t.Errorf("the earlier note survived a staged launch: %q", sess.TCCDenyNote)
+	}
+}

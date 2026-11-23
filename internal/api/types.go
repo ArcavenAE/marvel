@@ -301,6 +301,11 @@ type Session struct {
 	// text (aae-orc-mdr0n).
 	FirstPromptSha256  string `toml:"first_prompt_sha256,omitempty"`
 	SystemPromptSha256 string `toml:"system_prompt_sha256,omitempty"`
+	// TCCDenyNote is why this launch started without the privacy-folder deny
+	// (docs/design/seat-tcc-deny.md, section 4). Empty means the deny was
+	// applied, or does not apply to the seat. A launch sets it fresh, so a
+	// re-plan does not carry the previous launch's reason.
+	TCCDenyNote string `json:"tcc_deny_note,omitempty" toml:"tcc_deny_note,omitempty"`
 	// SettingSourcesNote is filled on read by describe for a record that has
 	// SettingSources and no delivery, and never stored.
 	SettingSourcesNote string `json:"setting_sources_note,omitempty" toml:"-"`
