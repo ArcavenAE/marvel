@@ -252,3 +252,30 @@ func (d *Daemon) handleAccountDelta(params json.RawMessage) daemonrpc.Response {
 	d.accountSeries.SetCluster(d.cluster)
 	return respond(d.accountSeries.Delta(key, req.Window, req.Start, req.End))
 }
+
+// seedAccountReadings puts each account's newest reading from the reloaded
+// series back into the newest-reading store, so a restart does not turn every
+// account to "none". The readings go in with the time they were observed, so
+// one older than api.ReadingMaxAge reads stale, with its percent and reset, and
+// a live report replaces it as usual.
+func (d *Daemon) seedAccountReadings(now time.Time) {
+	for _, r := range d.accountSeries.Newest() {
+		d.accounts.RecordObserved(r.Key, r.Windows, r.Session, r.At, now)
+	}
+}
+
+// accountReadingRows answers get account-readings: the stamped readings the
+// series holds, newest window figures included, oldest first within a window.
+// It reads the history only and asks nothing of any harness.
+func (d *Daemon) accountReadingRows(account string, sinceSeconds int64, now time.Time) []api.AccountSample {
+	var from time.Time
+	if sinceSeconds > 0 {
+		from = now.Add(-time.Duration(sinceSeconds) * time.Second)
+	}
+	d.accountSeries.SetCluster(d.cluster)
+	out := d.accountSeries.Recent(account, from)
+	if out == nil {
+		out = []api.AccountSample{}
+	}
+	return out
+}

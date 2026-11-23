@@ -45,7 +45,6 @@ func TestAccountReadingSurvivesARestartInBudgets(t *testing.T) {
 	if found.ResetsAt == nil || !found.ResetsAt.Equal(resets) {
 		t.Errorf("resets_at = %v, want %v", found.ResetsAt, resets)
 	}
-
 }
 
 // get account-readings --since 1h30m lists the reading taken before the restart.

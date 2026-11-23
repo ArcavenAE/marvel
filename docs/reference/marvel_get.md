@@ -1,10 +1,17 @@
 ## marvel get
 
-List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, vitals)
+List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, account-readings, vitals)
 
 ### Synopsis
 
 List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, vitals).
+
+get account-readings lists the stamped readings of each account window the daemon holds: the percent
+used, the reset time in UTC, when it was observed and the session that reported it. They are kept
+on disk and read back at start, so the list and the stale rows of get budgets survive a restart.
+--account keeps the accounts whose key contains the text, and --since 1h keeps readings no older
+than that. -o json prints the same list. It reads the history only and asks nothing of any
+harness; nothing gates or acts on it.
 
 get vitals shows the daemon's latest host vitals sample (swap, memory pressure, fseventsd RSS and
 the largest process's RSS, orphan CPU), its time, each threshold with its state, the top processes by
@@ -148,12 +155,14 @@ marvel get <resource-type> [flags]
 ### Options
 
 ```
+      --account string            with get account-readings: keep the accounts whose key contains this text
       --all-clusters              with get sessions or get vitals: read every cluster in the client config, in parallel, each under its own 10 s timer
       --columns string            sessions columns, comma-separated and in order (overrides display.session_columns); names: workspace, team, role, generation, name, state, health, composer, pane, context, cpu, rss, desk, runtime, llm, workdir, tout, rate, last-active, last-turn, age, active, tin, cr, cw, prompt, hit, spec, account, 5h, 7d, 5h-reset, 7d-reset, read, backend, cred, home, login, cluster, key, cost, wide, acct, service, rest
       --header                    print the daemon header above the sessions table even when stdout is not a terminal
       --load                      with get teams: one row per team with seats, mean ACTIVE% and limited seats
       --no-trunc                  print RUNTIME and WORKDIR in full instead of cutting them to fit
   -o, --output string             print get team or get workspace as json or yaml (desired and observed sections), or get sessions as json or yaml (a list; with a cluster set, {clusters, sessions})
+      --since duration            with get account-readings: keep readings no older than this, as 1h or 90m (default: every reading held)
   -w, --watch seconds[=default]   watch sessions (optional: seconds, default 2)
 ```
 

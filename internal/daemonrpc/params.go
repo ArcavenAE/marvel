@@ -50,6 +50,11 @@ type GetParams struct {
 	ResourceType string `json:"resource_type"`
 	// Composer asks for the COMPOSER column, which reads each seat's pane.
 	Composer bool `json:"composer,omitempty"`
+	// Account and SinceSeconds narrow get account-readings: Account keeps the
+	// accounts whose key text contains it, SinceSeconds the readings no older
+	// than that many seconds. Other resource types ignore both.
+	Account      string `json:"account,omitempty"`
+	SinceSeconds int64  `json:"since_seconds,omitempty"`
 }
 
 // DescribeParams names one resource to describe.

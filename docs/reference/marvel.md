@@ -31,7 +31,7 @@ Agent orchestration control plane
 * [marvel events](marvel_events.md)	 - List recent session/team state-transition events
 * [marvel example](marvel_example.md)	 - Print a manifest the binary carries
 * [marvel exposure](marvel_exposure.md)	 - Record, end or void the functions a slot has read (the clean-room exposure gate)
-* [marvel get](marvel_get.md)	 - List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, vitals)
+* [marvel get](marvel_get.md)	 - List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, account-readings, vitals)
 * [marvel handoff](marvel_handoff.md)	 - Hand a seat's work to its successor through the daemon
 * [marvel hibernate](marvel_hibernate.md)	 - Sign off the named teams, end every seat, and hold the teams until a wake
 * [marvel inject](marvel_inject.md)	 - Send keystrokes to a session's pane (executive privilege)
