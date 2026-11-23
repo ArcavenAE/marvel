@@ -134,7 +134,13 @@ made. So the decision comes first:
    adoption, so the reap will leave it cold.
 3. `RefreshLiveness` runs with the set of boot-eligible teams, and its reap
    skips the charge and the freeze for their rows (section 2.4). It still
-   removes the dead rows, as today.
+   removes the dead rows, as today. The skip is scoped to this one call.
+   `reapDeadLocked` is shared: `ReconcileOnce` calls it on every tick
+   (`controller.go:607`) and `RefreshLiveness` at start (`:694`). So the set
+   is an argument, never controller state: `reapDeadLocked(skip)` takes it,
+   `RefreshLiveness` passes the boot-eligible set, and `ReconcileOnce` passes
+   none. Nothing is stored, so from the first reconcile tick on, a crash in a
+   resumed team is charged exactly as today.
 4. `InitConvergencePosture` is unchanged: every cold team still goes to `hold`
    first.
 5. Each boot-eligible team is then set to `converge` with source `boot`,
@@ -159,13 +165,29 @@ of these hold:
    of now (default 7 days).
 6. **The team was live near the end**: its latest presence is within the
    bound of the daemon's last alive stamp. A team's latest presence is the
-   latest of: any row's `LastHeartbeat`; any row's `CreatedAt`; and, for a
-   scheduled role, its latest run's `StartedAt` or `EndedAt` from the run
-   history. A role that never beats, such as a scheduled headless role, is
-   present by its spawns and its runs, so a team of such roles resumes and
-   its schedule fires again. A scheduled role whose period is longer than the
-   bound (a monthly job under a 7-day bound) can fail this condition; it stays
-   held, and the log line names condition 6.
+   latest of:
+   - any row's `LastHeartbeat`;
+   - any row's `CreatedAt`;
+   - for a scheduled role, its latest run's `StartedAt` or `EndedAt` from the
+     run history;
+   - the daemon's last alive stamp itself, for any row the snapshot finds in
+     a state that `CountsAsAlive` (`pending`, `running` or
+     `crashloop-backoff`). The reconcile loop reaps a row whose pane is gone
+     on every tick (`controller.go:607`), so a row the store still holds as
+     alive had a pane at the last tick before the daemon stopped, within a
+     tick of the alive stamp.
+
+   A role that never beats is present by its spawns, its runs and its live
+   rows. This covers a scheduled headless role and an unscheduled, non-beating
+   role that was spawned long before the reboot and was still running at it.
+   A role whose only row is a finished run (a headless `succeeded` or exit 78
+   row) has nothing to resume: it holds its slot and is not relaunched
+   (ADR-010). A team of only such rows that fails this condition loses
+   nothing by staying held. One gap is left and named: a scheduled role whose
+   period is longer than the bound (a monthly job under a 7-day bound), with no
+   live row at the reboot, fails this condition. It stays held, and the log
+   line names condition 6. Once a session end time exists
+   (`session-shelving.md` proposes `EndedAt`), it joins this list.
 
 The daemon then sets the team's posture to `converge` with source `boot`, and
 emits a `team.resumed-on-boot` event. A team that fails a condition stays
@@ -197,7 +219,13 @@ can start a fleet.
 - Cluster config: `resume_on_boot` (default `true`) and
   `resume_on_boot_within` (default `7d`), beside the cluster's other switches
   in `internal/config/config.go` (`type Cluster struct`, `:295`). A cluster
-  that sets `resume_on_boot: false` keeps today's start path for every team.
+  that sets `resume_on_boot: false` keeps today's start path for every team
+  and role that does not set its own value.
+- **Precedence: the most specific level wins.** A role's own value wins over
+  its team's, and a team's wins over the cluster's; a level that sets nothing
+  reads the next one out. An off cluster or team is a default, not a lock: a
+  role set `true` under it is resumed. Today's start path is kept exactly for
+  a team only when the effective setting of every one of its roles is off.
 - A team opts out in its manifest settings with `resume_on_boot = false`, or
   sets `true` under a cluster that is off. This is spec, so it belongs in the
   manifest, unlike the posture, which stays status.
@@ -284,6 +312,10 @@ In order; `after:` names what lands first.
   - a team of scheduled headless roles with zero heartbeats, whose latest
     run ended an hour before the alive stamp: converge;
   - a team with a row whose pane survived adoption: not boot-eligible;
+  - an unscheduled, non-beating role created 30 days before the reboot, its
+    row still `running` in the store, with a fresh alive stamp: converge;
+  - a role set on under a cluster set off and a team that sets nothing:
+    converge for that role;
   - the team opted out in its manifest: hold;
   - every role of the team opted out: hold, condition 1;
   - one role opted out under a team set on: converge, with that role on
@@ -304,12 +336,14 @@ In order; `after:` names what lands first.
   the refusal reported, as a cold `converge` is today.
 - **RB7. The boot reap charges nothing for a resumed team.** `controller.go`
   (`RefreshLiveness` and `reapDeadLocked`, `:670-695`, and `noteReapedCrash`,
-  `:831-900`), which take the boot-eligible set. after: RB6. Red: a resumed
-  team with a `restart_policy = never` role comes back with that role frozen,
-  and another role's first spawn waits out a backoff. Green: neither role is
-  charged or frozen at any point, no `failed` row or reap charge event is
-  written for it, and a team that is not boot-eligible is charged exactly as
-  today.
+  `:831-900`); `reapDeadLocked` takes the skip set as an argument. after:
+  RB6. Red: a resumed team with a `restart_policy = never` role comes back
+  with that role frozen, and another role's first spawn waits out a backoff.
+  Green: neither role is charged or frozen at any point, no `failed` row or
+  reap charge event is written for it, and a team that is not boot-eligible is
+  charged exactly as today. A second case: after the resume, a seat of the
+  resumed team whose pane dies is reaped by `ReconcileOnce` and charged
+  exactly as today.
 - **RB9. A role on `BootWithheld` is withheld until an operator command.**
   `internal/api/types.go` (the team's `BootWithheld`), `controller.go`
   (`postureWithholds` and its callers in `schedule_clock.go:62` and
@@ -327,8 +361,9 @@ In order; `after:` names what lands first.
 
 - The setting adds no gate. Every spawn it allows passes the same checks a
   `marvel converge` spawn passes.
-- Turning the setting off, for a cluster or a team, restores today's start
-  path exactly: RB6 and RB7 act only for a team the decision resumes.
+- With the effective setting off for every role of a team, the team gets
+  today's start path exactly: RB6 and RB7 act only for a team the decision
+  resumes, and the reap skip applies only to the boot call (section 2.2).
 - What to measure on a host after the build, at a window the operator names:
   the pre-reboot running teams read `converge` from `boot` with fresh seats; a
   team held before the reboot is still held; a suspended cluster stays
@@ -361,9 +396,10 @@ right update them as you describe and route".
 
 ## 7. Candidate requirements (provisional, not ratified)
 
-- **RB-A (DESIGN):** resume on boot is on by default with a 7-day window, and
-  with it off for a cluster or a team, a daemon start behaves exactly as today
-  for it.
+- **RB-A (DESIGN):** resume on boot is on by default with a 7-day window. A
+  role's effective setting is its own value, else its team's, else the
+  cluster's. A team whose roles all have the setting off gets exactly today's
+  daemon start; an off team or cluster does not override a role set on.
 - **RB-F (DESIGN):** a role's own `resume_on_boot` overrides its team's, and a
   role whose effective setting is off neither spawns nor fires after a boot
   resume until the next operator posture command.
