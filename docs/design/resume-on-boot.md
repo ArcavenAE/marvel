@@ -149,7 +149,7 @@ together, not crashed one by one.
 A cold team (no live session after the reap) converges on boot only when all
 of these hold:
 
-1. **The setting is on** for the team (section 2.5).
+1. **The setting is on** for at least one of the team's roles (section 2.5).
 2. **The cluster is not suspended**: no suspend record exists.
 3. **The team is not hibernated**: no hibernate mark, in either state.
 4. **It was running before**: the effective posture is `converge`. The
@@ -192,7 +192,7 @@ can start a fleet.
   reconcile loop, and once more on a clean shutdown, in a small record of its
   own. One write a minute bounds the cost.
 
-### 2.5 The setting: on by default, a team or a cluster opts out
+### 2.5 The setting: on by default; a cluster, a team or a role opts out
 
 - Cluster config: `resume_on_boot` (default `true`) and
   `resume_on_boot_within` (default `7d`), beside the cluster's other switches
@@ -201,6 +201,33 @@ can start a fleet.
 - A team opts out in its manifest settings with `resume_on_boot = false`, or
   sets `true` under a cluster that is off. This is spec, so it belongs in the
   manifest, unlike the posture, which stays status.
+- **A role may override its team** with `resume_on_boot` in its own settings
+  (a new field on the role, `internal/api/types.go`, `type Role struct`,
+  `:823`). The team's value is the default for each of its roles, and a role
+  that sets nothing inherits it. A role's effective setting is its own value,
+  else its team's, else the cluster's.
+- **How a role override acts.** The posture is per team, so a role is held
+  back by a list on the team, not by a posture of its own. When the decision
+  resumes a team, it also records `BootWithheld`, a new status field on the
+  team: the roles whose effective setting is off. A role on that list is
+  withheld from cold spawn and from firing, the way `postureWithholds`
+  (`controller.go:1105-1110`) withholds a held team, while the rest of the
+  team converges. The next posture write by an `operator` (apply, converge or
+  wake) clears the list, so a withheld role starts on the next explicit
+  command, as it does today. A team whose roles are all off fails condition 1
+  and stays held.
+- **Worked example: a scheduled role.** A team is on by default and holds two
+  standing seats and a nightly scheduled role that sends a report. The
+  nightly role sets `resume_on_boot = false`, because its owner wants a
+  person to look before it fires after an unattended restart. After a reboot,
+  the two standing seats come back as fresh casts; the nightly role is on
+  `BootWithheld` and does not fire, and `describe team` says so, until the
+  operator runs `marvel converge`. The reverse works the same way: under a
+  team set off, a one-shot or scheduled role that sets `true` makes the team
+  boot-eligible, and only that role spawns or fires.
+- The boot reap's skip (section 2.4) covers every row of a boot-eligible
+  team, withheld roles included: their seats were lost to the reboot, not
+  crashed, and a `restart_policy = never` role on the list is not frozen.
 - The default is on, so a host needs no config change to get it.
 - `describe team` shows the posture, its source and set-at time, and whether
   resume on boot applies, so a held team says why it is held.
@@ -236,10 +263,13 @@ In order; `after:` names what lands first.
   suspend record) and the daemon's reconcile loop. after: none. Red: after a
   reconcile tick and after a clean shutdown, the store has no alive stamp.
   Green: it has one, and two ticks inside a minute write it once.
-- **RB4. The setting.** `internal/config/config.go` and the manifest team
-  spec. after: none. Red: an unset cluster reads off, and a team with
-  `resume_on_boot = false` under a cluster set on reads on. Green: an unset key
-  reads on with a 7-day window, and each set value reads as written.
+- **RB4. The setting.** `internal/config/config.go`, the manifest team spec
+  and the role spec. after: none. Red: an unset cluster reads off, a team with
+  `resume_on_boot = false` under a cluster set on reads on, and a role with
+  `resume_on_boot = false` under a team set on reads on. Green: an unset key
+  reads on with a 7-day window; each set value reads as written; a role that
+  sets nothing reads its team's value, and a team that sets nothing reads the
+  cluster's.
 - **RB5. The decision, as a pure function.** `internal/team`, for example
   `resumeOnBoot(snap bootSnapshot, cfg ResumeConfig, now time.Time) (bool, string)`.
   after: RB1, RB2, RB3, RB4. Red: a table test with the cases below returns
@@ -255,6 +285,11 @@ In order; `after:` names what lands first.
     run ended an hour before the alive stamp: converge;
   - a team with a row whose pane survived adoption: not boot-eligible;
   - the team opted out in its manifest: hold;
+  - every role of the team opted out: hold, condition 1;
+  - one role opted out under a team set on: converge, with that role on
+    `BootWithheld`;
+  - one role set on under a team set off: converge, with every other role on
+    `BootWithheld`;
   - a `start` hold carrying a prior `operator` converge: converge.
 - **RB6. Wire it into daemon start, before the reap.** `internal/daemon/daemon.go:839-847`:
   the snapshot and the decision run before `RefreshLiveness`, and the
@@ -275,10 +310,18 @@ In order; `after:` names what lands first.
   charged or frozen at any point, no `failed` row or reap charge event is
   written for it, and a team that is not boot-eligible is charged exactly as
   today.
+- **RB9. A role on `BootWithheld` is withheld until an operator command.**
+  `internal/api/types.go` (the team's `BootWithheld`), `controller.go`
+  (`postureWithholds` and its callers in `schedule_clock.go:62` and
+  `cadence_clock.go:27`). after: RB4, RB6. Red: in a resumed team whose
+  nightly scheduled role sets `resume_on_boot = false`, the nightly role
+  fires at its next due time. Green: it does not fire and spawns nothing
+  while the team's standing roles spawn; after `marvel converge` the list is
+  empty and the role fires at its next due time.
 - **RB8. `describe team` shows it.** `cmd/marvel` (describe team). after: RB1,
-  RB4. Red: describe shows the posture with no source, time or resume line.
-  Green: it shows all three, and a held team's line names the condition that
-  holds it.
+  RB4, RB9. Red: describe shows the posture with no source, time or resume line.
+  Green: it shows all three, a held team's line names the condition that
+  holds it, and a resumed team lists its `BootWithheld` roles.
 
 ## 4. Diagnostic and safety notes
 
@@ -304,7 +347,9 @@ right update them as you describe and route".
 - **S3. The boot reap's charge.** Ruled: a resumed team pays no reap charge
   (RB7); other teams keep today's accounting.
 - **S4. A per-team setting.** Ruled: each team can opt out in its manifest
-  settings.
+  settings. Ruled further by the operator, 2026-11-23: any role may override
+  its team's setting in its own settings, and the team's setting is the
+  default for its roles (section 2.5).
 
 ## 6. Out of scope
 
@@ -319,6 +364,9 @@ right update them as you describe and route".
 - **RB-A (DESIGN):** resume on boot is on by default with a 7-day window, and
   with it off for a cluster or a team, a daemon start behaves exactly as today
   for it.
+- **RB-F (DESIGN):** a role's own `resume_on_boot` overrides its team's, and a
+  role whose effective setting is off neither spawns nor fires after a boot
+  resume until the next operator posture command.
 - **RB-B (DESIGN):** a team converges on boot only if it was running before the
   reboot, was not held by an operator, is not hibernated, the cluster is not
   suspended, and both staleness bounds hold.
