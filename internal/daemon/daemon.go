@@ -700,6 +700,8 @@ func (d *Daemon) Start(socketPath string) (err error) {
 	if d.accountSeriesDir != "" {
 		if err := d.accountSeries.Attach(d.accountSeriesDir, d.accountSeriesRetention, time.Now()); err != nil {
 			log.Printf("warning: account series not persisted: %v", err)
+		} else {
+			d.seedAccountReadings(time.Now().UTC())
 		}
 	}
 
@@ -1858,6 +1860,8 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 		result = d.store.ListCredentials()
 	case "budgets", "budget":
 		result = d.budgetRows()
+	case "account-readings":
+		result = d.accountReadingRows(p.Account, p.SinceSeconds, time.Now().UTC())
 	default:
 		return daemonrpc.Response{Error: fmt.Sprintf("unknown resource type: %s", p.ResourceType)}
 	}

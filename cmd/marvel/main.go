@@ -1281,10 +1281,19 @@ func getCmd() *cobra.Command {
 	var watchSec, columns, output string
 	var getArgs []string // the arguments left once -w has taken its value
 	var noTrunc, header, load, allClusters bool
+	var account string
+	var since time.Duration
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
-		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, vitals)",
+		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, account-readings, vitals)",
 		Long: `List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, vitals).
+
+get account-readings lists the stamped readings of each account window the daemon holds: the percent
+used, the reset time in UTC, when it was observed and the session that reported it. They are kept
+on disk and read back at start, so the list and the stale rows of get budgets survive a restart.
+--account keeps the accounts whose key contains the text, and --since 1h keeps readings no older
+than that. -o json prints the same list. It reads the history only and asks nothing of any
+harness; nothing gates or acts on it.
 
 get vitals shows the daemon's latest host vitals sample (swap, memory pressure, fseventsd RSS and
 the largest process's RSS, orphan CPU), its time, each threshold with its state, the top processes by
@@ -1446,6 +1455,24 @@ under ? sort, ? lists every key, q quits.`,
 				}
 				return runFanOutGet(cmd, names, columns, output, noTrunc, watching, interval, cmd.Flags().Changed("output"), load)
 			}
+			if (account != "" || cmd.Flags().Changed("since")) && args[0] != "account-readings" {
+				return fmt.Errorf("--account and --since apply to get account-readings only")
+			}
+			if args[0] == "account-readings" {
+				switch {
+				case load:
+					return fmt.Errorf("--load applies to get teams only")
+				case watching:
+					return fmt.Errorf("get account-readings does not support --watch")
+				case columns != "":
+					return fmt.Errorf("--columns applies to get sessions only")
+				}
+				format := ""
+				if cmd.Flags().Changed("output") {
+					format = output
+				}
+				return getAccountReadings(cmd.OutOrStdout(), account, since, format)
+			}
 			if args[0] == "vitals" {
 				switch {
 				case load:
@@ -1507,6 +1534,8 @@ under ? sort, ? lists every key, q quits.`,
 		},
 	}
 	cmd.Flags().BoolVar(&allClusters, "all-clusters", false, "with get sessions or get vitals: read every cluster in the client config, in parallel, each under its own 10 s timer")
+	cmd.Flags().StringVar(&account, "account", "", "with get account-readings: keep the accounts whose key contains this text")
+	cmd.Flags().DurationVar(&since, "since", 0, "with get account-readings: keep readings no older than this, as 1h or 90m, at least 1s (default: every reading held)")
 	cmd.Flags().BoolVar(&load, "load", false, "with get teams: one row per team with seats, mean ACTIVE% and limited seats")
 	cmd.Flags().BoolVar(&noTrunc, "no-trunc", false, "print RUNTIME and WORKDIR in full instead of cutting them to fit")
 	f := cmd.Flags().VarPF(newOptionalString(&watchSec), "watch", "w", "watch sessions (optional: seconds, default 2)")
