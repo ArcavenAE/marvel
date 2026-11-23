@@ -1,0 +1,284 @@
+# Resume on boot: teams that were running come back after a host reboot
+
+- **Status:** design for review, 2026-11-23. Nothing here is built. Director
+  reads this note before any code PR; the build goes to a marvel builder.
+- **Author:** the arcaven team's architect seat.
+- **Checked at:** marvel `origin/main` a7e5c202. Every line cite below is at
+  that commit.
+- **Builds on:** `_kos/findings/finding-034-convergence-posture-hold-at-start-line.md`
+  (the hold at the start line), `fleet-hibernate.md`, `fleet-suspend-resume.md`
+  (ruling SR-C), and the open question `question-convergence-posture`
+  ("how do hold, the go-line, and resume-on-power compose").
+
+## 0. Why
+
+After a host reboot, marvel's daemon comes back with every team held and no
+seats, and stays that way until someone runs `marvel converge`. That hold is
+deliberate: it stops a stale store from starting a fleet nobody asked for. But
+it also means a host that rebooted overnight is idle until a person notices,
+even for teams that were running a minute before the reboot.
+
+This note adds an opt-in setting, off by default, that brings back the teams
+that were running before the reboot, and only those. A team held on purpose,
+a hibernated team, a suspended cluster, or a store too old to trust stays
+held. Seats come back as fresh casts through the normal spawn gate. How a seat
+recovers its own conversation is a separate problem (`fleet-hibernate.md`
+section 5, the resume journal) and is out of scope.
+
+## 1. What exists today
+
+### 1.1 The start path overwrites the posture before anything reads it
+
+- A team's `ConvergencePosture` is `hold` or `converge`
+  (`internal/api/types.go:1370-1383`). It is status, not spec (`toml:"-"`), and
+  JSON-persisted with the team (`types.go:1360-1369`).
+- At daemon start, after adoption, `RefreshLiveness` reaps rows whose panes did
+  not survive (`internal/daemon/daemon.go:839-847`,
+  `internal/team/controller.go:686-695`). Then `InitConvergencePosture`
+  (`controller.go:715-735`) sets every team with no live session to `hold` and
+  every team with one to `converge`. Its comment: "It OVERRIDES whatever
+  posture the store rehydrated, so a stale bolt that persisted PostureConverge
+  cannot cold-spawn a fleet nobody asked for" (`controller.go:704-706`).
+- `postureWithholds` (`controller.go:1105-1110`) then blocks cold spawns for a
+  held team with no live session.
+- The comment names this work: "tu2e (resume-on-power) will let an operator opt
+  a team out of the hold default" (`controller.go:712-713`).
+
+### 1.2 The posture records no source and no time
+
+Four sites write it, and none records who or when:
+
+| writer | sets | cite |
+|---|---|---|
+| `marvel apply` | `converge` | `daemon.go:1744-1757` |
+| `marvel converge` and `converge --hold` | either | `daemon.go:2125-2138`, `controller.go:745-775` |
+| `marvel wake` | `converge` | `internal/team/hibernate.go:523` |
+| daemon start | derived from live panes | `controller.go:728` |
+
+So a team the operator held and a team the last cold start held both read
+`hold`, and a team that was running reads `converge` in bolt only until the
+start path overwrites it.
+
+### 1.3 What else a start can read
+
+- **Session heartbeats are in bolt.** `UpdateSessionHeartbeat` sets
+  `LastHeartbeat` and writes the row (`internal/api/store.go:1080`, then
+  `persistPut` on `bucketSessions`), so a team's last live presence survives a
+  reboot.
+- **The daemon has no persisted heartbeat of its own.** No field records when
+  the daemon was last alive (searched `internal` and `cmd` for a daemon tick,
+  alive or shutdown stamp; none found). The staleness bound below needs one.
+- **The suspend record is in bolt** (`internal/api/suspend_record.go:10-60`,
+  bucket `suspend`), so a cluster suspended at the reboot is still marked
+  suspended after it.
+- **The hibernate mark is on the team** (`internal/api/hibernate.go:14-18`),
+  and `SetConvergencePosture` already refuses a hibernated team
+  (`controller.go:760`).
+
+### 1.4 The boot reap charges every lost seat as a crash
+
+The start-time reap runs `noteReapedCrash` for each row whose pane is gone
+(`controller.go:677-681`, `:831-900`):
+
+- a role with `restart_policy = never` is frozen and its row set `failed`
+  ("restart_policy=never, pane gone; role frozen", `controller.go:858-880`);
+- any other role is charged one restart per tick and given a backoff
+  (`controller.go:882-895`).
+
+A scheduled role is exempt (`controller.go:854-856`). Today this charge is
+mostly unseen, because the team then holds. With resume on boot it would
+matter: a reboot would come back with frozen roles and backoff delays, as if
+every seat had crashed.
+
+## 2. The design
+
+### 2.1 Record where each posture came from
+
+The team gains three status fields:
+
+- `PostureSource`: `operator` (apply, converge, hold, wake), `start` (the
+  start-time derivation) or `boot` (this setting);
+- `PostureSetAt`: when it was set;
+- `PriorPosture`: the posture, source and time that a `start` derivation
+  overwrote, kept until a non-`start` writer sets the posture again.
+
+`PriorPosture` is what lets a reboot followed by a second restart keep the
+fact that the team was running: the second start reads the carried posture,
+not the `hold` the first start wrote.
+
+### 2.2 Snapshot before the start path overrides it
+
+Daemon start reads each team's persisted posture, source, prior posture and
+hibernate mark, the suspend record, the daemon's last alive stamp, and each
+team's latest session `LastHeartbeat`, before `RefreshLiveness` and
+`InitConvergencePosture` run. `InitConvergencePosture` is unchanged: every
+cold team still goes to `hold` first. The resume decision runs after it and
+before the reconcile loop.
+
+### 2.3 Which teams converge on boot
+
+A cold team (no live session after the reap) converges on boot only when all
+of these hold:
+
+1. **The setting is on** for the team (section 2.5).
+2. **The cluster is not suspended**: no suspend record exists.
+3. **The team is not hibernated**: no hibernate mark, in either state.
+4. **It was running before**: the effective posture is `converge`. The
+   effective posture is the persisted one, or `PriorPosture` when the persisted
+   source is `start`. A `hold` set by `operator` stays held.
+5. **The store is fresh**: the daemon's last alive stamp is within the bound
+   of now (default 24h).
+6. **The team was live near the end**: its latest session heartbeat is within
+   the bound of the daemon's last alive stamp.
+
+The daemon then sets the team's posture to `converge` with source `boot`, and
+emits a `team.resumed-on-boot` event. A team that fails a condition stays
+held, and the daemon logs one line per team naming the first condition that
+failed, for example `resume on boot: team ws/b held: operator hold since
+2026-11-20T09:00Z`.
+
+Conditions 5 and 6 carry the money-safety guarantee of the cold-start hold.
+A bolt rehydrated from weeks ago fails condition 5. A team that was declared
+but had no live seat for days before the reboot fails condition 6. Neither
+can start a fleet.
+
+### 2.4 Seats come back as fresh casts, uncharged
+
+- A resumed team spawns through the normal reconcile path, so admission,
+  budgets, bus health and every other spawn check apply unchanged. A refused
+  spawn is refused as it is today.
+- For a team the decision resumes, the boot reap charges nothing and freezes
+  nothing. A seat lost to a reboot is not a crash of that seat. Teams that
+  are not resumed keep today's reap accounting, so the change does not reach
+  past the opt-in.
+- The daemon's alive stamp is written at most once a minute from the
+  reconcile loop, and once more on a clean shutdown, in a small record of its
+  own. One write a minute bounds the cost.
+
+### 2.5 The setting: off by default, an operator turns it on
+
+- Cluster config: `resume_on_boot` (default `false`) and
+  `resume_on_boot_within` (default `24h`), beside the cluster's other switches
+  in `internal/config/config.go` (`type Cluster struct`, `:295`).
+- A team may override the cluster value in its manifest with
+  `resume_on_boot = true` or `false`. This is spec, so it belongs in the
+  manifest, unlike the posture, which stays status.
+- A fleet that wants it sets `resume_on_boot: true` in each host's cluster
+  config. That is an operator act on each host.
+- `describe team` shows the posture, its source and set-at time, and whether
+  resume on boot applies, so a held team says why it is held.
+
+### 2.6 How this fits "nothing resumes except an explicit command"
+
+`fleet-suspend-resume.md` rules SR-C: "nothing resumes a suspended cluster
+except an explicit `resume`", and `fleet-hibernate.md` section 11 inherits it
+as "Nothing resumes except an explicit command". This setting keeps both:
+
+- it never acts on a suspended cluster (condition 2) or a hibernated team
+  (condition 3), so `resume` and `wake` stay the only ways out of those states;
+- turning it on is the operator's explicit, standing instruction, written in
+  the cluster config or the manifest, and it is off until then.
+
+Whether a standing setting counts as an "explicit command" under the inherited
+ruling is the operator's reading, and is ruling S1 below.
+
+## 3. Red tests, as flat build tickets
+
+In order; `after:` names what lands first.
+
+- **RB1. Posture source and set-at time.** `internal/api/types.go` (the team),
+  and each writer in section 1.2. after: none. Red, in
+  `internal/team/posture_test.go` beside `TestSetConvergencePostureFlipsAndReports`
+  (`:145`): after `SetConvergencePosture(hold)`, `apply`, `wake` and
+  `InitConvergencePosture`, the team has no source and no set-at time. Green:
+  `operator`, `operator`, `operator` and `start`, each with its time.
+- **RB2. The carried prior posture.** `controller.go`
+  (`InitConvergencePosture`). after: RB1. Red: a team persisted at `converge`
+  by `operator`, started cold twice, reads `hold` from `start` with nothing
+  carried. Green: after both starts `PriorPosture` is `converge` from
+  `operator` at its original time; a later `converge --hold` clears it.
+- **RB3. The daemon alive stamp.** `internal/api` (a one-key record, like the
+  suspend record) and the daemon's reconcile loop. after: none. Red: after a
+  reconcile tick and after a clean shutdown, the store has no alive stamp.
+  Green: it has one, and two ticks inside a minute write it once.
+- **RB4. The setting.** `internal/config/config.go` and the manifest team
+  spec. after: none. Red: a cluster with `resume_on_boot: true` reads off, and a
+  team with `resume_on_boot = false` under a cluster set on reads on. Green:
+  each reads as written, and an unset key reads off and 24h.
+- **RB5. The decision, as a pure function.** `internal/team`, for example
+  `resumeOnBoot(snap bootSnapshot, cfg ResumeConfig, now time.Time) (bool, string)`.
+  after: RB1, RB2, RB3, RB4. Red: a table test with the cases below returns
+  nothing, since the function does not exist. Green, each with its reason:
+  - running before the reboot, setting on, store fresh: converge;
+  - the same with the setting off: hold;
+  - an `operator` hold: hold;
+  - a hibernated team: hold;
+  - a suspend record present: hold;
+  - the alive stamp 30 days old: hold;
+  - the team's last heartbeat 3 days before the alive stamp: hold;
+  - a `start` hold carrying a prior `operator` converge: converge.
+- **RB6. Wire it into daemon start.** `internal/daemon/daemon.go:839-847`.
+  after: RB5. Red, in `internal/team/posture_test.go` beside
+  `TestInitConvergencePostureFromLivePresence` (`:106`) and
+  `TestRefreshLivenessReapsDeadPaneRecordsBeforePosture` (`:278`): a team
+  persisted at `converge`, with stale running rows, a fresh alive stamp and the
+  setting on, is still held after start and spawns nothing. Green: it reads
+  `converge` from `boot`, one `team.resumed-on-boot` event is emitted, and
+  its spawns go through the normal reconcile path. A second case: a budget
+  that refuses the spawn leaves the team at `converge` with nothing spawned and
+  the refusal reported, as a cold `converge` is today.
+- **RB7. The boot reap charges nothing for a resumed team.** `controller.go`
+  (`noteReapedCrash`, `:831-900`). after: RB6. Red: a resumed team with a
+  `restart_policy = never` role comes back with that role frozen, and another
+  role's first spawn waits out a backoff. Green: neither role is charged or
+  frozen, and a team that is not resumed is charged exactly as today.
+- **RB8. `describe team` shows it.** `cmd/marvel` (describe team). after: RB1,
+  RB4. Red: describe shows the posture with no source, time or resume line.
+  Green: it shows all three, and a held team's line names the condition that
+  holds it.
+
+## 4. Diagnostic and safety notes
+
+- The setting adds no gate. Every spawn it allows passes the same checks a
+  `marvel converge` spawn passes.
+- Turning the setting off restores today's start path exactly: RB6 and RB7 act
+  only for a team the decision resumes.
+- What to measure on a host after the build, at a window the operator names:
+  the pre-reboot running teams read `converge` from `boot` with fresh seats; a
+  team held before the reboot is still held; a suspended cluster stays
+  suspended.
+
+## 5. Rulings needed (director, for the operator)
+
+- **S1. Does a standing setting count as the explicit command SR-C asks
+  for?** Default: yes, under section 2.6, because it never touches a suspended
+  cluster or a hibernated team, and it is off until an operator turns it on.
+- **S2. The bound.** Default: 24h for both the store's freshness and the team's
+  last presence.
+- **S3. The boot reap's charge.** Default: no charge only for a resumed team
+  (RB7). The other option is no charge for any team at a start that follows a
+  reboot. That is simpler, but it changes behavior outside the opt-in.
+- **S4. A per-team override in the manifest.** Default: yes, as spec.
+
+This recommendation is valid until 2026-12-07; the architect will re-check it
+then.
+
+## 6. Out of scope
+
+- Starting the daemon at boot (a launch agent marvel installs) and the bus at
+  boot: they come before this setting can act, and are separate work.
+- Restoring a seat's conversation: the resume journal of `fleet-hibernate.md`
+  section 5.
+- Any change to hibernate, wake, suspend or resume.
+
+## 7. Candidate requirements (provisional, not ratified)
+
+- **RB-A (DESIGN):** with resume on boot off, a daemon start behaves exactly as
+  today.
+- **RB-B (DESIGN):** a team converges on boot only if it was running before the
+  reboot, was not held by an operator, is not hibernated, the cluster is not
+  suspended, and both staleness bounds hold.
+- **RB-C (DESIGN):** every posture change records its source and time.
+- **RB-D (DESIGN):** a resumed team's seats are fresh casts through the normal
+  spawn checks, and the reboot charges none of them as a crash.
+- **RB-E (DESIGN):** a held team's `describe` says which condition holds it.
