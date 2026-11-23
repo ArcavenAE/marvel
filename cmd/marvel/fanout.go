@@ -466,25 +466,38 @@ func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, no
 	if err != nil {
 		return err
 	}
-	for _, r := range records {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), r.statusLine())
-	}
 	sort.SliceStable(rows, func(i, j int) bool { return sessionTieLess(rows[i], rows[j]) })
+	// The totals block is header chrome on the header's stream, so it prints
+	// under the same rule as the daemon header: on a terminal or with --header.
+	// A fan-out read has no daemon header, so the block is the first thing out.
+	force, _ := cmd.Flags().GetBool("header")
+	out, errOut := renderFanOutScreen(records, rows, cols, explicit, noTrunc, terminalWidth(), wantHeader(force), rateClock(), startedFolded)
+	_, _ = fmt.Fprint(cmd.ErrOrStderr(), errOut)
+	fmt.Print(out)
+	return fanOutExitError(cmd, records)
+}
+
+// renderFanOutScreen is what a one-shot fan-out read prints: the text for
+// stdout (the totals block when header is set, then the merged table) and the
+// text for stderr (one status line per cluster). rows are already sorted.
+func renderFanOutScreen(records []clusterRecord, rows []api.Session, cols []sessionColumn, explicit, noTrunc bool, width int, header bool, now time.Time, startedFolded map[string]bool) (stdout, stderr string) {
+	var e strings.Builder
+	for _, r := range records {
+		e.WriteString(r.statusLine() + "\n")
+	}
 	fit := fitOptions{
-		width:    terminalWidth(),
+		width:    width,
 		explicit: explicit,
 		noTrunc:  noTrunc,
 		lead:     fanOutLead(explicit),
 	}
 	pre, table, post, shown := renderSessionsPartsShown(rows, cols, "", fit)
-	// The totals block is header chrome on the header's stream, so it prints
-	// under the same rule as the daemon header: on a terminal or with --header.
-	// A fan-out read has no daemon header, so the block is the first thing out.
-	if force, _ := cmd.Flags().GetBool("header"); wantHeader(force) {
-		fmt.Print(fanOutTotalsBlock(records, rows, shown, rateClock(), fit.width, startedFolded))
+	var o strings.Builder
+	if header {
+		o.WriteString(fanOutTotalsBlock(records, rows, shown, now, fit.width, startedFolded))
 	}
-	fmt.Print(pre + table + post)
-	return fanOutExitError(cmd, records)
+	o.WriteString(pre + table + post)
+	return o.String(), e.String()
 }
 
 // fanOutExitError is nil when every cluster answered, and otherwise the exit
