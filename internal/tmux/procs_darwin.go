@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -28,7 +29,7 @@ var (
 // (ps is setuid, and sandbox-exec cannot run it even under a profile that
 // allows everything).
 //
-// Only processes whose executable name (p_comm) is tmux are listed, since the
+// Only processes of this user whose executable name (p_comm) is tmux are listed, since the
 // one reader of the list, carriesSocket, ignores every other program. That is
 // narrower than the ps it replaces, which matched on argv[0] alone: a tmux
 // binary file named something else but run with argv[0] set to tmux is not
@@ -45,13 +46,19 @@ func defaultProcList(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kern.proc.all: %w", err)
 	}
+	uid := uint32(os.Geteuid())
 	var b bytes.Buffer
 	for _, p := range procs {
 		if commName(p.Proc.P_comm[:]) != "tmux" {
 			continue
 		}
+		// Another account's tmux is not this driver's server, and the kernel
+		// refuses its argument list.
+		if p.Eproc.Ucred.Uid != uid {
+			continue
+		}
 		pid := int(p.Proc.P_pid)
-		args, err := readArgsSettled(pid)
+		args, err := readArgsSettled(ctx, pid)
 		if err != nil {
 			if processGone(pid) {
 				continue
@@ -80,7 +87,7 @@ func commName(c []byte) string {
 // process is still coming or going: a process that has just forked, or has
 // exited and not yet been reaped, has no readable argument list for a few
 // milliseconds, and the retry keeps that from reading as an outage.
-func readArgsSettled(pid int) ([]string, error) {
+func readArgsSettled(ctx context.Context, pid int) ([]string, error) {
 	var (
 		args []string
 		err  error
@@ -92,7 +99,11 @@ func readArgsSettled(pid int) ([]string, error) {
 		if processGone(pid) {
 			return nil, err
 		}
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	return nil, err
 }
