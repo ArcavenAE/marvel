@@ -757,6 +757,7 @@ func (d *Daemon) Start(socketPath string) (err error) {
 	d.loadHostVitals(socketPath)
 	d.loadCredentialReveal(socketPath)
 	d.loadAccountWarn(socketPath)
+	d.loadLoginExpiry(socketPath)
 	d.identifyCluster(socketPath)
 	d.loadSuspendRecord(socketPath)
 	d.loadResumeJournal(socketPath)
@@ -934,6 +935,7 @@ func (d *Daemon) adoptAndRun(ctx context.Context, socketPath, network string) er
 	}()
 
 	d.startWatchdog(ctx)
+	d.startLoginExpiry(ctx)
 	d.startTxUsage(ctx)
 	if d.views != nil {
 		d.startViews(ctx)
@@ -1863,6 +1865,8 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 		result = d.store.ListCredentials()
 	case "budgets", "budget":
 		result = d.budgetRows()
+	case "account-logins":
+		result = d.accountLogins(time.Now().UTC())
 	case "account-readings":
 		result = d.accountReadingRows(p.Account, p.SinceSeconds, time.Now().UTC())
 	default:

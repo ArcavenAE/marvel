@@ -346,7 +346,12 @@ func (c *Cluster) LoginExpiryOn() bool { return c.loginExpiryOr(DefaultLoginExpi
 
 // loginExpiryOr is LoginExpiryOn with the default passed in, so a test can
 // tell "reads the default" from "reads false" while the default is false.
-func (c *Cluster) loginExpiryOr(def bool) bool { return false }
+func (c *Cluster) loginExpiryOr(def bool) bool {
+	if c != nil && c.LoginExpiry != nil {
+		return *c.LoginExpiry
+	}
+	return def
+}
 
 // DefaultAccountWarnPercent is the warning level of a cluster that sets none.
 const DefaultAccountWarnPercent = 80
