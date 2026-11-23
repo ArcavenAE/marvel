@@ -21,7 +21,7 @@ The aim is that a seat holds a secret only when its role says it needs one, that
 the value never rides a command line or sits in a file, and that the daemon
 carries it in memory only (ADR-009 as amended, 2026-10-19).
 
-Rulings this note applies: director ruling D on I-716 (the daemon reads the
+Rulings this note applies: the director's ruling of 2026-11-23 on the seat secret (the daemon reads the
 value once and holds it in memory; no argv and no file at rest; a per-spawn read
 of the keychain by a seat is refused, because seats may not read the keychain)
 and director's rulings of 2026-11-23 (FIFO default, `seat_secrets`, strip the
@@ -145,7 +145,7 @@ for that seat and present for one that declares `seat_secrets: [bd]`.
 
 ## 5. What this does not do
 
-- It rotates nothing and touches no credential at the third party (I-259).
+- It rotates nothing and touches no credential at the third party (the standing rule against rotating credentials).
 - No seat reads the keychain, and nothing here adds a keychain read per spawn.
 - It writes the value to no file, log, event or argument list. The FIFO node
   exists for the length of one write and carries no data.
