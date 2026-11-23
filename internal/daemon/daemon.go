@@ -1606,6 +1606,12 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 	}
 	workDirAdvisories = append(workDirAdvisories, runtimeAdvisories...)
 
+	// Pre-flight: refuse a role env that holds the literal redaction marker,
+	// which a tracked copy of a manifest carries in place of a secret.
+	if err := m.ValidateEnvPlaceholders(); err != nil {
+		return daemonrpc.Response{Error: err.Error()}
+	}
+
 	// Pre-flight: refuse a declared dimension no role in the team can ever
 	// report, so a mute gate is an error rather than a silent no-op. The
 	// capability predicate comes from the session manager's adapter
