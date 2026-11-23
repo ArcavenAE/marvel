@@ -67,7 +67,20 @@ Shapes that avoid it, in the order I would take them:
 2. **Fold the deny block into the run-conditions profile.** The profile generator for a run writes the section 3 denies as its first lines. The seat is unwrapped, so the test run is covered and the rest of the seat is not.
 3. **A launcher the run conditions call.** A marvel-owned wrapper takes the run's profile, appends the deny block, and starts the seat's test command under that one profile. Same coverage as 2 with one place to change the list.
 
-I recommend 1 for the first release, because it is the only one that cannot break a run, and 3 as the follow-up. This is a recommendation for the supervisor, not a decision.
+4. **A daemon-side run endpoint.** A seat asks marvel to run a command; the daemon starts it outside the seat's profile, under one profile it composes (the run's profile plus the deny block), and returns the output and exit status. The seat itself stays under the deny block, so every seat is covered, and a sandboxed run still works because it is never nested.
+
+   Measured: a process the daemon starts is not inside the seat's profile. A seat under the section 3 profile ran `ls ~/Pictures` and got `Operation not permitted` (exit 1). The same seat connected to a unix socket (allowed, since the profile does not deny it) served by a process outside the profile, and that process's `ls ~/Pictures` returned exit 0. A profile follows a process and its forks, not a request made to another process.
+
+   Costs, each a thing the first build must settle:
+   - **Escalation.** The daemon is not sandboxed, so a seat that can name any profile can name a permissive one and so leave its own. The endpoint must compose, not obey: the role's own profile, then the requested run profile, then the deny block, one text, with the block last. A requested profile is also checked against the role's, and a request the role could not have made itself is refused.
+   - **Authentication.** The seat proves who it is (the heartbeat token it already carries) and the daemon reads the role from its own record, never from the request.
+   - **Fidelity.** Working directory, environment, stdin and tty, signals, timeouts, exit status and streamed output must match a direct run, or the run-conditions scripts change behavior.
+   - **Lifetime.** The daemon owns the child, so it must kill it when the seat's request ends or the seat dies.
+   - **Surface.** A new socket call on the daemon, and the run-conditions scripts call it in place of `sandbox-exec`.
+
+   Options 1 to 3 give up coverage on the seats that nest. Option 4 does not, which is why it is the one that meets the "every seat" bar in section 11.
+
+My recommendation is 4, with 1 as the stopgap until it lands, since 1 is the only shape that cannot break a run today. It is a recommendation for the supervisor and the operator, not a decision.
 
 Claude Code's own seatbelt on its Bash tool was not present on the seat I measured from (a top-level `sandbox-exec -p '(version 1)(allow default)'` applied). A seat that does run under it would be in the nested case above, and the same shapes apply.
 
@@ -126,3 +139,31 @@ One thing to note: `du -sh ~` under the profile exits 1 and prints errors for th
 4. Tests first: the block names every row; a role profile's allow cannot re-open a folder; `tcc_deny = false` yields the role's profile unchanged; Linux yields none; the adapter flag stays unset.
 
 Step 3 waits on the nesting ruling in section 5.
+
+## 11. What a user must see
+
+The bar is that a marvel user does not face these prompts at all:
+
+1. **On by default.** On macOS every seat marvel launches gets the section 3 deny, with no setting for a new user to touch. `tcc_deny = false` exists, is off by default, and is named in the manifest reference.
+2. **Marvel's own code does not walk those folders either** (section 12).
+3. **Proof on a clean user.** A seat runs `du -x -sh ~`, `ls ~/Pictures ~/Music ~/Desktop` and `du -x -sh ~/OrbStack`, plus marvel's own `vitals`, `doctor` and `get`. The pass is no new TCC prompt and no `AUTHREQ_PROMPTING` line for `com.arcavenae.marvel`, against a control without the profile that does prompt. Creating a macOS user and raising the control prompt are acts at the host. They are written as an at-host script for the operator, not run from a seat.
+4. **Release notes**, one line: "macOS seats no longer read the protected folders or network volumes, so a seat's `du` or `find` no longer raises a privacy prompt."
+
+Linux is unchanged.
+
+## 12. Audit of marvel's own file walks
+
+Method: a search of the non-test Go source for `filepath.Walk`, `filepath.WalkDir`, `filepath.Glob`, `os.ReadDir`, `Statfs`, `UserHomeDir`, and `exec.Command` of `du`, `find` or `df`. Each hit is read for its root. This is a search, not a proof that no other path exists.
+
+| site | root it walks | reaches a protected folder or a network mount |
+|---|---|---|
+| `internal/view/view.go` (`makeReadOnly`, `forceRemove`, `sealTree`) | a view tree under marvel's own home | no |
+| `internal/company/treehash.go` (`TreeHash`) | a company recipe directory the caller names | only if the recipe sits under a protected folder |
+| `internal/daemon/watchdog.go` (`findTranscript`) | `<config dir>/projects`, one level | no; it is under `~/.claude` or `CLAUDE_CONFIG_DIR` |
+| `internal/session/base_sweep.go`, `home_sweep.go` | the session scratch base and per-seat homes | no |
+| `internal/api/trusted_folders.go`, `internal/config/config.go`, `internal/session/projection.go` | `~` is expanded, then a named path is read or checked; nothing is enumerated | only when a manifest names a path under a protected folder |
+| `internal/bus/headroom.go` | `Statfs` of the bus store directory; it enumerates nothing | no |
+| `internal/procstat`, `internal/suspend`, `internal/procargs` | `ps` and `lsof -d cwd -p <pid>`; no file tree is opened | no |
+| `internal/hostvitals`, `cmd/marvel/doctor.go` | no walk found; `doctor` runs the commands it is given | not found by this search |
+
+Result: no marvel path enumerates `~`, `/`, `/Users` or `/Volumes`. The one way marvel's own code can reach a protected folder is a manifest that names one: `workdir`, `workspace.root`, `trusted_folders`, a company directory or a settings file under `~/Documents` or `~/Desktop`. The launch check in section 4 covers `workdir`; the same check belongs on the others, and the build adds it so the daemon fails with a message instead of raising a prompt. Nothing needs fixing in a walk, and this section says so on the evidence of the search above and the reading of each root, not on a prompt-free run of the daemon.
