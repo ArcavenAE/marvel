@@ -24,8 +24,8 @@ config sets host_vitals.
 AGE is the time since the session was created, as 45s, 9m, 2h9m or 3d4h; a - means
 the row has no creation time.
 
-The account columns (opt-in; the set acct names all six, and wide holds account, 7d,
-7d-reset and read) each carry one fact: ACCOUNT is the display name display.account_names
+The account columns (opt-in; the set acct names account, 7d, 7d-reset and read, and wide
+holds the same four; 5h and 5h-reset are not in acct; add them by name) each carry one fact: ACCOUNT is the display name display.account_names
 gives the account, else the label the role declared, else a short key; 5H% and 7D% are
 the percent used, with a trailing ? once the reading is stale (the number is kept);
 5H-RESET and 7D-RESET are the time to reset as +2d3h or +47m, now once past; READ is
