@@ -62,19 +62,27 @@ start path overwrites it.
 
 ### 1.3 What else a start can read
 
-- **Session heartbeats are in bolt.** `UpdateSessionHeartbeat` sets
+- **Session heartbeats are in bolt, for roles that beat.** `UpdateSessionHeartbeat` sets
   `LastHeartbeat` and writes the row (`internal/api/store.go:1080`, then
-  `persistPut` on `bucketSessions`), so a team's last live presence survives a
-  reboot.
+  `persistPut` on `bucketSessions`), and only the heartbeat call reaches it
+  (`daemon.go:2210`). A role that does not beat, such as a headless run,
+  keeps a zero `LastHeartbeat`. Every row also persists its `CreatedAt`
+  (`types.go:385`), and a scheduled role's run history, with each run's
+  `StartedAt` and `EndedAt`, persists in the bbolt bucket `schedule_status`
+  (`internal/api/bolt.go:61`, `internal/api/schedule_status.go:25-45`).
+- **Scheduled firings stop while a team holds.** `schedule_clock.go:62` and
+  `cadence_clock.go:27` both read `postureWithholds`, so a held team's
+  schedule does not fire.
 - **The daemon has no persisted heartbeat of its own.** No field records when
   the daemon was last alive (searched `internal` and `cmd` for a daemon tick,
   alive or shutdown stamp; none found). The staleness bound below needs one.
 - **The suspend record is in bolt** (`internal/api/suspend_record.go:10-60`,
   bucket `suspend`), so a cluster suspended at the reboot is still marked
   suspended after it.
-- **The hibernate mark is on the team** (`internal/api/hibernate.go:14-18`),
-  and `SetConvergencePosture` already refuses a hibernated team
-  (`controller.go:760`).
+- **The hibernate mark is on the team** (`internal/api/hibernate.go:14-18`).
+  `SetConvergencePosture` refuses a team only when one team is named and its
+  mark reads `hibernated` (`controller.go:752-762`), not while it is
+  `waking`.
 
 ### 1.4 The boot reap charges every lost seat as a crash
 
@@ -107,14 +115,34 @@ The team gains three status fields:
 fact that the team was running: the second start reads the carried posture,
 not the `hold` the first start wrote.
 
-### 2.2 Snapshot before the start path overrides it
+### 2.2 Decide before the boot reap, from a snapshot
 
-Daemon start reads each team's persisted posture, source, prior posture and
-hibernate mark, the suspend record, the daemon's last alive stamp, and each
-team's latest session `LastHeartbeat`, before `RefreshLiveness` and
-`InitConvergencePosture` run. `InitConvergencePosture` is unchanged: every
-cold team still goes to `hold` first. The resume decision runs after it and
-before the reconcile loop.
+The order matters, because the boot reap charges before the posture is set.
+`RefreshLiveness` runs first (`daemon.go:843`), and its reap calls
+`noteReapedCrash` for each lost row (`controller.go:677-681`), which freezes
+or charges at once (section 1.4). Only then does `InitConvergencePosture` run
+(`daemon.go:844`). A decision taken after it would find the charges already
+made. So the decision comes first:
+
+1. After adoption and before `RefreshLiveness`, daemon start reads a
+   snapshot: each team's persisted posture, source, prior posture and
+   hibernate mark, the suspend record, the daemon's last alive stamp, each
+   team's latest presence (condition 6), and which of the team's rows still
+   have a pane after adoption.
+2. The decision runs on the snapshot. A team is **boot-eligible** when
+   conditions 1 to 6 of section 2.3 hold and none of its rows' panes survived
+   adoption, so the reap will leave it cold.
+3. `RefreshLiveness` runs with the set of boot-eligible teams, and its reap
+   skips the charge and the freeze for their rows (section 2.4). It still
+   removes the dead rows, as today.
+4. `InitConvergencePosture` is unchanged: every cold team still goes to `hold`
+   first.
+5. Each boot-eligible team is then set to `converge` with source `boot`,
+   before the reconcile loop starts.
+
+A daemon restart that finds every pane of a team gone, with no host reboot (a
+killed tmux server, for one), is treated the same way: the seats were lost
+together, not crashed one by one.
 
 ### 2.3 Which teams converge on boot
 
@@ -129,8 +157,15 @@ of these hold:
    source is `start`. A `hold` set by `operator` stays held.
 5. **The store is fresh**: the daemon's last alive stamp is within the bound
    of now (default 7 days).
-6. **The team was live near the end**: its latest session heartbeat is within
-   the bound of the daemon's last alive stamp.
+6. **The team was live near the end**: its latest presence is within the
+   bound of the daemon's last alive stamp. A team's latest presence is the
+   latest of: any row's `LastHeartbeat`; any row's `CreatedAt`; and, for a
+   scheduled role, its latest run's `StartedAt` or `EndedAt` from the run
+   history. A role that never beats, such as a scheduled headless role, is
+   present by its spawns and its runs, so a team of such roles resumes and
+   its schedule fires again. A scheduled role whose period is longer than the
+   bound (a monthly job under a 7-day bound) can fail this condition; it stays
+   held, and the log line names condition 6.
 
 The daemon then sets the team's posture to `converge` with source `boot`, and
 emits a `team.resumed-on-boot` event. A team that fails a condition stays
@@ -148,10 +183,11 @@ can start a fleet.
 - A resumed team spawns through the normal reconcile path, so admission,
   budgets, bus health and every other spawn check apply unchanged. A refused
   spawn is refused as it is today.
-- For a team the decision resumes, the boot reap charges nothing and freezes
-  nothing. A seat lost to a reboot is not a crash of that seat. Teams that
-  are not resumed keep today's reap accounting, so the change reaches no team
-  the decision holds.
+- For a boot-eligible team, the boot reap charges nothing and freezes
+  nothing, because the decision ran before the reap (section 2.2). A seat
+  lost to a reboot is not a crash of that seat. Teams that are not
+  boot-eligible keep today's reap accounting, so the change reaches no team
+  the decision holds. Nothing is charged and then undone.
 - The daemon's alive stamp is written at most once a minute from the
   reconcile loop, and once more on a clean shutdown, in a small record of its
   own. One write a minute bounds the cost.
@@ -214,11 +250,15 @@ In order; `after:` names what lands first.
   - a hibernated team: hold;
   - a suspend record present: hold;
   - the alive stamp 30 days old: hold;
-  - the team's last heartbeat 10 days before the alive stamp: hold;
+  - the team's latest presence 10 days before the alive stamp: hold;
+  - a team of scheduled headless roles with zero heartbeats, whose latest
+    run ended an hour before the alive stamp: converge;
+  - a team with a row whose pane survived adoption: not boot-eligible;
   - the team opted out in its manifest: hold;
   - a `start` hold carrying a prior `operator` converge: converge.
-- **RB6. Wire it into daemon start.** `internal/daemon/daemon.go:839-847`.
-  after: RB5. Red, in `internal/team/posture_test.go` beside
+- **RB6. Wire it into daemon start, before the reap.** `internal/daemon/daemon.go:839-847`:
+  the snapshot and the decision run before `RefreshLiveness`, and the
+  `converge` from `boot` is set after `InitConvergencePosture`. after: RB5. Red, in `internal/team/posture_test.go` beside
   `TestInitConvergencePostureFromLivePresence` (`:106`) and
   `TestRefreshLivenessReapsDeadPaneRecordsBeforePosture` (`:278`): a team
   persisted at `converge`, with stale running rows, a fresh alive stamp and the
@@ -228,10 +268,13 @@ In order; `after:` names what lands first.
   that refuses the spawn leaves the team at `converge` with nothing spawned and
   the refusal reported, as a cold `converge` is today.
 - **RB7. The boot reap charges nothing for a resumed team.** `controller.go`
-  (`noteReapedCrash`, `:831-900`). after: RB6. Red: a resumed team with a
-  `restart_policy = never` role comes back with that role frozen, and another
-  role's first spawn waits out a backoff. Green: neither role is charged or
-  frozen, and a team that is not resumed is charged exactly as today.
+  (`RefreshLiveness` and `reapDeadLocked`, `:670-695`, and `noteReapedCrash`,
+  `:831-900`), which take the boot-eligible set. after: RB6. Red: a resumed
+  team with a `restart_policy = never` role comes back with that role frozen,
+  and another role's first spawn waits out a backoff. Green: neither role is
+  charged or frozen at any point, no `failed` row or reap charge event is
+  written for it, and a team that is not boot-eligible is charged exactly as
+  today.
 - **RB8. `describe team` shows it.** `cmd/marvel` (describe team). after: RB1,
   RB4. Red: describe shows the posture with no source, time or resume line.
   Green: it shows all three, and a held team's line names the condition that
@@ -251,7 +294,8 @@ In order; `after:` names what lands first.
 ## 5. Ruled 2026-11-23
 
 The operator ruled on this note on 2026-11-23, relayed by director. The
-operator's words, verbatim: "I'm okay with 15 programs, they translate to a set of skills that can be scheduled or not. As for all the reset, yes, you're right update them as you describe and route".
+operator's words on these items, verbatim: "As for all the reset, yes, you're
+right update them as you describe and route".
 
 - **S1. A standing setting counts as the explicit resume** SR-C asks for.
   Ruled: yes (section 2.6).
