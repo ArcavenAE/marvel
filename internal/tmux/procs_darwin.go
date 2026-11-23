@@ -13,6 +13,12 @@ import (
 	"github.com/arcavenae/marvel/internal/procargs"
 )
 
+// The three kernel reads, behind variables so a test can make each one fail.
+var (
+	kinfoProcs = unix.SysctlKinfoProcSlice
+	procArgs   = procargs.Read
+)
+
 // defaultProcList lists the tmux processes as `ps -axo pid,args` would, read
 // from the kernel: the process table through the kern.proc.all sysctl and each
 // tmux process's argument list through kern.procargs2, which is how
@@ -29,7 +35,7 @@ func defaultProcList(ctx context.Context) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	procs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	procs, err := kinfoProcs("kern.proc.all")
 	if err != nil {
 		return nil, fmt.Errorf("kern.proc.all: %w", err)
 	}
@@ -39,7 +45,7 @@ func defaultProcList(ctx context.Context) ([]byte, error) {
 			continue
 		}
 		pid := int(p.Proc.P_pid)
-		args, err := procargs.Read(pid)
+		args, err := procArgs(pid)
 		if err != nil || len(args) == 0 {
 			continue
 		}
