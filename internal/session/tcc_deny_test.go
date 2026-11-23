@@ -54,15 +54,22 @@ func TestTCCDenyBlockDropsAPathThatBreaksTheQuoting(t *testing.T) {
 }
 
 // The seat's own working tree may sit under a denied folder (a user who keeps
-// code in ~/Documents). It is allowed back after the deny, so the later rule wins.
-func TestTCCDenyBlockAllowsTheWorkdirAfterTheDeny(t *testing.T) {
+// code in ~/Documents). The deny carves the tree out of the folder's rule, so
+// no rule of the block ever allows a path: a later allow would lift a deny the
+// role's own profile put on that tree.
+func TestTCCDenyBlockCarvesTheWorkdirOutOfItsFolderAndAllowsNothing(t *testing.T) {
 	t.Parallel()
 	work := tccTestHome + "/Documents/code"
 	block := tccDenyBlock(tccTestHome, nil, []string{work})
-	deny := strings.Index(block, `(subpath "`+tccTestHome+`/Documents")`)
-	allow := strings.Index(block, `(allow file-read* file-write* (subpath "`+work+`"))`)
-	if deny < 0 || allow < 0 || allow < deny {
-		t.Errorf("want the workdir allow after the deny (deny %d, allow %d):\n%s", deny, allow, block)
+	if strings.Contains(block, "(allow") {
+		t.Errorf("the block allows a path; a later allow lifts the role's own deny:\n%s", block)
+	}
+	want := `(require-all (subpath "` + tccTestHome + `/Documents") (require-not (subpath "` + work + `")))`
+	if !strings.Contains(block, want) {
+		t.Errorf("the folder holding the workdir is not carved around it, want %s:\n%s", want, block)
+	}
+	if !strings.Contains(block, `(subpath "`+tccTestHome+`/Pictures")`) {
+		t.Errorf("a folder that does not hold the workdir lost its plain rule:\n%s", block)
 	}
 }
 
@@ -104,8 +111,8 @@ func TestADefaultSeatIsStagedWithTheDenyBlock(t *testing.T) {
 			t.Errorf("staged profile lacks %q:\n%s", want, text)
 		}
 	}
-	if !strings.Contains(text, `(allow file-read* file-write* (subpath "`+sess.WorkDir+`"))`) {
-		t.Errorf("the seat's workdir is not allowed back:\n%s", text)
+	if !strings.Contains(text, `(require-not (subpath "`+sess.WorkDir+`"))`) || strings.Contains(text, "(allow file") {
+		t.Errorf("the seat's workdir is not carved out of its folder, or the block allows a path:\n%s", text)
 	}
 }
 
@@ -305,5 +312,46 @@ func TestTheNoteDoesNotOutliveTheLaunchItDescribes(t *testing.T) {
 	_ = r.mgr.planLaunch(sess)
 	if sess.TCCDenyNote != "" {
 		t.Errorf("the earlier note survived a staged launch: %q", sess.TCCDenyNote)
+	}
+}
+
+// With sandbox-exec missing the deny cannot be applied. The seat still starts,
+// and the seat says why, the same as for a staging failure.
+func TestAMissingSandboxExecIsRecordedOnTheSeat(t *testing.T) {
+	t.Parallel()
+	r := tccRig(t, api.Role{})
+	r.mgr.SandboxExec = filepath.Join(t.TempDir(), "no-such-sandbox-exec")
+	sess := r.session()
+	plan := r.mgr.planLaunch(sess)
+	if plan.sandbox != nil {
+		t.Fatalf("a seat was staged with no sandbox-exec: %+v", plan.sandbox)
+	}
+	if !strings.Contains(sess.TCCDenyNote, "sandbox-exec") {
+		t.Errorf("the note does not name the missing sandbox-exec: %q", sess.TCCDenyNote)
+	}
+}
+
+// The launch commit copies a fixed list of fields onto the stored session. The
+// note is on that list, or doctor, which reads the stored session, never sees it.
+func TestTheNoteReachesTheStoredSession(t *testing.T) {
+	t.Parallel()
+	r := tccRig(t, api.Role{})
+	sess := r.session()
+	if err := r.store.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	sess.TCCDenyNote = "the home of the user marvel runs as is not known"
+	if err := r.store.UpdateSession(sess.Key(), func(live *api.Session) error {
+		commitLaunchRecord(live, sess, "%1", 7)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.store.GetSession(sess.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TCCDenyNote != sess.TCCDenyNote {
+		t.Errorf("stored note = %q, want %q", got.TCCDenyNote, sess.TCCDenyNote)
 	}
 }
