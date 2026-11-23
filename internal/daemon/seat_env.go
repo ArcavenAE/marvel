@@ -2,8 +2,12 @@ package daemon
 
 import (
 	"log"
+	"os"
+	"sort"
 	"strings"
+	"time"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 )
 
@@ -35,5 +39,49 @@ func (d *Daemon) loadSeatEnv(socketPath string) {
 			log.Printf("seat env: %v", err)
 		}
 		log.Printf("seat env: cluster %s keeps %d seat secret variable(s) out of the tmux server and every pane: %s", cl.Name, len(vars), strings.Join(vars, ", "))
+		d.captureSeatSecrets(cl.Name, spec)
+	}
+}
+
+// seatSecretCredential is the store name of a need's value.
+func seatSecretCredential(need string) string { return "seat-secret/" + need }
+
+// captureSeatSecrets moves each mapped variable out of the daemon's environment
+// into the in-memory store, once, and removes it from the process environment
+// so no child inherits it. A value the store already holds (a reexec carried
+// it) is never replaced. A variable the daemon does not hold is named in the log
+// and the seat that declares the need starts without it. No value is logged.
+func (d *Daemon) captureSeatSecrets(cluster string, spec config.SeatEnv) {
+	if d.store == nil {
+		return
+	}
+	needs := make([]string, 0, len(spec.Secrets))
+	for need := range spec.Secrets {
+		needs = append(needs, need)
+	}
+	sort.Strings(needs)
+	for _, need := range needs {
+		name := spec.Secrets[need]
+		have := false
+		if _, err := d.store.GetCredential(seatSecretCredential(need)); err == nil {
+			have = true
+		}
+		value, set := os.LookupEnv(name)
+		if set {
+			_ = os.Unsetenv(name)
+		}
+		switch {
+		case have:
+		case !set || value == "":
+			log.Printf("seat env: cluster %s: %s is not set in the daemon's environment, so a seat that declares %q starts without it", cluster, name, need)
+		default:
+			err := d.store.CreateCredential(&api.Credential{
+				Name: seatSecretCredential(need), Kind: api.CredentialSeatSecret, Audience: "seats",
+				IssuedAt: time.Now().UTC(), Value: []byte(value),
+			})
+			if err != nil {
+				log.Printf("seat env: cluster %s: hold %s for the seats that declare %q: %v", cluster, name, need, err)
+			}
+		}
 	}
 }

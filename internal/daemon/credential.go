@@ -96,6 +96,10 @@ func (d *Daemon) handleCredentialReveal(params json.RawMessage, c caller) daemon
 	if err := json.Unmarshal(params, &p); err != nil {
 		return daemonrpc.Response{Error: fmt.Sprintf("bad params: %v", err)}
 	}
+	// A seat secret goes to a seat's pane through its FIFO and nowhere else.
+	if meta, err := d.store.GetCredential(p.Name); err == nil && meta.Kind == api.CredentialSeatSecret {
+		return daemonrpc.Response{Error: fmt.Sprintf("credential %s is a seat secret and is never revealed", p.Name)}
+	}
 	value, err := d.store.RevealCredentialValue(p.Name)
 	if err != nil {
 		return daemonrpc.Response{Error: err.Error()}
