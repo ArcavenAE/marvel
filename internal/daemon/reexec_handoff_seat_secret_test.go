@@ -63,9 +63,30 @@ func TestASeatSecretSurvivesAReexec(t *testing.T) {
 	}
 }
 
-// The value is in no file under the marvel home or the temp directory, in no
+// filesHolding lists the regular files under root that contain value.
+func filesHolding(root, value string) []string {
+	var found []string
+	_ = filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
+		if err != nil || !e.Type().IsRegular() {
+			return nil
+		}
+		if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), value) {
+			found = append(found, p)
+		}
+		return nil
+	})
+	return found
+}
+
+// The value is in no file under the daemon's own home or temp directory, in no
 // variable of the exec environment, and not in the log, after a carried reexec.
+// Both directories are scratch the test made before the daemon started, so the
+// scan never reads the real marvel home. A control file with the value, put
+// where the scan looks, must be found, so an empty scan cannot pass for nothing.
 func TestACarriedSeatSecretLeavesNoFileNoVariableNoLogLine(t *testing.T) {
+	home, tmp := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TMPDIR", tmp)
 	d := newHandlerDaemon(t)
 	putSeatSecret(t, d, handoffCanary)
 	d.handoffProbe = capableTarget
@@ -90,17 +111,20 @@ func TestACarriedSeatSecretLeavesNoFileNoVariableNoLogLine(t *testing.T) {
 	if strings.Contains(logs.String(), handoffCanary) {
 		t.Error("the log carries the value")
 	}
-	home, _ := os.UserHomeDir()
-	for _, root := range []string{filepath.Join(home, ".marvel"), os.TempDir()} {
-		_ = filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
-			if err != nil || !e.Type().IsRegular() {
-				return nil
-			}
-			if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), handoffCanary) {
-				t.Errorf("a file under %s holds the value: %s", root, p)
-			}
-			return nil
-		})
+	control := filepath.Join(tmp, "control")
+	if err := os.WriteFile(control, []byte("x"+handoffCanary+"x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := filesHolding(tmp, handoffCanary); len(got) != 1 || got[0] != control {
+		t.Fatalf("the scan did not find the control file it was given: %v", got)
+	}
+	if err := os.Remove(control); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{home, tmp} {
+		if got := filesHolding(root, handoffCanary); len(got) != 0 {
+			t.Errorf("a file under the scratch %s holds the value: %v", filepath.Base(root), got)
+		}
 	}
 }
 
