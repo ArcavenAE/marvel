@@ -153,3 +153,23 @@ Director ruled on three decisions on 2026-11-23, on the operator's direction:
 1. **Default switch state:** on for both services, conditional on the section 2.7 proof. Replaces the earlier recommendation of off unless enabled.
 2. **Launchd removal:** the operator's act, per host, as section 5 says, with no wait.
 3. **What director must expose** (section 3.3): a director pull request, routed after this note merges.
+
+## 9. Service install
+
+The two checks started as host-side services that someone installed by hand on each host, and the install of those services drifted. An inventory of the fleet's hosts, taken when the checks were stopped, found three risks, plus two facts about how the services came to be where they were.
+
+1. **The check scripts resolve into a builder's worktree.** On one host the installed entry points are links into a git worktree owned by a build seat, not into an installed copy. Removing or switching that worktree, which its owner may do at any time under the worktree rules, breaks the service with no change to the service itself.
+2. **A bus agent runs from a probe folder in a shared checkout.** On one host a bus agent is started from a folder inside a checkout that several sessions share. A branch change in that checkout changes the code the live service runs.
+3. **The daemon and its bus run inside a terminal multiplexer session.** On one host they do not survive a reboot, and nothing restarts them. The first sign is silence.
+4. **Most of the agents are tracked nowhere.** On one host three of five agents are described in no repository, so no review saw them and no reader can say what they should be.
+5. **Login expiry had three install paths on three hosts,** and none of them was a tracked installer. The same service was therefore three different things.
+
+All five are the same condition: a service whose definition lives only on the host it runs on.
+
+### 9.1 What the native services remove
+
+Login expiry and seat gap run inside the daemon (sections 2 and 3). A host that runs marvel has no host-side install for either: no agent definition, no script path, no worktree link, no checkout to keep stable. Risks 1, 2 and 5 cannot occur for these two services, and the services are tracked because they are marvel's own code and configuration. The services restart and persist with the daemon, so they are as durable as the daemon is.
+
+### 9.2 What stays out of scope
+
+Risks 3 and 4 are not removed by this change, because they are about the daemon and the other services around it, not these two checks. Installing a service so that it survives a reboot and restarts on failure (a keep-alive definition per host), and tracking such definitions in a repository, is the gap `finding-marvel-lt30-marvel-service-provisioning-lifecycle-gap.md` names: marvel's service record covers running a service, not installing, configuring, upgrading or persisting one. This note does not design that and does not touch any host's service definitions. Where a host's daemon and bus run in a multiplexer session, that stays a finding for the provisioning work until it is built.
