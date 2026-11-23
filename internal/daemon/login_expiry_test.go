@@ -330,3 +330,22 @@ func TestLoginPassARunWithAFailedSpellingIsAFailureNotALapse(t *testing.T) {
 		})
 	}
 }
+
+// A login whose reads are failing is read again within the hour, whatever its
+// last good expiry said: the interval follows FailingSince, so a login last
+// seen with 200 hours left but failing now does not wait 6 hours.
+func TestLoginIntervalIsAnHourWhileReadsAreFailing(t *testing.T) {
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	failing := loginexpiry.Row{
+		State: loginexpiry.StateOK, ExpiresAt: now.Add(200 * time.Hour),
+		ReadAt: now.Add(-2 * time.Hour), FailingSince: now.Add(-time.Hour),
+	}
+	if got := loginInterval([]loginexpiry.Row{failing}, now); got != time.Hour {
+		t.Errorf("interval with failing reads = %v, want %v", got, time.Hour)
+	}
+	healthy := failing
+	healthy.FailingSince = time.Time{}
+	if got := loginInterval([]loginexpiry.Row{healthy}, now); got != 6*time.Hour {
+		t.Errorf("interval with the same login healthy = %v, want %v (the control)", got, 6*time.Hour)
+	}
+}
