@@ -62,6 +62,14 @@ Events carry no email, organization, subscription detail beyond its type, or pat
 
 `login_expiry` on the cluster entry, beside `host_vitals`. The ruling on `host_vitals` (director, 2026-11-02) was off unless the cluster config turns it on, because a new always-on behavior in the daemon before the stability promise should not change every other installation. This adds a subprocess a few times a day, which is the same class. The recommendation follows the precedent (section 8, decision 1).
 
+### 2.7 The keychain prompt question
+
+The harness reads its keychain entry as a child of the marvel daemon, through `/usr/bin/security` (`service-column.md` section 1.1). A prompt that names marvel would be the kind of surprise this change must not cause, so the service is not enabled on a host until a proof step passes.
+
+- **Which process the keychain judges: unmeasured.** Whether an item's access control and the privacy daemon judge the requesting binary (`claude`, or the `security` it forks) or the responsible process up the parent chain (the daemon) has not been measured on this fleet, and no source is cited here. `egress-credential-front.md` covers partition lists for marvel's own items, not this case. The first build PR measures it before any default changes.
+- **Proof step, run on each host before its switch is turned on:** one scheduled read with the daemon as parent logs 0 `tccd` authorization-request lines in the unified log for the window of the read, and raises 0 keychain dialogs that name marvel. The count and the log query are recorded in the PR, with the host's before and after. A host that shows either leaves the switch off and the finding goes to the supervisor.
+- **If the daemon is the judged process**, the login-expiry service stays off on that host and the note's fallback is a read by the seat's own harness process, which the keychain already admits: a one-line status file the seat writes through its own `claude auth status`, read by the daemon. That fallback is not designed here.
+
 ## 3. Seat gap
 
 ### 3.1 What is compared
@@ -116,7 +124,7 @@ The act in step 2 is a write to a host's launchd, which no seat holds today: thi
 Each service is its own PR, red tests first, the failing run recorded by a seat other than the test author.
 
 1. Events: the five kinds in `internal/events` and the catalog test.
-2. Login service: parser (a fixture with a fake email and organization, asserting neither string appears in any event, log line or file), the state machine against a fake clock, the bounded runner with a process-group kill, the `get account-logins` verb, the vitals row, the doctor line.
+2. Login service, after the keychain measurement of section 2.7: parser (a fixture with a fake email and organization, asserting neither string appears in any event, log line or file), the state machine against a fake clock, the bounded runner with a process-group kill, the `get account-logins` verb, the vitals row, the doctor line.
 3. Seat-gap service: the roster decoder, the three outcomes, the join, the 10 minute age, the events, the vitals row.
 4. Config: the two switches and the reference docs.
 
