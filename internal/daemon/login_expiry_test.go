@@ -266,3 +266,67 @@ func TestLoginResultShowsTheLastGoodReadAndWhenFailuresBegan(t *testing.T) {
 		t.Errorf("failing_since = %v, want %v", l.FailingSince, t0.Add(time.Hour))
 	}
 }
+
+// A login is lapsed only when every spelling answered and every answer was
+// logged out. A spelling that failed to answer might be the one the login was
+// made under, so a failure anywhere in the set is a failed read, never a lapse.
+func TestLoginPassARunWithAFailedSpellingIsAFailureNotALapse(t *testing.T) {
+	t0 := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	timedOut := &loginexpiry.ReadError{Reason: loginexpiry.ReasonTimedOut}
+	cases := []struct {
+		name         string
+		first, other func() (loginexpiry.Reading, error)
+	}{
+		{
+			"failure then logged out",
+			func() (loginexpiry.Reading, error) { return loginexpiry.Reading{}, timedOut },
+			func() (loginexpiry.Reading, error) { return loginexpiry.Reading{LoggedIn: false}, nil },
+		},
+		{
+			"logged out then failure",
+			func() (loginexpiry.Reading, error) { return loginexpiry.Reading{LoggedIn: false}, nil },
+			func() (loginexpiry.Reading, error) { return loginexpiry.Reading{}, timedOut },
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sink := &loginSink{}
+			failing := false
+			ask := func(_ context.Context, spelling string) (loginexpiry.Reading, error) {
+				if !failing {
+					return readingIn(200*time.Hour, t0), nil
+				}
+				if spelling == "/homes/a/" {
+					return c.first()
+				}
+				return c.other()
+			}
+			list := func() []api.Session {
+				return []api.Session{
+					claudeSeat("a1", "/homes/a/", api.SessionRunning),
+					claudeSeat("a2", "/homes/a", api.SessionRunning),
+				}
+			}
+			svc := newLoginService(true, sink, list, ask)
+			svc.pass(context.Background(), t0)
+			failing = true
+			svc.pass(context.Background(), t0.Add(time.Hour))
+			for _, e := range sink.got {
+				if e.Kind == events.KindAccountLoginLapsed || e.Kind == events.KindAccountLoginRenewed {
+					t.Errorf("event %s after a pass with a failed spelling, want none (a login with 200h left did not lapse)", e.Kind)
+				}
+			}
+			res := svc.result(t0.Add(time.Hour))
+			if len(res.Logins) != 1 {
+				t.Fatalf("logins = %+v, want one", res.Logins)
+			}
+			l := res.Logins[0]
+			if l.State == string(loginexpiry.StateLapsed) {
+				t.Errorf("state = %s, want a failed read", l.State)
+			}
+			if l.FailingSince == nil {
+				t.Errorf("failing_since is unset, want the start of the failed reads")
+			}
+		})
+	}
+}
