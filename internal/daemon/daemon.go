@@ -102,7 +102,10 @@ type Daemon struct {
 	sessMgr            *session.Manager
 	// seatSecretVars maps a need to the variable it fills, from the cluster's
 	// seat_env.secrets; the values are in the store, never here.
-	seatSecretMu   sync.Mutex
+	seatSecretMu sync.Mutex
+	// seatStrip tracks the background strip of the tmux server environment, so a
+	// test can wait for it.
+	seatStrip      sync.WaitGroup
 	seatSecretVars map[string]string
 	teamCtrl       *team.Controller
 	driver         *tmux.Driver
