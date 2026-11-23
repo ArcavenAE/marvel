@@ -26,7 +26,19 @@ Denied for both `file-read*` and `file-write*`, as `subpath` rules under the sea
 | `Pictures` | the Photos library inside it is; the folder itself may not be | denied whole: seats have no use for it |
 | `Music`, `Movies` | not shown to be file-guarded; the media APIs are | denied whole for the same reason; **unverified as TCC classes** |
 
-The first four rows are the classes Apple documents. The last two rows are over-inclusive on purpose: a deny that was not needed costs nothing, and a missing deny costs a prompt. I did not trigger a prompt to test any single row, because the measurement in section 9 is meant to produce none. The list is data in one Go table, so a row can be added or dropped without touching the mechanism.
+Network volumes are a TCC class too ("access files on a network volume"). They are denied by path, not under `~`:
+
+| path | note |
+|---|---|
+| `/Volumes` | every external and network volume mounts here |
+| `~/OrbStack` | on the measured host, the only network mount, an NFS share inside `$HOME`; a `du` from `/Users` crossed into it |
+| every mount whose type is `nfs`, `smbfs`, `afpfs` or `webdav` | found at launch, see below |
+
+**Finding them at launch.** Marvel reads the mount table when it stages the profile (`getfsstat`, the same list `mount` prints: on the measured host `OrbStack:/OrbStack on /Users/<me>/OrbStack (nfs, ...)`) and adds a `subpath` deny for each mount point whose type is one of the four. A mount that is already there is covered, including one outside `/Volumes` and `$HOME`.
+
+**A mount that appears after the seat starts.** A profile is fixed when the seat starts, so a network mount made later outside `/Volumes` and `~/OrbStack` is not denied, and a seat that walks into it raises the prompt. Marvel does not rewrite a running seat's profile. The next start of the seat reads the mount table again and covers it. A mount under `/Volumes` is covered from the first start, since the whole path is denied. This gap is stated in the manifest docs, and it is not closed by polling.
+
+The first four home rows are the classes Apple documents. The last two rows are over-inclusive on purpose: a deny that was not needed costs nothing, and a missing deny costs a prompt. I did not trigger a prompt to test any single row, because the measurement in section 9 is meant to produce none. The list is data in one Go table, so a row can be added or dropped without touching the mechanism.
 
 ## 4. Launch and effect on tmux and children
 
@@ -89,7 +101,20 @@ du: /Users/<me>/Music: Operation not permitted               (exit 1, no total p
 $ log show --start "2026-11-23 09:46:27" --predicate 'process == "tccd"'
 ```
 
-The `tccd` log for that window held 45 lines; none names `du`, `ls` or `com.arcavenae.marvel`, so no new TCC request was raised for marvel. The positive control is the operator's own record: `tccd` at 09:41:45 the same day, responsible `com.arcavenae.marvel`, accessing `/usr/bin/du`. I did not repeat that run without the profile, since it would raise the prompt this change removes.
+With the network rows added (`/Volumes`, `~/OrbStack`), a walk of the share, run with `du -x` and a named root:
+
+```
+$ sandbox-exec -f outer2.sb /usr/bin/du -x -sh ~/OrbStack
+du: /Users/<me>/OrbStack: Operation not permitted            (exit 1)
+$ sandbox-exec -f outer2.sb /bin/ls /Volumes
+ls: /Volumes: Operation not permitted                        (exit 1)
+```
+
+The `tccd` log for that window held no line naming `du`, `marvel`, `network` or `OrbStack`.
+
+Disclosure: the first measurement above ran `du -sh ~` under a profile that did not yet deny `~/OrbStack`, so that walk entered the share (`du` reported a cyclic symlink under it). The `tccd` log showed no marvel line for it, but it is the case this note is about, and the later runs name their roots and use `-x`.
+
+For the first measurement, the `tccd` log for that window held 45 lines; none names `du`, `ls` or `com.arcavenae.marvel`, so no new TCC request was raised for marvel. The positive control is the operator's own record: `tccd` at 09:41:45 the same day, responsible `com.arcavenae.marvel`, accessing `/usr/bin/du`. I did not repeat that run without the profile, since it would raise the prompt this change removes.
 
 One thing to note: `du -sh ~` under the profile exits 1 and prints errors for the denied folders. A seat that treats a nonzero `du` as failure will see one. That is the intended "fail quickly and quietly", and the build documents it.
 
