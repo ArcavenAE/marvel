@@ -155,6 +155,22 @@ func fanOutSummary(records []clusterRecord, rows []api.Session, shown []sessionC
 	if len(starting) > 0 {
 		notes = append(notes, fmt.Sprintf("%s was still starting, so its figures may be low.", joinWords(starting)))
 	}
+	// A cluster with no row still has to be named: a reader who sees two rows
+	// and a TOTAL would otherwise take the total for the whole fleet.
+	counted := map[string]bool{}
+	for _, g := range groups {
+		counted[g.rec.Cluster] = true
+	}
+	for _, r := range records {
+		switch r.Outcome {
+		case outcomeAnswered, outcomeStarting, outcomeSameDaemon:
+			continue
+		}
+		if counted[r.Cluster] {
+			continue
+		}
+		notes = append(notes, fmt.Sprintf("%s did not answer (%s), so it has no row and its sessions are not in TOTAL.", r.Cluster, strings.ReplaceAll(string(r.Outcome), "_", " ")))
+	}
 	for _, n := range notes {
 		b.WriteString(wrapNote(n, width))
 	}
