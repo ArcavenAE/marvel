@@ -50,6 +50,8 @@ fi
 # Build events carry ImportPath, not Package, so a missing Package reads as "".
 mine='select((.Package // "") as $q | $q == $p or ($q | startswith($p + "/")))'
 rc=0
+# The most lines of a hung package's output the gate prints, from its panic.
+hang_cap=40
 for pkg in "$@"; do
   bad=0
   skipped="$(jq -r --arg p "$pkg" --argjson allowed "$allowed" "$mine | select(.Action == \"skip\") | select(((.Package // \"\") + \" \" + (.Test // \"\")) as \$k | (\$allowed | index(\$k)) | not) | \"\(.Package) \(.Test // \"(no test files)\")\"" "$json")"
@@ -85,6 +87,17 @@ for pkg in "$@"; do
       | ((\$all[] | select(.Action == \"build-output\" and (.ImportPath as \$i | \$b | index([\$i])))),
          (\$e[] | select(.Action == \"output\") | select({Package, Test} as \$k | \$f | index([\$k]))))
       | (.Output // \"\") | rtrimstr(\"\\n\")" "$json" | sed 's/^/    /' >&2
+    # A package that timed out has no failed test: go test -json attributes the
+    # timeout panic and the goroutine dump to the running test and emits no
+    # fail event for it, so only the package fails. Print that package's
+    # output from the panic on, capped, so the log names the running tests.
+    jq -rs --arg p "$pkg" --argjson cap "$hang_cap" "[.[] | $mine] as \$e
+      | ([\$e[] | select(.Action == \"fail\" and .Test != null) | .Package] | unique) as \$tf
+      | [\$e[] | select(.Action == \"fail\" and .Test == null and (.FailedBuild | not) and ((.Package // \"\") as \$q | \$tf | index(\$q) | not)) | .Package] | unique | .[] as \$q
+      | [\$e[] | select(.Package == \$q and .Action == \"output\") | .Output // \"\"] as \$o
+      | ([\$o | to_entries[] | select(.value | startswith(\"panic:\")) | .key] | first // 0) as \$start
+      | \"no-skips: \" + \$q + \" failed with no failing test; its output from the first panic, at most \" + (\$cap | tostring) + \" lines:\",
+        (\$o[\$start:\$start + \$cap][] | \"    \" + rtrimstr(\"\\n\"))" "$json" >&2
     bad=1
   fi
   if [[ -n "$unfinished" ]]; then
