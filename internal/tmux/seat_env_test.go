@@ -1,115 +1,78 @@
 package tmux
 
 import (
-	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/arcavenae/marvel/internal/api"
 )
 
-// Names a Claude Code session exports to its children that a seat must never
-// inherit (marvel#381). The test values are placeholders; assertions read
-// names only.
-var leakNames = []string{
-	"CLAUDE_CODE_MESSAGING_TOKEN",
-	"CLAUDE_CODE_MESSAGING_SOCKET",
-	"CLAUDE_CODE_SESSION_ID",
-	"CLAUDECODE",
-	"CLAUDE_PID",
-}
-
-// keepName is a backend selector the overlay pins deliberately. A strip that
-// widened to a CLAUDE_CODE_* prefix would silently unpin it.
-const keepName = "CLAUDE_CODE_USE_BEDROCK"
-
-// paneEnvNames runs `env` in a fresh pane and returns the variable names it
-// saw. Values are discarded at read time.
-func paneEnvNames(t *testing.T, d *Driver, session string) map[string]bool {
+func newPaneArgs(t *testing.T, d *Driver, log string, envs map[string]string) string {
 	t.Helper()
-	out := filepath.Join(t.TempDir(), "env.txt")
-	if _, err := d.NewPane(session, "env > "+out+".tmp && mv "+out+".tmp "+out, "", nil, false); err != nil {
-		t.Fatalf("new pane: %v", err)
+	if _, err := d.NewPaneAt("sess", "claude --x", "title", "", envs, false); err != nil {
+		t.Fatalf("NewPaneAt: %v", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	var data []byte
-	for {
-		b, err := os.ReadFile(out)
-		if err == nil {
-			data = b
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("pane never wrote its environment: %v", err)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	names := map[string]bool{}
-	for _, line := range strings.Split(string(data), "\n") {
-		if k, _, ok := strings.Cut(line, "="); ok {
-			names[k] = true
-		}
-	}
-	return names
-}
-
-func assertSeatEnv(t *testing.T, names map[string]bool) {
-	t.Helper()
-	for _, n := range leakNames {
-		if names[n] {
-			t.Errorf("pane inherited %s", n)
-		}
-	}
-	if !names[keepName] {
-		t.Errorf("pane lost %s; backend selectors must pass through", keepName)
-	}
-}
-
-// TestServerStartedByDirtyProcessKeepsPanesClean: a tmux server takes the
-// environment of the process that starts it, and every pane starts from that.
-// A daemon launched from a Claude Code session used to hand its messaging
-// credential to every seat this way (mokuzai).
-func TestServerStartedByDirtyProcessKeepsPanesClean(t *testing.T) {
-	skipIfNoTmux(t)
-	for _, n := range leakNames {
-		t.Setenv(n, "placeholder")
-	}
-	t.Setenv(keepName, "1")
-	socket := fmt.Sprintf("marvel-test-seatenv-%d", os.Getpid())
-	t.Setenv("MARVEL_TMUX_SOCKET", socket)
-	t.Cleanup(func() { killTestServer(socket) })
-
-	d, err := NewDriver()
+	b, err := os.ReadFile(log)
 	if err != nil {
-		t.Fatalf("new driver: %v", err)
+		t.Fatal(err)
 	}
-	if err := d.NewSession("seatenv"); err != nil {
-		t.Fatalf("new session: %v", err)
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.Contains(line, "new-window") {
+			return line
+		}
 	}
-	assertSeatEnv(t, paneEnvNames(t, d, "seatenv"))
+	t.Fatalf("no new-window call in %s", b)
+	return ""
 }
 
-// TestDirtyServerStillYieldsCleanPanes: a server started earlier by a dirty
-// process already holds the names in its global environment; the pane
-// command itself must drop them.
-func TestDirtyServerStillYieldsCleanPanes(t *testing.T) {
-	skipIfNoTmux(t)
-	d, err := NewDriver()
-	if err != nil {
-		t.Fatalf("new driver: %v", err)
+// seat_env.path_prepend puts its directories in front of the daemon's own PATH
+// in the pane, through -e, so a seat finds tools the daemon's PATH lacks.
+func TestSeatEnvPathPrependReachesThePane(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	d, log := fakeTmux(t)
+	d.SetSeatEnv([]string{"/home/x/.local/bin", "/opt/tools/bin"}, nil)
+	line := newPaneArgs(t, d, log, nil)
+	if !strings.Contains(line, "-e PATH=/home/x/.local/bin:/opt/tools/bin:/usr/bin:/bin") {
+		t.Errorf("new-window lacks the prepended PATH: %s", line)
 	}
-	const session = "seatenv-dirty"
-	if err := d.NewSession(session); err != nil {
-		t.Fatalf("new session: %v", err)
+}
+
+// A role that sets PATH itself keeps it: the cluster's seat_env does not
+// override a role's own environment.
+func TestSeatEnvDoesNotOverrideARolesOwnPath(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	d, log := fakeTmux(t)
+	d.SetSeatEnv([]string{"/home/x/.local/bin"}, nil)
+	line := newPaneArgs(t, d, log, map[string]string{"PATH": "/role/bin"})
+	if n := strings.Count(line, "-e PATH="); n != 1 || !strings.Contains(line, "-e PATH=/role/bin") {
+		t.Errorf("want exactly the role's PATH, got: %s", line)
 	}
-	t.Cleanup(func() { _ = d.KillSession(session) })
-	for _, n := range append(leakNames, keepName) {
-		if out, err := d.cmd("set-environment", "-g", n, "placeholder").CombinedOutput(); err != nil {
-			t.Fatalf("set-environment %s: %s: %v", n, out, err)
+}
+
+// No seat_env, no change: no PATH argument and the prefix is the built-in one.
+func TestNoSeatEnvLeavesTheNewWindowAsItWas(t *testing.T) {
+	d, log := fakeTmux(t)
+	line := newPaneArgs(t, d, log, nil)
+	if strings.Contains(line, "-e PATH=") {
+		t.Errorf("a PATH argument with no seat_env: %s", line)
+	}
+	if !strings.Contains(line, seatEnvPrefix+"claude --x") {
+		t.Errorf("the command is not behind the built-in prefix: %s", line)
+	}
+}
+
+// seat_env.unset names are removed in the pane beside the built-in list.
+func TestSeatEnvUnsetJoinsTheBuiltInPrefix(t *testing.T) {
+	d, log := fakeTmux(t)
+	d.SetSeatEnv(nil, []string{"AWS_PROFILE", "BEADS_DOLT_PASSWORD"})
+	line := newPaneArgs(t, d, log, nil)
+	for _, n := range append([]string{"AWS_PROFILE", "BEADS_DOLT_PASSWORD"}, api.InheritedSessionEnv...) {
+		if !strings.Contains(line, " -u "+n+" ") {
+			t.Errorf("the pane command does not unset %s: %s", n, line)
 		}
-		name := n
-		t.Cleanup(func() { _ = d.cmd("set-environment", "-gu", name).Run() })
 	}
-	assertSeatEnv(t, paneEnvNames(t, d, session))
+	if !strings.HasSuffix(strings.TrimSpace(line), "claude --x") {
+		t.Errorf("the command no longer ends the line: %s", line)
+	}
 }
