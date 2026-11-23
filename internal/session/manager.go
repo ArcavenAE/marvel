@@ -24,6 +24,7 @@ import (
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/runtime"
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
+	"github.com/arcavenae/marvel/internal/seatsecret"
 	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/usage"
 	"github.com/arcavenae/marvel/internal/view"
@@ -1132,6 +1133,11 @@ func (m *Manager) Create(sess *api.Session) error {
 		}
 	}
 
+	// A role that declares a secret reads it from a private FIFO in its pane.
+	if role, ok := m.roleOf(sess); ok {
+		m.wrapSeatSecrets(sess, role, &plan)
+	}
+
 	// Log the exact command line we're about to exec so post-hoc
 	// debugging has the argv — operators otherwise had to guess what
 	// tmux new-window was actually running when a pane died quickly.
@@ -1223,6 +1229,8 @@ func commitLaunchRecord(live, sess *api.Session, paneID string, pid int) {
 	live.SystemPromptSha256 = sess.SystemPromptSha256
 	// Why this launch started without the privacy-folder deny, kept for doctor.
 	live.TCCDenyNote = sess.TCCDenyNote
+	// Why this launch started without a secret its role declares, for doctor.
+	live.SecretNote = sess.SecretNote
 }
 
 // recordResume writes sess's entry in the resume journal
@@ -1635,7 +1643,50 @@ type SeatSecretSource interface {
 
 // wrapSeatSecrets wraps the launch command so the pane reads each secret its
 // role declares from a private FIFO, and starts the writers.
-func (m *Manager) wrapSeatSecrets(sess *api.Session, role api.Role, plan *launchPlan) {}
+func (m *Manager) wrapSeatSecrets(sess *api.Session, role api.Role, plan *launchPlan) {
+	sess.SecretNote = ""
+	if len(role.SeatSecrets) == 0 {
+		return
+	}
+	fail := func(need, why string) {
+		sess.SecretNote = fmt.Sprintf("the seat starts without the secret %q: %s", need, why)
+		log.Printf("session %s: %s", sess.Key(), sess.SecretNote)
+	}
+	if m.SeatSecrets == nil {
+		fail(role.SeatSecrets[0], "this daemon holds no seat secrets")
+		return
+	}
+	wait := m.SeatSecretWait
+	if wait <= 0 {
+		wait = 10 * time.Second
+	}
+	for _, need := range role.SeatSecrets {
+		name, value, ok := m.SeatSecrets.SeatSecret(need)
+		if !ok || name == "" || len(value) == 0 {
+			fail(need, "the cluster maps no value for it (seat_env.secrets) or the daemon holds none")
+			continue
+		}
+		h, err := seatsecret.Prepare(m.SeatSecretDir)
+		if err != nil {
+			fail(need, "no private directory for the hand-over")
+			clear(value)
+			continue
+		}
+		plan.command = h.Wrap(name, plan.command, wait)
+		key := sess.Key()
+		go func() {
+			defer clear(value)
+			if err := h.Deliver(value, wait+5*time.Second); err != nil {
+				note := fmt.Sprintf("the seat starts without the secret %q: the pane did not read it in time", need)
+				log.Printf("session %s: %s", key, note)
+				_ = m.store.UpdateSession(key, func(live *api.Session) error {
+					live.SecretNote = note
+					return nil
+				})
+			}
+		}()
+	}
+}
 
 // planLaunch uses the adapter registry when team/role context is
 // available, falling back to direct command construction for ad-hoc

@@ -595,6 +595,9 @@ func validateManifest(m *Manifest) (*Manifest, error) {
 			if err := validateDuties(fmt.Sprintf("team[%d].role[%d]", i, j), r.Duties); err != nil {
 				return nil, fmt.Errorf("parse manifest: %w", err)
 			}
+			if err := validateSeatSecrets(fmt.Sprintf("team[%d].role[%d]", i, j), r.SeatSecrets); err != nil {
+				return nil, fmt.Errorf("parse manifest: %w", err)
+			}
 			if r.Schedule != nil {
 				if err := validateSchedule(t.Name, r, time.Now().UTC()); err != nil {
 					return nil, fmt.Errorf("parse manifest: %w", err)
@@ -1233,6 +1236,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				GlobalRole:           mr.GlobalRole,
 				Supervises:           slices.Clone(mr.Supervises),
 				Duties:               slices.Clone(mr.Duties),
+				SeatSecrets:          slices.Clone(mr.SeatSecrets),
 				Identity:             mr.Identity,
 				Policy:               mr.Policy,
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),

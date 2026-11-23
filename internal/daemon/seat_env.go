@@ -3,6 +3,7 @@ package daemon
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -40,6 +41,17 @@ func (d *Daemon) loadSeatEnv(socketPath string) {
 		}
 		log.Printf("seat env: cluster %s keeps %d seat secret variable(s) out of the tmux server and every pane: %s", cl.Name, len(vars), strings.Join(vars, ", "))
 		d.captureSeatSecrets(cl.Name, spec)
+		if d.sessMgr != nil {
+			dir := filepath.Join(filepath.Dir(socketPath), "seat-secrets")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				log.Printf("seat env: no private directory for the seat secret hand-over, so seats start without their secrets: %v", err)
+			} else {
+				_ = os.Chmod(dir, 0o700)
+				d.sessMgr.SeatSecrets = d
+				d.sessMgr.SeatSecretDir = dir
+				d.sessMgr.SeatSecretWait = 10 * time.Second
+			}
+		}
 	}
 }
 
@@ -55,6 +67,12 @@ func (d *Daemon) captureSeatSecrets(cluster string, spec config.SeatEnv) {
 	if d.store == nil {
 		return
 	}
+	d.seatSecretMu.Lock()
+	d.seatSecretVars = make(map[string]string, len(spec.Secrets))
+	for need, name := range spec.Secrets {
+		d.seatSecretVars[need] = name
+	}
+	d.seatSecretMu.Unlock()
 	needs := make([]string, 0, len(spec.Secrets))
 	for need := range spec.Secrets {
 		needs = append(needs, need)
@@ -88,4 +106,19 @@ func (d *Daemon) captureSeatSecrets(cluster string, spec config.SeatEnv) {
 
 // seatSecret answers the session manager: the variable and the held value for a
 // need the cluster maps.
-func (d *Daemon) seatSecret(need string) (name string, value []byte, ok bool) { return "", nil, false }
+func (d *Daemon) seatSecret(need string) (name string, value []byte, ok bool) {
+	d.seatSecretMu.Lock()
+	name = d.seatSecretVars[need]
+	d.seatSecretMu.Unlock()
+	if name == "" || d.store == nil {
+		return "", nil, false
+	}
+	v, err := d.store.RevealCredentialValue(seatSecretCredential(need))
+	if err != nil || len(v) == 0 {
+		return "", nil, false
+	}
+	return name, v, true
+}
+
+// SeatSecret lets the session manager ask the daemon for a need.
+func (d *Daemon) SeatSecret(need string) (string, []byte, bool) { return d.seatSecret(need) }

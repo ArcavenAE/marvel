@@ -100,8 +100,12 @@ type Daemon struct {
 	store              *api.Store
 	broker             *broker.Broker
 	sessMgr            *session.Manager
-	teamCtrl           *team.Controller
-	driver             *tmux.Driver
+	// seatSecretVars maps a need to the variable it fills, from the cluster's
+	// seat_env.secrets; the values are in the store, never here.
+	seatSecretMu   sync.Mutex
+	seatSecretVars map[string]string
+	teamCtrl       *team.Controller
+	driver         *tmux.Driver
 
 	// vitals is the host vitals sampler. It is built off unless the cluster
 	// config turns it on, and metricsPass drives it every VitalsEvery passes.
