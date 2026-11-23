@@ -55,7 +55,7 @@ func TestApplyNamesEveryRoleHoldingAPlaceholder(t *testing.T) {
 		`            API_TOKEN: "<value>"`,
 		`            DB_PASSWORD: "<value>"`), "")
 	if resp.Error == "" {
-		t.Fatal("apply was accepted, want a refusal")
+		t.Fatal("apply of two roles whose env held the literal <value> was accepted, want a refusal naming both")
 	}
 	for _, want := range []string{"role[0=a]", "API_TOKEN", "role[1=b]", "DB_PASSWORD"} {
 		if !strings.Contains(resp.Error, want) {
