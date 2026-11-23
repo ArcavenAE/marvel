@@ -199,3 +199,42 @@ func TestTheArgumentRetryStopsWhenTheContextEnds(t *testing.T) {
 		t.Errorf("the retry kept sleeping for %v after the context ended", d)
 	}
 }
+
+// An exited process waiting to be reaped has an unreadable argument list and a
+// state of zombie. It cannot be holding the socket, so it is skipped, not an
+// outage.
+func TestAZombieTmuxIsSkippedNotAnOutage(t *testing.T) {
+	zombie := fakeTmuxProc(os.Getpid())
+	zombie.Proc.P_stat = sZOMB
+	d := &Driver{binary: "/nonexistent/tmux", socket: "mxzombie" + filepath.Base(t.TempDir())}
+	withKernelReads(t,
+		func(string, ...int) ([]unix.KinfoProc, error) { return []unix.KinfoProc{zombie}, nil },
+		func(int) ([]string, error) { return nil, unix.EINVAL })
+	old := kinfoProc
+	t.Cleanup(func() { kinfoProc = old })
+	kinfoProc = func(string, ...int) (*unix.KinfoProc, error) { return &zombie, nil }
+	out, err := defaultProcList(context.Background())
+	if err != nil || len(out) != 0 {
+		t.Errorf("defaultProcList = %q, %v; want an empty list and no error for a zombie", out, err)
+	}
+	if !d.serverAbsent(noSocketText) {
+		t.Error("serverAbsent = false because of a zombie tmux")
+	}
+}
+
+// With the real argument read, a process of another user (pid 1 is root's) is
+// never read, so its refusal cannot turn the list into an error.
+func TestARealOtherUsersProcessIsSkippedBeforeItsArgumentRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("pid 1 is this user's own process")
+	}
+	if _, err := procArgs(1); err == nil {
+		t.Skip("the kernel lets this user read pid 1's arguments, so there is no refusal to avoid")
+	}
+	other := fakeTmuxProc(1)
+	other.Eproc.Ucred.Uid = 0
+	withKernelReads(t, func(string, ...int) ([]unix.KinfoProc, error) { return []unix.KinfoProc{other}, nil }, nil)
+	if out, err := defaultProcList(context.Background()); err != nil || len(out) != 0 {
+		t.Errorf("defaultProcList = %q, %v; want an empty list and no error with root's process in the table", out, err)
+	}
+}
