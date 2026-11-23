@@ -839,3 +839,42 @@ func hasTests(t *testing.T, dir string) bool {
 	}
 	return len(matches) > 0
 }
+
+// macOSGoTestTimeout is the per-package test timeout the macOS restructure job
+// passes to go test. The Go default is 10m. On a slow hosted runner the same
+// job took two to three times its usual step times (setup, installs and tests
+// alike), and internal/daemon and internal/bus ran into the 10m default with
+// nothing hung. Twice the default leaves room for the worst slowdown measured
+// (about 2.6 times a 285 to 348 s step, so under 15 minutes) while a hung test
+// still fails the job, only later.
+const macOSGoTestTimeout = "20m"
+
+// TestMacOSRestructureTestLineSetsAGoTimeout holds the restructure job's
+// go test line to an explicit -timeout, so a slow runner does not turn a
+// healthy package into a timeout panic.
+func TestMacOSRestructureTestLineSetsAGoTimeout(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The macOS restructure job's test line is the one go test line in ci.yml
+	// that continues onto the next line with a backslash.
+	var found []string
+	var macLine string
+	for _, line := range strings.Split(string(data), "\n") {
+		l := strings.TrimSpace(line)
+		if strings.HasPrefix(l, "go test -json -count=1 -race") {
+			found = append(found, l)
+			if strings.HasSuffix(l, "\\") {
+				macLine = l
+			}
+		}
+	}
+	if macLine == "" {
+		t.Fatalf("no continued go test -json -count=1 -race line found in ci.yml; lines seen: %q", found)
+	}
+	if !strings.Contains(macLine, " -timeout "+macOSGoTestTimeout+" ") {
+		t.Errorf("the macOS restructure go test line %q lacks -timeout %s", macLine, macOSGoTestTimeout)
+	}
+}
