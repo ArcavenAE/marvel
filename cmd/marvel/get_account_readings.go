@@ -22,6 +22,12 @@ func getAccountReadings(w io.Writer, account string, since time.Duration, output
 	if since < 0 {
 		return fmt.Errorf("--since must not be negative")
 	}
+	// The daemon takes whole seconds and reads zero as "every reading", so a
+	// positive request under a second would be sent as zero and list everything.
+	// It is refused here, where the operator can see why, and not rounded up.
+	if since > 0 && since < time.Second {
+		return fmt.Errorf("--since must be at least 1s, or leave it out to list every reading")
+	}
 	params, err := json.Marshal(daemonrpc.GetParams{
 		ResourceType: "account-readings",
 		Account:      account,

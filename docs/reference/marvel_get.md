@@ -162,7 +162,7 @@ marvel get <resource-type> [flags]
       --load                      with get teams: one row per team with seats, mean ACTIVE% and limited seats
       --no-trunc                  print RUNTIME and WORKDIR in full instead of cutting them to fit
   -o, --output string             print get team or get workspace as json or yaml (desired and observed sections), or get sessions as json or yaml (a list; with a cluster set, {clusters, sessions})
-      --since duration            with get account-readings: keep readings no older than this, as 1h or 90m (default: every reading held)
+      --since duration            with get account-readings: keep readings no older than this, as 1h or 90m, at least 1s (default: every reading held)
   -w, --watch seconds[=default]   watch sessions (optional: seconds, default 2)
 ```
 

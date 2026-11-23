@@ -1535,7 +1535,7 @@ under ? sort, ? lists every key, q quits.`,
 	}
 	cmd.Flags().BoolVar(&allClusters, "all-clusters", false, "with get sessions or get vitals: read every cluster in the client config, in parallel, each under its own 10 s timer")
 	cmd.Flags().StringVar(&account, "account", "", "with get account-readings: keep the accounts whose key contains this text")
-	cmd.Flags().DurationVar(&since, "since", 0, "with get account-readings: keep readings no older than this, as 1h or 90m (default: every reading held)")
+	cmd.Flags().DurationVar(&since, "since", 0, "with get account-readings: keep readings no older than this, as 1h or 90m, at least 1s (default: every reading held)")
 	cmd.Flags().BoolVar(&load, "load", false, "with get teams: one row per team with seats, mean ACTIVE% and limited seats")
 	cmd.Flags().BoolVar(&noTrunc, "no-trunc", false, "print RUNTIME and WORKDIR in full instead of cutting them to fit")
 	f := cmd.Flags().VarPF(newOptionalString(&watchSec), "watch", "w", "watch sessions (optional: seconds, default 2)")
