@@ -50,7 +50,7 @@ fi
 # Build events carry ImportPath, not Package, so a missing Package reads as "".
 mine='select((.Package // "") as $q | $q == $p or ($q | startswith($p + "/")))'
 rc=0
-# The most lines of a hung package's output the gate prints, from its panic.
+# The most lines the gate prints of a hung package's output after its running-tests block (the goroutine dump).
 hang_cap=40
 for pkg in "$@"; do
   bad=0
@@ -90,14 +90,18 @@ for pkg in "$@"; do
     # A package that timed out has no failed test: go test -json attributes the
     # timeout panic and the goroutine dump to the running test and emits no
     # fail event for it, so only the package fails. Print that package's
-    # output from the panic on, capped, so the log names the running tests.
+    # output from the panic on: the panic and the whole "running tests:" block,
+    # which names the hung test even when -parallel makes it long, then the
+    # lines after it (the goroutine dump), capped.
     jq -rs --arg p "$pkg" --argjson cap "$hang_cap" "[.[] | $mine] as \$e
       | ([\$e[] | select(.Action == \"fail\" and .Test != null) | .Package] | unique) as \$tf
       | [\$e[] | select(.Action == \"fail\" and .Test == null and (.FailedBuild | not) and ((.Package // \"\") as \$q | \$tf | index(\$q) | not)) | .Package] | unique | .[] as \$q
       | [\$e[] | select(.Package == \$q and .Action == \"output\") | .Output // \"\"] as \$o
       | ([\$o | to_entries[] | select(.value | startswith(\"panic:\")) | .key] | first // 0) as \$start
-      | \"no-skips: \" + \$q + \" failed with no failing test; its output from the first panic, at most \" + (\$cap | tostring) + \" lines:\",
-        (\$o[\$start:\$start + \$cap][] | \"    \" + rtrimstr(\"\\n\"))" "$json" >&2
+      | ([\$o | to_entries[] | select(.key >= \$start and .value == \"\\trunning tests:\\n\") | .key] | first) as \$r
+      | (if \$r == null then \$start else ([\$o | to_entries[] | select(.key > \$r and (.value | startswith(\"\\t\\t\") | not)) | .key] | first // (\$o | length)) end) as \$end
+      | \"no-skips: \" + \$q + \" failed with no failing test; its output from the first panic, the whole running tests block, then at most \" + (\$cap | tostring) + \" more lines:\",
+        ((\$o[\$start:\$end][], \$o[\$end:\$end + \$cap][]) | \"    \" + rtrimstr(\"\\n\"))" "$json" >&2
     bad=1
   fi
   if [[ -n "$unfinished" ]]; then
