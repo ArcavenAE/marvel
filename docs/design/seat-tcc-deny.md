@@ -44,7 +44,9 @@ The first four home rows are the classes Apple documents. The last two rows are 
 
 The prepared seat command already runs under `sandbox-exec` when a role names `sandbox_profile` (`internal/session/manager.go`, the staged copy). The default deny reuses that path: the wrapped command is the pane's command, so tmux itself is outside the profile and the seat and every child it starts is inside it. A profile applies to the process and is inherited by everything it forks; no child can lift it. `tmux` clients started by the seat run under the profile, and the tmux server they reach does not.
 
-A seat whose `workdir` lies under a denied folder would fail every command. Launch refuses it, naming the folder, rather than starting a seat that cannot read its own tree.
+A seat whose `workdir` lies under a denied folder (a user who keeps code in `~/Documents`) would fail every command. The seat's working directory is allowed back after the deny, so the later rule wins and the rest of the folder stays denied. Other trees a manifest names under a denied folder (a company directory, a settings file) are read by the daemon, which is not under the profile, so they are unaffected.
+
+Staging the profile is a guard, not containment, so a failure to stage it (the profile directory cannot be written, the command is not one simple command, the home is unknown) is logged and the seat starts without it. Refusing every seat over a nuisance guard is worse than a prompt. This is a decision the note makes on its own and the reviewer can reverse.
 
 ## 5. Nesting: an inner `sandbox-exec` fails under an outer profile
 
@@ -80,13 +82,13 @@ Shapes that avoid it, in the order I would take them:
 
    Options 1 to 3 give up coverage on the seats that nest. Option 4 does not, which is why it is the one that meets the "every seat" bar in section 11.
 
-My recommendation is 4, with 1 as the stopgap until it lands, since 1 is the only shape that cannot break a run today. It is a recommendation for the supervisor and the operator, not a decision.
+My recommendation is 4, with 1 as the stopgap until it lands, since 1 is the only shape that cannot break a run today. It is a recommendation, not a decision.
 
 Claude Code's own seatbelt on its Bash tool was not present on the seat I measured from (a top-level `sandbox-exec -p '(version 1)(allow default)'` applied). A seat that does run under it would be in the nested case above, and the same shapes apply.
 
 ## 6. The opt-out field
 
-A role field `tcc_deny`, a boolean on the role beside `sandbox_profile`. Absent means on (deny). `tcc_deny = false` skips the default block for that role. A role that sets it keeps today's behavior and its prompts. The default for roles that nest is the supervisor's to propose to the operator; this note only names the field.
+A role field `tcc_deny`, a boolean on the role beside `sandbox_profile`. Absent means on (deny). `tcc_deny = false` skips the default block for that role. A role that sets it keeps today's behavior and its prompts. It is documented in the admin guide. A user who never sets it never sees a prompt caused by a seat. A role that runs `sandbox-exec` itself sets it, and carries the same rules in its own run profile (section 13).
 
 ## 7. Linux
 
@@ -127,18 +129,19 @@ The `tccd` log for that window held no line naming `du`, `marvel`, `network` or 
 
 Disclosure: the first measurement above ran `du -sh ~` under a profile that did not yet deny `~/OrbStack`, so that walk entered the share (`du` reported a cyclic symlink under it). The `tccd` log showed no marvel line for it, but it is the case this note is about, and the later runs name their roots and use `-x`.
 
-For the first measurement, the `tccd` log for that window held 45 lines; none names `du`, `ls` or `com.arcavenae.marvel`, so no new TCC request was raised for marvel. The positive control is the operator's own record: `tccd` at 09:41:45 the same day, responsible `com.arcavenae.marvel`, accessing `/usr/bin/du`. I did not repeat that run without the profile, since it would raise the prompt this change removes.
+For the first measurement, the `tccd` log for that window held 45 lines; none names `du`, `ls` or `com.arcavenae.marvel`, so no new TCC request was raised for marvel. The positive control is the host's own record: `tccd` at 09:41:45 the same day, responsible `com.arcavenae.marvel`, accessing `/usr/bin/du`. I did not repeat that run without the profile, since it would raise the prompt this change removes.
+
+With the profile marvel renders for the measured host (the section 3 rows, and the NFS mount the table reports, `~/OrbStack`), a read-only run of `ls ~/Pictures`, `ls ~/Music`, `ls ~/Desktop`, `du -x -sh ~/OrbStack` and `ls /Volumes` each gave `Operation not permitted` (exit 1), `du -x -sh` of the seat's own working tree gave a size (exit 0), and `ls ~/.marvel` listed it (exit 0). The `tccd` log from 09:57:42 held no line naming `marvel`, `du`, `ls`, `OrbStack`, `network` or `AUTHREQ`.
 
 One thing to note: `du -sh ~` under the profile exits 1 and prints errors for the denied folders. A seat that treats a nonzero `du` as failure will see one. That is the intended "fail quickly and quietly", and the build documents it.
 
-## 10. Build plan after this note
+## 10. What the change builds
 
-1. A table of the section 3 paths and a function that renders the deny block for a home.
-2. The `tcc_deny` field, parsed and validated, default on.
-3. Staging of the composed profile (section 8) and the launch refusal for a `workdir` under a denied folder.
-4. Tests first: the block names every row; a role profile's allow cannot re-open a folder; `tcc_deny = false` yields the role's profile unchanged; Linux yields none; the adapter flag stays unset.
+Built in this change: the path table and the block renderer (`internal/session/tcc_deny.go`); the mount table read through `getfsstat` on darwin, and nothing elsewhere; the `tcc_deny` role key, in TOML and YAML, absent meaning on; staging of the deny alone for a role with no profile, and appended after a role's own profile for one that names it; the manager switch the daemon sets; the admin-guide section. Tests came first: the block names every row and mount, drops a path that would break the quoting, allows the working directory back after the deny, comes after a role's own allow, leaves an opted-out profile byte for byte, does nothing on Linux or with the switch off, and is not read as containment by the goose posture rule.
 
-Step 3 waits on the nesting ruling in section 5.
+Not built: option 4 (section 5), which goes to the operator as its own decision.
+
+A test that runs the real `sandbox-exec` with the rendered profile is not in the suite, because a run under the run conditions is already inside a profile and cannot start another (section 5). The rendered profile for the real home was run once by hand, outside a test, as section 9 records.
 
 ## 11. What a user must see
 
@@ -167,3 +170,26 @@ Method: a search of the non-test Go source for `filepath.Walk`, `filepath.WalkDi
 | `internal/hostvitals`, `cmd/marvel/doctor.go` | no walk found; `doctor` runs the commands it is given | not found by this search |
 
 Result: no marvel path enumerates `~`, `/`, `/Users` or `/Volumes`. The one way marvel's own code can reach a protected folder is a manifest that names one: `workdir`, `workspace.root`, `trusted_folders`, a company directory or a settings file under `~/Documents` or `~/Desktop`. The launch check in section 4 covers `workdir`; the same check belongs on the others, and the build adds it so the daemon fails with a message instead of raising a prompt. Nothing needs fixing in a walk, and this section says so on the evidence of the search above and the reading of each root, not on a prompt-free run of the daemon.
+
+## 13. Outside marvel: what must change before this ships
+
+The default is on for every seat, so a role that runs `sandbox-exec` itself breaks the day a marvel with this change reaches its host unless the role opts out first. These places are outside this repository, are not edited here, and need their own changes:
+
+1. **The manifests on each macOS host**: every role whose seats run `sandbox-exec` for the run conditions (builder and reviewer roles) gets `tcc_deny = false`. The key is unknown to a marvel that predates this change, so the manifest must be applied after the new marvel is installed and before its seats restart; and the new marvel must not reach a host before its manifests carry the key, or those seats start under the default and their run profiles fail.
+2. **The run-profile generators**: the scripts that write the per-run profile for the run conditions add the section 3 deny block (and the mount rows, read from the mount table at run time), so a test run stays covered while its seat is not.
+3. **The run-conditions rule text** in the fleet's rule files and skills, so a new generator carries the block.
+
+Order: (a) the manifests and generators change first and are released; (b) the marvel with this change is installed; (c) the manifests are applied and seats restart. A marvel with default-on that reaches a host before step (a) breaks the nesting roles' test runs.
+
+The seat-level shells of those roles are the remaining gap: a command a builder types outside a test run is not covered, so it can still prompt. A rule for the seat's own shell commands covers it until option 4 exists.
+
+## 14. Security read of option 4
+
+A broker that runs a command for a seat widens what a seat can do, so it needs its own decision. The points a reviewer should hold it to:
+
+- The daemon is the confused deputy: it is unsandboxed and holds the user's rights. The request must be composed, never obeyed (section 5, cost 1). A run profile that is more permissive than the role's own must be refused.
+- The broker is a new local service on the daemon's socket. It needs the seat's identity from the daemon's own record, not from the request, and a log of what it ran for whom.
+- A seat that can ask the daemon to run any command can read the folders this change denies, by asking. The deny block stays on the composed profile for that reason, and the broker refuses a request whose profile removes it.
+- Output and exit status come back through the daemon, so the broker must not echo environment values or file contents it was not asked for.
+
+No code for it is in this change.
