@@ -187,3 +187,57 @@ func TestFanOutSummarySaysWhenAColumnCoversFewerSessionsThanTheRow(t *testing.T)
 		t.Errorf("a coverage note where every session reports:\n%s", strings.Join(notes, "\n"))
 	}
 }
+
+// A cluster that did not answer has no row, since it has no sessions to count,
+// but the summary still names it and says why, so a missing row is never read
+// as a cluster with nothing running. It is not part of TOTAL.
+func TestFanOutSummaryNamesEveryClusterThatDidNotAnswer(t *testing.T) {
+	for _, o := range allOutcomes {
+		switch o {
+		case outcomeAnswered, outcomeStarting, outcomeSameDaemon:
+			continue
+		}
+		t.Run(string(o), func(t *testing.T) {
+			records, rows := summaryRows("")
+			records = append(records, clusterRecord{Cluster: "gamma", Outcome: o, Cause: "no reply"})
+			out, _ := summaryScreen(t, records, rows, true)
+			table, notes, _ := summaryParts(t, out)
+			for _, l := range table {
+				if strings.HasPrefix(l, "gamma") {
+					t.Errorf("a cluster that did not answer has a row: %q", l)
+				}
+			}
+			if f := strings.Fields(table[len(table)-1]); f[0] != "TOTAL" || f[1] != "3" {
+				t.Errorf("TOTAL counts more than the answered clusters: %q", table[len(table)-1])
+			}
+			var found string
+			for _, l := range notes {
+				if strings.Contains(l, "gamma") {
+					found = l
+				}
+			}
+			words := strings.ReplaceAll(string(o), "_", " ")
+			if found == "" || !strings.Contains(found, words) || !strings.Contains(found, "TOTAL") {
+				t.Errorf("no note naming gamma, its outcome %q and that TOTAL leaves it out:\n%s", words, strings.Join(notes, "\n"))
+			}
+		})
+	}
+}
+
+// With no cluster answering there is no summary, and every status line stays on
+// stderr, so each failed cluster is still named.
+func TestFanOutWithNoAnswerKeepsEveryStatusLine(t *testing.T) {
+	records := []clusterRecord{
+		{Cluster: "alpha", Outcome: outcomeUnreachable, Cause: "refused"},
+		{Cluster: "beta", Outcome: outcomeAuthRefused, Cause: "no key"},
+	}
+	out, errOut := summaryScreen(t, records, nil, true)
+	if strings.HasPrefix(out, "CLUSTER") {
+		t.Errorf("a summary with no answered cluster:\n%s", out)
+	}
+	for _, c := range []string{"alpha", "beta"} {
+		if !strings.Contains(errOut, "cluster "+c+":") {
+			t.Errorf("%s lost its status line:\n%s", c, errOut)
+		}
+	}
+}
