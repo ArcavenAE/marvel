@@ -301,6 +301,11 @@ type Session struct {
 	// text (aae-orc-mdr0n).
 	FirstPromptSha256  string `toml:"first_prompt_sha256,omitempty"`
 	SystemPromptSha256 string `toml:"system_prompt_sha256,omitempty"`
+	// TCCDenyNote is why this launch started without the privacy-folder deny
+	// (docs/design/seat-tcc-deny.md, section 4). Empty means the deny was
+	// applied, or does not apply to the seat. A launch sets it fresh, so a
+	// re-plan does not carry the previous launch's reason.
+	TCCDenyNote string `json:"tcc_deny_note,omitempty" toml:"tcc_deny_note,omitempty"`
 	// SettingSourcesNote is filled on read by describe for a record that has
 	// SettingSources and no delivery, and never stored.
 	SettingSourcesNote string `json:"setting_sources_note,omitempty" toml:"-"`
@@ -845,10 +850,14 @@ type Role struct {
 	// SandboxProfile is the absolute path of the sandbox-exec profile a seat of
 	// this role runs under (darwin only). Empty means none. The key name was
 	// ratified by the operator on 2026-11-03.
-	SandboxProfile string        `toml:"sandbox_profile,omitempty"`
-	Runtime        Runtime       `toml:"runtime"`
-	RestartPolicy  RestartPolicy `toml:"restart_policy,omitempty"`
-	Permissions    string        `toml:"permissions,omitempty"`
+	SandboxProfile string `toml:"sandbox_profile,omitempty"`
+	// TCCDeny is the role's opt-out of the default deny of the macOS privacy
+	// folders and network volumes. Nil means on; only an explicit false turns it
+	// off. See TCCDenied.
+	TCCDeny       *bool         `toml:"tcc_deny,omitempty"`
+	Runtime       Runtime       `toml:"runtime"`
+	RestartPolicy RestartPolicy `toml:"restart_policy,omitempty"`
+	Permissions   string        `toml:"permissions,omitempty"`
 	// DangerousPermissions, when true, causes adapters that support it to
 	// append --dangerously-skip-permissions (or equivalent) to the spawned
 	// agent. Intended for autonomous marvel-managed teams where no
