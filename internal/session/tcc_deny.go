@@ -19,9 +19,10 @@ import (
 //
 // It is a guard against prompts, not containment: a seat under it is not
 // "sandboxed" for an adapter's posture rule, so it never sets
-// LaunchContext.SandboxProfile. A failure to stage it is logged and the seat
-// starts without it, since refusing every seat over a nuisance guard is worse
-// than a prompt.
+// LaunchContext.SandboxProfile. A failure to stage it, or a missing
+// sandbox-exec, is logged and the seat starts without it, since refusing every
+// seat over a nuisance guard is worse than a prompt. The reason is kept on the
+// seat (Session.TCCDenyNote) and marvel doctor prints it.
 
 // tccHomeFolders are the paths under the user's home denied to a seat. The
 // first group is what Apple documents as privacy-guarded. Pictures, Music and
