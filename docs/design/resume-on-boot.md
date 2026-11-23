@@ -1,7 +1,7 @@
 # Resume on boot: teams that were running come back after a host reboot
 
-- **Status:** design for review, 2026-11-23. Nothing here is built. Director
-  reads this note before any code PR; the build goes to a marvel builder.
+- **Status:** design, rulings made 2026-11-23 (section 5). Nothing here is
+  built; the build goes to a marvel builder, red tests first.
 - **Author:** the arcaven team's architect seat.
 - **Checked at:** marvel `origin/main` a7e5c202. Every line cite below is at
   that commit.
@@ -18,8 +18,9 @@ deliberate: it stops a stale store from starting a fleet nobody asked for. But
 it also means a host that rebooted overnight is idle until a person notices,
 even for teams that were running a minute before the reboot.
 
-This note adds an opt-in setting, off by default, that brings back the teams
-that were running before the reboot, and only those. A team held on purpose,
+This note adds a setting, on by default with a 7-day window (ruled, section
+5), that brings back the teams that were running before the reboot, and only
+those. A team or a cluster can turn it off. A team held on purpose,
 a hibernated team, a suspended cluster, or a store too old to trust stays
 held. Seats come back as fresh casts through the normal spawn gate. How a seat
 recovers its own conversation is a separate problem (`fleet-hibernate.md`
@@ -127,7 +128,7 @@ of these hold:
    effective posture is the persisted one, or `PriorPosture` when the persisted
    source is `start`. A `hold` set by `operator` stays held.
 5. **The store is fresh**: the daemon's last alive stamp is within the bound
-   of now (default 24h).
+   of now (default 7 days).
 6. **The team was live near the end**: its latest session heartbeat is within
    the bound of the daemon's last alive stamp.
 
@@ -149,22 +150,22 @@ can start a fleet.
   spawn is refused as it is today.
 - For a team the decision resumes, the boot reap charges nothing and freezes
   nothing. A seat lost to a reboot is not a crash of that seat. Teams that
-  are not resumed keep today's reap accounting, so the change does not reach
-  past the opt-in.
+  are not resumed keep today's reap accounting, so the change reaches no team
+  the decision holds.
 - The daemon's alive stamp is written at most once a minute from the
   reconcile loop, and once more on a clean shutdown, in a small record of its
   own. One write a minute bounds the cost.
 
-### 2.5 The setting: off by default, an operator turns it on
+### 2.5 The setting: on by default, a team or a cluster opts out
 
-- Cluster config: `resume_on_boot` (default `false`) and
-  `resume_on_boot_within` (default `24h`), beside the cluster's other switches
-  in `internal/config/config.go` (`type Cluster struct`, `:295`).
-- A team may override the cluster value in its manifest with
-  `resume_on_boot = true` or `false`. This is spec, so it belongs in the
+- Cluster config: `resume_on_boot` (default `true`) and
+  `resume_on_boot_within` (default `7d`), beside the cluster's other switches
+  in `internal/config/config.go` (`type Cluster struct`, `:295`). A cluster
+  that sets `resume_on_boot: false` keeps today's start path for every team.
+- A team opts out in its manifest settings with `resume_on_boot = false`, or
+  sets `true` under a cluster that is off. This is spec, so it belongs in the
   manifest, unlike the posture, which stays status.
-- A fleet that wants it sets `resume_on_boot: true` in each host's cluster
-  config. That is an operator act on each host.
+- The default is on, so a host needs no config change to get it.
 - `describe team` shows the posture, its source and set-at time, and whether
   resume on boot applies, so a held team says why it is held.
 
@@ -176,11 +177,9 @@ as "Nothing resumes except an explicit command". This setting keeps both:
 
 - it never acts on a suspended cluster (condition 2) or a hibernated team
   (condition 3), so `resume` and `wake` stay the only ways out of those states;
-- turning it on is the operator's explicit, standing instruction, written in
-  the cluster config or the manifest, and it is off until then.
-
-Whether a standing setting counts as an "explicit command" under the inherited
-ruling is the operator's reading, and is ruling S1 below.
+- the setting is the operator's explicit, standing instruction: the operator
+  ruled that a standing setting counts as the explicit resume (section 5), and
+  a team or a cluster can turn it off.
 
 ## 3. Red tests, as flat build tickets
 
@@ -202,9 +201,9 @@ In order; `after:` names what lands first.
   reconcile tick and after a clean shutdown, the store has no alive stamp.
   Green: it has one, and two ticks inside a minute write it once.
 - **RB4. The setting.** `internal/config/config.go` and the manifest team
-  spec. after: none. Red: a cluster with `resume_on_boot: true` reads off, and a
-  team with `resume_on_boot = false` under a cluster set on reads on. Green:
-  each reads as written, and an unset key reads off and 24h.
+  spec. after: none. Red: an unset cluster reads off, and a team with
+  `resume_on_boot = false` under a cluster set on reads on. Green: an unset key
+  reads on with a 7-day window, and each set value reads as written.
 - **RB5. The decision, as a pure function.** `internal/team`, for example
   `resumeOnBoot(snap bootSnapshot, cfg ResumeConfig, now time.Time) (bool, string)`.
   after: RB1, RB2, RB3, RB4. Red: a table test with the cases below returns
@@ -215,7 +214,8 @@ In order; `after:` names what lands first.
   - a hibernated team: hold;
   - a suspend record present: hold;
   - the alive stamp 30 days old: hold;
-  - the team's last heartbeat 3 days before the alive stamp: hold;
+  - the team's last heartbeat 10 days before the alive stamp: hold;
+  - the team opted out in its manifest: hold;
   - a `start` hold carrying a prior `operator` converge: converge.
 - **RB6. Wire it into daemon start.** `internal/daemon/daemon.go:839-847`.
   after: RB5. Red, in `internal/team/posture_test.go` beside
@@ -241,27 +241,26 @@ In order; `after:` names what lands first.
 
 - The setting adds no gate. Every spawn it allows passes the same checks a
   `marvel converge` spawn passes.
-- Turning the setting off restores today's start path exactly: RB6 and RB7 act
-  only for a team the decision resumes.
+- Turning the setting off, for a cluster or a team, restores today's start
+  path exactly: RB6 and RB7 act only for a team the decision resumes.
 - What to measure on a host after the build, at a window the operator names:
   the pre-reboot running teams read `converge` from `boot` with fresh seats; a
   team held before the reboot is still held; a suspended cluster stays
   suspended.
 
-## 5. Rulings needed (director, for the operator)
+## 5. Ruled 2026-11-23
 
-- **S1. Does a standing setting count as the explicit command SR-C asks
-  for?** Default: yes, under section 2.6, because it never touches a suspended
-  cluster or a hibernated team, and it is off until an operator turns it on.
-- **S2. The bound.** Default: 24h for both the store's freshness and the team's
-  last presence.
-- **S3. The boot reap's charge.** Default: no charge only for a resumed team
-  (RB7). The other option is no charge for any team at a start that follows a
-  reboot. That is simpler, but it changes behavior outside the opt-in.
-- **S4. A per-team override in the manifest.** Default: yes, as spec.
+The operator ruled on this note on 2026-11-23, relayed by director. The
+operator's words, verbatim: "I'm okay with 15 programs, they translate to a set of skills that can be scheduled or not. As for all the reset, yes, you're right update them as you describe and route".
 
-This recommendation is valid until 2026-12-07; the architect will re-check it
-then.
+- **S1. A standing setting counts as the explicit resume** SR-C asks for.
+  Ruled: yes (section 2.6).
+- **S2. The bound.** Ruled: 7 days, for both the store's freshness and the
+  team's last presence. The setting is on by default.
+- **S3. The boot reap's charge.** Ruled: a resumed team pays no reap charge
+  (RB7); other teams keep today's accounting.
+- **S4. A per-team setting.** Ruled: each team can opt out in its manifest
+  settings.
 
 ## 6. Out of scope
 
@@ -273,8 +272,9 @@ then.
 
 ## 7. Candidate requirements (provisional, not ratified)
 
-- **RB-A (DESIGN):** with resume on boot off, a daemon start behaves exactly as
-  today.
+- **RB-A (DESIGN):** resume on boot is on by default with a 7-day window, and
+  with it off for a cluster or a team, a daemon start behaves exactly as today
+  for it.
 - **RB-B (DESIGN):** a team converges on boot only if it was running before the
   reboot, was not held by an operator, is not hibernated, the cluster is not
   suspended, and both staleness bounds hold.
