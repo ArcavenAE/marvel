@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"log"
-	"os/exec"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -159,13 +158,11 @@ func (d *Daemon) loadLoginExpiry(socketPath string) {
 }
 
 // askClaudeLogin reads one spelling of one claude login with the claude on the
-// daemon's PATH. A harness that is not there reads like one that failed.
+// daemon's PATH. A harness that is not there reads like one that failed. The
+// daemon package may not import os/exec (limitwiring_exec_test.go), so the
+// program name goes to loginexpiry, which resolves it.
 func askClaudeLogin(ctx context.Context, spelling string) (loginexpiry.Reading, error) {
-	prog, err := exec.LookPath("claude")
-	if err != nil {
-		return loginexpiry.Reading{}, &loginexpiry.ReadError{Reason: loginexpiry.ReasonExitNonZero}
-	}
-	return loginexpiry.Ask(ctx, prog, spelling, loginReadBound)
+	return loginexpiry.Ask(ctx, "claude", spelling, loginReadBound)
 }
 
 // startLoginExpiry runs the service's passes until ctx ends: once at start,

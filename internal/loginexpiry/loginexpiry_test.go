@@ -384,3 +384,12 @@ func TestTrackerUnreadableKeepsTheLastGoodReadAndWhenFailuresBegan(t *testing.T)
 		}
 	}
 }
+
+// A harness that is not on PATH reads like one that failed, with a fixed reason.
+func TestAskProgramNotFoundReadsLikeAFailure(t *testing.T) {
+	_, err := Ask(context.Background(), "no-such-harness-on-any-path", "", time.Second)
+	var re *ReadError
+	if !errors.As(err, &re) || re.Reason != ReasonExitNonZero {
+		t.Errorf("err = %v, want a ReadError with reason %q", err, ReasonExitNonZero)
+	}
+}
