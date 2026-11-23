@@ -1285,7 +1285,7 @@ func getCmd() *cobra.Command {
 	var since time.Duration
 	cmd := &cobra.Command{
 		Use:   "get <resource-type>",
-		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, account-readings, vitals)",
+		Short: "List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, account-readings, account-logins, vitals)",
 		Long: `List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, vitals).
 
 get account-readings lists the stamped readings of each account window the daemon holds: the percent
@@ -1294,6 +1294,12 @@ on disk and read back at start, so the list and the stale rows of get budgets su
 --account keeps the accounts whose key contains the text, and --since 1h keeps readings no older
 than that. -o json prints the same list. It reads the history only and asks nothing of any
 harness; nothing gates or acts on it.
+
+get account-logins lists each login's expiry state as the daemon's login expiry service last read it:
+the state (ok, expiring, lapsed or unreadable), the expiry in UTC, whole hours left, when it was last
+read, and why a read failed and since when. It reads the daemon's memory only and asks nothing of any
+harness; -o json prints the same document. Login expiry is off unless the cluster config sets
+login_expiry.
 
 get vitals shows the daemon's latest host vitals sample (swap, memory pressure, fseventsd RSS and
 the largest process's RSS, orphan CPU), its time, each threshold with its state, the top processes by
@@ -1480,6 +1486,21 @@ under ? sort, ? lists every key, q quits.`,
 					format = output
 				}
 				return getAccountReadings(cmd.OutOrStdout(), account, since, format)
+			}
+			if args[0] == "account-logins" {
+				switch {
+				case load:
+					return fmt.Errorf("--load applies to get teams only")
+				case watching:
+					return fmt.Errorf("get account-logins does not support --watch")
+				case columns != "":
+					return fmt.Errorf("--columns applies to get sessions only")
+				}
+				format := ""
+				if cmd.Flags().Changed("output") {
+					format = output
+				}
+				return getAccountLogins(cmd.OutOrStdout(), format)
 			}
 			if args[0] == "vitals" {
 				switch {

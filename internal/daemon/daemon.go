@@ -245,7 +245,10 @@ type Daemon struct {
 	accountSeries *api.AccountSeries
 	// accountWarn reports an account window reaching the cluster's warning
 	// level, once per window (marvel#1340).
-	accountWarn      *accountWarner
+	accountWarn *accountWarner
+	// logins is the login expiry service, nil until the daemon builds it
+	// (docs/design/native-checks.md section 2).
+	logins           *loginService
 	accountWarnLevel int // 0 when the cluster turned the warning off
 	// limitMenu holds the captured limit-menu samples, the one list the inject
 	// refusal (its Menus) and the pane-menu source and limit action read. Production
@@ -757,6 +760,7 @@ func (d *Daemon) Start(socketPath string) (err error) {
 	d.loadHostVitals(socketPath)
 	d.loadCredentialReveal(socketPath)
 	d.loadAccountWarn(socketPath)
+	d.loadLoginExpiry(socketPath)
 	d.identifyCluster(socketPath)
 	d.loadSuspendRecord(socketPath)
 	d.loadResumeJournal(socketPath)
@@ -934,6 +938,7 @@ func (d *Daemon) adoptAndRun(ctx context.Context, socketPath, network string) er
 	}()
 
 	d.startWatchdog(ctx)
+	d.startLoginExpiry(ctx)
 	d.startTxUsage(ctx)
 	if d.views != nil {
 		d.startViews(ctx)
@@ -1863,6 +1868,8 @@ func (d *Daemon) handleGet(params json.RawMessage) daemonrpc.Response {
 		result = d.store.ListCredentials()
 	case "budgets", "budget":
 		result = d.budgetRows()
+	case "account-logins":
+		result = d.accountLogins(time.Now().UTC())
 	case "account-readings":
 		result = d.accountReadingRows(p.Account, p.SinceSeconds, time.Now().UTC())
 	default:

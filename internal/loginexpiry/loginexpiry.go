@@ -167,7 +167,12 @@ type Row struct {
 	Key       api.AccountKey
 	State     State
 	ExpiresAt time.Time
-	ReadAt    time.Time
+	// ReadAt is the time of the last read that gave a reading; zero for a
+	// login never read.
+	ReadAt time.Time
+	// FailingSince is when the current run of failed reads began, zero while
+	// the last read succeeded.
+	FailingSince time.Time
 	// Why is the fixed reason of the last failed read, empty when it succeeded.
 	Why Reason
 }
@@ -195,8 +200,12 @@ func (t *Tracker) Observe(key api.AccountKey, rd Reading, err error, now time.Ti
 		row = &Row{Key: key, State: StateUnreadable}
 		t.rows[key] = row
 	}
-	row.ReadAt = now
 	if err != nil {
+		// A failed read keeps the last good read time, and the run of failures
+		// is dated from its first read.
+		if row.FailingSince.IsZero() {
+			row.FailingSince = now
+		}
 		row.Why = ReasonExitNonZero
 		var re *ReadError
 		if errors.As(err, &re) {
@@ -204,6 +213,8 @@ func (t *Tracker) Observe(key api.AccountKey, rd Reading, err error, now time.Ti
 		}
 		return
 	}
+	row.ReadAt = now
+	row.FailingSince = time.Time{}
 	row.Why = ""
 	prior, priorExpiry := row.State, row.ExpiresAt
 	known := seen && prior != StateUnreadable
