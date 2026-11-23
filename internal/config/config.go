@@ -342,7 +342,11 @@ const DefaultLoginExpiry = false
 
 // LoginExpiryOn resolves the cluster's login expiry switch: the cluster's own
 // setting, else the default. A nil cluster reads the default.
-func (c *Cluster) LoginExpiryOn() bool { return false }
+func (c *Cluster) LoginExpiryOn() bool { return c.loginExpiryOr(DefaultLoginExpiry) }
+
+// loginExpiryOr is LoginExpiryOn with the default passed in, so a test can
+// tell "reads the default" from "reads false" while the default is false.
+func (c *Cluster) loginExpiryOr(def bool) bool { return false }
 
 // DefaultAccountWarnPercent is the warning level of a cluster that sets none.
 const DefaultAccountWarnPercent = 80

@@ -32,3 +32,31 @@ func TestClusterLoginExpiry(t *testing.T) {
 		t.Errorf("a nil cluster reads %v, want the default %v", got, DefaultLoginExpiry)
 	}
 }
+
+// The default is read from the default and not assumed: with the default
+// passed in as true, an unset or nil cluster reads true and a cluster that
+// names a value keeps it.
+func TestClusterLoginExpiryReadsTheDefaultOnlyWhenUnset(t *testing.T) {
+	t.Parallel()
+	yes, no := true, false
+	on, off, unset := &Cluster{LoginExpiry: &yes}, &Cluster{LoginExpiry: &no}, &Cluster{}
+	var nilCluster *Cluster
+	cases := []struct {
+		name string
+		c    *Cluster
+		def  bool
+		want bool
+	}{
+		{"unset, default on", unset, true, true},
+		{"unset, default off", unset, false, false},
+		{"nil, default on", nilCluster, true, true},
+		{"nil, default off", nilCluster, false, false},
+		{"on, default off", on, false, true},
+		{"off, default on", off, true, false},
+	}
+	for _, c := range cases {
+		if got := c.c.loginExpiryOr(c.def); got != c.want {
+			t.Errorf("%s: reads %v, want %v", c.name, got, c.want)
+		}
+	}
+}
