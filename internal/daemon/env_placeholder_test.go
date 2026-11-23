@@ -47,6 +47,9 @@ func TestApplyRefusesALiteralValuePlaceholderInRoleEnv(t *testing.T) {
 	if strings.Contains(resp.Error, "LOG_LEVEL") {
 		t.Errorf("apply error = %q, a real value must not be reported", resp.Error)
 	}
+	if teams := d.store.ListTeams(); len(teams) != 0 {
+		t.Errorf("a refused apply stored %d teams, want none", len(teams))
+	}
 }
 
 func TestApplyNamesEveryRoleHoldingAPlaceholder(t *testing.T) {
@@ -61,6 +64,9 @@ func TestApplyNamesEveryRoleHoldingAPlaceholder(t *testing.T) {
 		if !strings.Contains(resp.Error, want) {
 			t.Errorf("apply error = %q, want it to contain %q", resp.Error, want)
 		}
+	}
+	if teams := d.store.ListTeams(); len(teams) != 0 {
+		t.Errorf("a refused apply stored %d teams, want none", len(teams))
 	}
 }
 
