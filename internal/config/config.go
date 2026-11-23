@@ -1188,6 +1188,9 @@ func (c *Config) Validate() error {
 		if err := ValidateServices(&cl); err != nil {
 			errs = append(errs, err)
 		}
+		if _, err := cl.SeatEnvSpec(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }

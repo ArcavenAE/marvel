@@ -23,7 +23,8 @@ func scheduleHistoryMaxFrom(cl *config.Cluster) int {
 // error means no config was read.
 func configLoadUsable(err error) bool {
 	return err == nil || errors.Is(err, config.ErrInvalidClusterName) ||
-		errors.Is(err, config.ErrInvalidBus) || errors.Is(err, config.ErrInvalidService)
+		errors.Is(err, config.ErrInvalidBus) || errors.Is(err, config.ErrInvalidService) ||
+		errors.Is(err, config.ErrInvalidSeatEnv)
 }
 
 // loadScheduleHistoryMax sets the daemon's history ceiling from the

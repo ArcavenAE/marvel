@@ -760,6 +760,7 @@ func (d *Daemon) Start(socketPath string) (err error) {
 	d.loadHostVitals(socketPath)
 	d.loadCredentialReveal(socketPath)
 	d.loadAccountWarn(socketPath)
+	d.loadSeatEnv(socketPath)
 	d.loadLoginExpiry(socketPath)
 	d.identifyCluster(socketPath)
 	d.loadSuspendRecord(socketPath)
