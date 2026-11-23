@@ -306,6 +306,11 @@ type Session struct {
 	// applied, or does not apply to the seat. A launch sets it fresh, so a
 	// re-plan does not carry the previous launch's reason.
 	TCCDenyNote string `json:"tcc_deny_note,omitempty" toml:"tcc_deny_note,omitempty"`
+	// SecretNote is why a seat that declares a seat secret started without it:
+	// the cluster maps no such need, the daemon does not hold the value, or no
+	// pane read the hand-over in time. It names the need and the variable, never
+	// the value, and marvel doctor shows it as a warning.
+	SecretNote string `json:"secret_note,omitempty" toml:"secret_note,omitempty"`
 	// SettingSourcesNote is filled on read by describe for a record that has
 	// SettingSources and no delivery, and never stored.
 	SettingSourcesNote string `json:"setting_sources_note,omitempty" toml:"-"`
@@ -854,7 +859,11 @@ type Role struct {
 	// TCCDeny is the role's opt-out of the default deny of the macOS privacy
 	// folders and network volumes. Nil means on; only an explicit false turns it
 	// off. See TCCDenied.
-	TCCDeny       *bool         `toml:"tcc_deny,omitempty"`
+	TCCDeny *bool `toml:"tcc_deny,omitempty"`
+	// SeatSecrets names the secrets a seat of this role needs by name, such as
+	// bd; the cluster maps a name to a variable (seat_env.secrets) and the daemon
+	// hands the value to the pane through a FIFO. Never a value.
+	SeatSecrets   []string      `toml:"seat_secrets,omitempty"`
 	Runtime       Runtime       `toml:"runtime"`
 	RestartPolicy RestartPolicy `toml:"restart_policy,omitempty"`
 	Permissions   string        `toml:"permissions,omitempty"`

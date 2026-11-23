@@ -133,3 +133,18 @@ func TestCredentialRevealRefusesASeatSecret(t *testing.T) {
 		t.Error("the refusal carries the value")
 	}
 }
+
+// The daemon answers the session manager for a mapped need from the store, and
+// for nothing else.
+func TestTheDaemonAnswersASeatSecretNeedFromTheStore(t *testing.T) {
+	t.Setenv(seatSecretVar, "mxfake-0042")
+	d, _ := seatSecretDaemon(t, seatSecretYAML)
+	d.loadSeatEnv(seatSecretSock)
+	name, value, ok := d.seatSecret("bd")
+	if !ok || name != seatSecretVar || string(value) != "mxfake-0042" {
+		t.Errorf("seatSecret(bd) = %q, ok %v; want the mapped variable and the held value", name, ok)
+	}
+	if _, _, ok := d.seatSecret("other"); ok {
+		t.Error("an unmapped need was answered")
+	}
+}

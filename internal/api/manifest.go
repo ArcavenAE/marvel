@@ -174,6 +174,9 @@ type ManifestRole struct {
 	// TCCDeny opts a role out of the default deny of the macOS privacy folders
 	// and network volumes (docs/design/seat-tcc-deny.md). Absent means on.
 	TCCDeny *bool `toml:"tcc_deny,omitempty" yaml:"tcc_deny,omitempty"`
+	// SeatSecrets names the secrets this role's seats need, such as bd. A name,
+	// never a value: the cluster's seat_env.secrets maps it to a variable.
+	SeatSecrets []string `toml:"seat_secrets,omitempty" yaml:"seat_secrets,omitempty"`
 	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
 	// shift key this marvel does not understand, and whether the table wrote
 	// an any key at all.

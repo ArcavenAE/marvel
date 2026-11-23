@@ -85,3 +85,7 @@ func (d *Daemon) captureSeatSecrets(cluster string, spec config.SeatEnv) {
 		}
 	}
 }
+
+// seatSecret answers the session manager: the variable and the held value for a
+// need the cluster maps.
+func (d *Daemon) seatSecret(need string) (name string, value []byte, ok bool) { return "", nil, false }

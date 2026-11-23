@@ -62,8 +62,14 @@ type Manager struct {
 	// zero Manager leaves launches as they were. NetMounts lists the network
 	// mount points at launch; nil means read the host's mount table. A seam for
 	// tests.
-	TCCDeny   bool
-	NetMounts func() []string
+	TCCDeny bool
+	// SeatSecrets, SeatSecretDir and SeatSecretWait feed wrapSeatSecrets: where a
+	// declared need's value comes from, the private directory its FIFO is made in,
+	// and how long the pane and the writer wait for each other.
+	SeatSecrets    SeatSecretSource
+	SeatSecretDir  string
+	SeatSecretWait time.Duration
+	NetMounts      func() []string
 
 	// roleReader replaces the store read that answers which role a session is
 	// and whether it names a sandbox profile; nil means the store. A seam for
@@ -1619,6 +1625,17 @@ func (m *Manager) assignSessionID(lctx *runtime.LaunchContext, adapter runtime.A
 	lctx.HarnessSessionID = id
 	lctx.Session.HarnessSessionID = id
 }
+
+// SeatSecretSource says what a seat that declares a need receives: the
+// environment variable that carries it and the value, held in memory by the
+// daemon. ok is false when the cluster maps no such need or holds no value.
+type SeatSecretSource interface {
+	SeatSecret(need string) (name string, value []byte, ok bool)
+}
+
+// wrapSeatSecrets wraps the launch command so the pane reads each secret its
+// role declares from a private FIFO, and starts the writers.
+func (m *Manager) wrapSeatSecrets(sess *api.Session, role api.Role, plan *launchPlan) {}
 
 // planLaunch uses the adapter registry when team/role context is
 // available, falling back to direct command construction for ad-hoc
