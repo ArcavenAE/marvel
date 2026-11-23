@@ -45,7 +45,7 @@ func TestSpawnDoesNotRefuseAValueThatMerelyContainsThePlaceholder(t *testing.T) 
 	r := newContainerRig(t, "test-env-placeholder-ctl", api.PlacementLocalhost, api.Role{Name: "seat", Replicas: 1})
 	sess := r.session("sleep")
 	sess.Runtime.Env = map[string]string{"NOTE": "see " + api.EnvPlaceholder + " in the doc", "REAL": "x"}
-	if err := r.mgr.Create(sess); err != nil && strings.Contains(err.Error(), api.EnvPlaceholder) {
-		t.Errorf("Create refused a value that only contains the text: %v", err)
+	if err := r.mgr.Create(sess); err != nil {
+		t.Errorf("Create = %v, want nil: a value that only contains the text is a real value", err)
 	}
 }
