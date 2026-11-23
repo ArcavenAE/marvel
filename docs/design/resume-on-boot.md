@@ -170,12 +170,17 @@ of these hold:
    - any row's `CreatedAt`;
    - for a scheduled role, its latest run's `StartedAt` or `EndedAt` from the
      run history;
-   - the daemon's last alive stamp itself, for any row the snapshot finds in
-     a state that `CountsAsAlive` (`pending`, `running` or
-     `crashloop-backoff`). The reconcile loop reaps a row whose pane is gone
-     on every tick (`controller.go:607`), so a row the store still holds as
-     alive had a pane at the last tick before the daemon stopped, within a
-     tick of the alive stamp.
+   - the daemon's last alive stamp itself, for any row the snapshot finds
+     `running` with a pane recorded. The reconcile loop reaps such a row on
+     the tick its pane is gone (`controller.go:607`), so a row the store
+     still holds as `running` had a pane at the last tick before the daemon
+     stopped, within a tick of the alive stamp. Only `running` counts. The
+     reap skips a row with no pane (`internal/session/manager.go:2462-2465`),
+     so the claim does not hold for the other states that `CountsAsAlive`. A
+     `crashloop-backoff` row is set after its crash was already reaped
+     (`controller.go:2111-2115`), and a `pending` row may not have a pane
+     yet. Neither proves the role was up at the stamp, so both count only
+     by their `LastHeartbeat` and `CreatedAt`.
 
    A role that never beats is present by its spawns, its runs and its live
    rows. This covers a scheduled headless role and an unscheduled, non-beating
@@ -183,10 +188,12 @@ of these hold:
    A role whose only row is a finished run (a headless `succeeded` or exit 78
    row) has nothing to resume: it holds its slot and is not relaunched
    (ADR-010). A team of only such rows that fails this condition loses
-   nothing by staying held. One gap is left and named: a scheduled role whose
-   period is longer than the bound (a monthly job under a 7-day bound), with no
-   live row at the reboot, fails this condition. It stays held, and the log
-   line names condition 6. Once a session end time exists
+   nothing by staying held. One gap is left and named. Condition 6 is
+   team-wide, so the gap is a team, not a role: a team whose only roles are
+   scheduled with a period longer than the bound (a monthly job under a
+   7-day bound), with no `running` row at the reboot, fails this condition.
+   The team stays held, and the log line names condition 6. A monthly role in
+   a team that has any other recent presence is resumed with its team. Once a session end time exists
    (`session-shelving.md` proposes `EndedAt`), it joins this list.
 
 The daemon then sets the team's posture to `converge` with source `boot`, and
@@ -228,8 +235,7 @@ can start a fleet.
   sets nothing reads the next one out. A team set off is a default its roles
   may override. Today's start path is kept exactly for a team when its
   cluster is off, or when the effective setting of every one of its roles is
-  off. (Director ruling, 2026-11-23, applying the operator's rulings in
-  section 5.)
+  off. (Director ruling, 2026-11-23, recorded as S5 in section 5.)
 - A team opts out in its manifest settings with `resume_on_boot = false`, or
   sets `true` to state the default for its roles. Under a cluster that is off,
   neither has any effect. This is spec, so it belongs in the manifest, unlike
@@ -321,6 +327,8 @@ In order; `after:` names what lands first.
   - a team with a row whose pane survived adoption: not boot-eligible;
   - an unscheduled, non-beating role created 30 days before the reboot, its
     row still `running` in the store, with a fresh alive stamp: converge;
+  - the same role with its row in `crashloop-backoff`, created 30 days
+    before the reboot and with no heartbeat: hold, condition 6;
   - a role set on under a cluster set off and a team that sets nothing:
     hold, the cluster lock;
   - a role set on under a team set off, on a cluster that is on: converge
@@ -394,6 +402,11 @@ right update them as you describe and route".
   settings. Ruled further by the operator, 2026-11-23: any role may override
   its team's setting in its own settings, and the team's setting is the
   default for its roles (section 2.5).
+- **S5. A cluster set off.** Ruled by director, 2026-11-23, applying the
+  operator's rulings above: a cluster set off is a hard lock that no team or
+  role setting lifts, because turning a whole host off is a deliberate
+  host-wide act, often for maintenance. Below the cluster, the most specific
+  level wins (section 2.5).
 
 ## 6. Out of scope
 
