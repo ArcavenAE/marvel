@@ -60,3 +60,18 @@ func TestClusterLoginExpiryReadsTheDefaultOnlyWhenUnset(t *testing.T) {
 		}
 	}
 }
+
+// The service stays off on a cluster that does not set the key. The other tests
+// here compare against DefaultLoginExpiry by name, so they follow the constant
+// wherever it goes; this one pins the value. Only the keychain proof in
+// docs/design/native-checks.md section 2.7 lets it change, and the change to
+// true comes with this test.
+func TestDefaultLoginExpiryIsOff(t *testing.T) {
+	if DefaultLoginExpiry {
+		t.Fatal("DefaultLoginExpiry is true: the login expiry service would run on every cluster that does not set the key, before the section 2.7 keychain proof")
+	}
+	var c Cluster
+	if c.LoginExpiryOn() {
+		t.Error("a cluster with no login_expiry key reads as on")
+	}
+}
