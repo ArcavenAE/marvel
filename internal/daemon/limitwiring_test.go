@@ -358,6 +358,7 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.productionCollector d.driver.Unguarded":             true, // suspend: the two read-only pid calls, past the gate (tmux's unguarded-site test lists the calls)
 		"NewWithOptions driver.SetSuspendGate":                       true, // wires the suspend gate once, at construction
 		"NewWithOptions driver.SetTiming":                            true, // wires the timing registry once, at construction
+		"*Daemon.loadSeatEnv d.driver.SetSeatEnv":                    true, // wires the cluster's seat_env once, at start; no pane is read or keyed
 		"*Daemon.productionCollector drv.ServerPID":                  true, // read-only, through the unguarded view
 		"*Daemon.productionCollector drv.PanePIDs":                   true, // read-only, through the unguarded view
 	}
