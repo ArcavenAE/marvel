@@ -16,10 +16,13 @@ import (
 	"github.com/arcavenae/marvel/internal/procargs"
 )
 
-// The three kernel reads, behind variables so a test can make each one fail.
+// The kernel reads, behind variables so a test can make each one fail or answer
+// as it likes: the process table, one process's arguments, and one process's
+// table entry (which says whether it is gone).
 var (
 	kinfoProcs = unix.SysctlKinfoProcSlice
 	procArgs   = procargs.Read
+	kinfoProc  = unix.SysctlKinfoProc
 )
 
 // defaultProcList lists the tmux processes as `ps -axo pid,args` would, read
@@ -114,7 +117,7 @@ func readArgsSettled(ctx context.Context, pid int) ([]string, error) {
 // x/sys in go.mod). Any other answer, including a refusal, counts as still
 // there, so an unreadable process is never taken for a gone one.
 func processGone(pid int) bool {
-	k, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	k, err := kinfoProc("kern.proc.pid", pid)
 	if err != nil {
 		return errors.Is(err, unix.ESRCH) || errors.Is(err, unix.EIO)
 	}
