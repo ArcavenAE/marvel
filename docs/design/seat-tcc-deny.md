@@ -185,7 +185,7 @@ The default is on for every seat, so a role that runs `sandbox-exec` itself brea
 2. **The run-profile generators**: the scripts that write the per-run profile for the run conditions add the section 3 deny block (and the mount rows, read from the mount table at run time), so a test run stays covered while its seat is not.
 3. **The run-conditions rule text** in the fleet's rule files and skills, so a new generator carries the block.
 
-What an older marvel does with the key: nothing. The manifest decoders drop a role key they do not know, in TOML and in YAML. The one place an unknown key is refused is the `runtime.goose` table (`unmarshalManifestTOML` in `internal/api/manifest.go`). That leniency is older than the build on the measured host (the source comment dates from 2026-10-02 and the installed build is from 2026-11-21). I read the parser and ran nothing live, so the claim is about the source, not about each installed binary.
+What an older marvel does with the key: nothing. The manifest decoders drop a role key they do not know, in TOML and in YAML. The one place an unknown key is refused is the `runtime.goose` table (`unmarshalManifestTOML` in `internal/api/manifest.go`). That leniency is older than the build on the measured host: the comment that states it is dated 2026-11-01 by `git blame` on `main`, the decoder ignoring unknown keys is older than the comment, and the installed build is from 2026-11-21. I read the parser and ran nothing live, so the claim is about the source, not about each installed binary.
 
 So a manifest that carries `tcc_deny = false` parses on a marvel that predates this change and is ignored there, which is also why a misspelled key fails silently. That makes the safe order:
 
