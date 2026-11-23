@@ -57,6 +57,13 @@ type Manager struct {
 	SandboxExec string
 	SandboxDir  string
 	RealHome    string
+	// TCCDeny turns on the default deny of the macOS privacy folders and network
+	// volumes for every seat whose role does not opt out. The daemon sets it; a
+	// zero Manager leaves launches as they were. NetMounts lists the network
+	// mount points at launch; nil means read the host's mount table. A seam for
+	// tests.
+	TCCDeny   bool
+	NetMounts func() []string
 
 	// roleReader replaces the store read that answers which role a session is
 	// and whether it names a sandbox profile; nil means the store. A seam for
