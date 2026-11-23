@@ -130,3 +130,29 @@ func TestGetAccountReadingsFlagRules(t *testing.T) {
 		t.Errorf("%d reads reached the daemon from refused commands, want 0", n)
 	}
 }
+
+// A --since under one second is a positive request the wire cannot carry (the
+// daemon takes whole seconds, and a zero means every reading), so it used to
+// reach the daemon as zero and list everything. It is refused before any dial.
+func TestGetAccountReadingsRefusesASinceUnderOneSecond(t *testing.T) {
+	sock, params := readingsFakeDaemon(t, nil)
+	for _, since := range []string{"500ms", "1ns", "999ms"} {
+		code, _, stderr := runFanGet(t, "--socket", sock, "get", "account-readings", "--since", since)
+		if code != 1 {
+			t.Errorf("--since %s: exit = %d, want 1\n%s", since, code, stderr)
+		}
+		if want := "--since must be at least 1s"; !strings.Contains(stderr, want) {
+			t.Errorf("--since %s: stderr lacks %q:\n%s", since, want, stderr)
+		}
+	}
+	if n := len(params()); n != 0 {
+		t.Errorf("%d reads reached the daemon from refused commands, want 0", n)
+	}
+	// Control: one second is accepted and sent as one second.
+	if code, _, stderr := runFanGet(t, "--socket", sock, "get", "account-readings", "--since", "1s"); code != 0 {
+		t.Fatalf("--since 1s: exit = %d, want 0\n%s", code, stderr)
+	}
+	if got := params(); len(got) != 1 || got[0].SinceSeconds != 1 {
+		t.Errorf("daemon was sent %+v, want one read with since_seconds 1", got)
+	}
+}
