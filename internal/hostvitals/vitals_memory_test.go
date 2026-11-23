@@ -14,11 +14,13 @@ func fp(pid, ppid int, name string, rssGiB uint64) Proc {
 	return Proc{PID: pid, PPID: ppid, RSSBytes: rssGiB * gibB, ElapsedSeconds: 600, Name: name}
 }
 
-// Two seats, one process outside every seat. Seat a holds 1 + 6 GiB and seat b
-// holds 1 + 4 GiB; the outside process holds 20 GiB and is not summed.
+// Two seats, one process outside every seat. Seat a holds sh 1 + 2.1.322 6 +
+// a grandchild node 2 GiB and seat b holds sh 1 + node 4 GiB; the outside
+// process holds 20 GiB and is not summed. The grandchild makes a sum that stops
+// at direct children come up short.
 func seatTable() []Proc {
 	return []Proc{
-		fp(100, 50, "sh", 1), fp(101, 100, "2.1.322", 6),
+		fp(100, 50, "sh", 1), fp(101, 100, "2.1.322", 6), fp(102, 101, "node", 2),
 		fp(200, 50, "sh", 1), fp(201, 200, "node", 4),
 		fp(300, 1, "modeld", 20),
 	}
@@ -38,12 +40,12 @@ func seatSampler(read func() Reading) *Sampler {
 
 func TestSeatRSSSumsEachSeatTreeOnce(t *testing.T) {
 	seats, rss := SeatRSS(seatTable(), []int{100, 200})
-	if seats != 2 || rss != 12*gibB {
-		t.Errorf("SeatRSS = %d seats, %d bytes, want 2 seats, %d bytes", seats, rss, 12*gibB)
+	if seats != 2 || rss != 14*gibB {
+		t.Errorf("SeatRSS = %d seats, %d bytes, want 2 seats, %d bytes", seats, rss, 14*gibB)
 	}
 	seats, rss = SeatRSS(seatTable(), []int{100, 100, 999})
-	if seats != 1 || rss != 7*gibB {
-		t.Errorf("a repeated root and a root missing from the table: %d seats, %d bytes, want 1 seat, %d bytes", seats, rss, 7*gibB)
+	if seats != 1 || rss != 9*gibB {
+		t.Errorf("a repeated root and a root missing from the table: %d seats, %d bytes, want 1 seat, %d bytes", seats, rss, 9*gibB)
 	}
 }
 
@@ -55,7 +57,7 @@ func TestSeatMemoryVitalSumsSeatsAgainstPhysicalMemory(t *testing.T) {
 	if !ok {
 		t.Fatalf("thresholds %+v have no \"seat memory\" line", s.Snapshot().Thresholds)
 	}
-	for _, want := range []string{"2 seats", "12.0 GiB", "48.0 GiB", "25%"} {
+	for _, want := range []string{"2 seats", "14.0 GiB", "48.0 GiB", "29%"} {
 		if !strings.Contains(got.Detail, want) {
 			t.Errorf("seat memory detail %q lacks %q", got.Detail, want)
 		}
@@ -69,8 +71,8 @@ func TestSeatMemoryVitalWithoutPhysicalMemoryStillSumsSeats(t *testing.T) {
 	s := seatSampler(func() Reading { return Reading{} })
 	s.SampleProcs(seatTable(), true)
 	got, ok := find(s.Snapshot().Thresholds, "seat memory")
-	if !ok || !strings.Contains(got.Detail, "12.0 GiB") || strings.Contains(got.Detail, "%") {
-		t.Errorf("seat memory = %+v, want the 12.0 GiB sum and no percentage", got)
+	if !ok || !strings.Contains(got.Detail, "14.0 GiB") || strings.Contains(got.Detail, "%") {
+		t.Errorf("seat memory = %+v, want the 14.0 GiB sum and no percentage", got)
 	}
 }
 
@@ -126,8 +128,8 @@ func TestTopProcessesNameTheSeatTheyBelongTo(t *testing.T) {
 	for _, p := range s.Snapshot().Top {
 		bySeat[p.PID] = p.Seat
 	}
-	if bySeat[101] != "ws/seat-a" || bySeat[201] != "ws/seat-b" || bySeat[300] != "" {
-		t.Errorf("seat by pid = %v, want 101 in ws/seat-a, 201 in ws/seat-b, 300 in none", bySeat)
+	if bySeat[101] != "ws/seat-a" || bySeat[102] != "ws/seat-a" || bySeat[201] != "ws/seat-b" || bySeat[300] != "" {
+		t.Errorf("seat by pid = %v, want 101 and 102 in ws/seat-a, 201 in ws/seat-b, 300 in none", bySeat)
 	}
 }
 
