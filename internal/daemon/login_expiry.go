@@ -74,31 +74,39 @@ func newLoginService(enabled bool, emit events.Emitter, list func() []api.Sessio
 	return &loginService{enabled: enabled, tracker: loginexpiry.NewTracker(emit), list: list, ask: ask}
 }
 
-// pass asks every target once and feeds the tracker. A target whose first
-// spelling reads logged out tries the next; the first reading that is logged
-// in wins, and when none is, a logged-out reading stands over a failed read.
-// A service that is off asks nothing.
+// pass asks every target once and feeds the tracker. A target's spellings are
+// tried in order and the first reading that is logged in wins. A login is
+// recorded as logged out only when every spelling answered and every answer was
+// logged out: a spelling that failed to answer might be the one the login was
+// made under, so any failure with no logged-in reading is a failed read, and
+// the first failure is the one recorded. A service that is off asks nothing.
 func (l *loginService) pass(ctx context.Context, now time.Time) {
 	if l == nil || !l.enabled {
 		return
 	}
 	for _, t := range loginTargets(l.list()) {
 		var (
-			best    loginexpiry.Reading
-			bestErr error
-			have    bool
+			best     loginexpiry.Reading
+			firstErr error
 		)
 		for _, spelling := range t.Spellings {
 			rd, err := l.ask(ctx, spelling)
-			if err == nil && rd.LoggedIn {
-				best, bestErr, have = rd, nil, true
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			best = rd
+			if rd.LoggedIn {
+				firstErr = nil
 				break
 			}
-			if err == nil || !have {
-				best, bestErr, have = rd, err, true
-			}
 		}
-		l.tracker.Observe(t.Key, best, bestErr, now)
+		if firstErr != nil {
+			best = loginexpiry.Reading{}
+		}
+		l.tracker.Observe(t.Key, best, firstErr, now)
 	}
 }
 
