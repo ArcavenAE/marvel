@@ -62,6 +62,10 @@ var handoffMagic = [4]byte{'M', 'V', 'H', 'F'}
 // daemon could re-request it.
 var carryTable = map[api.CredentialKind]bool{
 	api.CredentialNATSNKeySeed: true,
+	// A seat secret is third-party bearer material held in memory (ADR-009 as
+	// amended). It is not carried until a carry is ruled, and then only by an
+	// in-memory path, never a file. TODO: the ruling on carry and its mechanism.
+	api.CredentialSeatSecret: false,
 }
 
 // Outcomes of the departing side's attempt, as the reexec response reports

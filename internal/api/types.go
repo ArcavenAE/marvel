@@ -1462,13 +1462,20 @@ const (
 	// CredentialNATSNKeySeed is a NATS NKey seed for the bus. It is the first
 	// and, today, only kind.
 	CredentialNATSNKeySeed CredentialKind = "nats-nkey-seed"
+
+	// CredentialSeatSecret is a value a seat receives at spawn when its role
+	// declares the need (seat_secrets), such as the bd dolt password. The daemon
+	// moves it from its own environment into memory at start. It never reaches
+	// the get or list surface, is never revealed, and is handed to a pane only
+	// through a FIFO that pane reads once (docs/design/seat-env-and-seat-secrets.md).
+	CredentialSeatSecret CredentialKind = "seat-secret"
 )
 
 // CredentialKinds lists every credential kind marvel can hold. A test over
 // this list fails until each new kind has a written carry decision in the
 // daemon's reexec handoff (aae-orc-4h9xp).
 func CredentialKinds() []CredentialKind {
-	return []CredentialKind{CredentialNATSNKeySeed}
+	return []CredentialKind{CredentialNATSNKeySeed, CredentialSeatSecret}
 }
 
 // ValidCredentialKind reports whether k is a known credential kind.
