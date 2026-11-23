@@ -5,6 +5,7 @@ package tmux
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -26,11 +27,15 @@ var (
 // (ps is setuid, and sandbox-exec cannot run it even under a profile that
 // allows everything).
 //
-// Only processes whose executable name is tmux are listed, since the one
-// reader of the list, carriesSocket, ignores every other program. A process
-// that exits between the table read and its argument read is skipped. If the
-// table itself cannot be read the error is returned, and the caller reads the
-// answer as "not absent", the safe direction.
+// Only processes whose executable name (p_comm) is tmux are listed, since the
+// one reader of the list, carriesSocket, ignores every other program. That is
+// narrower than the ps it replaces, which matched on argv[0] alone: a tmux
+// binary file named something else but run with argv[0] set to tmux is not
+// listed. marvel starts the binary it resolves as tmux, and p_comm is cut at 16
+// bytes, which does not touch a 4-byte name. A process that exits between the
+// table read and its argument read is skipped. Any other failure is returned:
+// a table that cannot be read, or the arguments of a tmux process that is still
+// in the table. The caller reads an error as "not absent", the safe direction.
 func defaultProcList(ctx context.Context) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -46,7 +51,15 @@ func defaultProcList(ctx context.Context) ([]byte, error) {
 		}
 		pid := int(p.Proc.P_pid)
 		args, err := procArgs(pid)
-		if err != nil || len(args) == 0 {
+		if err != nil {
+			if processGone(pid) {
+				continue
+			}
+			// Still in the table, so a live tmux that cannot be read is
+			// unknown, not gone: say so, and the caller reads "not absent".
+			return nil, fmt.Errorf("arguments of tmux pid %d: %w", pid, err)
+		}
+		if len(args) == 0 {
 			continue
 		}
 		fmt.Fprintf(&b, "%d %s\n", pid, strings.Join(args, " "))
@@ -60,4 +73,14 @@ func commName(c []byte) string {
 		c = c[:i]
 	}
 	return string(c)
+}
+
+// processGone says the kernel no longer has pid: the process exited after the
+// table was read. The sysctl answers a pid it does not have with ESRCH, or with
+// EIO when the answer is empty (measured on darwin with the x/sys in go.mod).
+// Any other answer, including a refusal, counts as still there, so an
+// unreadable process is never taken for a gone one.
+func processGone(pid int) bool {
+	_, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	return errors.Is(err, unix.ESRCH) || errors.Is(err, unix.EIO)
 }
