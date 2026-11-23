@@ -73,11 +73,11 @@ func TestLoadSeatEnvMovesADeclaredSecretIntoTheStore(t *testing.T) {
 	}
 }
 
-// A cluster that declares nothing keeps its environment as it was, and the
-// store stays empty.
+// A cluster that opts out with secrets: {} keeps its environment as it was, and
+// the store stays empty.
 func TestLoadSeatEnvWithNoSecretsTakesNothingFromTheEnvironment(t *testing.T) {
 	t.Setenv(seatSecretVar, "mxfake-0042")
-	d, _ := seatSecretDaemon(t, "clusters:\n  - name: mine\n    socket: "+seatSecretSock+"\n")
+	d, _ := seatSecretDaemon(t, "clusters:\n  - name: mine\n    socket: "+seatSecretSock+"\n    seat_env:\n      secrets: {}\n")
 	d.loadSeatEnv(seatSecretSock)
 	if got := os.Getenv(seatSecretVar); got != "mxfake-0042" {
 		t.Errorf("the variable was touched with no mapping: %q", got)
