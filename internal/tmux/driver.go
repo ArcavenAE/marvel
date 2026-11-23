@@ -62,7 +62,9 @@ type Driver struct {
 	// pathPrepend and seatPrefix are the cluster's seat_env (SetSeatEnv). Zero
 	// values leave a pane as it always was.
 	pathPrepend []string
-	seatPrefix  string
+	unset       []string
+	// secretNames are the seat secret variables (SetSeatSecretNames).
+	secretNames []string
 
 	// procs lists processes for the guard that tells a missing socket from a
 	// missing server; nil means `ps -axo pid,args`.
@@ -208,7 +210,7 @@ func (d *Driver) cmd(args ...string) *tmuxCmd {
 	}
 	full = append(full, args...)
 	c := exec.CommandContext(ctx, d.binary, full...)
-	c.Env = api.ScrubInheritedSessionEnv(os.Environ())
+	c.Env = dropEnv(api.ScrubInheritedSessionEnv(os.Environ()), d.secretNames)
 	// A killed tmux client can leave a child holding its output pipe open;
 	// without a wait delay the read would outlive the kill.
 	c.WaitDelay = time.Second
@@ -382,20 +384,31 @@ func seatEnvPrefixFor(extra []string) string {
 // Set it before the driver is shared between goroutines, as SetExecTimeout.
 func (d *Driver) SetSeatEnv(pathPrepend, unset []string) {
 	d.pathPrepend = append([]string(nil), pathPrepend...)
-	d.seatPrefix = seatEnvPrefixFor(unset)
+	d.unset = append([]string(nil), unset...)
 }
 
 // SetSeatSecretNames names the variables that carry a seat secret: they are
 // kept out of every tmux client's environment (so the server never holds them)
 // and out of every pane's, until the seat that declares the need is handed its
 // own. Set it before the driver is shared between goroutines.
-func (d *Driver) SetSeatSecretNames(names []string) {}
+func (d *Driver) SetSeatSecretNames(names []string) {
+	d.secretNames = append([]string(nil), names...)
+}
 
 // StripServerEnv removes the seat secret names from the global environment of a
 // tmux server that is already running, which may have been started by a process
 // that still carried them. Only names go on the argument list. A missing server
 // is not an error: there is nothing to strip.
-func (d *Driver) StripServerEnv() error { return nil }
+func (d *Driver) StripServerEnv() error {
+	var errs []error
+	for _, n := range d.secretNames {
+		out, err := d.cmd("set-environment", "-g", "-u", n).CombinedOutput()
+		if err != nil && classifyAbsence(string(out)) == absenceNone {
+			errs = append(errs, fmt.Errorf("strip %s from the tmux server environment: %s: %w", n, strings.TrimSpace(string(out)), err))
+		}
+	}
+	return errors.Join(errs...)
+}
 
 // SetExecTimeout sets the bound on one tmux invocation. Zero restores
 // DefaultExecTimeout. Set it before the driver is shared between goroutines.
@@ -651,8 +664,8 @@ func (d *Driver) NewPaneAt(session, command, title, dir string, envs map[string]
 		args = append(args, "-e", "PATH="+strings.Join(dirs, ":"))
 	}
 	prefix := seatEnvPrefix
-	if d.seatPrefix != "" {
-		prefix = d.seatPrefix
+	if len(d.unset) > 0 || len(d.secretNames) > 0 {
+		prefix = seatEnvPrefixFor(append(append([]string(nil), d.unset...), d.secretNames...))
 	}
 	args = append(args, prefix+command)
 
@@ -1392,4 +1405,23 @@ func (d *Driver) PanePIDs() ([]int, error) {
 		pids = append(pids, pid)
 	}
 	return pids, nil
+}
+
+// dropEnv removes the named variables from an environment list.
+func dropEnv(env, names []string) []string {
+	if len(names) == 0 {
+		return env
+	}
+	drop := make(map[string]bool, len(names))
+	for _, n := range names {
+		drop[n] = true
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); drop[k] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }

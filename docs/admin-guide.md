@@ -512,6 +512,20 @@ clusters:
 - `unset` removes these variables in the pane, beside the session credentials
   marvel always removes. A name has to be a plain variable name (letters,
   digits and `_`, not starting with a digit).
+- `secrets` maps a need a role can declare to the environment variable that
+  carries it, for example `bd: BEADS_DOLT_PASSWORD`. The block holds names and
+  never a value. Declaring a mapping keeps that variable out of the tmux server
+  the daemon starts, out of every tmux client it runs, and out of every pane
+  (`env -u` in the pane command), and removes it by name from a tmux server that
+  is already running (`tmux set-environment -g -u NAME`, a name and no value on
+  the argument list). **It is opt-in for now, and the default later.** Until the
+  hand-over that gives a seat its own value lands (a role field `seat_secrets`
+  and a FIFO read once by the pane), declaring a mapping strips the variable from
+  every seat, including seats that run `bd`. Do not declare it before that
+  release. A pane started before the daemon change keeps what it already had. A
+  server that is already running keeps the variable in its own process
+  environment until it is restarted; only its global environment table is
+  cleaned, which is what new panes read.
 - The block is read when the daemon starts, so a change takes effect at the
   next daemon start and for seats started after it. Seats already running keep
   the environment they started with.

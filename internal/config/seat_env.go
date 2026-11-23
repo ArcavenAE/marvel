@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -34,6 +35,9 @@ var ErrInvalidSeatEnv = errors.New("invalid seat_env")
 // envNameRE is a portable variable name: what `env -u` and a shell accept.
 var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// seatNeedRE is the name a role gives a secret it needs: seat_secrets: [bd].
+var seatNeedRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+
 // SeatEnvSpec is the cluster's seat_env block, checked and with ~ expanded. A
 // nil cluster or an unset block is the zero value.
 func (c *Cluster) SeatEnvSpec() (SeatEnv, error) {
@@ -57,10 +61,49 @@ func (c *Cluster) SeatEnvSpec() (SeatEnv, error) {
 		}
 		out.PathPrepend = append(out.PathPrepend, dir)
 	}
+	needs := make([]string, 0, len(c.SeatEnv.Secrets))
+	for need := range c.SeatEnv.Secrets {
+		needs = append(needs, need)
+	}
+	sort.Strings(needs)
+	byVar := map[string]string{}
+	for _, need := range needs {
+		name := c.SeatEnv.Secrets[need]
+		// The text names the need and never the value: a mapping that holds a
+		// secret where a variable name belongs must not be echoed into a log.
+		if !seatNeedRE.MatchString(need) {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: seat_env.secrets: need %q is not a name (lower case letters, digits, - and _, starting with a letter)", ErrInvalidSeatEnv, c.Name, need))
+			continue
+		}
+		if !envNameRE.MatchString(name) {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: seat_env.secrets.%s: the value is not a variable name", ErrInvalidSeatEnv, c.Name, need))
+			continue
+		}
+		if other, dup := byVar[name]; dup {
+			errs = append(errs, fmt.Errorf("%w: cluster %q: seat_env.secrets: needs %s and %s name the same variable", ErrInvalidSeatEnv, c.Name, other, need))
+			continue
+		}
+		byVar[name] = need
+		if out.Secrets == nil {
+			out.Secrets = map[string]string{}
+		}
+		out.Secrets[need] = name
+	}
 	if len(errs) > 0 {
 		return SeatEnv{}, errors.Join(errs...)
 	}
 	return out, nil
+}
+
+// SecretVars is the variable names the cluster maps its seat secrets to, in
+// name order.
+func (s SeatEnv) SecretVars() []string {
+	out := make([]string, 0, len(s.Secrets))
+	for _, v := range s.Secrets {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // seatEnvDir expands a leading ~ and refuses what would split or confuse PATH:
