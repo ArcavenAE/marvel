@@ -105,6 +105,14 @@ separate fields and nothing converts tokens to dollars. A wide line breaks betwe
 fields onto a second totals line. Every total is diagnostic only: nothing gates or acts
 on it.
 
+With --all-clusters or a cluster list, the one-shot read prints a summary table above the
+merged sessions table instead, on a terminal or with --header: one aligned row per
+cluster that answered, a TOTAL row, and a note under it for each column, for a + lower
+bound, for a column that covers fewer sessions than its row, for a cluster that was
+still starting and for a cluster that shares a daemon with another. A cluster that
+answered gets no status line on stderr then; every other outcome keeps its line, and the
+lines follow the table. The single-cluster line and the watch frame are unchanged.
+
 A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat reported
 it, which is weaker than token flow: * reported by statusline or heartbeat,
 not token flow. A value from the token stream carries no mark. On a terminal
