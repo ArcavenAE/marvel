@@ -88,7 +88,9 @@ func tccRig(t *testing.T, role api.Role) *sandboxRig {
 func TestADefaultSeatIsStagedWithTheDenyBlock(t *testing.T) {
 	t.Parallel()
 	r := tccRig(t, api.Role{})
-	plan := r.mgr.planLaunch(r.session())
+	sess := r.session()
+	sess.WorkDir = filepath.Join(r.mgr.RealHome, "Documents", "code")
+	plan := r.mgr.planLaunch(sess)
 	if plan.sandboxFail != nil || plan.sandbox == nil {
 		t.Fatalf("plan = %+v", plan)
 	}
@@ -102,7 +104,7 @@ func TestADefaultSeatIsStagedWithTheDenyBlock(t *testing.T) {
 			t.Errorf("staged profile lacks %q:\n%s", want, text)
 		}
 	}
-	if !strings.Contains(text, `(allow file-read* file-write* (subpath "`+r.work+`"))`) {
+	if !strings.Contains(text, `(allow file-read* file-write* (subpath "`+sess.WorkDir+`"))`) {
 		t.Errorf("the seat's workdir is not allowed back:\n%s", text)
 	}
 }

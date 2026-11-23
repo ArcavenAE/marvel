@@ -1717,6 +1717,11 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		if sbPlan != nil {
 			lctx.SandboxProfile = sbPlan.copyPath
 		}
+	} else if lctx.Placement != api.PlacementContainer && m.tccApplies(*role) {
+		// No profile of its own: the default deny of the privacy folders, staged
+		// alone. It is not handed to the adapter as a profile in force, since it
+		// is not containment.
+		sbPlan = m.stageTCCOnly(sess)
 	}
 	lctx.CredentialHelper = m.CredentialHelper
 	if m.Bus != nil {
@@ -1781,6 +1786,12 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	if err != nil {
 		log.Printf("adapter %s prepare failed for %s, falling back: %v", adapter.Name(), sess.Key(), err)
 		discardSink(fifo)
+		if sbPlan != nil && sbPlan.tccOnly {
+			// The deny is a guard, not the role's profile: the fallback keeps it.
+			p := m.directPlan(sess)
+			p.sandbox = sbPlan
+			return p
+		}
 		if sbPlan != nil {
 			// The raw command drops every rule the adapter would apply (for goose,
 			// the watchdog and the posture refusal), and the profile alone does not

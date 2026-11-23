@@ -429,6 +429,9 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 		log.Printf("daemon state file: %s (resource_version=%d)", opts.StateBolt, store.ResourceVersion())
 	}
 	sessMgr := session.NewManager(store, driver)
+	// On macOS every seat starts under the deny of the privacy folders and
+	// network volumes, with no setting; a role opts out with tcc_deny = false.
+	sessMgr.TCCDeny = true
 	teamCtrl := team.NewController(store, sessMgr)
 	// Zero leaves the controller on its built-in default (10 minutes);
 	// a nonzero value from --shift-timeout / MARVEL_SHIFT_TIMEOUT overrides.

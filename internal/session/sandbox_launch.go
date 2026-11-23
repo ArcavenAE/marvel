@@ -236,6 +236,10 @@ type sandboxPlan struct {
 	// code is the staged copy with its comments removed: the bytes sandbox-exec
 	// reads decide which optional parameters the launch fills.
 	code string
+	// tccOnly marks the default deny of the privacy folders, staged for a role
+	// that names no profile of its own. It is not containment, so it is never
+	// handed to an adapter as the profile in force.
+	tccOnly bool
 }
 
 // roleOf finds the role a session belongs to.
@@ -453,6 +457,25 @@ func (m *Manager) stageSandboxProfile(sess *api.Session, l *sandboxLaunch) (*san
 	if len(src) == 0 || len(src) > maxSandboxProfileBytes {
 		return nil, f("its size is outside 1 byte to %d bytes", maxSandboxProfileBytes)
 	}
+	// The default deny of the privacy folders goes last, so a rule of the role's
+	// own cannot allow a folder back (docs/design/seat-tcc-deny.md).
+	if role, ok := m.roleOf(sess); ok && m.tccApplies(role) {
+		block, berr := m.tccBlock(sess)
+		if berr != nil {
+			return nil, f("the privacy-folder deny: %v", berr)
+		}
+		src = append(append(src, '\n'), block...)
+	}
+	plan, fail := m.writeSandboxCopy(sess, src, f)
+	if plan != nil {
+		plan.launch = *l
+	}
+	return plan, fail
+}
+
+// writeSandboxCopy writes src to a marvel-owned per-launch file, reads it back
+// and hashes what sandbox-exec will read.
+func (m *Manager) writeSandboxCopy(sess *api.Session, src []byte, f func(string, ...any) *sandboxFailure) (*sandboxPlan, *sandboxFailure) {
 	dir, err := m.sandboxDir()
 	if err != nil {
 		return nil, f("no directory: %v", err)
@@ -490,7 +513,7 @@ func (m *Manager) stageSandboxProfile(sess *api.Session, l *sandboxLaunch) (*san
 			}
 		}
 	}
-	return &sandboxPlan{launch: *l, copyPath: copyPath, sha: hex.EncodeToString(sum[:]), code: sbplCode(back)}, nil
+	return &sandboxPlan{copyPath: copyPath, sha: hex.EncodeToString(sum[:]), code: sbplCode(back)}, nil
 }
 
 // wrapInSandbox is the counterpart of wrapInContainer: it prefixes the planned
@@ -504,6 +527,10 @@ func (m *Manager) stageSandboxProfile(sess *api.Session, l *sandboxLaunch) (*san
 // it prints its reason or exits 78, which is why that check must come first.
 func (m *Manager) wrapInSandbox(sess *api.Session, plan *launchPlan) *sandboxFailure {
 	sb := plan.sandbox
+	if sb.tccOnly {
+		m.wrapTCCOnly(sess, plan)
+		return nil
+	}
 	f := func(reason, format string, a ...any) *sandboxFailure {
 		return &sandboxFailure{reason: reason, msg: fmt.Sprintf("not started: %s/%s names a sandbox profile and %s; nothing is started without it", sess.Team, sess.Role, fmt.Sprintf(format, a...))}
 	}
