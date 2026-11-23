@@ -132,3 +132,25 @@ func TestATmuxThatExitedBetweenTheReadsIsSkipped(t *testing.T) {
 		t.Error("serverAbsent = false; a process that exited is absence")
 	}
 }
+
+// A tmux process that has just forked has no readable argument list for a few
+// milliseconds. That passes, so a server being started or stopped next to the
+// read is not taken for an outage.
+func TestAnArgumentListThatSettlesIsRead(t *testing.T) {
+	calls := 0
+	withKernelReads(t,
+		func(string, ...int) ([]unix.KinfoProc, error) {
+			return []unix.KinfoProc{fakeTmuxProc(os.Getpid())}, nil
+		},
+		func(int) ([]string, error) {
+			calls++
+			if calls < 3 {
+				return nil, unix.EINVAL
+			}
+			return []string{"tmux", "-L", "mxsettle"}, nil
+		})
+	out, err := defaultProcList(context.Background())
+	if err != nil || len(out) == 0 {
+		t.Errorf("defaultProcList = %q, %v; want the process listed once its arguments settle", out, err)
+	}
+}

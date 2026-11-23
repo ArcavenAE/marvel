@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -50,7 +51,7 @@ func defaultProcList(ctx context.Context) ([]byte, error) {
 			continue
 		}
 		pid := int(p.Proc.P_pid)
-		args, err := procArgs(pid)
+		args, err := readArgsSettled(pid)
 		if err != nil {
 			if processGone(pid) {
 				continue
@@ -75,12 +76,39 @@ func commName(c []byte) string {
 	return string(c)
 }
 
-// processGone says the kernel no longer has pid: the process exited after the
-// table was read. The sysctl answers a pid it does not have with ESRCH, or with
-// EIO when the answer is empty (measured on darwin with the x/sys in go.mod).
-// Any other answer, including a refusal, counts as still there, so an
-// unreadable process is never taken for a gone one.
-func processGone(pid int) bool {
-	_, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
-	return errors.Is(err, unix.ESRCH) || errors.Is(err, unix.EIO)
+// readArgsSettled reads a process's arguments, trying a few times while the
+// process is still coming or going: a process that has just forked, or has
+// exited and not yet been reaped, has no readable argument list for a few
+// milliseconds, and the retry keeps that from reading as an outage.
+func readArgsSettled(pid int) ([]string, error) {
+	var (
+		args []string
+		err  error
+	)
+	for i := 0; i < 5; i++ {
+		if args, err = procArgs(pid); err == nil {
+			return args, nil
+		}
+		if processGone(pid) {
+			return nil, err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return nil, err
 }
+
+// processGone says the kernel no longer has pid, or holds it only as an exited
+// process waiting to be reaped. The sysctl answers a pid it does not have with
+// ESRCH, or with EIO when the answer is empty (measured on darwin with the
+// x/sys in go.mod). Any other answer, including a refusal, counts as still
+// there, so an unreadable process is never taken for a gone one.
+func processGone(pid int) bool {
+	k, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil {
+		return errors.Is(err, unix.ESRCH) || errors.Is(err, unix.EIO)
+	}
+	return k.Proc.P_stat == sZOMB
+}
+
+// sZOMB is the kernel's process state for an exited process not yet reaped.
+const sZOMB = 5
