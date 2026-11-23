@@ -24,11 +24,11 @@ func TestSeatEnvSecretsRefuseWhatCannotBeANeedOrAVariable(t *testing.T) {
 	for _, tc := range []struct{ name, y, mention string }{
 		{"a need with a space", "seat_env:\n  secrets:\n    \"big need\": BEADS_DOLT_PASSWORD\n", "big need"},
 		{"an upper case need", "seat_env:\n  secrets:\n    BD: BEADS_DOLT_PASSWORD\n", "BD"},
-		{"a variable with a space", "seat_env:\n  secrets:\n    bd: \"BEADS DOLT\"\n", "BEADS DOLT"},
-		{"a variable with an equals sign", "seat_env:\n  secrets:\n    bd: \"A=B\"\n", "A=B"},
-		{"an empty variable", "seat_env:\n  secrets:\n    bd: \"\"\n", "bd"},
-		{"two needs on one variable", "seat_env:\n  secrets:\n    bd: MX_ONE\n    other: MX_ONE\n", "MX_ONE"},
-		{"a value where a name belongs", "seat_env:\n  secrets:\n    bd: \"s3cr3t value 1234\"\n", "secrets"},
+		{"a variable with a space", "seat_env:\n  secrets:\n    bd: \"BEADS DOLT\"\n", "secrets.bd"},
+		{"a variable with an equals sign", "seat_env:\n  secrets:\n    bd: \"A=B\"\n", "secrets.bd"},
+		{"an empty variable", "seat_env:\n  secrets:\n    bd: \"\"\n", "secrets.bd"},
+		{"two needs on one variable", "seat_env:\n  secrets:\n    bd: MX_ONE\n    other: MX_ONE\n", "bd and other"},
+		{"a value where a name belongs", "seat_env:\n  secrets:\n    bd: \"s3cr3t value 1234\"\n", "secrets.bd"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Config{Clusters: []Cluster{seatCluster(t, "name: local\n"+tc.y)}}
@@ -43,7 +43,7 @@ func TestSeatEnvSecretsRefuseWhatCannotBeANeedOrAVariable(t *testing.T) {
 	}
 }
 
-// A refusal never repeats a value: the text names the key of the entry.
+// A refusal never repeats a value: the text names the need, the key of the entry.
 func TestSeatEnvSecretsRefusalDoesNotRepeatAValue(t *testing.T) {
 	cfg := Config{Clusters: []Cluster{seatCluster(t, "name: local\nseat_env:\n  secrets:\n    bd: \"s3cr3t value 1234\"\n")}}
 	err := cfg.Validate()
