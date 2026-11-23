@@ -175,11 +175,18 @@ Result: no marvel path enumerates `~`, `/`, `/Users` or `/Volumes`. The one way 
 
 The default is on for every seat, so a role that runs `sandbox-exec` itself breaks the day a marvel with this change reaches its host unless the role opts out first. These places are outside this repository, are not edited here, and need their own changes:
 
-1. **The manifests on each macOS host**: every role whose seats run `sandbox-exec` for the run conditions (builder and reviewer roles) gets `tcc_deny = false`. The key is unknown to a marvel that predates this change, so the manifest must be applied after the new marvel is installed and before its seats restart; and the new marvel must not reach a host before its manifests carry the key, or those seats start under the default and their run profiles fail.
+1. **The manifests on each macOS host**: every role whose seats run `sandbox-exec` for the run conditions (builder and reviewer roles) gets `tcc_deny = false`.
 2. **The run-profile generators**: the scripts that write the per-run profile for the run conditions add the section 3 deny block (and the mount rows, read from the mount table at run time), so a test run stays covered while its seat is not.
 3. **The run-conditions rule text** in the fleet's rule files and skills, so a new generator carries the block.
 
-Order: (a) the manifests and generators change first and are released; (b) the marvel with this change is installed; (c) the manifests are applied and seats restart. A marvel with default-on that reaches a host before step (a) breaks the nesting roles' test runs.
+What an older marvel does with the key: nothing. The manifest decoders drop a role key they do not know, in TOML and in YAML. The one place an unknown key is refused is the `runtime.goose` table (`unmarshalManifestTOML` in `internal/api/manifest.go`). That leniency is older than the build on the measured host (the source comment dates from 2026-10-02 and the installed build is from 2026-11-21). I read the parser and ran nothing live, so the claim is about the source, not about each installed binary.
+
+So a manifest that carries `tcc_deny = false` parses on a marvel that predates this change and is ignored there, which is also why a misspelled key fails silently. That makes the safe order:
+
+1. Release the run-profile generators with the deny block, and apply the manifests with `tcc_deny = false` on the nesting roles. An older marvel ignores the key and keeps running those roles as before, and the generated run profiles already carry the block.
+2. Install the marvel with this change. Its default-on deny reaches seats only as they restart, and the opted-out roles skip it.
+
+A release flag that manifests opt into (a shape where the deny ships off) is not needed, because the key does not have to exist before anything relies on it. It would also leave the default off for a user who changes nothing, which is the case this change is for. The cost of the order above is that step 1 cannot be confirmed by a seat on an older marvel, since the key does nothing there; the check is that the key reads back from the applied role after step 2.
 
 The seat-level shells of those roles are the remaining gap: a command a builder types outside a test run is not covered, so it can still prompt. A rule for the seat's own shell commands covers it until option 4 exists.
 
