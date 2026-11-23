@@ -22,7 +22,14 @@ Out: remediation. Neither service logs in, restarts, nudges or signals anything 
 
 ### 2.1 Where the expiry is read from
 
-From the harness, by asking its own status command, never from its credential store. For claude the daemon runs `claude auth status --json` with `CLAUDE_CONFIG_DIR` set to the exact string the seat was launched with (unset for the default home). The call is the one `seat-bootstrap.md` already specifies for the pre-launch login check: a 10 second bound, `Setpgid`, the whole process group killed on timeout, only after a successful start and only for a pid above 1.
+From the harness, by asking its own status command, never from its credential store. For claude the daemon runs `claude auth status --json` with `CLAUDE_CONFIG_DIR` set to the exact string the seat was launched with (unset for the default home). The call follows the process handling of the pre-launch login check in `seat-bootstrap.md` (a 10 second bound, `Setpgid`, the whole process group killed on timeout, only after a successful start and only for a pid above 1), and departs from it in one respect: that check reads only the exit status and sends stdout and stderr to `/dev/null` unread, because they carry account identity. This reading needs the expiry, so it reads stdout. The departure is covered as follows:
+
+- stdout goes to a pipe and is read once, with a size cap of 64 KiB; stderr goes to `/dev/null`;
+- the wait is bounded (`cmd.WaitDelay` or equivalent), because `claude auth status` forks `security find-generic-password` and a surviving grandchild can hold the stdout pipe open, which would otherwise hang the daemon; on the bound the group is killed and the pipe closed;
+- the raw stdout bytes are decoded and dropped, never kept, logged or put in an event;
+- the "unreadable" reason is one of a fixed set of words (timed out, exited non-zero, not JSON, expiry missing), never output text.
+
+`service-column.md` section 3.3 deferred a per-seat `auth status` probe because it makes marvel cause a credential read for every seat it launches and returns an email and organization that marvel would have to drop before storing. This reading clears the second reason by the decode described above, and the first by being one read per login every few hours rather than one per spawn, run only for a login a seat already uses, so it asks the harness nothing the seat's own start has not already asked.
 
 The answer carries personal data (an email address, an organization name and id) next to the three fields wanted. The daemon decodes stdout in memory into a struct of exactly `loginExpiresAt`, `loggedIn` and `subscriptionType`, so the other fields are dropped by the decoder and never reach a variable, a log line, an event or a file. The harness reads its own keychain entry to answer (`service-column.md` section 1.1); marvel sees only the answer. That keeps the custody line of SOUL section 3: marvel holds no third-party bearer material, and does not read any.
 
@@ -67,14 +74,14 @@ Events carry no email, organization, subscription detail beyond its type, or pat
 The harness reads its keychain entry as a child of the marvel daemon, through `/usr/bin/security` (`service-column.md` section 1.1). A prompt that names marvel would be the kind of surprise this change must not cause, so the default depends on a proof step.
 
 - **Which process the keychain judges: unmeasured.** Whether an item's access control and the privacy daemon judge the requesting binary (`claude`, or the `security` it forks) or the responsible process up the parent chain (the daemon) has not been measured on this fleet, and no source is cited here. `egress-credential-front.md` covers partition lists for marvel's own items, not this case. The first build PR measures it before any default changes.
-- **Proof step, run on each fleet host before the release that turns the service on by default:** one scheduled read with the daemon as parent logs 0 `tccd` authorization-request lines in the unified log for the window of the read, and raises 0 keychain dialogs that name marvel. The count and the log query are recorded in the PR, with the host's before and after. A host that shows either leaves `login_expiry` off by default until it is fixed, and the finding goes to the supervisor.
+- **Proof step, run on each fleet host before the release that turns the service on by default:** one scheduled read with the daemon as parent logs 0 `tccd` authorization-request lines in the unified log for the window of the read, logs 0 lines from a process named `SecurityAgent` in the same window (`log show --predicate 'process == "SecurityAgent"'`), and raises 0 keychain dialogs that name marvel. A keychain access prompt is likely to come from `SecurityAgent` and not `tccd`; that is not measured either, which is why both are counted. The count and the log query are recorded in the PR, with the host's before and after. A host that shows either leaves `login_expiry` off by default until it is fixed, and the finding goes to the supervisor.
 - **If the daemon is the judged process**, the login-expiry service ships off by default and the note's fallback is a read by the seat's own harness process, which the keychain already admits: a one-line status file the seat writes through its own `claude auth status`, read by the daemon. That fallback is not designed here.
 
 ## 3. Seat gap
 
 ### 3.1 What is compared
 
-The daemon's own sessions against the director roster. A session counts when it is alive (`CountsAsAlive`), its harness is claude, and it has been up more than 10 minutes (`now - CreatedAt`, using `AgeAt` where a suspend applies). The daemon sees only its own cluster's sessions, so the cross-cluster false positives of an all-clusters read (42 of 64 on one host) cannot arise.
+The daemon's own sessions against the director roster. A session counts when it is alive (`CountsAsAlive`), its harness is claude, and it has been up more than 10 minutes (`now - CreatedAt`, using `AgeAt` where a suspend applies). The daemon sees only its own cluster's sessions, so the cross-cluster false positives of an all-clusters read cannot arise.
 
 ### 3.2 The join
 
@@ -86,7 +93,7 @@ Through director's published interface: `director-mcp roster --json`, which read
 
 Three outcomes, never conflated:
 
-- **director not present**: no `director-mcp` on PATH, or the program reports no broker. The check reports "director not present" and nothing else. Not an error, not zero gaps.
+- **director not present**: no `director-mcp` on PATH. Once director ships item 2 below, a program that reports no broker through its distinct exit status reads the same way. Until then a program that ran and failed is "unreadable". The check reports "director not present" and nothing else. Not an error, not zero gaps.
 - **unreadable**: the program ran and failed, timed out, or printed a document that does not parse. The check reports the reason, and claims no seat missing.
 - **read**: rows compared; each qualifying session with no fresh row is a gap.
 
@@ -96,7 +103,7 @@ What director must expose, so the check does not rest on a text match:
 2. A distinct exit status for "no broker reachable", apart from a read error.
 3. A way to say which broker the roster came from, so a host with more than one cluster does not read another cluster's rows as its own.
 
-Until those exist, the daemon treats a non-zero exit with no output as "director not present" only when the program is missing, and as "unreadable" otherwise. The three items are director's to build. They go to director as a pull request in its own repository, routed by the supervisor after this note merges; this note changes nothing in director.
+Until those exist, "director not present" means the program is missing, and every other failure is "unreadable". The three items are director's to build. They go to director as a pull request in its own repository, routed by the supervisor after this note merges; this note changes nothing in director.
 
 ### 3.4 Where it shows
 
