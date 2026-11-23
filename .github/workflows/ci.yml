@@ -114,12 +114,15 @@ jobs:
       - name: Report coverage against the floor
         # Report only: coverage informs and does not gate (no ratified gate
         # exists for it). The step prints the total, writes it to the job
-        # summary, and annotates a total under the reference value. It never
-        # fails the job, so a failing test still fails through its own step.
+        # summary, and annotates a total under the reference value. A low total
+        # never fails the step; a missing total does, because that is a broken
+        # measurement. A failing test still fails through its own step.
         env:
           COVERAGE_FLOOR: "38.0"
         run: |
+          set -o pipefail
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%",""); print $3}')
+          [[ -n "$total" ]] || { echo "::error::no coverage total in coverage.out"; exit 1; }
           echo "total coverage: ${total}% (reference: ${COVERAGE_FLOOR}%)"
           echo "total coverage: ${total}% (reference: ${COVERAGE_FLOOR}%)" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           if ! awk -v t="$total" -v f="$COVERAGE_FLOOR" 'BEGIN{exit !(t+0 >= f+0)}'; then
