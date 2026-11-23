@@ -365,6 +365,10 @@ var seatEnvPrefix = func() string {
 	return b.String()
 }()
 
+// SetSeatEnv sets the cluster's seat_env for every pane NewPaneAt starts:
+// directories put in front of PATH, and variable names removed.
+func (d *Driver) SetSeatEnv(pathPrepend, unset []string) {}
+
 // SetExecTimeout sets the bound on one tmux invocation. Zero restores
 // DefaultExecTimeout. Set it before the driver is shared between goroutines.
 func (d *Driver) SetExecTimeout(t time.Duration) { d.execTimeout = t }

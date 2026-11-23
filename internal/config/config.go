@@ -332,6 +332,9 @@ type Cluster struct {
 	// once. Unset means DefaultAccountWarnPercent; 0 turns it off; 1 to 100 is
 	// the level. It is a report and gates nothing.
 	AccountWarnPercent *int `yaml:"account_warn_percent,omitempty"`
+	// SeatEnv is the environment change the daemon makes for every seat pane it
+	// starts on this cluster (docs/admin-guide, seat environment).
+	SeatEnv *SeatEnv `yaml:"seat_env,omitempty"`
 }
 
 // DefaultLoginExpiry is the login expiry service's state on a cluster that sets
