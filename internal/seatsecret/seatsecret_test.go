@@ -178,7 +178,7 @@ func TestTheValueNeverAppearsOnAProcessArgumentList(t *testing.T) {
 	if err := os.WriteFile(pat, []byte(marker+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var hits atomic.Int64
+	var hits, samples atomic.Int64
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -193,6 +193,7 @@ func TestTheValueNeverAppearsOnAProcessArgumentList(t *testing.T) {
 			if err == nil && strings.TrimSpace(string(out)) != "0" {
 				hits.Add(1)
 			}
+			samples.Add(1)
 		}
 	}()
 	ctl := exec.Command("perl", "-e", "sleep 3", marker)
@@ -207,6 +208,11 @@ func TestTheValueNeverAppearsOnAProcessArgumentList(t *testing.T) {
 		close(stop)
 		<-done
 		t.Skip("the sampler cannot read the process table here, so the proof would pass for nothing")
+	}
+	// A sample already running when the control died can still count it. Wait for
+	// two whole samples that started after the kill before the count restarts.
+	for settled := samples.Load() + 2; samples.Load() < settled; {
+		time.Sleep(20 * time.Millisecond)
 	}
 	hits.Store(0)
 	h, err := Prepare(t.TempDir())
