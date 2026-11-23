@@ -130,8 +130,10 @@ func TestAskErrorsCarryNoOutputText(t *testing.T) {
 }
 
 func TestAskBoundsAHungChildAndKillsItsGroup(t *testing.T) {
+	// The harness forks the keychain reader, so the stub forks a grandchild: a
+	// kill of the child alone leaves it running, only a kill of the group ends it.
 	pidFile := filepath.Join(t.TempDir(), "pid")
-	prog := stub(t, `echo $$ > `+pidFile+`; exec sleep 30`)
+	prog := stub(t, `sleep 30 & echo $! > `+pidFile+`; wait`)
 	start := time.Now()
 	_, err := Ask(context.Background(), prog, "", 300*time.Millisecond)
 	var re *ReadError
@@ -206,7 +208,7 @@ func TestTrackerIsQuietAboveTheWarningLine(t *testing.T) {
 	s := &sink{}
 	tr := NewTracker(s)
 	tr.Observe(keyA, good(t0.Add(WarnWithin+time.Hour)), nil, t0)
-	tr.Observe(keyA, good(t0.Add(WarnWithin+time.Hour)), nil, t0.Add(6*time.Hour))
+	tr.Observe(keyA, good(t0.Add(WarnWithin+time.Hour)), nil, t0.Add(30*time.Minute))
 	if len(s.got) != 0 {
 		t.Errorf("events = %v, want none above 72 hours", s.kinds())
 	}
@@ -285,6 +287,8 @@ func TestTrackerTreatsSubMinuteMovementAsJitterNotRenewal(t *testing.T) {
 	exp := t0.Add(48 * time.Hour)
 	tr.Observe(keyA, good(exp), nil, t0)
 	tr.Observe(keyA, good(exp.Add(400*time.Millisecond)), nil, t0.Add(time.Hour))
+	// Thirty seconds is still under the one-minute line.
+	tr.Observe(keyA, good(exp.Add(30*time.Second)), nil, t0.Add(2*time.Hour))
 	if got := s.kinds(); len(got) != 1 {
 		t.Errorf("events = %v, want only the first warning", got)
 	}
