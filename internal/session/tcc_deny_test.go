@@ -227,3 +227,30 @@ func TestAFailedMountReadStillDeniesTheStaticFolders(t *testing.T) {
 		t.Errorf("static rows missing:\n%s", got)
 	}
 }
+
+func TestIsNetworkFS(t *testing.T) {
+	t.Parallel()
+	for _, fs := range []string{"nfs", "smbfs", "afpfs", "webdav"} {
+		if !isNetworkFS(fs) {
+			t.Errorf("isNetworkFS(%q) = false", fs)
+		}
+	}
+	for _, fs := range []string{"apfs", "hfs", "devfs", "autofs", "msdos", "", "NFS"} {
+		if isNetworkFS(fs) {
+			t.Errorf("isNetworkFS(%q) = true", fs)
+		}
+	}
+}
+
+// On darwin the real mount table reads without error and never names a local
+// volume as a network mount (the root volume is apfs).
+func TestNetworkMountsNeverNamesTheRootVolume(t *testing.T) {
+	t.Parallel()
+	got := networkMounts()
+	t.Logf("network mounts read: %v", got)
+	for _, m := range got {
+		if m == "/" {
+			t.Error("networkMounts() names / as a network mount")
+		}
+	}
+}
