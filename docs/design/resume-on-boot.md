@@ -220,20 +220,26 @@ can start a fleet.
   `resume_on_boot_within` (default `7d`), beside the cluster's other switches
   in `internal/config/config.go` (`type Cluster struct`, `:295`). A cluster
   that sets `resume_on_boot: false` keeps today's start path for every team
-  and role that does not set its own value.
-- **Precedence: the most specific level wins.** A role's own value wins over
-  its team's, and a team's wins over the cluster's; a level that sets nothing
-  reads the next one out. An off cluster or team is a default, not a lock: a
-  role set `true` under it is resumed. Today's start path is kept exactly for
-  a team only when the effective setting of every one of its roles is off.
+  and role on it, whatever they set.
+- **Precedence, the one rule.** A cluster set off is a hard lock: no team or
+  role setting lifts it, because turning a whole host off is a deliberate
+  host-wide act, often for maintenance. On a cluster that is on, the most
+  specific level wins: a role's own value over its team's, and a level that
+  sets nothing reads the next one out. A team set off is a default its roles
+  may override. Today's start path is kept exactly for a team when its
+  cluster is off, or when the effective setting of every one of its roles is
+  off. (Director ruling, 2026-11-23, applying the operator's rulings in
+  section 5.)
 - A team opts out in its manifest settings with `resume_on_boot = false`, or
-  sets `true` under a cluster that is off. This is spec, so it belongs in the
-  manifest, unlike the posture, which stays status.
+  sets `true` to state the default for its roles. Under a cluster that is off,
+  neither has any effect. This is spec, so it belongs in the manifest, unlike
+  the posture, which stays status.
 - **A role may override its team** with `resume_on_boot` in its own settings
   (a new field on the role, `internal/api/types.go`, `type Role struct`,
   `:823`). The team's value is the default for each of its roles, and a role
-  that sets nothing inherits it. A role's effective setting is its own value,
-  else its team's, else the cluster's.
+  that sets nothing inherits it. On a cluster that is on, a role's effective
+  setting is its own value, else its team's, else the cluster's; on a cluster
+  that is off, it is off.
 - **How a role override acts.** The posture is per team, so a role is held
   back by a list on the team, not by a posture of its own. When the decision
   resumes a team, it also records `BootWithheld`, a new status field on the
@@ -250,8 +256,9 @@ can start a fleet.
   person to look before it fires after an unattended restart. After a reboot,
   the two standing seats come back as fresh casts; the nightly role is on
   `BootWithheld` and does not fire, and `describe team` says so, until the
-  operator runs `marvel converge`. The reverse works the same way: under a
-  team set off, a one-shot or scheduled role that sets `true` makes the team
+  operator runs `marvel converge`. The reverse works the same way, on a
+  cluster that is on: under a team set off, a one-shot or scheduled role that
+  sets `true` makes the team
   boot-eligible, and only that role spawns or fires.
 - The boot reap's skip (section 2.4) covers every row of a boot-eligible
   team, withheld roles included: their seats were lost to the reboot, not
@@ -297,7 +304,7 @@ In order; `after:` names what lands first.
   `resume_on_boot = false` under a team set on reads on. Green: an unset key
   reads on with a 7-day window; each set value reads as written; a role that
   sets nothing reads its team's value, and a team that sets nothing reads the
-  cluster's.
+  cluster's; and under a cluster set off, a role or team set on reads off.
 - **RB5. The decision, as a pure function.** `internal/team`, for example
   `resumeOnBoot(snap bootSnapshot, cfg ResumeConfig, now time.Time) (bool, string)`.
   after: RB1, RB2, RB3, RB4. Red: a table test with the cases below returns
@@ -315,7 +322,9 @@ In order; `after:` names what lands first.
   - an unscheduled, non-beating role created 30 days before the reboot, its
     row still `running` in the store, with a fresh alive stamp: converge;
   - a role set on under a cluster set off and a team that sets nothing:
-    converge for that role;
+    hold, the cluster lock;
+  - a role set on under a team set off, on a cluster that is on: converge
+    for that role;
   - the team opted out in its manifest: hold;
   - every role of the team opted out: hold, condition 1;
   - one role opted out under a team set on: converge, with that role on
@@ -397,9 +406,10 @@ right update them as you describe and route".
 ## 7. Candidate requirements (provisional, not ratified)
 
 - **RB-A (DESIGN):** resume on boot is on by default with a 7-day window. A
-  role's effective setting is its own value, else its team's, else the
-  cluster's. A team whose roles all have the setting off gets exactly today's
-  daemon start; an off team or cluster does not override a role set on.
+  cluster set off is a hard lock, and every team on it gets exactly today's
+  daemon start. On a cluster that is on, a role's effective setting is its own
+  value, else its team's, else the cluster's, and a team whose roles all have
+  the setting off gets exactly today's daemon start.
 - **RB-F (DESIGN):** a role's own `resume_on_boot` overrides its team's, and a
   role whose effective setting is off neither spawns nor fires after a boot
   resume until the next operator posture command.
