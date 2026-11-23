@@ -135,6 +135,7 @@ func (m *Manager) tccBlock(sess *api.Session) (string, error) {
 func (m *Manager) stageTCCOnly(sess *api.Session) *sandboxPlan {
 	block, err := m.tccBlock(sess)
 	if err != nil {
+		sess.TCCDenyNote = err.Error()
 		log.Printf("session %s: privacy-folder deny not applied: %v", sess.Key(), err)
 		return nil
 	}
@@ -142,6 +143,7 @@ func (m *Manager) stageTCCOnly(sess *api.Session) *sandboxPlan {
 		return &sandboxFailure{reason: RefusalSandboxProfile, msg: fmt.Sprintf(format, a...)}
 	})
 	if fail != nil {
+		sess.TCCDenyNote = fail.msg
 		log.Printf("session %s: privacy-folder deny not applied: %s", sess.Key(), fail.msg)
 		return nil
 	}
@@ -155,6 +157,7 @@ func (m *Manager) stageTCCOnly(sess *api.Session) *sandboxPlan {
 func (m *Manager) wrapTCCOnly(sess *api.Session, plan *launchPlan) {
 	sb := plan.sandbox
 	if issue := shapeIssue(plan.command, true); issue != "" {
+		sess.TCCDenyNote = "the launch command holds " + issue
 		log.Printf("session %s: privacy-folder deny not applied: the launch command holds %s", sess.Key(), issue)
 		_ = os.Remove(sb.copyPath)
 		plan.sandbox = nil

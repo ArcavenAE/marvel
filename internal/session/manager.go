@@ -1633,6 +1633,9 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// The projected file this launch passes the harness is recorded below, and a
 	// launch that projects none must not carry the previous launch's path.
 	sess.ProjectionPath = ""
+	// The reason a launch started without the privacy-folder deny is the launch's
+	// too, set where the deny is dropped and read by marvel doctor.
+	sess.TCCDenyNote = ""
 	// Look up team and role for full adapter context. Store returns
 	// snapshots — taking addresses of these locals is safe because the
 	// adapter is read-only and the LaunchContext doesn't outlive this
