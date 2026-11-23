@@ -111,12 +111,15 @@ func (l *loginService) pass(ctx context.Context, now time.Time) {
 }
 
 // loginInterval is the wait before the next pass: an hour while any login is
-// expiring, lapsed or unreadable or has an expiry within 96 hours, so a renewal
-// or a recovery is seen within the hour, otherwise 6 hours.
+// expiring, lapsed or unreadable, has reads that are failing (FailingSince is
+// set, even when its last good read was far from expiry) or has an expiry within
+// 96 hours, so a renewal or a recovery is seen within the hour, otherwise 6 hours.
 func loginInterval(rows []loginexpiry.Row, now time.Time) time.Duration {
 	for _, r := range rows {
 		switch {
 		case r.State == loginexpiry.StateExpiring, r.State == loginexpiry.StateLapsed, r.State == loginexpiry.StateUnreadable:
+			return loginFastEvery
+		case !r.FailingSince.IsZero():
 			return loginFastEvery
 		case !r.ExpiresAt.IsZero() && r.ExpiresAt.Sub(now) <= loginNear:
 			return loginFastEvery
