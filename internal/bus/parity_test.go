@@ -70,6 +70,10 @@ func TestParitySequenceEmitsTheGoldenBusEvents(t *testing.T) {
 		return Structure{Missing: []string{"stream AGENT_INBOX"}, Authorized: true}, nil
 	}
 	s.writeProbeFn = func(context.Context) (WriteReading, error) { return WriteReading{}, nil }
+	// Pin the headroom reading, so the first tick does not read the free space
+	// of the machine the test runs on: a host under the floor would add a
+	// bus.store.low the golden list does not hold.
+	s.headroomFn = func(context.Context) (Headroom, error) { return Headroom{}, nil }
 	pt := tableOf(s)
 
 	// A stale pidfile, and the port held by a process it does not prove.
