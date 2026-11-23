@@ -29,6 +29,15 @@ type Reading struct {
 	SwapUsed  uint64 `json:"swap_used"`  // bytes
 	SwapTotal uint64 `json:"swap_total"` // bytes
 
+	// MemTotal is the host's physical memory in bytes; 0 when the host did not say.
+	MemTotal uint64 `json:"mem_total,omitempty"`
+
+	// SwapInsOK is true when the host keeps a cumulative swap-in counter;
+	// SwapIns is that counter in pages. The snapshot shows the change between
+	// two samples.
+	SwapInsOK bool   `json:"swap_ins_ok,omitempty"`
+	SwapIns   uint64 `json:"swap_ins,omitempty"`
+
 	// KernelPressureOK is true on macOS, where the kernel reports a pressure
 	// level (1 normal, 2 warning, 4 critical) and the free share of memory
 	// behind the figure `memory_pressure` prints.

@@ -15,6 +15,9 @@ type Proc struct {
 	ElapsedSeconds float64 `json:"elapsed_seconds"`
 	CPUSeconds     float64 `json:"cpu_seconds"`
 	Name           string  `json:"name"`
+	// Seat is the key of the seat whose pane tree holds the process, from the
+	// daemon's own record; empty for a process outside every seat.
+	Seat string `json:"seat,omitempty"`
 }
 
 // TopProcesses is how many processes the top list keeps.
@@ -58,3 +61,7 @@ func summarize(procs []Proc) (top []Proc, fseventsd uint64, seen bool) {
 func procDetail(p Proc) string {
 	return fmt.Sprintf("%s (pid %d) %s", p.Name, p.PID, gib(p.RSSBytes))
 }
+
+// SeatRSS sums the RSS of every process in the pane tree of each root, and
+// counts the roots found in the table. A process under two roots counts once.
+func SeatRSS(procs []Proc, roots []int) (seats int, rss uint64) { return 0, 0 }

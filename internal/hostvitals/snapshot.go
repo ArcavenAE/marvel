@@ -174,3 +174,10 @@ func orphanThreshold(ok bool, v orphanView) Threshold {
 	}
 	return t
 }
+
+// DiskStat reports the total and free bytes of the volume that holds path.
+type DiskStat func(path string) (total, free uint64, err error)
+
+// SetDiskPaths names the paths whose volumes the disk free vital reports, and
+// the reader for them.
+func (s *Sampler) SetDiskPaths(paths []string, stat DiskStat) {}

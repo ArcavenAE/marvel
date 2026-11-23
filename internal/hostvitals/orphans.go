@@ -43,6 +43,8 @@ type Orphan struct {
 	// It is set only for the marker reason.
 	ClaimedSession string    `json:"claimed_session,omitempty"`
 	MarkedAt       time.Time `json:"marked_at"`
+	// RSSBytes is the orphan's resident memory at the latest pass.
+	RSSBytes uint64 `json:"rss_bytes"`
 	// CPUSecondsSinceMarked is its CPU time now minus its CPU time when marked.
 	CPUSecondsSinceMarked float64 `json:"cpu_seconds_since_marked"`
 	// Share is its share of one core over the last OrphanWindow, nil until it
