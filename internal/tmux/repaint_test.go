@@ -165,6 +165,14 @@ func TestRepaintRefusesAPaneThatHasExited(t *testing.T) {
 
 const testHold = 150 * time.Millisecond
 
+// sizeOnlyHold is the hold for the test of a program that only polls the
+// terminal size. sizeOnlyScript polls with a stty fork and a 50 ms sleep, and
+// when the package's tests run together a pass of that loop took about 200 ms
+// (measured by logging each poll), longer than testHold, so the poll could miss
+// the widened size altogether and the pane never showed a repaint. The hold
+// must outlast several passes of the slowest poll, not one.
+const sizeOnlyHold = time.Second
+
 // A program like the harnesses research measured: it repaints when the terminal
 // SIZE changes, and a bare SIGWINCH with the same size does nothing.
 const sizeOnlyScript = `prev=""
@@ -202,7 +210,7 @@ func TestRepaintNudgesTheSizeOfAProgramThatIgnoresASignal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Repaint(pane, testHold); err != nil {
+	if _, err := d.Repaint(pane, sizeOnlyHold); err != nil {
 		t.Fatalf("Repaint: %v", err)
 	}
 	// The nudge paints at the widened size and the restore paints at the
