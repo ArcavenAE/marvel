@@ -4,10 +4,12 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -66,6 +68,7 @@ func fakeTmuxProc(pid int) unix.KinfoProc {
 	var p unix.KinfoProc
 	p.Proc.P_pid = int32(pid)
 	copy(p.Proc.P_comm[:], "tmux")
+	p.Eproc.Ucred.Uid = uint32(os.Geteuid())
 	return p
 }
 
@@ -152,5 +155,47 @@ func TestAnArgumentListThatSettlesIsRead(t *testing.T) {
 	out, err := defaultProcList(context.Background())
 	if err != nil || len(out) == 0 {
 		t.Errorf("defaultProcList = %q, %v; want the process listed once its arguments settle", out, err)
+	}
+}
+
+// Another account's tmux is none of this driver's business, and the kernel
+// refuses its argument list. Reading it as an error would make every read fail
+// on a host with a second user's tmux, and a cold start would fail again.
+func TestAnotherUsersTmuxIsNotReadAndNotAnOutage(t *testing.T) {
+	d := &Driver{binary: "/nonexistent/tmux", socket: "mxother" + filepath.Base(t.TempDir())}
+	other := fakeTmuxProc(os.Getpid())
+	other.Eproc.Ucred.Uid = uint32(os.Geteuid()) + 1
+	asked := false
+	withKernelReads(t,
+		func(string, ...int) ([]unix.KinfoProc, error) { return []unix.KinfoProc{other}, nil },
+		func(int) ([]string, error) { asked = true; return nil, unix.EPERM })
+	out, err := defaultProcList(context.Background())
+	if err != nil || len(out) != 0 {
+		t.Errorf("defaultProcList = %q, %v; want an empty list and no error with only another user's tmux", out, err)
+	}
+	if asked {
+		t.Error("the arguments of another user's process were read")
+	}
+	if !d.serverAbsent(noSocketText) {
+		t.Error("serverAbsent = false because of another user's tmux; a cold start would fail")
+	}
+}
+
+// The retry loop stops when the caller's context ends, instead of sleeping
+// through its attempts.
+func TestTheArgumentRetryStopsWhenTheContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	withKernelReads(t,
+		func(string, ...int) ([]unix.KinfoProc, error) {
+			return []unix.KinfoProc{fakeTmuxProc(os.Getpid())}, nil
+		},
+		func(int) ([]string, error) { cancel(); return nil, unix.EINVAL })
+	start := time.Now()
+	_, err := defaultProcList(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("defaultProcList error = %v; want the context's error once it ended", err)
+	}
+	if d := time.Since(start); d > 30*time.Millisecond {
+		t.Errorf("the retry kept sleeping for %v after the context ended", d)
 	}
 }
