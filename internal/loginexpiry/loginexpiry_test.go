@@ -135,7 +135,7 @@ func TestAskBoundsAHungChildAndKillsItsGroup(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	prog := stub(t, `sleep 30 & echo $! > `+pidFile+`; wait`)
 	start := time.Now()
-	_, err := Ask(context.Background(), prog, "", 300*time.Millisecond)
+	_, err := Ask(context.Background(), prog, "", 2*time.Second)
 	var re *ReadError
 	if !errors.As(err, &re) || re.Reason != ReasonTimedOut {
 		t.Fatalf("err = %v, want a ReadError with reason %q", err, ReasonTimedOut)
