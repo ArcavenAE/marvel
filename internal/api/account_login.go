@@ -11,8 +11,11 @@ type AccountLogin struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	// HoursLeft is whole hours to the expiry, omitted when there is no expiry
 	// or it has passed.
-	HoursLeft *int      `json:"hours_left,omitempty"`
-	ReadAt    time.Time `json:"read_at"`
+	HoursLeft *int `json:"hours_left,omitempty"`
+	// ReadAt is the last read that gave a reading; zero for a login never read.
+	ReadAt time.Time `json:"read_at"`
+	// FailingSince is when the current run of failed reads began.
+	FailingSince *time.Time `json:"failing_since,omitempty"`
 	// Why is the fixed reason of the last failed read.
 	Why string `json:"why,omitempty"`
 }

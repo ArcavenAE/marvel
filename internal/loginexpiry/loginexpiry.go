@@ -167,7 +167,12 @@ type Row struct {
 	Key       api.AccountKey
 	State     State
 	ExpiresAt time.Time
-	ReadAt    time.Time
+	// ReadAt is the time of the last read that gave a reading; zero for a
+	// login never read.
+	ReadAt time.Time
+	// FailingSince is when the current run of failed reads began, zero while
+	// the last read succeeded.
+	FailingSince time.Time
 	// Why is the fixed reason of the last failed read, empty when it succeeded.
 	Why Reason
 }

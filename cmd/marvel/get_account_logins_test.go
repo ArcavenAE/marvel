@@ -153,3 +153,22 @@ func TestGetAccountLoginsFlagRules(t *testing.T) {
 		t.Errorf("%d reads reached the daemon from refused commands, want 0", n)
 	}
 }
+
+// An unreadable login shows its last good read and when the failures began, so
+// "unreadable" is not read as "just now".
+func TestGetAccountLoginsShowsWhenAnUnreadableLoginFirstFailed(t *testing.T) {
+	good := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	since := good.Add(time.Hour)
+	sock, _ := loginsFakeDaemon(t, api.AccountLogins{Enabled: true, Logins: []api.AccountLogin{
+		{Account: "claude default - /homes/c", State: "unreadable", ReadAt: good, FailingSince: &since, Why: "timed out"},
+	}})
+	code, out, errOut := runFanGet(t, "--socket", sock, "get", "account-logins")
+	if code != 0 {
+		t.Fatalf("exit %d; stderr %q", code, errOut)
+	}
+	for _, want := range []string{"2026-11-23T12:00:00Z", "timed out since 2026-11-23T13:00:00Z"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, out)
+		}
+	}
+}

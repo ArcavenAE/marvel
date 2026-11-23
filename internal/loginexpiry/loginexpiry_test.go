@@ -353,3 +353,34 @@ func TestTrackerEventsCarryNoPersonalData(t *testing.T) {
 		}
 	}
 }
+
+func TestTrackerUnreadableKeepsTheLastGoodReadAndWhenFailuresBegan(t *testing.T) {
+	tr := NewTracker(&sink{})
+	exp := t0.Add(48 * time.Hour)
+	tr.Observe(keyA, good(exp), nil, t0)
+	tr.Observe(keyA, Reading{}, &ReadError{Reason: ReasonTimedOut}, t0.Add(time.Hour))
+	tr.Observe(keyA, Reading{}, &ReadError{Reason: ReasonNotJSON}, t0.Add(2*time.Hour))
+	rows := tr.Rows()
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want one", rows)
+	}
+	if !rows[0].ReadAt.Equal(t0) {
+		t.Errorf("ReadAt = %v, want the last good read %v", rows[0].ReadAt, t0)
+	}
+	if !rows[0].FailingSince.Equal(t0.Add(time.Hour)) {
+		t.Errorf("FailingSince = %v, want the first failure %v", rows[0].FailingSince, t0.Add(time.Hour))
+	}
+	// A good read ends the run of failures.
+	tr.Observe(keyA, good(exp), nil, t0.Add(3*time.Hour))
+	if r := tr.Rows()[0]; !r.FailingSince.IsZero() || !r.ReadAt.Equal(t0.Add(3*time.Hour)) || r.Why != "" {
+		t.Errorf("after a good read: %+v, want no failing-since, read at %v, no why", r, t0.Add(3*time.Hour))
+	}
+	// A login never read has no read time, and says when it first failed.
+	other := api.AccountKey{Harness: "claude", ConfigHome: "/homes/z"}
+	tr.Observe(other, Reading{}, &ReadError{Reason: ReasonTimedOut}, t0)
+	for _, r := range tr.Rows() {
+		if r.Key == other && (!r.ReadAt.IsZero() || !r.FailingSince.Equal(t0)) {
+			t.Errorf("never-read row = %+v, want no read time and failing since %v", r, t0)
+		}
+	}
+}

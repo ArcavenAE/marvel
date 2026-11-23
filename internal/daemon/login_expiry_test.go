@@ -238,3 +238,31 @@ func TestGetAccountLoginsThroughTheDaemon(t *testing.T) {
 		t.Errorf("a daemon with no service answered %s (%v), want enabled false", none.Result, err)
 	}
 }
+
+func TestLoginResultShowsTheLastGoodReadAndWhenFailuresBegan(t *testing.T) {
+	t0 := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	fail := false
+	ask := func(context.Context, string) (loginexpiry.Reading, error) {
+		if fail {
+			return loginexpiry.Reading{}, &loginexpiry.ReadError{Reason: loginexpiry.ReasonTimedOut}
+		}
+		return readingIn(48*time.Hour, t0), nil
+	}
+	list := func() []api.Session { return []api.Session{claudeSeat("a1", "/homes/a", api.SessionRunning)} }
+	svc := newLoginService(true, &loginSink{}, list, ask)
+	svc.pass(context.Background(), t0)
+	fail = true
+	svc.pass(context.Background(), t0.Add(time.Hour))
+	svc.pass(context.Background(), t0.Add(2*time.Hour))
+	res := svc.result(t0.Add(2 * time.Hour))
+	if len(res.Logins) != 1 {
+		t.Fatalf("logins = %+v, want one", res.Logins)
+	}
+	l := res.Logins[0]
+	if !l.ReadAt.Equal(t0) {
+		t.Errorf("read_at = %v, want the last good read %v", l.ReadAt, t0)
+	}
+	if l.FailingSince == nil || !l.FailingSince.Equal(t0.Add(time.Hour)) {
+		t.Errorf("failing_since = %v, want %v", l.FailingSince, t0.Add(time.Hour))
+	}
+}
