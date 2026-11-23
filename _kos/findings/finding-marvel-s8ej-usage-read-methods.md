@@ -10,7 +10,7 @@ Marvel decides which seats can run by what each login has left, and it learns th
 
 ## Accounts
 
-Named by role only. The Enterprise login is the default-home login (`CLAUDE_CONFIG_DIR` unset). The Max 20x login is the one under a named config home. A third, a Max 20x login on another host, was read there by that host's own seat and is cited as that seat's reading.
+Named by role only. The Enterprise login is the default-home login (`CLAUDE_CONFIG_DIR` unset). The Max 20x login is the one under a named config home. A third, a Max 20x login on another host, was read there by two readers and is cited as theirs: that host's supervisor seat (22:00Z, 23:00Z and 23:05Z) and director (00:00Z and 00:36Z).
 
 ## What was read, and how
 
@@ -44,11 +44,11 @@ Limits of that proof:
 1. `get_usage` names only `subscription_type`. It carries no account identifier, so the proof is the auth pair plus the fact that the script binds the config home.
 2. The `/usage` panes show no email or organisation.
 3. The earliest (c) reading of the Max 20x login, at 19:48Z, has no `.end` file, so its closing time is unrecorded.
-4. The account key `api.AccountKey{Harness, Backend, CredentialSource, ConfigHome}` is derived from the path, not read from the credential. A path spelled two ways is two accounts in marvel's view. It is also a false-negative source in the other direction: `claude auth status` reports `loggedIn:false` for the same login if `CLAUDE_CONFIG_DIR` has a trailing slash or names the parent directory. Only the exact string reports the login. A reader that takes its path from a manifest therefore needs the same spelling the login was made under.
+4. The account key `api.AccountKey{Harness, Backend, CredentialSource, ConfigHome}` is derived from the path, not read from the credential. At `4da31668`, `canonicalConfigHomeIn` in `internal/api/account.go` applies `filepath.Clean` and maps the harness's default directory to empty, so a trailing-slash spelling and the default-directory spelling are one account in marvel's key. A spelling that `filepath.Clean` does not merge, such as a parent directory or a second path to the same login, would still be a second account. The hazard is on the harness side: the key is cleaned, but `claude auth status` reports `loggedIn:false` for the same login if `CLAUDE_CONFIG_DIR` has a trailing slash or names the parent directory, so only the exact string reports the login. A reader that takes its path from a manifest therefore needs the spelling the login was made under, even where marvel's key would merge the two.
 
 ## The scheduled-reset calibration
 
-The Max 20x login on the other host was read by its own seat with method (b) at 22:00Z, 23:00Z, 23:05Z and 00:36Z. Its 00:00Z read failed through a scheduling error in the run (a backgrounded job in an interactive shell stalled before the read, leaving a 47 byte file), not through the method:
+The Max 20x login on the other host was read with method (b) at 22:00Z, 23:00Z and 23:05Z by that host's supervisor seat, and at 00:36Z by director. Director's 00:00Z read failed through a scheduling error in director's run (a backgrounded job in an interactive shell stalled before the read, leaving a 47 byte file), not through the method:
 
 - 22:00Z: seven_day utilization 99, `resets_at` 22:59:59.598Z, a `seven_day_breakdown` object with `window_started_at`.
 - 23:00Z: utilization 0, `resets_at` 2026-11-29T23:00:00Z (the fractional seconds gone), `seven_day_breakdown` null.
@@ -61,7 +61,7 @@ Three field behaviours that bear on a detector:
 
 - `resets_at` jitters on the same instant, on both hosts. The Max login on kinu read 02:00:00.426Z, 02:00:00.436Z, 02:00:00.036Z and 01:59:59.950Z across reads of one window. A comparison needs a tolerance of at least one second.
 - A reset can change the format of the value (the fractional part disappeared at 23:00Z and was back at 00:36Z, for one instant).
-- A block can drop out after a reset (`seven_day_breakdown`), so no reader may require `window_started_at`.
+- A block can drop out after a reset (`seven_day_breakdown` was null at 23:00Z and 23:05Z and populated again at 00:36Z), so no reader may require `window_started_at`.
 
 The two kinu logins did not reset during the series. The Max login stayed at utilization 100 with a reset on 2026-11-25. The Enterprise login has no 5h or 7d window; its figure is a monthly credit allowance.
 
@@ -76,7 +76,7 @@ The reply has `spend.balance` and `spend.auto_reload`, both null on every login 
 ## What it means for marvel (design only)
 
 - A usage reader seat that runs method (b) on a schedule costs no tokens, and its reading is richer than the statusline feed's (credits, scoped weekly limits, reset times with no need for a prior request).
-- It needs an identity check per read. The cheap one is the `auth status` pair against the exact config-home string, and the account key should record the spelling it was read under.
+- It needs an identity check per read. The cheap one is the `auth status` pair against the exact config-home string, and the reader should pass the exact spelling the login was made under, since the key's cleaning does not make the harness accept another spelling.
 - A reset detector needs a timestamp tolerance of one second or more and must not depend on optional blocks.
 - The credit inventory has a place in the reply but no data; a value estimate waits for a login that carries a balance.
 
@@ -90,4 +90,4 @@ Raw readings are kept outside this repository and are cited by the first 12 hexa
 - (b) Max login, kinu, 22:00Z: `ea372b0a5de2`; 23:00Z: `045212bda1c2`; 23:10Z: `18cefa34c67d`; 00:30Z: `8d2a66b10d3b`.
 - (c) Enterprise 22:00Z: `5283fded2512`; 00:00Z: `af5a04e4ad15`; 00:30Z: `4b543f76d423`.
 - (c) Max login, scheduled, empty pane: `e3b0c44298fc` (the hash of nothing) at each of five rounds.
-- The other host's seat, from its own files: 22:00Z `70505dd8`, 23:00Z `8013c703`, 23:05Z `03f5fb19`, 00:36Z `85f4a6c6`, and the failed 00:00Z file `056e3d2d` (8-digit prefixes as that seat reported them).
+- The other host's supervisor seat, from its own files: 22:00Z `70505dd8`, 23:00Z `8013c703`, 23:05Z `03f5fb19`. Director's reads of the same login: 00:36Z `85f4a6c6`, and the failed 00:00Z file `056e3d2d` (8-digit prefixes as reported).
