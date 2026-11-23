@@ -164,3 +164,26 @@ func TestFanOutStatusLinesDoNotCrowdTheSummary(t *testing.T) {
 		}
 	}
 }
+
+// A column can cover fewer sessions than its row: a session with no value adds
+// nothing. The notes say so in words, so a partial sum is never silent, and say
+// nothing when every session reports.
+func TestFanOutSummarySaysWhenAColumnCoversFewerSessionsThanTheRow(t *testing.T) {
+	records, rows := summaryRows("")
+	rows[1].SpendOut = nil // alpha's second session reports no TOUT
+	out, _ := summaryScreen(t, records, rows, true)
+	_, notes, _ := summaryParts(t, out)
+	text := strings.Join(notes, "\n")
+	if !strings.Contains(text, "TOUT in alpha 1 of 2") || !strings.Contains(text, "fewer sessions than its row") {
+		t.Errorf("no note that TOUT covers 1 of alpha's 2 sessions:\n%s", text)
+	}
+	if strings.Contains(text, "TOUT in beta") || strings.Contains(text, "mCPU in") {
+		t.Errorf("a note for a column that covers every session:\n%s", text)
+	}
+	records, rows = summaryRows("")
+	out, _ = summaryScreen(t, records, rows, true)
+	_, notes, _ = summaryParts(t, out)
+	if strings.Contains(strings.Join(notes, "\n"), "fewer sessions") {
+		t.Errorf("a coverage note where every session reports:\n%s", strings.Join(notes, "\n"))
+	}
+}

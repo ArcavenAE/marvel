@@ -472,19 +472,17 @@ func runFanOutGet(cmd *cobra.Command, names []string, columns, format string, no
 	// A fan-out read has no daemon header, so the block is the first thing out.
 	force, _ := cmd.Flags().GetBool("header")
 	out, errOut := renderFanOutScreen(records, rows, cols, explicit, noTrunc, terminalWidth(), wantHeader(force), rateClock(), startedFolded)
-	_, _ = fmt.Fprint(cmd.ErrOrStderr(), errOut)
+	// The table leads; what is left on stderr follows it.
 	fmt.Print(out)
+	_, _ = fmt.Fprint(cmd.ErrOrStderr(), errOut)
 	return fanOutExitError(cmd, records)
 }
 
 // renderFanOutScreen is what a one-shot fan-out read prints: the text for
 // stdout (the totals block when header is set, then the merged table) and the
-// text for stderr (one status line per cluster). rows are already sorted.
+// text for stderr (a status line per cluster that the summary does not cover).
+// rows are already sorted.
 func renderFanOutScreen(records []clusterRecord, rows []api.Session, cols []sessionColumn, explicit, noTrunc bool, width int, header bool, now time.Time, startedFolded map[string]bool) (stdout, stderr string) {
-	var e strings.Builder
-	for _, r := range records {
-		e.WriteString(r.statusLine() + "\n")
-	}
 	fit := fitOptions{
 		width:    width,
 		explicit: explicit,
@@ -493,10 +491,22 @@ func renderFanOutScreen(records []clusterRecord, rows []api.Session, cols []sess
 	}
 	pre, table, post, shown := renderSessionsPartsShown(rows, cols, "", fit)
 	var o strings.Builder
+	summary := ""
 	if header {
-		o.WriteString(fanOutTotalsBlock(records, rows, shown, now, fit.width, startedFolded))
+		summary = fanOutSummary(records, rows, shown, now, fit.width, startedFolded)
+		o.WriteString(summary)
 	}
 	o.WriteString(pre + table + post)
+	// With the summary on screen, a cluster that answered has its row there and
+	// needs no status line. Every other outcome keeps its line, which holds the
+	// cause and the next step.
+	var e strings.Builder
+	for _, r := range records {
+		if summary != "" && r.Outcome == outcomeAnswered {
+			continue
+		}
+		e.WriteString(r.statusLine() + "\n")
+	}
 	return o.String(), e.String()
 }
 
@@ -589,52 +599,69 @@ var keyArgCommands = map[string]int{
 	"marvel describe": -1, "marvel delete": -1,
 }
 
-// fanOutTotalsBlock is the block of totals lines a one-shot fan-out read prints
-// above the merged table, one per cluster that answered, in the order of the
-// records (docs/design/cluster-rollup-header.md sections 2.5 and 2.9). A member
-// folded into a leader gets no line: its rows count on the leader's line, which
-// names it. A line is marked starting when its leader, or any member folded
-// into it, was starting. startedFolded names the clusters that were starting
-// when the fold merged them, because the fold overwrites a member's outcome;
-// the marker stays off clusterRecord (the architect's choice b, section 2.9).
-// Each line breaks between fields at width, as the single-cluster line does.
-func fanOutTotalsBlock(records []clusterRecord, rows []api.Session, shown []sessionColumn, now time.Time, width int, startedFolded map[string]bool) string {
-	return fanTotalsBlock(records, rows, shown, now, width, startedFolded, nil, false)
+// fanGroup is one line of the totals: a cluster that answered, or is held from
+// an earlier read, with the rows that count on it.
+type fanGroup struct {
+	rec      clusterRecord
+	opts     totalsOpts
+	own      []api.Session
+	members  []string
+	starting bool
 }
 
-// fanTotalsBlock is the block of the watch frame too, where a cluster can hold
-// rows from an earlier read: held maps such a cluster to the time of that read,
-// and its line is drawn whatever its record says, carrying the time (design
-// sections 2.5 and 2.8). cut says the table is cut, so each line ends with the
-// count of its own cluster's rows.
-func fanTotalsBlock(records []clusterRecord, rows []api.Session, shown []sessionColumn, now time.Time, width int, startedFolded map[string]bool, held map[string]time.Time, cut bool) string {
-	var b strings.Builder
+// fanGroups is the clusters that get a line, in the order of the records
+// (docs/design/cluster-rollup-header.md sections 2.5 and 2.9). A member folded
+// into a leader gets no group: its rows count on the leader's, which names it.
+// A group is starting when its leader, or any member folded into it, was
+// starting. startedFolded names the clusters that were starting when the fold
+// merged them, because the fold overwrites a member's outcome; the marker stays
+// off clusterRecord (the architect's choice b, section 2.9). held maps a
+// cluster that holds rows from an earlier read to the time of that read; its
+// group is kept whatever its record says.
+func fanGroups(records []clusterRecord, rows []api.Session, startedFolded map[string]bool, held map[string]time.Time) []fanGroup {
+	var out []fanGroup
 	for _, rec := range records {
 		asOf, isHeld := held[rec.Cluster]
 		if rec.Outcome != outcomeAnswered && rec.Outcome != outcomeStarting && !isHeld {
 			continue
 		}
-		opts := totalsOpts{label: rec.Cluster, starting: rec.Outcome == outcomeStarting, asOf: asOf}
+		g := fanGroup{rec: rec, starting: rec.Outcome == outcomeStarting}
+		g.opts = totalsOpts{label: rec.Cluster, asOf: asOf}
 		mine := map[string]bool{rec.Cluster: true}
 		for _, m := range records {
 			if m.Outcome == outcomeSameDaemon && m.SameDaemonAs == rec.Cluster {
-				opts.members = append(opts.members, m.Cluster)
+				g.members = append(g.members, m.Cluster)
 				mine[m.Cluster] = true
 				if startedFolded[m.Cluster] {
-					opts.starting = true
+					g.starting = true
 				}
 			}
 		}
-		var own []api.Session
+		g.opts.members, g.opts.starting = g.members, g.starting
 		for _, r := range rows {
 			if mine[r.Cluster] {
-				own = append(own, r)
+				g.own = append(g.own, r)
 			}
 		}
+		out = append(out, g)
+	}
+	return out
+}
+
+// fanTotalsBlock is the block of totals lines the watch frame prints, where a
+// cluster can hold rows from an earlier read: held maps such a cluster to the
+// time of that read, and its line is drawn whatever its record says (design
+// sections 2.5 and 2.8). cut says the table is cut, so each line ends with the
+// count of its own cluster's rows. Each line breaks between fields at width, as
+// the single-cluster line does. The one-shot read prints the summary table of
+// fanout_summary.go instead.
+func fanTotalsBlock(records []clusterRecord, rows []api.Session, shown []sessionColumn, now time.Time, width int, startedFolded map[string]bool, held map[string]time.Time, cut bool) string {
+	var b strings.Builder
+	for _, g := range fanGroups(records, rows, startedFolded, held) {
 		if cut {
-			opts.covered = len(own)
+			g.opts.covered = len(g.own)
 		}
-		b.WriteString(wrapTotals(renderTotals(own, shown, now, opts), width))
+		b.WriteString(wrapTotals(renderTotals(g.own, shown, now, g.opts), width))
 	}
 	return b.String()
 }

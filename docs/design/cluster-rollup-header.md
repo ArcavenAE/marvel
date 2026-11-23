@@ -145,6 +145,15 @@ Answers to the builder's questions on T5 (aae-orc-sf197), 2026-11-17.
 - **ACTIVE%.** In `(N of M)`, M is the running seats summed over the teams the row summed, as in a team row.
 - **One team.** The row appears only with two or more team rows.
 
+### 2.12 The one-shot all-clusters read prints a summary table
+
+The totals lines of 2.5 and 2.9 were hard to read for a cluster set: each line had its own widths, nothing said what a field counted, the parenthesised counts and the `+` went unexplained, and there was no total across clusters. The one-shot read of a cluster set now prints a summary table instead, above the merged sessions table, under the same rule as before (a terminal or `--header`, never `-o`):
+
+- A header row `CLUSTER`, `SESSIONS` and one column per summed column the fit drew, one right-aligned row per cluster that answered, and a `TOTAL` row over every row once. Sums are the same sums; no number changes meaning.
+- Notes follow, each caveat once and in words: what each column counts, which clusters a `+` lower bound applies to, where a column covers fewer sessions than its row (`TOUT in alpha 24 of 25`), a cluster that was starting, and a member that shares a daemon with a leader (it has no row of its own).
+- A cluster that answered gets no status line on stderr when the summary prints. Every other outcome keeps its line, and the lines follow the table.
+- The single-cluster line (2.1 to 2.3) and the fan-out watch frame (2.10) are unchanged, and `-o json` and `-o yaml` are untouched.
+
 ## 3. Which views carry it
 
 | View | Carries it? | Why |

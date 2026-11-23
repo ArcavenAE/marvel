@@ -20,6 +20,12 @@ func clusterRow(cluster, name string, cpuPercent float64) api.Session {
 	return s
 }
 
+// fanOutTotalsBlock is the watch frame's totals block with nothing held and the
+// table not cut, which is what these tests read.
+func fanOutTotalsBlock(records []clusterRecord, rows []api.Session, shown []sessionColumn, now time.Time, width int, startedFolded map[string]bool) string {
+	return fanTotalsBlock(records, rows, shown, now, width, startedFolded, nil, false)
+}
+
 func answeredRecord(name string) clusterRecord {
 	return clusterRecord{Cluster: name, Outcome: outcomeAnswered}
 }
@@ -157,9 +163,8 @@ func TestFanOutTotalsStartingFoldedMemberMarksTheLeader(t *testing.T) {
 	}
 }
 
-// Through the command: --header prints the block above the merged table, even
-// into a pipe; a plain pipe prints none; there is no grand total across
-// clusters.
+// Through the command: --header prints the summary above the merged table, even
+// into a pipe, with a TOTAL row; a plain pipe prints none.
 func TestFanOutTotalsNotIntoPipe(t *testing.T) {
 	a := startFake(t, fakeAnswers, []api.Session{sampled("a1", api.SessionRunning, 10, 1<<20), sampled("a2", api.SessionRunning, 15, 1<<20)})
 	b := startFake(t, fakeAnswers, []api.Session{sampled("b1", api.SessionRunning, 40, 1<<20)})
@@ -169,23 +174,17 @@ func TestFanOutTotalsNotIntoPipe(t *testing.T) {
 	)
 
 	_, plain, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b", "--columns", "name,cpu")
-	if strings.Contains(plain, "totals") {
-		t.Errorf("a plain pipe must not carry the block:\n%s", plain)
+	if strings.Contains(plain, "CLUSTER") || strings.Contains(plain, "TOTAL") {
+		t.Errorf("a plain pipe must not carry the summary:\n%s", plain)
 	}
 
 	_, out, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b", "--columns", "name,cpu", "--header")
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) < 2 || lines[0] != "totals a   2 sessions   mCPU 250 (2)" || lines[1] != "totals b   1 session   mCPU 400 (1)" {
-		t.Errorf("--header should print one line per cluster above the table:\n%s", out)
-	}
-	n := 0
-	for _, l := range lines {
-		if strings.HasPrefix(l, "totals") {
-			n++
-		}
-	}
-	if n != 2 {
-		t.Errorf("want exactly two totals lines and no grand total, got %d:\n%s", n, out)
+	if len(lines) < 4 || strings.Fields(lines[0])[0] != "CLUSTER" ||
+		strings.Join(strings.Fields(lines[1]), " ") != "a 2 250" ||
+		strings.Join(strings.Fields(lines[2]), " ") != "b 1 400" ||
+		strings.Join(strings.Fields(lines[3]), " ") != "TOTAL 3 650" {
+		t.Errorf("--header should print a row per cluster and a total above the table:\n%s", out)
 	}
 	if !strings.Contains(out, "AGENT NAME") {
 		t.Errorf("fixture: the merged table is missing:\n%s", out)
@@ -206,13 +205,13 @@ func TestFanOutTotalsNotInTheJSONDocument(t *testing.T) {
 	if doc := decodeSet(t, out); len(doc.Clusters) != 2 || len(doc.Sessions) != 2 {
 		t.Errorf("%d cluster records and %d rows, want 2 and 2", len(doc.Clusters), len(doc.Sessions))
 	}
-	if strings.Contains(out, "totals   ") {
-		t.Errorf("-o json must not carry a totals line:\n%s", out)
+	if strings.Contains(out, "TOTAL") || strings.Contains(out, "CLUSTER ") {
+		t.Errorf("-o json must not carry the summary:\n%s", out)
 	}
-	// The premise: the same read with --header and no -o does print the block.
+	// The premise: the same read with --header and no -o does print the summary.
 	_, table, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b", "--columns", "name,cpu", "--header")
-	if !strings.HasPrefix(table, "totals a   ") {
-		t.Errorf("fixture: --header on the table should print the block first:\n%s", table)
+	if !strings.HasPrefix(table, "CLUSTER ") {
+		t.Errorf("fixture: --header on the table should print the summary first:\n%s", table)
 	}
 }
 
@@ -240,9 +239,9 @@ func TestFanOutTotalsBlockBreaksAtTheWidth(t *testing.T) {
 	}
 }
 
-// The block follows the columns the fit drew, not the columns asked for: at 120
-// columns the default table shows TOUT and RATE but not mCPU, so the block has
-// no mCPU field; at 200 it has one.
+// The summary follows the columns the fit drew, not the columns asked for: at
+// 120 columns the default table shows TOUT and RATE but not mCPU, so the
+// summary has no mCPU column; at 200 it has one.
 func TestFanOutTotalsFollowTheDrawnColumns(t *testing.T) {
 	a := sampled("a1", api.SessionRunning, 10, 1<<20)
 	a.SpendOut = tokens(1000)
@@ -253,32 +252,35 @@ func TestFanOutTotalsFollowTheDrawnColumns(t *testing.T) {
 		width      int
 		wantMCPU   bool
 		wantFields string
-	}{{120, false, "TOUT 1k (1)"}, {200, true, "mCPU 100 (1)"}} {
+		wantTotal  string
+	}{{120, false, "1k", "2k"}, {200, true, "100", "200"}} {
 		setWidth(t, c.width)
 		_, out, _ := runFanGet(t, "get", "sessions", "--cluster", "a,b", "--header")
-		var block, table string
-		for _, l := range strings.Split(out, "\n") {
-			switch {
-			case strings.HasPrefix(l, "totals"):
-				block += l + "\n"
-			case strings.Contains(l, "AGENT NAME"):
+		block, rest, found := strings.Cut(out, "\n\n")
+		var table string
+		for _, l := range strings.Split(rest, "\n") {
+			if strings.Contains(l, "AGENT NAME") {
 				table = l
 			}
 		}
-		if table == "" || block == "" {
-			t.Errorf("width %d: the block and the table should both print:\n%s", c.width, out)
+		if !found || table == "" || !strings.HasPrefix(block, "CLUSTER") {
+			t.Errorf("width %d: the summary and the table should both print:\n%s", c.width, out)
 			continue
 		}
-		if has := strings.Contains(block, "mCPU "); has != c.wantMCPU || strings.Contains(table, "mCPU") != c.wantMCPU {
-			t.Errorf("width %d: mCPU in the table = %v, in the block = %v, want %v\ntable: %q\nblock: %q", c.width, strings.Contains(table, "mCPU"), has, c.wantMCPU, table, block)
+		lines := strings.Split(block, "\n")
+		if has := strings.Contains(lines[0], "mCPU"); has != c.wantMCPU || strings.Contains(table, "mCPU") != c.wantMCPU {
+			t.Errorf("width %d: mCPU in the table = %v, in the summary = %v, want %v\ntable: %q\nsummary: %q", c.width, strings.Contains(table, "mCPU"), has, c.wantMCPU, table, lines[0])
 		}
-		lines := strings.Split(strings.TrimRight(block, "\n"), "\n")
-		if len(lines) != 2 {
-			t.Errorf("width %d: want one line per cluster, got %d:\n%s", c.width, len(lines), block)
+		if len(lines) != 4 {
+			t.Errorf("width %d: want a header, a row per cluster and a total, got %d lines:\n%s", c.width, len(lines), block)
 		}
-		for i, l := range lines {
-			if !strings.Contains(l, c.wantFields) {
-				t.Errorf("width %d: line %d should carry %q:\n%s", c.width, i, c.wantFields, l)
+		for i, l := range lines[1:] {
+			want := c.wantFields
+			if i == len(lines)-2 {
+				want = c.wantTotal // the TOTAL row adds the two clusters
+			}
+			if !strings.Contains(l, want) {
+				t.Errorf("width %d: line %d should carry %q:\n%s", c.width, i+1, want, l)
 			}
 		}
 	}
