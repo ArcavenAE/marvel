@@ -1171,32 +1171,7 @@ func (m *Manager) Create(sess *api.Session) error {
 	// references fields on sess. Per orc finding-032, the Store is the
 	// sync boundary.
 	if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
-		live.PaneID = paneID
-		live.PID = pid
-		live.State = api.SessionRunning
-		live.BackendRedirection = sess.BackendRedirection
-		live.BackendIntended = sess.BackendIntended
-		live.BackendResolved = sess.BackendResolved
-		live.BackendCredentialSource = sess.BackendCredentialSource
-		live.AmbientBearer = sess.AmbientBearer
-		live.BackendOverlayPath = sess.BackendOverlayPath
-		// The projected file this launch was started with, kept so a policy
-		// edit still reaches it after the projection directory moves.
-		live.ProjectionPath = sess.ProjectionPath
-		// What marvel named this launch, kept so the binding survives a
-		// daemon restart. Empty when the runtime has no id pin.
-		live.HarnessSessionID = sess.HarnessSessionID
-		// Where this session's harness state lives, kept so the binding
-		// survives a daemon restart. Empty when the runtime shares the
-		// operator's own home.
-		live.HarnessHome = sess.HarnessHome
-		live.AccountHome = sess.AccountHome
-		// What the harness was told to load, and how it was passed, kept for describe.
-		live.SettingSources = sess.SettingSources
-		live.SettingSourcesDelivery = sess.SettingSourcesDelivery
-		// The hashes of the prompts this launch passed, kept for get session.
-		live.FirstPromptSha256 = sess.FirstPromptSha256
-		live.SystemPromptSha256 = sess.SystemPromptSha256
+		commitLaunchRecord(live, sess, paneID, pid)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("update session %s post-create: %w", sess.Key(), err)
@@ -1208,6 +1183,38 @@ func (m *Manager) Create(sess *api.Session) error {
 	m.recordResume(sess)
 	m.announceSpawn(sess, paneID, plan.firstPrompt, plan.sandbox)
 	return nil
+}
+
+// commitLaunchRecord copies what a launch settled onto the stored session.
+// It runs under the store lock, so every field the launch sets and a reader
+// needs after the launch is copied here and nowhere else.
+func commitLaunchRecord(live, sess *api.Session, paneID string, pid int) {
+	live.PaneID = paneID
+	live.PID = pid
+	live.State = api.SessionRunning
+	live.BackendRedirection = sess.BackendRedirection
+	live.BackendIntended = sess.BackendIntended
+	live.BackendResolved = sess.BackendResolved
+	live.BackendCredentialSource = sess.BackendCredentialSource
+	live.AmbientBearer = sess.AmbientBearer
+	live.BackendOverlayPath = sess.BackendOverlayPath
+	// The projected file this launch was started with, kept so a policy
+	// edit still reaches it after the projection directory moves.
+	live.ProjectionPath = sess.ProjectionPath
+	// What marvel named this launch, kept so the binding survives a
+	// daemon restart. Empty when the runtime has no id pin.
+	live.HarnessSessionID = sess.HarnessSessionID
+	// Where this session's harness state lives, kept so the binding
+	// survives a daemon restart. Empty when the runtime shares the
+	// operator's own home.
+	live.HarnessHome = sess.HarnessHome
+	live.AccountHome = sess.AccountHome
+	// What the harness was told to load, and how it was passed, kept for describe.
+	live.SettingSources = sess.SettingSources
+	live.SettingSourcesDelivery = sess.SettingSourcesDelivery
+	// The hashes of the prompts this launch passed, kept for get session.
+	live.FirstPromptSha256 = sess.FirstPromptSha256
+	live.SystemPromptSha256 = sess.SystemPromptSha256
 }
 
 // recordResume writes sess's entry in the resume journal
