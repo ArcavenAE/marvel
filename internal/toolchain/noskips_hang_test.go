@@ -61,3 +61,33 @@ func TestNoSkipsGateCapsTheHangOutput(t *testing.T) {
 		t.Errorf("output is %d lines, want at most 80 for a capped hang", n)
 	}
 }
+
+// With -parallel set high, go lists every running test, one line each, ahead
+// of the goroutine dump. The gate prints that whole list, so the hung test's
+// name cannot fall past the cap, and caps only the dump after it.
+func TestNoSkipsGatePrintsTheWholeRunningTestsBlock(t *testing.T) {
+	t.Parallel()
+	const running = 100
+	s := ev("run", hangPkg, "TestHangs") + outEv(hangPkg, "TestHangs", "panic: test timed out after 10m0s") +
+		outEv(hangPkg, "TestHangs", `\trunning tests:`)
+	for i := 0; i < running; i++ {
+		s += outEv(hangPkg, "TestHangs", fmt.Sprintf(`\t\tTestHangs/sub%03d (10m0s)`, i))
+	}
+	s += outEv(hangPkg, "TestHangs", "")
+	for i := 0; i < 500; i++ {
+		s += outEv(hangPkg, "TestHangs", fmt.Sprintf("goroutine line %d", i))
+	}
+	s += outEv(hangPkg, "", `FAIL\t`+hangPkg+`\t600.150s`) + ev("fail", hangPkg, "")
+	got, out := runNoSkips(t, s, hangPkg)
+	if got != 1 {
+		t.Fatalf("exit %d, want 1; output:\n%s", got, out)
+	}
+	for _, want := range []string{"TestHangs/sub000 (10m0s)", "TestHangs/sub099 (10m0s)", "goroutine line 0"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not carry %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "goroutine line 499") {
+		t.Errorf("the goroutine dump runs past the cap:\n%s", out)
+	}
+}
