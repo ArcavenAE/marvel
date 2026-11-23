@@ -60,15 +60,15 @@ Events carry no email, organization, subscription detail beyond its type, or pat
 
 ### 2.6 Switch
 
-`login_expiry` on the cluster entry, beside `host_vitals`. The ruling on `host_vitals` (director, 2026-11-02) was off unless the cluster config turns it on, because a new always-on behavior in the daemon before the stability promise should not change every other installation. This adds a subprocess a few times a day, which is the same class. The recommendation follows the precedent (section 8, decision 1).
+`login_expiry` and `seat_gap` on the cluster entry, beside `host_vitals`, each on unless set to false. Director ruled both services on by default (2026-11-23): they are native services, and a marvel user should not have to turn on a check that protects them from a lapse. This departs from the `host_vitals` ruling (off unless enabled) on purpose, and it carries one condition: the proof step in section 2.7. If `claude auth status` run as a daemon child raises a keychain dialog, `login_expiry` ships off by default until that is fixed, and the release notes say why. `seat_gap` runs no keychain read and is not affected.
 
 ### 2.7 The keychain prompt question
 
-The harness reads its keychain entry as a child of the marvel daemon, through `/usr/bin/security` (`service-column.md` section 1.1). A prompt that names marvel would be the kind of surprise this change must not cause, so the service is not enabled on a host until a proof step passes.
+The harness reads its keychain entry as a child of the marvel daemon, through `/usr/bin/security` (`service-column.md` section 1.1). A prompt that names marvel would be the kind of surprise this change must not cause, so the default depends on a proof step.
 
 - **Which process the keychain judges: unmeasured.** Whether an item's access control and the privacy daemon judge the requesting binary (`claude`, or the `security` it forks) or the responsible process up the parent chain (the daemon) has not been measured on this fleet, and no source is cited here. `egress-credential-front.md` covers partition lists for marvel's own items, not this case. The first build PR measures it before any default changes.
-- **Proof step, run on each host before its switch is turned on:** one scheduled read with the daemon as parent logs 0 `tccd` authorization-request lines in the unified log for the window of the read, and raises 0 keychain dialogs that name marvel. The count and the log query are recorded in the PR, with the host's before and after. A host that shows either leaves the switch off and the finding goes to the supervisor.
-- **If the daemon is the judged process**, the login-expiry service stays off on that host and the note's fallback is a read by the seat's own harness process, which the keychain already admits: a one-line status file the seat writes through its own `claude auth status`, read by the daemon. That fallback is not designed here.
+- **Proof step, run on each fleet host before the release that turns the service on by default:** one scheduled read with the daemon as parent logs 0 `tccd` authorization-request lines in the unified log for the window of the read, and raises 0 keychain dialogs that name marvel. The count and the log query are recorded in the PR, with the host's before and after. A host that shows either leaves `login_expiry` off by default until it is fixed, and the finding goes to the supervisor.
+- **If the daemon is the judged process**, the login-expiry service ships off by default and the note's fallback is a read by the seat's own harness process, which the keychain already admits: a one-line status file the seat writes through its own `claude auth status`, read by the daemon. That fallback is not designed here.
 
 ## 3. Seat gap
 
@@ -96,7 +96,7 @@ What director must expose, so the check does not rest on a text match:
 2. A distinct exit status for "no broker reachable", apart from a read error.
 3. A way to say which broker the roster came from, so a host with more than one cluster does not read another cluster's rows as its own.
 
-Until those exist, the daemon treats a non-zero exit with no output as "director not present" only when the program is missing, and as "unreadable" otherwise. No director change is made or requested by this note beyond the three items.
+Until those exist, the daemon treats a non-zero exit with no output as "director not present" only when the program is missing, and as "unreadable" otherwise. The three items are director's to build. They go to director as a pull request in its own repository, routed by the supervisor after this note merges; this note changes nothing in director.
 
 ### 3.4 Where it shows
 
@@ -112,12 +112,12 @@ SOUL section 2: marvel works without director. The seat-gap service is optional 
 
 ## 5. Retiring director's versions
 
-Once both services ship and a host's `login_expiry` and seat-gap switches are on:
+Once both services ship:
 
 1. director#737 and director#738 are updated to point at `marvel get account-logins`, the vitals rows and the event kinds, and their scheduling notes stop proposing a launchd entry.
-2. The launchd agents on each fleet host are unloaded and their plists removed.
+2. The launchd agents on each host that has one are removed.
 
-The act in step 2 is a write to a host's launchd, which no seat holds today: this builder, supervisors and reviewers are barred from it. It needs a holder named by whoever rules on this note. The recommendation is the operator, or the seat the operator grants a host-act for that host, one host at a time, each act recording before and after (the agent's loaded state and the first marvel event of each kind seen on that host). The agents stay until the marvel services have run on that host for one full expiry cycle of its shortest login, so the replacement is observed, not assumed.
+The act in step 2 is a write to a host's launchd, which no seat holds. The operator holds it, per host: on the two hosts that still have an agent loaded, the operator removes it through the host's Login Items, and may do so now, without waiting for the marvel services to ship. The agent on kinu is already unloaded. No seat touches a host's launchd.
 
 ## 6. Build plan
 
@@ -138,8 +138,10 @@ Run conditions for the tests as for the rest of the module: `env -i`, scratch HO
 - It does not check a harness other than claude.
 - It does not decide what a lapsed login means for a seat; the watchdog's harness-state reading is unchanged.
 
-## 8. Decisions for the supervisor
+## 8. Rulings
 
-1. **Default switch state.** Recommended: both services off unless the cluster config enables them, enabled on the three fleet hosts, as ruled for `host_vitals`. The alternative is on by default. This recommendation is valid until 2026-12-07; the supervisor re-checks it then.
-2. **Who holds the launchd removal** (section 5). Recommended: the operator, per host. Valid until 2026-12-07.
-3. **The three requests to director** (section 3.3). They are director's to schedule; the seat-gap service ships with the stricter outcomes either way.
+Director ruled on three decisions on 2026-11-23, on the operator's direction:
+
+1. **Default switch state:** on for both services, conditional on the section 2.7 proof. Replaces the earlier recommendation of off unless enabled.
+2. **Launchd removal:** the operator's act, per host, as section 5 says, with no wait.
+3. **What director must expose** (section 3.3): a director pull request, routed after this note merges.
