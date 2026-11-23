@@ -30,3 +30,8 @@ content: |
   - Do the study's thresholds (90%, reset more than 12h away, back at the
     recorded reset) hold on a week of real readings? Re-check once FO1 has
     a week on disk.
+
+edges:
+  - target: finding-marvel-s8ej-usage-read-methods
+    type: supports
+    note: "bears on the first OPEN item: a headless get_usage read costs zero tokens and carries windows, resets and credits with no prior request; measured on one host, out-of-cycle resets not observed"

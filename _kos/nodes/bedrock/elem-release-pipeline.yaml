@@ -58,6 +58,9 @@ content: |
 edges:
   - target: aae-orc::elem-rapid-development
     type: implements
+  - target: finding-marvel-5x1s-commit-fails-cannot-run-gpg-when-hook-tools-off-path
+    type: supports
+    note: "the lefthook pre-commit lint step fails a commit when gofumpt and golangci-lint are off PATH; the error ends with a gpg line though ssh signing was intact"
 provenance:
   created_by: human
   session: session-017
