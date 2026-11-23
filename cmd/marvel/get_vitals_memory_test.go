@@ -34,3 +34,26 @@ func TestPrintVitalsShowsSeatAndOrphanRSS(t *testing.T) {
 		t.Errorf("orphan list lacks an RSS column with 3.0 GiB:\n%s", text)
 	}
 }
+
+// Each orphan row shows its start time and its parent chain.
+func TestPrintVitalsShowsOrphanStartAndParents(t *testing.T) {
+	at := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	snap := hostvitals.Snapshot{
+		Enabled: true, Sampled: true, At: &at,
+		Orphans: []hostvitals.Orphan{{
+			PID: 301, Name: "modeld", Reason: hostvitals.ReasonSeatTree, Session: "ws/seat-a",
+			MarkedAt: at, StartedAt: at.Add(-90 * time.Minute), Parents: []string{"sh", "term"},
+		}},
+	}
+	var out bytes.Buffer
+	if err := printVitals(&out, snap, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if !strings.Contains(text, "STARTED") || !strings.Contains(text, "2026-11-19T22:30:00Z") {
+		t.Errorf("orphan list lacks a STARTED column with 2026-11-19T22:30:00Z:\n%s", text)
+	}
+	if !strings.Contains(text, "PARENTS") || !strings.Contains(text, "sh < term") {
+		t.Errorf("orphan list lacks a PARENTS column reading \"sh < term\":\n%s", text)
+	}
+}

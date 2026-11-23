@@ -43,6 +43,12 @@ type Orphan struct {
 	// It is set only for the marker reason.
 	ClaimedSession string    `json:"claimed_session,omitempty"`
 	MarkedAt       time.Time `json:"marked_at"`
+	// Parents are the command names of the orphan's ancestors, nearest first,
+	// as last seen before it lost its parent; empty when it was never seen
+	// with one.
+	Parents []string `json:"parents,omitempty"`
+	// StartedAt is when the process started: the pass time less its elapsed time.
+	StartedAt time.Time `json:"started_at"`
 	// RSSBytes is the orphan's resident memory at the latest pass.
 	RSSBytes uint64 `json:"rss_bytes"`
 	// CPUSecondsSinceMarked is its CPU time now minus its CPU time when marked.
@@ -80,6 +86,9 @@ type OrphanSources struct {
 	RootSession func(pid int) string
 	// Detail reads the arguments and working directory of a process.
 	Detail func(pid int) ProcDetail
+	// Exclude lists bundle or executable paths whose processes are never
+	// counted as orphans. Empty excludes nothing.
+	Exclude []string
 }
 
 // SetOrphanSources gives the sampler its orphan sources. Without them no

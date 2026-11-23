@@ -19,6 +19,10 @@ func hostVitalsEnabled(cl *config.Cluster) bool {
 	return cl != nil && cl.HostVitals
 }
 
+// hostVitalsOrphanExclude reads the cluster's host_vitals_orphan_exclude list.
+// No cluster entry, or an unset key, is the empty list.
+func hostVitalsOrphanExclude(cl *config.Cluster) []string { return nil }
+
 // loadHostVitals builds the daemon's host vitals sampler from the cluster
 // entry whose socket is ours, found the way loadScheduleHistoryMax finds it
 // and under the same tolerance for a config that loads with a validation

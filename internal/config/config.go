@@ -319,6 +319,10 @@ type Cluster struct {
 	// swap and memory pressure read once a minute and reported, nothing acted
 	// on. Unset is off.
 	HostVitals bool `yaml:"host_vitals,omitempty"`
+	// HostVitalsOrphanExclude lists bundle or executable paths whose processes
+	// the host vitals orphan vital never counts. Unset is empty: nothing is
+	// excluded.
+	HostVitalsOrphanExclude []string `yaml:"host_vitals_orphan_exclude,omitempty"`
 	// AllowCredentialReveal lets the daemon answer credential.reveal on its
 	// local socket. Unset or false means reveal is refused.
 	AllowCredentialReveal bool `yaml:"allow_credential_reveal,omitempty"`
