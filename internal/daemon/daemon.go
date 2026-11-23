@@ -245,7 +245,10 @@ type Daemon struct {
 	accountSeries *api.AccountSeries
 	// accountWarn reports an account window reaching the cluster's warning
 	// level, once per window (marvel#1340).
-	accountWarn      *accountWarner
+	accountWarn *accountWarner
+	// logins is the login expiry service, nil until the daemon builds it
+	// (docs/design/native-checks.md section 2).
+	logins           *loginService
 	accountWarnLevel int // 0 when the cluster turned the warning off
 	// limitMenu holds the captured limit-menu samples, the one list the inject
 	// refusal (its Menus) and the pane-menu source and limit action read. Production
