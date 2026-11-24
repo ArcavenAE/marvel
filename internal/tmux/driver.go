@@ -59,6 +59,10 @@ type Driver struct {
 
 	// execTimeout bounds each tmux invocation; zero means DefaultExecTimeout.
 	execTimeout time.Duration
+	// pathPrepend and seatPrefix are the cluster's seat_env (SetSeatEnv). Zero
+	// values leave a pane as it always was.
+	pathPrepend []string
+	seatPrefix  string
 
 	// procs lists processes for the guard that tells a missing socket from a
 	// missing server; nil means `ps -axo pid,args`.
@@ -354,16 +358,32 @@ func (c *tmuxCmd) CombinedOutput() ([]byte, error) {
 // already holds them and which the scrubbed exec in cmd cannot reach. It
 // applies to the first simple command of the pane's line, which is the whole
 // line for every adapter launch; `env -u` is on macOS and GNU coreutils.
-var seatEnvPrefix = func() string {
+var seatEnvPrefix = seatEnvPrefixFor(nil)
+
+// seatEnvPrefixFor is the prefix with the cluster's seat_env.unset names added
+// after the built-in ones.
+func seatEnvPrefixFor(extra []string) string {
 	var b strings.Builder
 	b.WriteString("env")
 	for _, n := range api.InheritedSessionEnv {
 		b.WriteString(" -u ")
 		b.WriteString(n)
 	}
+	for _, n := range extra {
+		b.WriteString(" -u ")
+		b.WriteString(n)
+	}
 	b.WriteString(" ")
 	return b.String()
-}()
+}
+
+// SetSeatEnv sets the cluster's seat_env for every pane NewPaneAt starts:
+// directories put in front of PATH, and variable names removed.
+// Set it before the driver is shared between goroutines, as SetExecTimeout.
+func (d *Driver) SetSeatEnv(pathPrepend, unset []string) {
+	d.pathPrepend = append([]string(nil), pathPrepend...)
+	d.seatPrefix = seatEnvPrefixFor(unset)
+}
 
 // SetExecTimeout sets the bound on one tmux invocation. Zero restores
 // DefaultExecTimeout. Set it before the driver is shared between goroutines.
@@ -609,7 +629,20 @@ func (d *Driver) NewPaneAt(session, command, title, dir string, envs map[string]
 	for k, v := range envs {
 		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
 	}
-	args = append(args, seatEnvPrefix+command)
+	// seat_env.path_prepend: in front of the daemon's own PATH, which is the
+	// one the tmux server started with. A role that sets PATH keeps it.
+	if _, own := envs["PATH"]; !own && len(d.pathPrepend) > 0 {
+		dirs := append([]string(nil), d.pathPrepend...)
+		if p := os.Getenv("PATH"); p != "" {
+			dirs = append(dirs, p)
+		}
+		args = append(args, "-e", "PATH="+strings.Join(dirs, ":"))
+	}
+	prefix := seatEnvPrefix
+	if d.seatPrefix != "" {
+		prefix = d.seatPrefix
+	}
+	args = append(args, prefix+command)
 
 	out, err := d.cmd(args...).CombinedOutput()
 	if err != nil {

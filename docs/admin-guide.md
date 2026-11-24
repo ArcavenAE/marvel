@@ -488,6 +488,40 @@ marvel config remove-cluster staging
 `~/.marvel/config.yaml`. Created automatically on first use with a
 `local` cluster resolving to `~/.marvel/run/marvel.sock`.
 
+### The environment of a seat (`seat_env`)
+
+A seat's pane starts with the environment of the daemon's tmux server, which is
+the environment the daemon was started with. A launchd or systemd daemon has a
+short `PATH` and carries whatever its service file set, so a seat can miss tools
+an interactive shell finds, and can hold variables it should not. The cluster
+entry the daemon runs for can correct both, once, for every seat it starts:
+
+```yaml
+clusters:
+  - name: local
+    socket: ~/.marvel/run/marvel.sock
+    seat_env:
+      path_prepend: ["~/.local/bin", /opt/homebrew/bin]
+      unset: [AWS_PROFILE]
+```
+
+- `path_prepend` puts these directories in front of the daemon's own `PATH` in
+  the pane. A leading `~` is the home of the user the daemon runs as. A role
+  that sets `PATH` in its own `env` keeps its value, and `seat_env` does not
+  touch it.
+- `unset` removes these variables in the pane, beside the session credentials
+  marvel always removes. A name has to be a plain variable name (letters,
+  digits and `_`, not starting with a digit).
+- The block is read when the daemon starts, so a change takes effect at the
+  next daemon start and for seats started after it. Seats already running keep
+  the environment they started with.
+- A block that does not check out (a name with a space or an `=`, a relative
+  directory, a colon inside one) is refused when the config loads. The daemon
+  logs it and starts seats with no `seat_env` instead of failing to start.
+
+It is host policy, so it lives in the daemon's own cluster entry and never in a
+workspace manifest.
+
 ## The message bus
 
 A cluster may declare a message broker. Marvel provisions it, keeps its
