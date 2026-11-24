@@ -19,13 +19,21 @@ read, and why a read failed and since when. It reads the daemon's memory only an
 harness; -o json prints the same document. Login expiry is off unless the cluster config sets
 login_expiry.
 
-get vitals shows the daemon's latest host vitals sample (swap, memory pressure, fseventsd RSS and
-the largest process's RSS, orphan CPU), its time, each threshold with its state, the top processes by
-RSS (command name only, never arguments), the orphans (processes that lost their marvel parent),
-and a GAP line for each vital the design lists and the
+get vitals shows the daemon's latest host vitals sample (swap as GiB used with the swap-ins since the
+last sample where the host keeps a counter, memory pressure, the seats' summed RSS against physical
+memory, the free space of the volumes that hold marvel's home and the teams' work directories,
+fseventsd RSS and the largest process's RSS, orphan CPU and orphan memory), its time, each threshold
+with its state, the top processes by RSS (command name only, never arguments, with the seat each
+belongs to), the orphans (processes that lost their marvel parent, each with its RSS, start time and
+parent chain), and a GAP line for each vital the design lists and the
 sampler does not hold yet. It reads the daemon's memory only, and -o json prints the same record as a
 document. It is diagnostic: nothing gates or acts on it. host vitals is off unless the cluster
-config sets host_vitals.
+config sets host_vitals. A cluster sets host_vitals_orphan_exclude to a list of
+bundle or executable paths whose processes are never counted as orphans; it is empty by default.
+
+A value that is the literal redaction marker a tracked copy of a manifest carries (<value>)
+shows as unset (placeholder) in the workdir, home, login and account cells, and marvel doctor
+warns for each seat whose env holds it.
 
 AGE is the time since the session was created, as 45s, 9m, 2h9m or 3d4h; a - means
 the row has no creation time.

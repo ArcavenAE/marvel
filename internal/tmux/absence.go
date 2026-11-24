@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -61,10 +60,6 @@ func classifyAbsence(text string) absence {
 // procList lists processes as `ps -axo pid,args` does; a test replaces it.
 type procList func(ctx context.Context) ([]byte, error)
 
-func psAll(ctx context.Context) ([]byte, error) {
-	return exec.CommandContext(ctx, "ps", "-axo", "pid,args").Output()
-}
-
 // serverAbsent reports whether tmux's stderr means there is no server to ask.
 // It is the one rule every caller that reads tmux's stderr applies: a server
 // answer that says "no server", or that the socket is missing or refused, is
@@ -106,7 +101,7 @@ func (d *Driver) serverProcessAlive() (bool, error) {
 	defer cancel()
 	list := d.procs
 	if list == nil {
-		list = psAll
+		list = defaultProcList
 	}
 	out, err := list(ctx)
 	if err != nil {

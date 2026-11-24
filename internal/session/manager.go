@@ -986,6 +986,9 @@ func (m *Manager) Create(sess *api.Session) error {
 	if err := m.checkWorkDir(sess); err != nil {
 		return err
 	}
+	if err := m.checkEnvPlaceholder(sess); err != nil {
+		return err
+	}
 	image, inContainer, err := m.containerPlacement(sess)
 	if err != nil {
 		return err
@@ -1292,6 +1295,31 @@ func (m *Manager) checkWorkDir(sess *api.Session) error {
 	msg := fmt.Sprintf("not started: the directory %s for %s/%s %s; tmux would start it in $HOME", sess.WorkDir, sess.Team, sess.Role, why)
 	m.noteRefusal(sess, key, RefusalDirectory, events.KindSessionPlacementRefused, sess.WorkDir, msg)
 	return fmt.Errorf("refuse to start session %s: directory %s %s: %w", sess.Key(), sess.WorkDir, why, ErrPlacementRefused)
+}
+
+// envPlaceholderRefusalSuffix keys the placeholder refusal apart from the
+// directory one, so each clears on its own.
+const envPlaceholderRefusalSuffix = "#env-placeholder"
+
+// checkEnvPlaceholder refuses a spawn whose role env holds the literal
+// redaction marker a tracked copy of a manifest carries in place of a secret.
+// The apply guard refuses it at apply time; this covers a spec stored before
+// the guard, a schedule that kept it, and every path that spawns from a stored
+// spec (scale, converge, shift, a scheduled firing). The message names each
+// key and the literal, never another value. No row exists yet, so none is left.
+func (m *Manager) checkEnvPlaceholder(sess *api.Session) error {
+	key := sess.Workspace + "/" + sess.Team + "/" + sess.Role + envPlaceholderRefusalSuffix
+	m.refusedMu.Lock()
+	defer m.refusedMu.Unlock()
+	keys := api.EnvPlaceholderKeys(sess.Runtime.Env)
+	if len(keys) == 0 {
+		delete(m.refused, key)
+		return nil
+	}
+	why := fmt.Sprintf("env %s holds the literal %s, a redaction marker from a tracked copy of a manifest", strings.Join(keys, ", "), api.EnvPlaceholder)
+	msg := fmt.Sprintf("not started: %s/%s: %s; apply the manifest that holds the real values", sess.Team, sess.Role, why)
+	m.noteRefusal(sess, key, RefusalEnvPlaceholder, events.KindSessionPlacementRefused, "", msg)
+	return fmt.Errorf("refuse to start session %s: %s: %w", sess.Key(), why, ErrEnvPlaceholderRefused)
 }
 
 // harnessHomeRefusalSuffix keys the harness home refusal apart from the
@@ -2775,6 +2803,13 @@ type BusEnv interface {
 // any other spawn failure.
 var ErrPlacementRefused = errors.New("placement refused")
 
+// ErrEnvPlaceholderRefused is the placement refusal for a role env that holds
+// the redaction marker. It wraps ErrPlacementRefused, so every caller that
+// treats a refusal as a placement refusal still does, and a caller that must
+// tell it apart (it never clears by itself, unlike a missing directory) asks
+// errors.Is for this one.
+var ErrEnvPlaceholderRefused = fmt.Errorf("env placeholder: %w", ErrPlacementRefused)
+
 // checkExposure refuses a session for a role that writes a function its slot has
 // read. Every spawn path ends in Create, so this is the one place the ad-hoc run,
 // a shift successor and a reconcile spawn all pass; the planner and the shift
@@ -2828,6 +2863,7 @@ const (
 	RefusalContainerRuntime = "container runtime"
 	RefusalHarnessHome      = "harness home"
 	RefusalPrivateDir       = "private directory"
+	RefusalEnvPlaceholder   = "env placeholder"
 	// The reasons a profiled spawn is refused; all key under #sandbox.
 	RefusalSandboxHost      = "sandbox host"
 	RefusalSandboxProfile   = "sandbox profile"

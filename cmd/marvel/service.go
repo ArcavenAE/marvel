@@ -49,7 +49,20 @@ func loginCell(s api.Session) string {
 	if s.Runtime.AccountLabel == "" {
 		return "-"
 	}
-	return s.Runtime.AccountLabel
+	return placeholderCell(s.Runtime.AccountLabel)
+}
+
+// placeholderWord is what a cell says in place of the redaction marker a tracked
+// copy of a manifest carries where a secret or path was removed. The marker is
+// never a real value, so the cell says the value is unset, in words.
+const placeholderWord = "unset (placeholder)"
+
+// placeholderCell is v, or placeholderWord when v is the redaction marker.
+func placeholderCell(v string) string {
+	if api.IsEnvPlaceholder(v) {
+		return placeholderWord
+	}
+	return v
 }
 
 // clusterCell is the cluster a row was read from, or a dash on a plain read.
@@ -107,6 +120,9 @@ func serviceHome(s api.Session, homes serviceHomes) string {
 	home := clientAccountKey(s).ConfigHome
 	if home == "" {
 		return defaultHomeWord
+	}
+	if api.IsEnvPlaceholder(home) {
+		return placeholderWord
 	}
 	last := filepath.Base(home)
 	if last == defaultHomeWord || homes.collides(s.Cluster, last) {
