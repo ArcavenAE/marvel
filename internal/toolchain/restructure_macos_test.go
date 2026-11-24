@@ -839,3 +839,110 @@ func hasTests(t *testing.T, dir string) bool {
 	}
 	return len(matches) > 0
 }
+
+// macOSGoTestTimeout is the per-package test timeout the macOS restructure job
+// passes to go test. The Go default is 10m. On a slow hosted runner the same
+// job took two to three times its usual step times (setup, installs and tests
+// alike), and internal/daemon and internal/bus ran into the 10m default with
+// nothing hung. Twice the default leaves room for the worst slowdown measured
+// (about 2.6 times a 285 to 348 s step, so under 15 minutes) while a hung test
+// still fails the job, only later.
+const macOSGoTestTimeout = "20m"
+
+// restructureTimeoutGaps returns why the restructure-macos job's go test
+// command does not set the go test timeout, or nothing when it does. It reads
+// only that job's step run text, so a timeout on a go test line in another job
+// does not count. -timeout 20m and -timeout=20m both pass, since go test takes
+// either spelling; the command is read as fields, with a continued line
+// joined, and comment lines skipped.
+func restructureTimeoutGaps(path string) []string {
+	jobs, err := ciJobs(path)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	job, ok := jobs["restructure-macos"]
+	if !ok {
+		return []string{"ci.yml has no restructure-macos job"}
+	}
+	var gaps []string
+	commands := 0
+	for _, step := range job.Steps {
+		var lines []string
+		for _, line := range strings.Split(strings.ReplaceAll(step.Run, "\\\n", " "), "\n") {
+			if l := strings.TrimSpace(line); !strings.HasPrefix(l, "#") {
+				lines = append(lines, l)
+			}
+		}
+		for _, l := range lines {
+			f := strings.Fields(l)
+			if len(f) < 2 || f[0] != "go" || f[1] != "test" {
+				continue
+			}
+			commands++
+			timeout := ""
+			for i, w := range f {
+				switch {
+				case w == "-timeout" && i+1 < len(f):
+					timeout = f[i+1]
+				case strings.HasPrefix(w, "-timeout="):
+					timeout = strings.TrimPrefix(w, "-timeout=")
+				}
+			}
+			if timeout != macOSGoTestTimeout {
+				gaps = append(gaps, fmt.Sprintf("the restructure-macos go test command %q has -timeout %q, want %s", l, timeout, macOSGoTestTimeout))
+			}
+		}
+	}
+	if commands == 0 {
+		gaps = append(gaps, "the restructure-macos job runs no go test command")
+	}
+	return gaps
+}
+
+// TestMacOSRestructureTestLineSetsAGoTimeout holds the restructure job's
+// go test line to an explicit -timeout, so a slow runner does not turn a
+// healthy package into a timeout panic.
+func TestMacOSRestructureTestLineSetsAGoTimeout(t *testing.T) {
+	t.Parallel()
+	ci := filepath.Join("..", "..", ".github", "workflows", "ci.yml")
+	if gaps := restructureTimeoutGaps(ci); len(gaps) > 0 {
+		t.Errorf("%s", strings.Join(gaps, "\n"))
+	}
+}
+
+// TestMacOSTimeoutGuardReadsTheRestructureJobOnly mutates ci.yml and holds the
+// guard to the restructure-macos job: a timeout on a go test line in another
+// job must not satisfy it, and the equals spelling go accepts must.
+func TestMacOSTimeoutGuardReadsTheRestructureJobOnly(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	const line = "go test -json -count=1 -race -timeout 20m \\\n"
+	const next = "  goreleaser-check:\n"
+	if strings.Count(text, line) != 1 || strings.Count(text, next) != 1 {
+		t.Fatalf("ci.yml anchors are stale: %d copies of the test line, %d of the next job", strings.Count(text, line), strings.Count(text, next))
+	}
+	decoy := "  decoy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          go test -json -count=1 -race -timeout 20m \\\n            ./x/...\n"
+	for _, c := range []struct {
+		name string
+		text string
+		gap  bool
+	}{
+		{"as committed", text, false},
+		{"equals spelling", strings.Replace(text, line, "go test -json -count=1 -race -timeout=20m \\\n", 1), false},
+		{"flag removed", strings.Replace(text, line, "go test -json -count=1 -race \\\n", 1), true},
+		{"wrong value", strings.Replace(text, line, "go test -json -count=1 -race -timeout 10m \\\n", 1), true},
+		{"flag removed, another job carries it", strings.Replace(strings.Replace(text, line, "go test -json -count=1 -race \\\n", 1), next, decoy+next, 1), true},
+	} {
+		p := filepath.Join(t.TempDir(), "ci.yml")
+		if err := os.WriteFile(p, []byte(c.text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := len(restructureTimeoutGaps(p)) > 0; got != c.gap {
+			t.Errorf("%s: gap = %v, want %v (%v)", c.name, got, c.gap, restructureTimeoutGaps(p))
+		}
+	}
+}

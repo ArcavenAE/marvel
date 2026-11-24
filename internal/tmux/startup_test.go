@@ -42,9 +42,7 @@ func newStartupFake(t *testing.T, sessionThere bool) (*startupFake, *Driver) {
 		"esac\n" +
 		"echo \"" + noServerText + "\" >&2\nexit 1\n"
 	script := filepath.Join(dir, "tmux")
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, []byte(body))
 	warmFake(t, script)
 	d := &Driver{binary: script, socket: "unit", procs: procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d")}
 	return f, d
@@ -148,9 +146,7 @@ func TestATimeoutIsNeverRetried(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls")
 	script := filepath.Join(dir, "tmux")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\ncase \"$*\" in warm) exit 0;; esac\necho \"$*\" >> "+log+"\necho \""+noServerText+"\" >&2\nexec sleep 5\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, []byte("#!/bin/sh\ncase \"$*\" in warm) exit 0;; esac\necho \"$*\" >> "+log+"\necho \""+noServerText+"\" >&2\nexec sleep 5\n"))
 	warmFake(t, script)
 	d := &Driver{binary: script, socket: "unit", procs: procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d")}
 	d.SetExecTimeout(2 * time.Second)
@@ -197,9 +193,7 @@ func textFake(t *testing.T, text string, procs procList) (*startupFake, *Driver)
 		"if [ -e " + f.ready + " ]; then exit 0; fi\n" +
 		"echo \"" + text + "\" >&2\nexit 1\n"
 	script := filepath.Join(dir, "tmux")
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, []byte(body))
 	warmFake(t, script)
 	return f, &Driver{binary: script, socket: "unit", procs: procs}
 }

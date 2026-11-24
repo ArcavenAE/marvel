@@ -481,6 +481,12 @@ func checkSeats(r *doctorReport, in doctorInput) {
 		return
 	}
 	for _, s := range sessions {
+		if s.TCCDenyNote != "" {
+			r.line(statWarn, "tcc-deny", fmt.Sprintf("seat %s started without the privacy-folder deny: %s", s.Name, firstLine(s.TCCDenyNote)), "")
+		}
+		if keys := api.EnvPlaceholderKeys(s.Runtime.Env); len(keys) > 0 {
+			r.line(statWarn, "env-placeholder", fmt.Sprintf("seat %s holds the redaction marker %s in env %s; it was applied from a tracked copy, so apply the manifest that holds the real values", s.Name, api.EnvPlaceholder, strings.Join(keys, ", ")), "")
+		}
 		name := "seat " + s.Name
 		switch s.Pane {
 		case "prompt":

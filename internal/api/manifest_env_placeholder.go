@@ -11,6 +11,24 @@ import (
 // exactly is a copy applied raw.
 const EnvPlaceholder = "<value>"
 
+// IsEnvPlaceholder reports whether v is the redaction marker, after trimming
+// space. A value that merely contains the text is a real value.
+func IsEnvPlaceholder(v string) bool { return strings.TrimSpace(v) == EnvPlaceholder }
+
+// EnvPlaceholderKeys lists the keys of env that hold the marker, sorted. It
+// returns values never: the marker is the only value it could name, and the
+// other values may be secrets.
+func EnvPlaceholderKeys(env map[string]string) []string {
+	var keys []string
+	for k, v := range env {
+		if IsEnvPlaceholder(v) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // ValidateEnvPlaceholders refuses a manifest whose role env holds the literal
 // EnvPlaceholder. Applied as it stands, the literal would reach the seat's
 // environment and nothing would say the real value was missing. Every offending

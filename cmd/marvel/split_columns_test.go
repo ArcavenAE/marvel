@@ -48,7 +48,7 @@ func cellsOf(t *testing.T, cols string, sessions ...api.Session) map[string][]st
 }
 
 func TestAcctSetExpandsToSplitColumns(t *testing.T) {
-	wantAcct := []string{"ACCOUNT", "5H%", "7D%", "5H-RESET", "7D-RESET", "READ"}
+	wantAcct := []string{"ACCOUNT", "7D%", "7D-RESET", "READ"}
 	if got := headersOf(columnsOrFatal(t, "acct", nil)); !slices.Equal(got, wantAcct) {
 		t.Errorf("--columns acct = %v, want %v", got, wantAcct)
 	}
@@ -59,7 +59,7 @@ func TestAcctSetExpandsToSplitColumns(t *testing.T) {
 		t.Errorf("--columns service = %v, want RUNTIME BACKEND CRED HOME LOGIN", got)
 	}
 	got := headersOf(columnsOrFatal(t, "name,acct,age", nil))
-	want := []string{"AGENT NAME", "ACCOUNT", "5H%", "7D%", "5H-RESET", "7D-RESET", "READ", "AGE"}
+	want := []string{"AGENT NAME", "ACCOUNT", "7D%", "7D-RESET", "READ", "AGE"}
 	if !slices.Equal(got, want) {
 		t.Errorf("name,acct,age = %v, want the set expanded in place: %v", got, want)
 	}
@@ -389,5 +389,32 @@ func TestGetSessionsJSONCarriesTheLimitFiguresUnchanged(t *testing.T) {
 	}
 	if strings.Contains(out, "44%?") {
 		t.Errorf("a table cell with its stale mark leaked into the json:\n%s", out)
+	}
+}
+
+// The set acct no longer carries the five-hour columns, which have nothing to
+// show on the logins fleets use; they stay available by name, so the help text
+// says to add them by hand and no longer says the set names all six.
+func TestGetHelpNamesTheAcctSetWithoutTheFiveHourColumns(t *testing.T) {
+	long := getCmd().Long
+	if strings.Contains(long, "names all six") {
+		t.Errorf("get --help still says the set acct names all six")
+	}
+	mustContain(t, "get --help", long, "5h and 5h-reset are not in acct; add them by name")
+}
+
+// Guard: the five-hour columns stay selectable by name, print their header, and
+// show a dash where a row has no reading. This passes before the acct change
+// and must keep passing.
+func TestFiveHourColumnsByNameStillPrintAndShowDashes(t *testing.T) {
+	if got := headersOf(columnsOrFatal(t, "5h,5h-reset", nil)); !slices.Equal(got, []string{"5H%", "5H-RESET"}) {
+		t.Errorf("--columns 5h,5h-reset = %v, want 5H%% and 5H-RESET", got)
+	}
+	old := acctSession("old", "/acct/a", api.ReadingFresh, "fresh 99% (five_hour)")
+	if got := cellsOf(t, "5h,5h-reset", old)["old"]; !slices.Equal(got, []string{"-", "-"}) {
+		t.Errorf("a row with no stamped windows = %v, want two dashes", got)
+	}
+	if got := cellsOf(t, "5h", splitSession("s"))["s"]; !slices.Equal(got, []string{"44%"}) {
+		t.Errorf("a row with a five-hour window = %v, want 44%%", got)
 	}
 }

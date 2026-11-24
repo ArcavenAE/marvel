@@ -44,9 +44,7 @@ cat "$d/$scope.out"
 cat "$d/$scope.err" >&2
 exit "$rc"
 `
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, []byte(body))
 	d := &Driver{binary: script, socket: "unit"}
 	// A short bound only where the test wants the call to hang; elsewhere a
 	// loaded host must not turn a slow script into a false unknown.

@@ -19,9 +19,7 @@ func hungDriver(t *testing.T, stderrText string) *Driver {
 		body += "echo \"" + stderrText + "\" >&2\n"
 	}
 	body += "sleep 60\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, []byte(body))
 	d := &Driver{binary: script, socket: "unit"}
 	d.SetExecTimeout(300 * time.Millisecond)
 	return d
@@ -91,9 +89,7 @@ func TestTimeoutIsNotPaneGone(t *testing.T) {
 
 func TestExecWithinBoundIsUnaffected(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "tmux")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '0\\t\\t\\t1\\n'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, []byte("#!/bin/sh\nprintf '0\\t\\t\\t1\\n'\n"))
 	d := &Driver{binary: script, socket: "unit"}
 	d.SetExecTimeout(5 * time.Second)
 	st, err := d.PaneStatus("%1")
@@ -122,9 +118,7 @@ func TestNewSessionDoesNotCreateAfterHasSessionTimesOut(t *testing.T) {
 	marker := filepath.Join(dir, "new-session-ran")
 	script := filepath.Join(dir, "tmux")
 	body := "#!/bin/sh\ncase \"$4\" in\nhas-session) sleep 60 ;;\nnew-session) : > " + marker + " ;;\nesac\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, []byte(body))
 	d := &Driver{binary: script, socket: "unit"}
 	d.SetExecTimeout(300 * time.Millisecond)
 

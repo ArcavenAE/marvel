@@ -31,7 +31,7 @@ From the harness, by asking its own status command, never from its credential st
 
 `service-column.md` section 3.3 deferred a per-seat `auth status` probe because it makes marvel cause a credential read for every seat it launches and returns an email and organization that marvel would have to drop before storing. This reading clears the second reason by the decode described above, and the first by being one read per login every few hours rather than one per spawn, run only for a login a seat already uses, so it asks the harness nothing the seat's own start has not already asked.
 
-The answer carries personal data (an email address, an organization name and id) next to the three fields wanted. The daemon decodes stdout in memory into a struct of exactly `loginExpiresAt`, `loggedIn` and `subscriptionType`, so the other fields are dropped by the decoder and never reach a variable, a log line, an event or a file. The harness reads its own keychain entry to answer (`service-column.md` section 1.1); marvel sees only the answer. That keeps the custody line of SOUL section 3: marvel holds no third-party bearer material, and does not read any.
+The answer carries personal data (an email address, an organization name and id) next to the three fields wanted. The daemon decodes stdout in memory into a struct of exactly `loginExpiresAt`, `loggedIn` and `subscriptionType`, so the other fields never reach a value marvel keeps. The raw bytes sit in a capped buffer only until the decode and are then dropped; no decoded value, log line, event or file holds them. The harness reads its own keychain entry to answer (`service-column.md` section 1.1); marvel sees only the answer. That keeps the custody line of SOUL section 3: marvel holds no third-party bearer material, and does not read any.
 
 Measured cost, from `service-column.md` section 1.1: about 0.2 s and 155 MB peak for the child, no network, no writes under a write-deny profile for a logged-in home. A logged-out home makes the harness write its own config (`seat-bootstrap.md` section on the login check), no more than the seat writes a second later.
 
@@ -43,9 +43,11 @@ The set of account keys of the sessions the store holds and the manifest declare
 
 The key is cleaned, but the harness is not forgiving: `claude auth status` reports `loggedIn: false` when `CLAUDE_CONFIG_DIR` has a trailing slash or names a parent directory (finding `finding-marvel-s8ej-usage-read-methods`). So the call uses the spelling taken from a seat's own environment (`ClaudeConfigDirEnv`), and the key only names the result. Where two seats of one key carry different spellings, the first spelling that answers `loggedIn: true` is used. A `loggedIn: false` from a spelling no seat uses is never reported.
 
+A declared seat with no live session is covered by the seat-gap check (section 3), not by login expiry: a login belongs to an account and not to a seat, and an account no live seat uses is not being spent.
+
 ### 2.3 Schedule
 
-At daemon start, after the store attaches, then every 6 hours; every hour while any known expiry is within 96 hours, so a renewal is seen within the hour. One login is asked at a time, from one goroutine, with at most one call in flight, so the metrics pass never waits on it. A host with no claude seat asks nothing.
+At daemon start, after the store attaches, then every 6 hours; every hour while any known expiry is within 96 hours, and also every hour while any login is expiring, lapsed or unreadable, because the hourly read is what notices a renewal or a recovery, so a renewal is seen within the hour. One login is asked at a time, from one goroutine, with at most one call in flight, so the metrics pass never waits on it. A host with no claude seat asks nothing.
 
 ### 2.4 States and events
 
@@ -62,12 +64,12 @@ Events carry no email, organization, subscription detail beyond its type, or pat
 ### 2.5 Where it shows
 
 - `marvel get vitals`: a threshold row "login expiry", line "72 hours", state crossed when any key is `expiring` or `lapsed`, with the soonest expiry in its detail.
-- `marvel get account-logins` (new, beside `get account-readings`): one row per key with state, expiry, hours left and when it was read. Table and `-o json`. Never a row of zeros for an unread key; an unread key says why.
+- `marvel get account-logins` (new, beside `get account-readings`): one row per key with state, expiry, hours left, the last good read and, for a failed read, its fixed reason and when the run of failures began (`failing_since`). Table and `-o json`. Never a row of zeros for an unread key; an unread key says why. A daemon whose switch is off says so and does not answer an empty list. Built; the vitals row and the doctor line are next.
 - `marvel doctor`: the `login` line reads the daemon's answer when a daemon is reachable, and keeps today's exit-status check when it is not.
 
 ### 2.6 Switch
 
-`login_expiry` and `seat_gap` on the cluster entry, beside `host_vitals`, each on unless set to false. Director ruled both services on by default (2026-11-23): they are native services, and a marvel user should not have to turn on a check that protects them from a lapse. This departs from the `host_vitals` ruling (off unless enabled) on purpose, and it carries one condition: the proof step in section 2.7. If `claude auth status` run as a daemon child raises a keychain dialog, `login_expiry` ships off by default until that is fixed, and the release notes say why. `seat_gap` runs no keychain read and is not affected.
+`login_expiry` and `seat_gap` on the cluster entry, beside `host_vitals`. Director ruled both services on by default (2026-11-23): they are native services, and a marvel user should not have to turn on a check that protects them from a lapse. This departs from the `host_vitals` ruling (off unless enabled) on purpose, and it carries one condition: the proof step in section 2.7. In the code, `login_expiry` ships off by default (`config.DefaultLoginExpiry`, false) until the proof is recorded for the fleet's hosts; the constant is the one line that turns it on, and the release notes say so. If `claude auth status` run as a daemon child raises a keychain dialog, it stays off until that is fixed. `seat_gap` runs no keychain read and is not affected.
 
 ### 2.7 The keychain prompt question
 
@@ -75,6 +77,7 @@ The harness reads its keychain entry as a child of the marvel daemon, through `/
 
 - **Which process the keychain judges: unmeasured.** Whether an item's access control and the privacy daemon judge the requesting binary (`claude`, or the `security` it forks) or the responsible process up the parent chain (the daemon) has not been measured on this fleet, and no source is cited here. `egress-credential-front.md` covers partition lists for marvel's own items, not this case. The first build PR measures it before any default changes.
 - **Proof step, run on each fleet host before the release that turns the service on by default:** one scheduled read with the daemon as parent logs 0 `tccd` authorization-request lines in the unified log for the window of the read, logs 0 lines from a process named `SecurityAgent` in the same window (`log show --predicate 'process == "SecurityAgent"'`), and raises 0 keychain dialogs that name marvel. A keychain access prompt is likely to come from `SecurityAgent` and not `tccd`; that is not measured either, which is why both are counted. The count and the log query are recorded in the PR, with the host's before and after. A host that shows either leaves `login_expiry` off by default until it is fixed, and the finding goes to the supervisor.
+- **Measured so far (2026-11-23, one host, a login already admitted by the keychain):** three reads of `claude auth status --json`, each run from a seat's own process chain and not from the daemon, each bracketed by a `log show` window of its own length plus 2 seconds. In every window the `SecurityAgent` process logged 0 lines and `tccd` logged 0 authorization-request lines (`AUTHREQ`); one window held two `tccd` `TCCAccessCopyInformationForBundle` lines from another process, which are not authorization requests. No dialog appeared. This does not settle which process is judged: the login was already admitted, so a prompt would not show, and the parent was not the daemon. The daemon-as-parent run on each fleet host is still the proof step above.
 - **If the daemon is the judged process**, the login-expiry service ships off by default and the note's fallback is a read by the seat's own harness process, which the keychain already admits: a one-line status file the seat writes through its own `claude auth status`, read by the daemon. That fallback is not designed here.
 
 ## 3. Seat gap
@@ -152,3 +155,23 @@ Director ruled on three decisions on 2026-11-23, on the operator's direction:
 1. **Default switch state:** on for both services, conditional on the section 2.7 proof. Replaces the earlier recommendation of off unless enabled.
 2. **Launchd removal:** the operator's act, per host, as section 5 says, with no wait.
 3. **What director must expose** (section 3.3): a director pull request, routed after this note merges.
+
+## 9. Service install
+
+The two checks started as host-side services that someone installed by hand on each host, and the install of those services drifted. An inventory of the fleet's hosts, taken when the checks were stopped, found five things, numbered 1 to 5: three install-drift risks (1 to 3) and two facts about how the services came to be where they were (4 and 5).
+
+1. **The check scripts resolve into a builder's worktree.** On one host the installed entry points are links into a git worktree owned by a build seat, not into an installed copy. Removing or switching that worktree, which its owner may do at any time under the worktree rules, breaks the service with no change to the service itself.
+2. **A bus agent runs from a probe folder in a shared checkout.** On one host a bus agent is started from a folder inside a checkout that several sessions share. A branch change in that checkout changes the code the live service runs.
+3. **The daemon and its bus run inside a terminal multiplexer session.** On one host they do not survive a reboot, because no service definition starts them again afterwards. The first sign is silence. This describes a missing definition; it is not a task assigned by this note.
+4. **Most of the agents are tracked nowhere.** On one host three of five agents are described in no repository, so no review saw them and no reader can say what they should be.
+5. **Login expiry had three install paths on three hosts,** and none of them was a tracked installer. The same service was therefore three different things.
+
+All five come from the same condition: a service whose definition lives only on the host it runs on.
+
+### 9.1 What the native services remove
+
+Login expiry and seat gap run inside the daemon (sections 2 and 3). A host that runs marvel has no host-side install for either: no agent definition, no script path, no worktree link, no checkout to keep stable. Items 1, 2 and 5 cannot occur for these two services, and the services are tracked because they are marvel's own code and configuration. The services restart and persist with the daemon, so they are as durable as the daemon is.
+
+### 9.2 What stays out of scope
+
+Items 3 and 4 are not removed by this change, because they are about the daemon and the other services around it, not these two checks. Installing a service so that it survives a reboot and restarts on failure (a keep-alive definition per host), and tracking such definitions in a repository, is the gap `finding-marvel-lt30-marvel-service-provisioning-lifecycle-gap.md` names: marvel's service record covers running a service, not installing, configuring, upgrading or persisting one. This note does not design that and does not touch any host's service definitions. Where a host's daemon and bus run in a multiplexer session, that stays a finding for the provisioning work until it is built.

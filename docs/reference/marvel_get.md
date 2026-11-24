@@ -1,6 +1,6 @@
 ## marvel get
 
-List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, account-readings, vitals)
+List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, account-readings, account-logins, vitals)
 
 ### Synopsis
 
@@ -12,6 +12,12 @@ on disk and read back at start, so the list and the stale rows of get budgets su
 --account keeps the accounts whose key contains the text, and --since 1h keeps readings no older
 than that. -o json prints the same list. It reads the history only and asks nothing of any
 harness; nothing gates or acts on it.
+
+get account-logins lists each login's expiry state as the daemon's login expiry service last read it:
+the state (ok, expiring, lapsed or unreadable), the expiry in UTC, whole hours left, when it was last
+read, and why a read failed and since when. It reads the daemon's memory only and asks nothing of any
+harness; -o json prints the same document. Login expiry is off unless the cluster config sets
+login_expiry.
 
 get vitals shows the daemon's latest host vitals sample (swap as GiB used with the swap-ins since the
 last sample where the host keeps a counter, memory pressure, the seats' summed RSS against physical
@@ -25,11 +31,15 @@ document. It is diagnostic: nothing gates or acts on it. host vitals is off unle
 config sets host_vitals. A cluster sets host_vitals_orphan_exclude to a list of
 bundle or executable paths whose processes are never counted as orphans; it is empty by default.
 
+A value that is the literal redaction marker a tracked copy of a manifest carries (<value>)
+shows as unset (placeholder) in the workdir, home, login and account cells, and marvel doctor
+warns for each seat whose env holds it.
+
 AGE is the time since the session was created, as 45s, 9m, 2h9m or 3d4h; a - means
 the row has no creation time.
 
-The account columns (opt-in; the set acct names all six, and wide holds account, 7d,
-7d-reset and read) each carry one fact: ACCOUNT is the display name display.account_names
+The account columns (opt-in; the set acct names account, 7d, 7d-reset and read, and wide
+holds the same four; 5h and 5h-reset are not in acct; add them by name) each carry one fact: ACCOUNT is the display name display.account_names
 gives the account, else the label the role declared, else a short key; 5H% and 7D% are
 the percent used, with a trailing ? once the reading is stale (the number is kept);
 5H-RESET and 7D-RESET are the time to reset as +2d3h or +47m, now once past; READ is
@@ -108,6 +118,14 @@ a bill and covers statusline seats only. HIT% is never summed. TOUT and COST are
 separate fields and nothing converts tokens to dollars. A wide line breaks between
 fields onto a second totals line. Every total is diagnostic only: nothing gates or acts
 on it.
+
+With --all-clusters or a cluster list, the one-shot read prints a summary table above the
+merged sessions table instead, on a terminal or with --header: one aligned row per
+cluster that answered, a TOTAL row, and a note under it for each column, for a + lower
+bound, for a column that covers fewer sessions than its row, for a cluster that was
+still starting and for a cluster that shares a daemon with another. A cluster that
+answered gets no status line on stderr then; every other outcome keeps its line, and the
+lines follow the table. The single-cluster line and the watch frame are unchanged.
 
 A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat reported
 it, which is weaker than token flow: * reported by statusline or heartbeat,

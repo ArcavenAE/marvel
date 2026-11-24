@@ -82,6 +82,30 @@ reads as a routing problem. The permission prompt can sit unanswered on a
 fresh machine, so grant it to the terminal that will run the daemon and its
 checks before testing any LAN path.
 
+### macOS: seats do not read the privacy folders
+
+On macOS a command a seat runs is charged to the daemon, so a seat that walks
+the home folder (`du -sh ~`, a `find` from `~`) makes macOS ask "marvel would
+like to access" Music, Photos, Documents and the like. Marvel starts every seat
+under a sandbox-exec profile that refuses those paths, so the walk fails inside
+the seat and no prompt is raised. It needs no setting.
+
+The profile denies read and write on `Desktop`, `Documents`, `Downloads`,
+`Music`, `Pictures`, `Movies`, `Library/Mobile Documents`, `Library/Calendars`,
+`Library/Mail`, `Library/Messages`, `Library/Safari` and
+`Library/Application Support/AddressBook` under the home folder, on
+`~/OrbStack`, on `/Volumes`, and on every mount of type `nfs`, `smbfs`, `afpfs`
+or `webdav` found when the seat starts. A network mount made after a seat starts
+is covered by that seat's next start. A seat's own working directory is allowed
+back when it lies under one of these folders.
+
+A role that must read one of these folders sets `tcc_deny = false` (YAML:
+`tcc_deny: false`). A role that runs `sandbox-exec` itself sets it, because an
+inner `sandbox-exec` fails under an outer profile ("sandbox_apply: Operation not
+permitted"); such a role carries the same deny rules in its own profile. A role
+that names `sandbox_profile` gets the deny rules appended after its profile.
+Linux hosts are unchanged. The design is in `docs/design/seat-tcc-deny.md`.
+
 ## Starting the daemon
 
 ### Local only (default)

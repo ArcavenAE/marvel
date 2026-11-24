@@ -149,7 +149,7 @@ guess.
 
 `acct` and `service` stay as named sets that expand in place, as `wide` does,
 so a saved `display.session_columns` keeps working: `acct` expands to
-`account,5h,7d,5h-reset,7d-reset,read`, and `service` to
+`account,7d,7d-reset,read` (the five-hour columns stay available by name, `5h` and `5h-reset`, and are no longer in the set), and `service` to
 `runtime,backend,cred,home,login`. Every new column is opt-in, so the default
 table is unchanged. `wide` gains `account`, `7d`, `7d-reset` and `read`, so a
 stale figure's age is in view wherever the figure is. `rest` picks up every new

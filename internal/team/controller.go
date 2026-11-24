@@ -1579,6 +1579,13 @@ func (c *Controller) applyRolePlan(t *api.Team, role *api.Role, plan RolePlan) {
 			if err == nil && sess.Predecessor != "" {
 				c.crashPredecessorTaken(t, plan.Role, plan.Generation, sess.Predecessor)
 			}
+			// Only a refusal that never clears by itself is recorded as a failed
+			// run: a missing directory or a busy harness home can clear on the
+			// next pass, and recording it would spend a retry or freeze a
+			// schedule that used to skip and try again.
+			if err != nil && errors.Is(err, session.ErrEnvPlaceholderRefused) && role.Schedule != nil && plan.Firing != "" {
+				c.recordRefusedFiring(t, role, sess, err)
+			}
 			if err != nil && !errors.Is(err, session.ErrPlacementRefused) && !errors.Is(err, session.ErrExposureRefused) && !errors.Is(err, session.ErrSettingsFileRefused) {
 				log.Printf("reconcile: create session %s: %v", name, err)
 			}
@@ -3018,4 +3025,50 @@ func (c *Controller) HealthVisits() func(*api.Session) bool {
 		teamCache[t.Key()] = t
 	}
 	return func(sess *api.Session) bool { return healthVisits(teamCache, sess) }
+}
+
+// recordRefusedFiring gives a firing whose spawn was refused the trace a run
+// that started would have: a failed run row that carries the reason, the
+// attempt settled the way a failed run settles it (retries, on_failure), and a
+// schedule.skipped event that names the firing. A refused spawn creates no
+// session, so without this the firing read as current with nothing run and the
+// only word was a placement event the ring could roll over. on_failure = wait
+// holds nothing: the next firing runs as declared.
+func (c *Controller) recordRefusedFiring(t *api.Team, role *api.Role, sess *api.Session, cause error) {
+	now := c.nowUTC()
+	key := t.Workspace + "/" + t.Name + "/" + role.Name
+	policy := *role.Schedule
+	rec := api.RunRecord{
+		Session:   sess.Key(),
+		Firing:    sess.Firing,
+		StartedAt: now,
+		EndedAt:   now,
+		Outcome:   api.RunFailed,
+	}
+	rec.SetResult("not started: " + cause.Error())
+	var froze bool
+	if _, err := c.store.UpdateScheduleStatus(key, func(st *api.ScheduleStatus) bool {
+		if st.Firing != sess.Firing {
+			return false
+		}
+		rec.DueAt, rec.CatchUp = st.FiringDueAt, st.FiringCatchUp
+		st.AddRun(rec, policy.HistoryBound())
+		froze = st.SettleRun(rec, policy, now)
+		return true
+	}); err != nil {
+		log.Printf("warning: firing %s of %s: record refused run: %v", sess.Firing, key, err)
+		return
+	}
+	if froze {
+		events.Emit(c.Events, events.Event{
+			Kind: events.KindScheduleFrozen, Severity: events.SeverityWarning,
+			Workspace: t.Workspace, Team: t.Name, Role: role.Name,
+			Message: fmt.Sprintf("firing %s was not started and its retries are used up; on_failure = freeze stops the schedule until reset-health", sess.Firing),
+		})
+	}
+	events.Emit(c.Events, events.Event{
+		Kind: events.KindScheduleSkipped, Severity: events.SeverityWarning,
+		Workspace: t.Workspace, Team: t.Name, Role: role.Name,
+		Message: fmt.Sprintf("firing %s not started: %v; recorded as a failed run", sess.Firing, cause),
+	})
 }

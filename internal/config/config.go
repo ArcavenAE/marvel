@@ -323,6 +323,11 @@ type Cluster struct {
 	// the host vitals orphan vital never counts. Unset is empty: nothing is
 	// excluded.
 	HostVitalsOrphanExclude []string `yaml:"host_vitals_orphan_exclude,omitempty"`
+	// LoginExpiry turns the login expiry service on or off
+	// (docs/design/native-checks.md section 2): a bounded read of each login's
+	// own status command, and an event 72 hours before it expires. Unset reads
+	// as DefaultLoginExpiry.
+	LoginExpiry *bool `yaml:"login_expiry,omitempty"`
 	// AllowCredentialReveal lets the daemon answer credential.reveal on its
 	// local socket. Unset or false means reveal is refused.
 	AllowCredentialReveal bool `yaml:"allow_credential_reveal,omitempty"`
@@ -331,6 +336,25 @@ type Cluster struct {
 	// once. Unset means DefaultAccountWarnPercent; 0 turns it off; 1 to 100 is
 	// the level. It is a report and gates nothing.
 	AccountWarnPercent *int `yaml:"account_warn_percent,omitempty"`
+}
+
+// DefaultLoginExpiry is the login expiry service's state on a cluster that sets
+// none. Director ruled it on by default on 2026-11-23, conditional on the proof
+// of docs/design/native-checks.md section 2.7 that a daemon-run status read
+// raises no keychain dialog. Until that proof is recorded it stays off.
+const DefaultLoginExpiry = false
+
+// LoginExpiryOn resolves the cluster's login expiry switch: the cluster's own
+// setting, else the default. A nil cluster reads the default.
+func (c *Cluster) LoginExpiryOn() bool { return c.loginExpiryOr(DefaultLoginExpiry) }
+
+// loginExpiryOr is LoginExpiryOn with the default passed in, so a test can
+// tell "reads the default" from "reads false" while the default is false.
+func (c *Cluster) loginExpiryOr(def bool) bool {
+	if c != nil && c.LoginExpiry != nil {
+		return *c.LoginExpiry
+	}
+	return def
 }
 
 // DefaultAccountWarnPercent is the warning level of a cluster that sets none.

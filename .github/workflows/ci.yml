@@ -227,10 +227,13 @@ jobs:
         # the gate prints the failed tests' output, which the redirect keeps
         # out of the log. go test's own status is not read, hence set +e, so
         # the gate runs after a failure too. restructure_macos_test.go holds
-        # this step to that shape.
+        # this step to that shape. -timeout 20m is twice the Go default of
+        # 10m a package gets otherwise: a slow hosted runner ran this job two to
+        # three times slower end to end and internal/daemon and internal/bus hit
+        # the default with nothing hung. A hung test still fails, at 20m.
         run: |
           set +e
-          go test -json -count=1 -race \
+          go test -json -count=1 -race -timeout 20m \
             ./internal/daemon/... \
             ./internal/daemonrpc/... \
             ./internal/bus/... \
