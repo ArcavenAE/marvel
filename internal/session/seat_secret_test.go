@@ -205,3 +205,50 @@ func TestTheSecretNoteDoesNotOutliveTheLaunchItDescribes(t *testing.T) {
 		t.Errorf("the earlier note survived a launch that handed the value over: %q", sess.SecretNote)
 	}
 }
+
+// Several needs that fail each leave their own line, not only the last one, and a
+// need that has a variable names it.
+func TestEveryFailedNeedIsInTheNoteAndNamesItsVariable(t *testing.T) {
+	r, _ := secretRig(t, fakeSecrets{"bd": {"BEADS_DOLT_PASSWORD", ""}, "bus": {"MX_BUS", ""}})
+	plan := launchPlan{command: "echo hi", env: map[string]string{}}
+	sess := r.session()
+	r.mgr.wrapSeatSecrets(sess, api.Role{Name: "seat", SeatSecrets: []string{"bd", "bus"}}, &plan)
+	for _, want := range []string{`"bd"`, "BEADS_DOLT_PASSWORD", `"bus"`, "MX_BUS"} {
+		if !strings.Contains(sess.SecretNote, want) {
+			t.Errorf("the note %q does not hold %s", sess.SecretNote, want)
+		}
+	}
+}
+
+// A value the hand-over refuses is reported as that refusal, not as a pane that was
+// too slow, and the note never holds the value.
+func TestARefusedValueIsNotReportedAsASlowPane(t *testing.T) {
+	r, _ := secretRig(t, fakeSecrets{"bd": {"BEADS_DOLT_PASSWORD", "mxfake\n0042"}})
+	sess := r.session()
+	if err := r.store.CreateSession(sess); err != nil {
+		t.Fatal(err)
+	}
+	plan := launchPlan{command: "echo hi", env: map[string]string{}}
+	r.mgr.wrapSeatSecrets(sess, api.Role{Name: "seat", SeatSecrets: []string{"bd"}}, &plan)
+	deadline := time.Now().Add(5 * time.Second)
+	var note string
+	for time.Now().Before(deadline) {
+		if got, err := r.store.GetSession(sess.Key()); err == nil && got.SecretNote != "" {
+			note = got.SecretNote
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if note == "" {
+		t.Fatal("no note was recorded for a refused value")
+	}
+	if strings.Contains(note, "in time") || !strings.Contains(note, "newline") {
+		t.Errorf("note = %q; want the refusal (newline), not a slow pane", note)
+	}
+	if strings.Contains(note, "mxfake") {
+		t.Errorf("the note holds the value: %q", note)
+	}
+	if !strings.Contains(note, "BEADS_DOLT_PASSWORD") {
+		t.Errorf("the note does not name the variable: %q", note)
+	}
+}

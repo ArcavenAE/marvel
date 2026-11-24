@@ -1692,12 +1692,13 @@ func (m *Manager) wrapSeatSecrets(sess *api.Session, role api.Role, plan *launch
 	if len(role.SeatSecrets) == 0 {
 		return
 	}
-	fail := func(need, why string) {
-		sess.SecretNote = fmt.Sprintf("the seat starts without the secret %q: %s", need, why)
-		log.Printf("session %s: %s", sess.Key(), sess.SecretNote)
+	fail := func(need, name, why string) {
+		note := secretNote(need, name, why)
+		sess.SecretNote = joinSecretNotes(sess.SecretNote, note)
+		log.Printf("session %s: %s", sess.Key(), note)
 	}
 	if m.SeatSecrets == nil {
-		fail(role.SeatSecrets[0], "this daemon holds no seat secrets")
+		fail(role.SeatSecrets[0], "", "this daemon holds no seat secrets")
 		return
 	}
 	wait := m.SeatSecretWait
@@ -1707,12 +1708,12 @@ func (m *Manager) wrapSeatSecrets(sess *api.Session, role api.Role, plan *launch
 	for _, need := range role.SeatSecrets {
 		name, value, ok := m.SeatSecrets.SeatSecret(need)
 		if !ok || name == "" || len(value) == 0 {
-			fail(need, "the cluster maps no value for it (seat_env.secrets) or the daemon holds none")
+			fail(need, name, "the cluster maps no value for it (seat_env.secrets) or the daemon holds none")
 			continue
 		}
 		h, err := seatsecret.Prepare(m.SeatSecretDir)
 		if err != nil {
-			fail(need, "no private directory for the hand-over")
+			fail(need, name, "no private directory for the hand-over")
 			clear(value)
 			continue
 		}
@@ -1721,15 +1722,33 @@ func (m *Manager) wrapSeatSecrets(sess *api.Session, role api.Role, plan *launch
 		go func() {
 			defer clear(value)
 			if err := h.Deliver(value, wait+time.Second); err != nil {
-				note := fmt.Sprintf("the seat starts without the secret %q: the pane did not read it in time", need)
+				// Deliver's error names its cause and never holds the value.
+				note := secretNote(need, name, err.Error())
 				log.Printf("session %s: %s", key, note)
 				_ = m.store.UpdateSession(key, func(live *api.Session) error {
-					live.SecretNote = note
+					live.SecretNote = joinSecretNotes(live.SecretNote, note)
 					return nil
 				})
 			}
 		}()
 	}
+}
+
+// secretNote is one line about a seat secret that did not arrive: the need, the
+// variable it fills when the cluster maps one, and the cause. Never the value.
+func secretNote(need, name, why string) string {
+	if name != "" {
+		return fmt.Sprintf("the seat starts without the secret %q (%s): %s", need, name, why)
+	}
+	return fmt.Sprintf("the seat starts without the secret %q: %s", need, why)
+}
+
+// joinSecretNotes keeps every failure of a launch, not only the last.
+func joinSecretNotes(old, add string) string {
+	if old == "" {
+		return add
+	}
+	return old + "; " + add
 }
 
 // planLaunch uses the adapter registry when team/role context is

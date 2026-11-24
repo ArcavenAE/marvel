@@ -171,6 +171,13 @@ func (d *Daemon) spawnGate() string {
 	if late {
 		bound = 0
 	}
+	// A finished strip wins over an expired timer: with the bound at zero both
+	// cases are ready, and select would pick one at random.
+	select {
+	case <-done:
+		return ""
+	default:
+	}
 	timer := time.NewTimer(bound)
 	defer timer.Stop()
 	select {
