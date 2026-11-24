@@ -19,9 +19,7 @@ func scriptedDriver(t *testing.T, body string) (*Driver, string) {
 	log := filepath.Join(dir, "calls.log")
 	script := filepath.Join(dir, "tmux")
 	src := "#!/bin/sh\n[ \"$1\" = --exec-probe ] && exit 0\necho \"$*\" >> '" + log + "'\n" + body + "\n"
-	if err := os.WriteFile(script, []byte(src), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, []byte(src))
 	waitExecutable(t, script)
 	d := &Driver{binary: script, socket: "unit"}
 	d.SetExecTimeout(5 * time.Second)
@@ -53,9 +51,7 @@ func waitExecutable(t *testing.T, script string) {
 // for the writer to close instead of failing the test that built the script.
 func TestWaitExecutableOutlastsAnOpenWriter(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "tmux")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\n[ \"$1\" = --exec-probe ] && exit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, []byte("#!/bin/sh\n[ \"$1\" = --exec-probe ] && exit 0\n"))
 	w, err := os.OpenFile(script, os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)

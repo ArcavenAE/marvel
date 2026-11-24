@@ -181,9 +181,7 @@ func TestEveryTmuxExecStartsWithTheUTF8Flag(t *testing.T) {
 	stub := filepath.Join(t.TempDir(), "tmux")
 	log := filepath.Join(t.TempDir(), "args.txt")
 	script := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > " + log + "\n"
-	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, stub, []byte(script))
 	for _, tc := range []struct {
 		name, socket string
 		want         []string

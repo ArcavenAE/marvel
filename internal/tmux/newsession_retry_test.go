@@ -44,9 +44,7 @@ func newSeqFake(t *testing.T, has, mk string, procs procList) (*seqFake, *Driver
 		"*) exit 0 ;;\n" +
 		"esac\n"
 	script := filepath.Join(dir, "tmux")
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, []byte(body))
 	warmFake(t, script)
 	return f, &Driver{binary: script, socket: "unit", procs: procs}
 }

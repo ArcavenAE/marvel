@@ -15,9 +15,7 @@ func stubTmux(t *testing.T, delay string) {
 	t.Helper()
 	dir := t.TempDir()
 	body := "#!/bin/sh\nsleep " + delay + "\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, filepath.Join(dir, "tmux"), []byte(body))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv(SocketEnv, "timing-"+filepath.Base(dir))
 }
