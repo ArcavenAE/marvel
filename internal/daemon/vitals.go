@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"time"
+
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/hostvitals"
@@ -161,5 +163,13 @@ func vitalsProcs(table []procstat.Proc) []hostvitals.Proc {
 // nothing from the host and writes nothing, and a daemon whose sampler is off
 // or was never built answers the off snapshot, not an error.
 func (d *Daemon) handleHostVitals() daemonrpc.Response {
-	return respond(d.vitals.Snapshot())
+	snap := d.vitals.Snapshot()
+	// The login expiry row comes from the login service's memory, and only
+	// while that service runs: a daemon with it off has nothing to say, and a
+	// row would read as a login that is fine.
+	if snap.Enabled && d.logins != nil && d.logins.enabled {
+		now := time.Now().UTC()
+		snap.Thresholds = append(snap.Thresholds, loginVitalsRow(d.logins.result(now), now))
+	}
+	return respond(snap)
 }

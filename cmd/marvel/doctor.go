@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -59,6 +60,9 @@ type doctorInput struct {
 	// errRemoteNotDialed for a remote daemon that was not asked for, and any
 	// other error when the daemon does not answer. Nil means no read.
 	Sessions func() ([]api.Session, error)
+	// Logins reads the daemon's login expiry answer. It returns an error when
+	// no daemon answers. Nil means no read.
+	Logins func() (api.AccountLogins, error)
 	// Installs names the installed-copies records doctor reads. The zero
 	// value reads nothing.
 	Installs installSource
@@ -274,6 +278,16 @@ func checkLogins(r *doctorReport, in doctorInput) {
 	}
 	asked := map[string]bool{}
 	other := 0
+	// When the daemon runs the login expiry service and has read a login, its
+	// answer stands in for claude's exit-status check (native-checks.md 2.5);
+	// with the service off, no login read or no daemon, today's check runs.
+	var daemon *api.AccountLogins
+	if in.Logins != nil {
+		if res, err := in.Logins(); err == nil && res.Enabled && len(res.Logins) > 0 {
+			daemon = &res
+		}
+	}
+	daemonShown := false
 	for _, t := range in.Manifest.Teams {
 		for _, role := range t.Roles {
 			path, base, ok := harnessOf(role.Runtime.Command)
@@ -286,6 +300,13 @@ func checkLogins(r *doctorReport, in doctorInput) {
 				continue
 			}
 			asked[path] = true
+			if base == "claude" && daemon != nil {
+				if !daemonShown {
+					daemonShown = true
+					daemonLoginLines(r, *daemon)
+				}
+				continue
+			}
 			name := "login " + base
 			prog := path
 			if !filepath.IsAbs(path) {
@@ -305,6 +326,37 @@ func checkLogins(r *doctorReport, in doctorInput) {
 	}
 	if other > 0 {
 		r.line(statSkip, "login", fmt.Sprintf("%d role(s) start a harness with no known status command", other), "")
+	}
+}
+
+// daemonLoginLines writes one line per login the daemon's login expiry service
+// holds: PASS while ok, WARN when expiring or unreadable, FAIL when lapsed. A
+// line carries the account key, the expiry and the fixed reason of a failed
+// read, never an email or organization.
+func daemonLoginLines(r *doctorReport, doc api.AccountLogins) {
+	for _, l := range doc.Logins {
+		name := "login " + l.Account
+		left := "no expiry known"
+		if l.ExpiresAt != nil {
+			left = "expires " + l.ExpiresAt.UTC().Format(time.RFC3339)
+			if l.HoursLeft != nil {
+				left += fmt.Sprintf(", %d hours left", *l.HoursLeft)
+			}
+		}
+		switch l.State {
+		case "ok":
+			r.line(statPass, name, left, "")
+		case "expiring":
+			r.line(statWarn, name, "expiring: "+left, "")
+		case "lapsed":
+			r.line(statFail, name, "lapsed: "+left, "log in with `claude auth login`")
+		default:
+			why := l.Why
+			if why == "" {
+				why = "no reading"
+			}
+			r.line(statWarn, name, "unreadable: "+why, "")
+		}
 	}
 }
 
@@ -626,6 +678,27 @@ func hostDoctorInput(args []string, remote bool) (doctorInput, error) {
 			return nil, err
 		}
 		return out, nil
+	}
+	in.Logins = func() (api.AccountLogins, error) {
+		var doc api.AccountLogins
+		if isRemoteAddr(addr) && !remote {
+			return doc, errRemoteNotDialed
+		}
+		if isRemoteAddr(addr) {
+			if _, err := os.Stat(layout.KnownHosts()); errors.Is(err, os.ErrNotExist) {
+				return doc, errKnownHostsAbsent
+			}
+		}
+		params, _ := json.Marshal(daemonrpc.GetParams{ResourceType: "account-logins"})
+		resp, err := sendTimed(daemonrpc.Request{Method: "get", Params: params})
+		if err != nil {
+			return doc, err
+		}
+		if resp.Error != "" {
+			return doc, fmt.Errorf("daemon refused the read")
+		}
+		err = json.Unmarshal(resp.Result, &doc)
+		return doc, err
 	}
 	return in, nil
 }
