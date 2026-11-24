@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+// MaxComposedRunProfileBytes bounds the composed text. It rides in sandbox-exec's
+// argv, which the kernel caps, so a larger profile is refused here with a reason
+// and not left to fail at exec.
+const MaxComposedRunProfileBytes = 256 << 10
+
 // ErrRunProfileRefused is wrapped by every refusal of a requested run profile.
 var ErrRunProfileRefused = errors.New("run profile refused")
 
@@ -197,6 +202,7 @@ func checkForm(f sexp) error {
 var (
 	roleNetworkWord   = regexp.MustCompile(`network`)
 	roleAllowsDefault = regexp.MustCompile(`\(\s*allow\s+default\s*\)`)
+	roleDeniesDefault = regexp.MustCompile(`\(\s*deny\s+default\s*\)`)
 	roleVersionForm   = regexp.MustCompile(`\(\s*version\s+1\s*\)`)
 	roleParamForm     = regexp.MustCompile(`\(\s*param\s+"([A-Za-z0-9_]+)"\s*\)`)
 )
@@ -220,7 +226,7 @@ func ComposeRunProfile(role, requested, block string) (string, error) {
 	// (allow default) and names no network operation. A deny-default role, a role
 	// with a network rule, and a role naming neither default are refused.
 	networkAllowOK := strings.TrimSpace(roleCode) == "" ||
-		(roleAllowsDefault.MatchString(roleCode) && !roleNetworkWord.MatchString(roleCode))
+		(roleAllowsDefault.MatchString(roleCode) && !roleDeniesDefault.MatchString(roleCode) && !roleNetworkWord.MatchString(roleCode))
 	var b strings.Builder
 	switch {
 	case strings.TrimSpace(roleCode) == "":
@@ -247,6 +253,9 @@ func ComposeRunProfile(role, requested, block string) (string, error) {
 	b.WriteString(block)
 	if !strings.HasSuffix(block, "\n") {
 		b.WriteString("\n")
+	}
+	if b.Len() > MaxComposedRunProfileBytes {
+		return "", refuse("the composed profile is %d bytes, over %d: it travels in argv", b.Len(), MaxComposedRunProfileBytes)
 	}
 	return b.String(), nil
 }

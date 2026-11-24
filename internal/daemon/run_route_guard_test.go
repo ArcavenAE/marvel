@@ -20,6 +20,12 @@ const runChildAllowedFile = "run_sandboxed.go"
 func runChildUseViolations(p pkgFiles) []string {
 	var out []string
 	p.each(func(file string, n ast.Node) bool {
+		// An aliased import of the session package would hide the selector from
+		// the scan below, so any name other than session is a violation.
+		if imp, ok := n.(*ast.ImportSpec); ok && imp.Path.Value == `"github.com/arcavenae/marvel/internal/session"` &&
+			imp.Name != nil && imp.Name.Name != "session" {
+			out = append(out, file+": the session package is imported as "+imp.Name.Name+"; the route guard reads it as session")
+		}
 		sel, ok := n.(*ast.SelectorExpr)
 		if ok && isSel(sel, "session", "RunChild") && file != runChildAllowedFile {
 			out = append(out, file+": session.RunChild at "+p.fset.Position(sel.Pos()).String()+"; only "+runChildAllowedFile+" may")
@@ -69,6 +75,15 @@ func TestAPlantedSessionRunChildCallInAnyOtherFileIsRefused(t *testing.T) {
 	}
 	if got := runChildUseViolations(plant(runChildAllowedFile)); len(got) != 0 {
 		t.Errorf("the allowed file was refused: %v", got)
+	}
+	const aliased = "package daemon\n\nimport s \"github.com/arcavenae/marvel/internal/session\"\n\nvar _ = s.RunChild\n"
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, runChildAllowedFile, aliased, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := runChildUseViolations(pkgFiles{fset: fset, files: map[string]*ast.File{runChildAllowedFile: f}}); len(got) != 1 || !strings.Contains(got[0], "imported as s") {
+		t.Errorf("an aliased session import: violations = %v, want one naming the alias", got)
 	}
 	for _, other := range []string{"daemon.go", "methods.go", "planted.go"} {
 		if got := runChildUseViolations(plant(other)); len(got) != 1 || !strings.Contains(got[0], other) {

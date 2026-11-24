@@ -179,3 +179,22 @@ func TestCheckRunHostRefusesWhatCannotSandbox(t *testing.T) {
 		t.Errorf("darwin with sandbox-exec present was refused: %v", err)
 	}
 }
+
+// A role holding both defaults is read as deny-default: the network allows are
+// refused, never accepted on the strength of the (allow default) alone.
+func TestComposeRunProfileRefusesNetworkAllowsOverARoleNamingBothDefaults(t *testing.T) {
+	both := "(version 1)\n(allow default)\n(deny default)\n"
+	if _, err := ComposeRunProfile(both, netAllow+"\n", testBlock); !errors.Is(err, ErrRunProfileRefused) {
+		t.Errorf("err = %v, want ErrRunProfileRefused", err)
+	}
+}
+
+// The composed text rides in argv, so a profile over the bound is refused with a
+// reason at compose time.
+func TestComposeRunProfileRefusesAProfileTooLargeForArgv(t *testing.T) {
+	role := "(version 1)\n(allow default)\n;" + strings.Repeat("x", MaxComposedRunProfileBytes) + "\n(deny network*)\n"
+	_, err := ComposeRunProfile(role, "(deny process-fork)\n", testBlock)
+	if !errors.Is(err, ErrRunProfileRefused) || !strings.Contains(err.Error(), "argv") {
+		t.Errorf("err = %v, want ErrRunProfileRefused naming argv", err)
+	}
+}

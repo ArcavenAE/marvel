@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -413,4 +414,43 @@ func TestHandleRunSandboxedPassesCtxEndToTheRunner(t *testing.T) {
 // handler uses.
 func runChild(ctx context.Context, argv []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error) {
 	return session.RunChild(ctx, &session.RunPlan{Prefix: argv[:1]}, argv[1:], dir, env, timeout, maxOut)
+}
+
+// The connection-bound lifetime: when the seat's client closes its end mid-run,
+// the run's ctx ends.
+func TestRunSandboxedConnectionCloseEndsTheRun(t *testing.T) {
+	d, sess, _ := greenFixture(t)
+	started, ended := make(chan struct{}), make(chan struct{})
+	d.runExec = func(ctx context.Context, a []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error) {
+		close(started)
+		<-ctx.Done()
+		close(ended)
+		return api.RunSandboxedResult{ExitCode: -1}, nil
+	}
+	params, err := json.Marshal(api.RunSandboxedRequest{Token: sess.HeartbeatToken, Argv: []string{"/usr/bin/true"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, client := net.Pipe()
+	served := make(chan struct{})
+	go func() { d.handleRWCAs(server, localCaller()); close(served) }()
+	go func() {
+		_ = json.NewEncoder(client).Encode(daemonrpc.Request{Method: daemonrpc.MethodRunSandboxed, Params: params})
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run never started")
+	}
+	_ = client.Close()
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run's ctx did not end when the client closed the connection")
+	}
+	select {
+	case <-served:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the connection handler did not return")
+	}
 }
