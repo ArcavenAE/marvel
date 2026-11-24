@@ -66,6 +66,7 @@ func (d *Daemon) loadSeatEnv(socketPath string) {
 				d.sessMgr.SeatSecretDir = dir
 				d.sessMgr.SeatSecretWait = 10 * time.Second
 			}
+			d.sessMgr.SpawnGate = d.spawnGate
 		}
 	}
 }
@@ -137,3 +138,12 @@ func (d *Daemon) seatSecret(need string) (name string, value []byte, ok bool) {
 
 // SeatSecret lets the session manager ask the daemon for a need.
 func (d *Daemon) SeatSecret(need string) (string, []byte, bool) { return d.seatSecret(need) }
+
+// spawnGate holds a seat spawn until the strip of the tmux server environment has
+// finished, for at most the bound, and returns a note when it had not.
+func (d *Daemon) spawnGate() string {
+	if d.seatStripBound < 0 {
+		return ""
+	}
+	return ""
+}

@@ -70,7 +70,11 @@ type Manager struct {
 	SeatSecrets    SeatSecretSource
 	SeatSecretDir  string
 	SeatSecretWait time.Duration
-	NetMounts      func() []string
+	// SpawnGate, when set, is called before a seat's pane is made and returns a
+	// note when what it waits for did not finish, which the seat carries as its
+	// SecretNote. A nil gate waits for nothing.
+	SpawnGate func() string
+	NetMounts func() []string
 
 	// roleReader replaces the store read that answers which role a session is
 	// and whether it names a sandbox profile; nil means the store. A seam for

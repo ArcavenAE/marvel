@@ -105,7 +105,10 @@ type Daemon struct {
 	seatSecretMu sync.Mutex
 	// seatStrip tracks the background strip of the tmux server environment, so a
 	// test can wait for it.
-	seatStrip      sync.WaitGroup
+	seatStrip sync.WaitGroup
+	// seatStripBound is how long a seat spawn waits for the strip; zero is the
+	// default in spawnGate.
+	seatStripBound time.Duration
 	seatSecretVars map[string]string
 	teamCtrl       *team.Controller
 	driver         *tmux.Driver
