@@ -2,11 +2,10 @@ package tmux
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 const fakeSecretName = "BEADS_DOLT_PASSWORD"
@@ -95,21 +94,6 @@ func TestStripServerEnvWithNoServerIsNotAnError(t *testing.T) {
 	}
 }
 
-func serverEnvNames(t *testing.T, pid int) map[string]bool {
-	t.Helper()
-	out, err := exec.Command("ps", "-E", "-ww", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		t.Skipf("ps -E cannot read the server here: %v", err)
-	}
-	names := map[string]bool{}
-	for _, f := range strings.Fields(string(out)) {
-		if k, _, ok := strings.Cut(f, "="); ok && k != "" {
-			names[k] = true
-		}
-	}
-	return names
-}
-
 func realDriver(t *testing.T, tag string) *Driver {
 	t.Helper()
 	skipIfNoTmux(t)
@@ -160,9 +144,33 @@ func TestAServerStartedAfterTheNameIsSetHoldsNoSecret(t *testing.T) {
 	}
 }
 
-// A pane of a running server, started by a dirty process, loses the name from the
-// server's global environment through StripServerEnv, and a pane started after it
-// does not carry it either.
+// rawPaneEnvNames starts a pane with a bare new-window, not NewPane, because
+// NewPane puts the secret names in the pane's own `env -u` prefix and would hide a
+// strip that did nothing. It returns the NAMES the pane holds, never a value.
+func rawPaneEnvNames(t *testing.T, d *Driver, tag string) map[string]bool {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), tag)
+	script := "env | cut -d= -f1 > '" + out + ".tmp' && mv '" + out + ".tmp' '" + out + "'"
+	if b, err := d.cmd("new-window", "-d", "-t", "probe", script).CombinedOutput(); err != nil {
+		t.Fatalf("new-window: %v: %s", err, b)
+	}
+	for i := 0; i < 100; i++ {
+		if b, err := os.ReadFile(out); err == nil {
+			names := map[string]bool{}
+			for _, n := range strings.Fields(string(b)) {
+				names[n] = true
+			}
+			return names
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("the %s pane never wrote its environment names", tag)
+	return nil
+}
+
+// A running server started by a dirty process loses the name from its global
+// environment through StripServerEnv, and a pane started after the strip does not
+// carry it. A pane started before the strip is the control: it does carry it.
 func TestStripServerEnvLeavesNoNameForTheNextPane(t *testing.T) {
 	t.Setenv(fakeSecretName, "mxfake-0042")
 	d := realDriver(t, "mxsecd")
@@ -172,6 +180,9 @@ func TestStripServerEnvLeavesNoNameForTheNextPane(t *testing.T) {
 	if out, _ := d.cmd("show-environment", "-g", fakeSecretName).CombinedOutput(); !strings.Contains(string(out), fakeSecretName+"=") {
 		t.Fatalf("the dirty server does not hold the name in its global environment: %q", out)
 	}
+	if !rawPaneEnvNames(t, d, "before")[fakeSecretName] {
+		t.Fatal("a pane started before the strip does not carry the name, so the check below would pass without the change")
+	}
 	d.SetSeatSecretNames([]string{fakeSecretName})
 	if err := d.StripServerEnv(); err != nil {
 		t.Fatalf("StripServerEnv: %v", err)
@@ -179,5 +190,8 @@ func TestStripServerEnvLeavesNoNameForTheNextPane(t *testing.T) {
 	out, _ := d.cmd("show-environment", "-g", fakeSecretName).CombinedOutput()
 	if strings.Contains(string(out), fakeSecretName+"=") {
 		t.Errorf("the global environment still holds the name after the strip")
+	}
+	if rawPaneEnvNames(t, d, "after")[fakeSecretName] {
+		t.Errorf("a pane started after the strip still carries %s", fakeSecretName)
 	}
 }
