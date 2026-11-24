@@ -795,3 +795,26 @@ func TestTmuxVersionParts(t *testing.T) {
 		}
 	}
 }
+
+// A seat that started without the privacy-folder deny gets a WARN line that names
+// the seat and the reason. It is a warning, not a failure: the seat runs.
+func TestDoctorWarnsOfASeatStartedWithoutTheTCCDeny(t *testing.T) {
+	in := fakeHost(t)
+	in.Sessions = func() ([]api.Session, error) {
+		return []api.Session{
+			{Name: "builder-0", Pane: "idle", TCCDenyNote: "the home of the user marvel runs as is not known"},
+			{Name: "builder-1", Pane: "idle"},
+		}, nil
+	}
+	out, failed := doctorRun(in)
+	if failed != 0 {
+		t.Fatalf("failed = %d, want 0\n%s", failed, out)
+	}
+	l := lineWith(out, "tcc-deny")
+	if !strings.HasPrefix(l, "WARN") || !strings.Contains(l, "builder-0") || !strings.Contains(l, "home of the user") {
+		t.Fatalf("tcc-deny line = %q, want a WARN naming the seat and the reason\n%s", l, out)
+	}
+	if strings.Contains(l, "builder-1") {
+		t.Errorf("a seat with the deny is named in the warning: %q", l)
+	}
+}

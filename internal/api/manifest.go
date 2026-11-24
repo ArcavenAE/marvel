@@ -171,6 +171,9 @@ type ManifestRole struct {
 	// seats run under, on darwin. Empty means none. The key name was ratified
 	// by the operator on 2026-11-03.
 	SandboxProfile string `toml:"sandbox_profile,omitempty" yaml:"sandbox_profile,omitempty"`
+	// TCCDeny opts a role out of the default deny of the macOS privacy folders
+	// and network volumes (docs/design/seat-tcc-deny.md). Absent means on.
+	TCCDeny *bool `toml:"tcc_deny,omitempty" yaml:"tcc_deny,omitempty"`
 	// shiftKeyErr and shiftAnyPresent come from shiftKeysProbe: the first
 	// shift key this marvel does not understand, and whether the table wrote
 	// an any key at all.
@@ -1232,6 +1235,7 @@ func (m *Manifest) ApplyFrom(store *Store, source string) error {
 				WorkDir:              joinWorkDir(m.Workspace.Root, mr.WorkDir),
 				ContainerImage:       mr.ContainerImage,
 				SandboxProfile:       mr.SandboxProfile,
+				TCCDeny:              mr.TCCDeny,
 				Task:                 mr.Task,
 				SettingsSources:      mr.SettingsSources,
 				Writes:               normalizeWrites(mr.Writes),

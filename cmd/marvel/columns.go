@@ -103,7 +103,7 @@ var wideSessionColumns = []string{
 // columnSets maps each set name to its members, in print order.
 var columnSets = map[string][]string{
 	columnSetWide: wideSessionColumns,
-	"acct":        {"account", "5h", "7d", "5h-reset", "7d-reset", "read"},
+	"acct":        {"account", "7d", "7d-reset", "read"},
 	"service":     {"runtime", "backend", "cred", "home", "login"},
 }
 

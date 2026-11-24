@@ -57,6 +57,13 @@ type Manager struct {
 	SandboxExec string
 	SandboxDir  string
 	RealHome    string
+	// TCCDeny turns on the default deny of the macOS privacy folders and network
+	// volumes for every seat whose role does not opt out. The daemon sets it; a
+	// zero Manager leaves launches as they were. NetMounts lists the network
+	// mount points at launch; nil means read the host's mount table. A seam for
+	// tests.
+	TCCDeny   bool
+	NetMounts func() []string
 
 	// roleReader replaces the store read that answers which role a session is
 	// and whether it names a sandbox profile; nil means the store. A seam for
@@ -1164,32 +1171,7 @@ func (m *Manager) Create(sess *api.Session) error {
 	// references fields on sess. Per orc finding-032, the Store is the
 	// sync boundary.
 	if err := m.store.UpdateSession(sess.Key(), func(live *api.Session) error {
-		live.PaneID = paneID
-		live.PID = pid
-		live.State = api.SessionRunning
-		live.BackendRedirection = sess.BackendRedirection
-		live.BackendIntended = sess.BackendIntended
-		live.BackendResolved = sess.BackendResolved
-		live.BackendCredentialSource = sess.BackendCredentialSource
-		live.AmbientBearer = sess.AmbientBearer
-		live.BackendOverlayPath = sess.BackendOverlayPath
-		// The projected file this launch was started with, kept so a policy
-		// edit still reaches it after the projection directory moves.
-		live.ProjectionPath = sess.ProjectionPath
-		// What marvel named this launch, kept so the binding survives a
-		// daemon restart. Empty when the runtime has no id pin.
-		live.HarnessSessionID = sess.HarnessSessionID
-		// Where this session's harness state lives, kept so the binding
-		// survives a daemon restart. Empty when the runtime shares the
-		// operator's own home.
-		live.HarnessHome = sess.HarnessHome
-		live.AccountHome = sess.AccountHome
-		// What the harness was told to load, and how it was passed, kept for describe.
-		live.SettingSources = sess.SettingSources
-		live.SettingSourcesDelivery = sess.SettingSourcesDelivery
-		// The hashes of the prompts this launch passed, kept for get session.
-		live.FirstPromptSha256 = sess.FirstPromptSha256
-		live.SystemPromptSha256 = sess.SystemPromptSha256
+		commitLaunchRecord(live, sess, paneID, pid)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("update session %s post-create: %w", sess.Key(), err)
@@ -1201,6 +1183,40 @@ func (m *Manager) Create(sess *api.Session) error {
 	m.recordResume(sess)
 	m.announceSpawn(sess, paneID, plan.firstPrompt, plan.sandbox)
 	return nil
+}
+
+// commitLaunchRecord copies what a launch settled onto the stored session.
+// It runs under the store lock, so every field the launch sets and a reader
+// needs after the launch is copied here and nowhere else.
+func commitLaunchRecord(live, sess *api.Session, paneID string, pid int) {
+	live.PaneID = paneID
+	live.PID = pid
+	live.State = api.SessionRunning
+	live.BackendRedirection = sess.BackendRedirection
+	live.BackendIntended = sess.BackendIntended
+	live.BackendResolved = sess.BackendResolved
+	live.BackendCredentialSource = sess.BackendCredentialSource
+	live.AmbientBearer = sess.AmbientBearer
+	live.BackendOverlayPath = sess.BackendOverlayPath
+	// The projected file this launch was started with, kept so a policy
+	// edit still reaches it after the projection directory moves.
+	live.ProjectionPath = sess.ProjectionPath
+	// What marvel named this launch, kept so the binding survives a
+	// daemon restart. Empty when the runtime has no id pin.
+	live.HarnessSessionID = sess.HarnessSessionID
+	// Where this session's harness state lives, kept so the binding
+	// survives a daemon restart. Empty when the runtime shares the
+	// operator's own home.
+	live.HarnessHome = sess.HarnessHome
+	live.AccountHome = sess.AccountHome
+	// What the harness was told to load, and how it was passed, kept for describe.
+	live.SettingSources = sess.SettingSources
+	live.SettingSourcesDelivery = sess.SettingSourcesDelivery
+	// The hashes of the prompts this launch passed, kept for get session.
+	live.FirstPromptSha256 = sess.FirstPromptSha256
+	live.SystemPromptSha256 = sess.SystemPromptSha256
+	// Why this launch started without the privacy-folder deny, kept for doctor.
+	live.TCCDenyNote = sess.TCCDenyNote
 }
 
 // recordResume writes sess's entry in the resume journal
@@ -1626,6 +1642,9 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	// The projected file this launch passes the harness is recorded below, and a
 	// launch that projects none must not carry the previous launch's path.
 	sess.ProjectionPath = ""
+	// The reason a launch started without the privacy-folder deny is the launch's
+	// too, set where the deny is dropped and read by marvel doctor.
+	sess.TCCDenyNote = ""
 	// Look up team and role for full adapter context. Store returns
 	// snapshots — taking addresses of these locals is safe because the
 	// adapter is read-only and the LaunchContext doesn't outlive this
@@ -1710,6 +1729,16 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 		if sbPlan != nil {
 			lctx.SandboxProfile = sbPlan.copyPath
 		}
+	} else if lctx.Placement != api.PlacementContainer && m.tccApplies(*role) {
+		// No profile of its own: the default deny of the privacy folders, staged
+		// alone. It is not handed to the adapter as a profile in force, since it
+		// is not containment.
+		sbPlan = m.stageTCCOnly(sess)
+	} else if lctx.Placement != api.PlacementContainer && m.tccWanted(*role) {
+		// The deny is wanted and sandbox-exec is not there, so the seat starts
+		// without it and says so, the same as a staging failure.
+		sess.TCCDenyNote = "sandbox-exec is not at " + m.sandboxExecPath()
+		log.Printf("session %s: privacy-folder deny not applied: %s", sess.Key(), sess.TCCDenyNote)
 	}
 	lctx.CredentialHelper = m.CredentialHelper
 	if m.Bus != nil {
@@ -1774,6 +1803,12 @@ func (m *Manager) planLaunch(sess *api.Session) launchPlan {
 	if err != nil {
 		log.Printf("adapter %s prepare failed for %s, falling back: %v", adapter.Name(), sess.Key(), err)
 		discardSink(fifo)
+		if sbPlan != nil && sbPlan.tccOnly {
+			// The deny is a guard, not the role's profile: the fallback keeps it.
+			p := m.directPlan(sess)
+			p.sandbox = sbPlan
+			return p
+		}
 		if sbPlan != nil {
 			// The raw command drops every rule the adapter would apply (for goose,
 			// the watchdog and the posture refusal), and the profile alone does not
