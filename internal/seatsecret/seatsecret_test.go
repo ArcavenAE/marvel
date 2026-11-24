@@ -211,7 +211,13 @@ func TestTheValueNeverAppearsOnAProcessArgumentList(t *testing.T) {
 	}
 	// A sample already running when the control died can still count it. Wait for
 	// two whole samples that started after the kill before the count restarts.
-	for settled := samples.Load() + 2; samples.Load() < settled; {
+	settled, give := samples.Load()+2, time.Now().Add(30*time.Second)
+	for samples.Load() < settled {
+		if time.Now().After(give) {
+			close(stop)
+			<-done
+			t.Fatal("the sampler took no new sample in 30 seconds, so the proof would pass for nothing")
+		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	hits.Store(0)
