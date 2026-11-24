@@ -359,6 +359,8 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"NewWithOptions driver.SetSuspendGate":                       true, // wires the suspend gate once, at construction
 		"NewWithOptions driver.SetTiming":                            true, // wires the timing registry once, at construction
 		"*Daemon.loadSeatEnv d.driver.SetSeatEnv":                    true, // wires the cluster's seat_env once, at start; no pane is read or keyed
+		"*Daemon.loadSeatEnv d.driver.SetSeatSecretNames":            true, // wires the seat secret variable names once, at start
+		"*Daemon.loadSeatEnv d.driver.StripServerEnv":                true, // removes those names from a running server's global environment, by name
 		"*Daemon.productionCollector drv.ServerPID":                  true, // read-only, through the unguarded view
 		"*Daemon.productionCollector drv.PanePIDs":                   true, // read-only, through the unguarded view
 	}

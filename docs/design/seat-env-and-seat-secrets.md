@@ -143,6 +143,13 @@ before the strip. The proof is `ps -E` for the tmux server and for a pane of a
 seat that does not declare the need, printing key names only: the key is absent
 for that seat and present for one that declares `seat_secrets: [bd]`.
 
+Sequencing. The strip is opt-in in its own PR: nothing changes unless the
+cluster entry declares `seat_env.secrets`. The end state is a stripped password,
+so the PR that adds the hand-over (section 4.3) makes the strip the default for
+a cluster that has the mapping and the role field, and it does not merge without
+that change. Until then, declaring the mapping strips the variable from every
+seat, and the admin guide says so.
+
 ## 5. What this does not do
 
 - It rotates nothing and touches no credential at the third party (the standing rule against rotating credentials).
