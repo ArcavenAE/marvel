@@ -109,6 +109,7 @@ type Daemon struct {
 	// seatStripBound is how long a seat spawn waits for the strip; zero is the
 	// default in spawnGate.
 	seatStripBound time.Duration
+	seatStripDone  chan struct{}
 	seatSecretVars map[string]string
 	teamCtrl       *team.Controller
 	driver         *tmux.Driver

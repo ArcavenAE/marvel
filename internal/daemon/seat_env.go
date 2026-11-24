@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -46,10 +47,15 @@ func (d *Daemon) loadSeatEnv(socketPath string) {
 		// writes secrets: {} keeps every seat's environment as it was.
 		d.driver.SetSeatSecretNames(vars)
 		// Off the start path: a tmux that does not answer must not hold the daemon
-		// back, and every pane carries its own env -u for these names meanwhile.
+		// back. The first seat spawn waits for it through spawnGate, with a bound.
+		done := make(chan struct{})
+		d.seatSecretMu.Lock()
+		d.seatStripDone = done
+		d.seatSecretMu.Unlock()
 		d.seatStrip.Add(1)
 		go func() {
 			defer d.seatStrip.Done()
+			defer close(done)
 			if err := d.driver.StripServerEnv(); err != nil {
 				log.Printf("seat env: %v", err)
 			}
@@ -140,10 +146,32 @@ func (d *Daemon) seatSecret(need string) (name string, value []byte, ok bool) {
 func (d *Daemon) SeatSecret(need string) (string, []byte, bool) { return d.seatSecret(need) }
 
 // spawnGate holds a seat spawn until the strip of the tmux server environment has
-// finished, for at most the bound, and returns a note when it had not.
+// finished, for at most the bound, and returns a note when it had not. A seat
+// that starts before the strip ends carries the note, and marvel doctor shows it.
 func (d *Daemon) spawnGate() string {
-	if d.seatStripBound < 0 {
+	d.seatSecretMu.Lock()
+	done := d.seatStripDone
+	vars := make([]string, 0, len(d.seatSecretVars))
+	for _, v := range d.seatSecretVars {
+		vars = append(vars, v)
+	}
+	d.seatSecretMu.Unlock()
+	if done == nil {
 		return ""
 	}
-	return ""
+	bound := d.seatStripBound
+	if bound <= 0 {
+		bound = 10 * time.Second
+	}
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return ""
+	case <-timer.C:
+		sort.Strings(vars)
+		note := fmt.Sprintf("started before the tmux server environment was stripped of %s (not finished in %s); the pane still removes it itself", strings.Join(vars, ", "), bound)
+		log.Printf("seat env: %s", note)
+		return note
+	}
 }

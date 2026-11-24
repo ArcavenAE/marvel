@@ -1138,8 +1138,20 @@ func (m *Manager) Create(sess *api.Session) error {
 	}
 
 	// A role that declares a secret reads it from a private FIFO in its pane.
+	// The pane is made only after the gate answers; a gate that gave up leaves its
+	// note on the seat.
+	gateNote := ""
+	if m.SpawnGate != nil {
+		gateNote = m.SpawnGate()
+	}
 	if role, ok := m.roleOf(sess); ok {
 		m.wrapSeatSecrets(sess, role, &plan)
+	}
+	if gateNote != "" {
+		if sess.SecretNote != "" {
+			sess.SecretNote += "; "
+		}
+		sess.SecretNote += gateNote
 	}
 
 	// Log the exact command line we're about to exec so post-hoc
