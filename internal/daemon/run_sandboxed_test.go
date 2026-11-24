@@ -15,6 +15,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
+	"github.com/arcavenae/marvel/internal/session"
 )
 
 // run.sandboxed starts a command on a seat's behalf, so like handoff.put it is
@@ -335,5 +336,74 @@ func TestHandleRunSandboxedRefusesAHostThatCannotSandbox(t *testing.T) {
 		if _, serr := os.Stat(p); serr == nil {
 			t.Fatalf("something ran on a host that cannot sandbox: %s exists", p)
 		}
+	}
+}
+
+// greenFixture is handlerFixture with a real session manager over a scratch
+// profile directory, and a runner seam that records what it was asked to exec.
+func greenFixture(t *testing.T) (d *Daemon, sess api.Session, got *[]string) {
+	t.Helper()
+	d, sess, _ = handlerFixture(t)
+	m := session.NewManager(d.store, nil)
+	m.GOOS, m.SandboxExec = "darwin", d.runSandboxExec
+	m.SandboxDir, m.RealHome = t.TempDir(), t.TempDir()
+	m.NetMounts = func() []string { return nil }
+	m.TCCDeny = true
+	d.sessMgr = m
+	var argv []string
+	d.runExec = func(ctx context.Context, a []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error) {
+		argv = a
+		return api.RunSandboxedResult{ExitCode: 5, Stdout: "ok"}, nil
+	}
+	return d, sess, &argv
+}
+
+// An authorized run execs sandbox-exec -f <staged> argv, and the staged bytes
+// are the composed profile with the deny block last.
+func TestHandleRunSandboxedExecsTheComposedProfile(t *testing.T) {
+	d, sess, got := greenFixture(t)
+	body, err := json.Marshal(api.RunSandboxedRequest{
+		Token: sess.HeartbeatToken, Argv: []string{"/usr/bin/true", "a"}, Profile: "(deny network*)\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := d.handleRunSandboxed(context.Background(), body)
+	if resp.Error != "" {
+		t.Fatalf("an authorized run was refused: %s", resp.Error)
+	}
+	var res api.RunSandboxedResult
+	if err := json.Unmarshal(resp.Result, &res); err != nil || res.ExitCode != 5 || res.Stdout != "ok" {
+		t.Fatalf("result = %+v (%v), want the runner's rc 5 and stdout", res, err)
+	}
+	a := *got
+	if len(a) < 5 || a[0] != d.runSandboxExec || a[1] != "-f" || a[len(a)-2] != "/usr/bin/true" || a[len(a)-1] != "a" {
+		t.Fatalf("argv = %q, want sandbox-exec -f <staged> ... /usr/bin/true a", a)
+	}
+	if _, serr := os.Stat(a[2]); serr == nil {
+		t.Errorf("the staged profile %s was left behind", a[2])
+	}
+}
+
+// ctx ending (the seat hung up) reaches the runner.
+func TestHandleRunSandboxedPassesCtxEndToTheRunner(t *testing.T) {
+	d, sess, _ := greenFixture(t)
+	seen := make(chan struct{})
+	d.runExec = func(ctx context.Context, a []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error) {
+		<-ctx.Done()
+		close(seen)
+		return api.RunSandboxedResult{ExitCode: -1}, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	body, err := json.Marshal(api.RunSandboxedRequest{Token: sess.HeartbeatToken, Argv: []string{"/usr/bin/true"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(200 * time.Millisecond); cancel() }()
+	d.handleRunSandboxed(ctx, body)
+	select {
+	case <-seen:
+	default:
+		t.Fatal("the runner did not see ctx end")
 	}
 }
