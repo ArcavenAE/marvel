@@ -110,6 +110,7 @@ type Daemon struct {
 	// default in spawnGate.
 	seatStripBound time.Duration
 	seatStripDone  chan struct{}
+	seatStripLate  bool
 	seatSecretVars map[string]string
 	teamCtrl       *team.Controller
 	driver         *tmux.Driver

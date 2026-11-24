@@ -163,6 +163,14 @@ func (d *Daemon) spawnGate() string {
 	if bound <= 0 {
 		bound = 10 * time.Second
 	}
+	// Once one spawn has waited the whole bound, later spawns do not each wait it
+	// again; they carry the note until the strip finishes.
+	d.seatSecretMu.Lock()
+	late := d.seatStripLate
+	d.seatSecretMu.Unlock()
+	if late {
+		bound = 0
+	}
 	timer := time.NewTimer(bound)
 	defer timer.Stop()
 	select {
@@ -170,8 +178,19 @@ func (d *Daemon) spawnGate() string {
 		return ""
 	case <-timer.C:
 		sort.Strings(vars)
-		note := fmt.Sprintf("started before the tmux server environment was stripped of %s (not finished in %s); the pane still removes it itself", strings.Join(vars, ", "), bound)
+		note := fmt.Sprintf("started before the tmux server environment was stripped of %s (not finished in %s); the pane still removes it itself", strings.Join(vars, ", "), d.boundOf())
+		d.seatSecretMu.Lock()
+		d.seatStripLate = true
+		d.seatSecretMu.Unlock()
 		log.Printf("seat env: %s", note)
 		return note
 	}
+}
+
+// boundOf is the strip wait a spawn is given the first time.
+func (d *Daemon) boundOf() time.Duration {
+	if d.seatStripBound > 0 {
+		return d.seatStripBound
+	}
+	return 10 * time.Second
 }
