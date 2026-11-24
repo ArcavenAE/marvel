@@ -76,3 +76,23 @@ func TestTheGateGivesUpAtTheBoundAndSaysSo(t *testing.T) {
 		t.Errorf("note = %q; want one naming the variable and never the value", note)
 	}
 }
+
+// After one spawn has waited the whole bound for a strip that has not finished,
+// the next spawns do not each wait it again: they carry the note at once, until
+// the strip finishes.
+func TestALaterSpawnDoesNotWaitTheBoundAgain(t *testing.T) {
+	d, _ := gateDaemon(t, "5")
+	d.seatStripBound = 400 * time.Millisecond
+	d.loadSeatEnv(seatSecretSock)
+	if note := d.sessMgr.SpawnGate(); note == "" {
+		t.Fatal("the first gate did not time out, so the test proves nothing")
+	}
+	start := time.Now()
+	note := d.sessMgr.SpawnGate()
+	if took := time.Since(start); took > 150*time.Millisecond {
+		t.Errorf("the second spawn waited %v", took)
+	}
+	if note == "" {
+		t.Error("the second spawn started silently with the strip unfinished")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A seat's pane is made only after the spawn gate has answered, so a pane never
@@ -14,6 +15,8 @@ func TestTheSpawnGateRunsBeforeTheSeatStarts(t *testing.T) {
 	var called, ranAtGate bool
 	r.mgr.SpawnGate = func() string {
 		called = true
+		// Long enough that a pane made before the gate answered would have run.
+		time.Sleep(700 * time.Millisecond)
 		_, err := os.Stat(filepath.Join(r.out, "ran"))
 		ranAtGate = err == nil
 		return ""
