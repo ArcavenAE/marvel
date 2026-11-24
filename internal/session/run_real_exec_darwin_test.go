@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,10 +43,11 @@ func skipIfNested(t *testing.T) {
 	if _, err := os.Stat(runRealSandboxExec); err != nil {
 		t.Skip("no sandbox-exec")
 	}
-	res, err := RunChild(context.Background(), &RunPlan{Prefix: []string{runRealSandboxExec, "-p", "(version 1)(allow default)"}},
-		[]string{"/usr/bin/true"}, "/", []string{"PATH=/usr/bin:/bin"}, 10*time.Second, 4096)
-	if err != nil || res.ExitCode != 0 {
-		t.Skipf("sandbox-exec cannot start from here (already inside a profile?): rc=%d err=%v out=%q", res.ExitCode, err, res.Stderr)
+	// The probe runs sandbox-exec directly, not through RunChild, so a broken
+	// RunChild fails the tests below and does not make them skip or run bare.
+	out, err := exec.Command(runRealSandboxExec, "-p", "(version 1)(allow default)", "/usr/bin/true").CombinedOutput()
+	if err != nil {
+		t.Skipf("sandbox-exec cannot start from here (already inside a profile?): %v: %q", err, out)
 	}
 }
 

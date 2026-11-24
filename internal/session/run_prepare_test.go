@@ -32,7 +32,6 @@ func TestPrepareRunPassesTheProfileInlineAndStagesNoFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareRun: %v", err)
 	}
-	defer plan.Remove()
 	if len(plan.Prefix) < 3 || plan.Prefix[0] != fakeExec || plan.Prefix[1] != "-p" || plan.Prefix[2] != plan.Composed {
 		t.Fatalf("prefix = %q, want [sandbox-exec -p <the composed text> ...]", plan.Prefix)
 	}

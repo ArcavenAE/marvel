@@ -128,7 +128,6 @@ func (d *Daemon) handleRunSandboxed(ctx context.Context, params json.RawMessage)
 	if err != nil {
 		return daemonrpc.Response{Error: "run.sandboxed: " + err.Error()}
 	}
-	defer plan.Remove()
 
 	timeout := time.Duration(req.TimeoutSeconds) * time.Second
 	if timeout <= 0 {

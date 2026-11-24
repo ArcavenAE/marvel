@@ -358,8 +358,8 @@ func greenFixture(t *testing.T) (d *Daemon, sess api.Session, got *[]string) {
 	return d, sess, &argv
 }
 
-// An authorized run execs sandbox-exec -f <staged> argv, and the staged bytes
-// are the composed profile with the deny block last.
+// An authorized run execs sandbox-exec -p <composed profile> argv: the request
+// comes before the deny block, and no file is staged.
 func TestHandleRunSandboxedExecsTheComposedProfile(t *testing.T) {
 	d, sess, got := greenFixture(t)
 	body, err := json.Marshal(api.RunSandboxedRequest{
@@ -377,11 +377,11 @@ func TestHandleRunSandboxedExecsTheComposedProfile(t *testing.T) {
 		t.Fatalf("result = %+v (%v), want the runner's rc 5 and stdout", res, err)
 	}
 	a := *got
-	if len(a) < 5 || a[0] != d.runSandboxExec || a[1] != "-f" || a[len(a)-2] != "/usr/bin/true" || a[len(a)-1] != "a" {
-		t.Fatalf("argv = %q, want sandbox-exec -f <staged> ... /usr/bin/true a", a)
+	if len(a) < 5 || a[0] != d.runSandboxExec || a[1] != "-p" || a[len(a)-2] != "/usr/bin/true" || a[len(a)-1] != "a" {
+		t.Fatalf("argv = %q, want sandbox-exec -p <composed profile> ... /usr/bin/true a", a)
 	}
-	if _, serr := os.Stat(a[2]); serr == nil {
-		t.Errorf("the staged profile %s was left behind", a[2])
+	if !strings.Contains(a[2], "(deny network*)") || !strings.HasSuffix(strings.TrimSpace(a[2]), ")") || strings.Index(a[2], "(deny network*)") > strings.Index(a[2], "/Volumes") {
+		t.Errorf("the inline profile lacks the request before the deny block:\n%s", a[2])
 	}
 }
 

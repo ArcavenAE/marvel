@@ -73,8 +73,11 @@ func runArgv(ctx context.Context, argv []string, dir string, env []string, timeo
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		werr = <-done
 	}
-	// A group member that outlived the leader dies with the group.
-	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	// A group member that outlived the leader dies with the group. An empty group
+	// answers ESRCH to the probe, so a reused group id is not signalled.
+	if syscall.Kill(-pgid, 0) == nil {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
 	res := api.RunSandboxedResult{
 		Stdout: out.buf.String(), Stderr: errw.buf.String(),
 		Truncated: out.dropped || errw.dropped, TimedOut: timedOut,
@@ -95,5 +98,8 @@ func runArgv(ctx context.Context, argv []string, dir string, env []string, timeo
 // sandbox-exec prefix to argv and runs the whole, so no caller can run a command
 // without a composed profile. A nil plan or an empty prefix is an error.
 func RunChild(ctx context.Context, plan *RunPlan, argv []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error) {
-	return runArgv(ctx, argv, dir, env, timeout, maxOut) // red: the prefix is not applied
+	if plan == nil || len(plan.Prefix) == 0 {
+		return api.RunSandboxedResult{}, errors.New("no composed profile: nothing was run")
+	}
+	return runArgv(ctx, append(append([]string{}, plan.Prefix...), argv...), dir, env, timeout, maxOut)
 }

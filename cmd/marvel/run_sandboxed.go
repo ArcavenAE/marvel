@@ -33,7 +33,9 @@ token, from the environment marvel started it with.
 
 The command runs with this process's environment (minus the heartbeat token)
 and working directory, whole output at exit, no stdin and no tty, capped at 1 MiB
-per stream. This command exits with the command's own status; a daemon refusal
+per stream. The daemon ends the run when this connection reaches end of file, so
+the client must keep its side of the socket open until the answer comes (this
+command does). This command exits with the command's own status; a daemon refusal
 exits 1 with the reason on stderr.
 
   marvel run-sandboxed --profile run.sb -- /usr/bin/env go test ./...`,

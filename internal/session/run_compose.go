@@ -195,9 +195,10 @@ func checkForm(f sexp) error {
 }
 
 var (
-	roleNetworkWord = regexp.MustCompile(`network`)
-	roleVersionForm = regexp.MustCompile(`\(\s*version\s+1\s*\)`)
-	roleParamForm   = regexp.MustCompile(`\(\s*param\s+"([A-Za-z0-9_]+)"\s*\)`)
+	roleNetworkWord   = regexp.MustCompile(`network`)
+	roleAllowsDefault = regexp.MustCompile(`\(\s*allow\s+default\s*\)`)
+	roleVersionForm   = regexp.MustCompile(`\(\s*version\s+1\s*\)`)
+	roleParamForm     = regexp.MustCompile(`\(\s*param\s+"([A-Za-z0-9_]+)"\s*\)`)
 )
 
 // ComposeRunProfile joins the parts of a sandboxed run's profile into one text:
@@ -205,8 +206,8 @@ var (
 // The request is read into forms and re-serialized, never copied as text, and
 // refused unless every form is a deny or one of the three localhost network
 // allows the run conditions use (seat-tcc-deny.md, sections 5 and 14; marvel#1596
-// rulings Q1 and Q3). The network allows are also refused when the role's own
-// profile names a network operation, since they would lift its rules. A role
+// rulings Q1 and Q3). The network allows are also refused unless the role has no
+// profile or is (allow default) with no network rule, since they would widen it. A role
 // with no profile gets (version 1)(allow default).
 func ComposeRunProfile(role, requested, block string) (string, error) {
 	forms, err := readForms(requested)
@@ -214,7 +215,12 @@ func ComposeRunProfile(role, requested, block string) (string, error) {
 		return "", err
 	}
 	roleCode := sbplCode([]byte(role))
-	roleNamesNetwork := roleNetworkWord.MatchString(roleCode)
+	// The network allows are accepted only where they cannot widen the role: a
+	// role with no profile (the base allows everything), or one that is
+	// (allow default) and names no network operation. A deny-default role, a role
+	// with a network rule, and a role naming neither default are refused.
+	networkAllowOK := strings.TrimSpace(roleCode) == "" ||
+		(roleAllowsDefault.MatchString(roleCode) && !roleNetworkWord.MatchString(roleCode))
 	var b strings.Builder
 	switch {
 	case strings.TrimSpace(roleCode) == "":
@@ -232,8 +238,8 @@ func ComposeRunProfile(role, requested, block string) (string, error) {
 		if err := checkForm(f); err != nil {
 			return "", err
 		}
-		if f.head() == "allow" && roleNamesNetwork {
-			return "", refuse("%s would lift a network rule of the role's own profile", f.String())
+		if f.head() == "allow" && !networkAllowOK {
+			return "", refuse("%s would widen the role's own profile, which is not (allow default) without network rules", f.String())
 		}
 		b.WriteString(f.String())
 		b.WriteString("\n")
