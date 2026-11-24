@@ -57,13 +57,6 @@ func runLogRecord(sess api.Session, req api.RunSandboxedRequest, composed string
 		sess.Key(), argv0, len(req.Argv), hex.EncodeToString(sum[:]), rc, took)
 }
 
-// runChild runs argv in its own process group (session.RunChild). The process
-// start lives in the session package, which already launches seats' commands,
-// so the daemon package keeps its pinned list of process starts.
-func runChild(ctx context.Context, argv []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error) {
-	return session.RunChild(ctx, argv, dir, env, timeout, maxOut)
-}
-
 // runCarveOut is the path the deny block lets back through a denied folder: the
 // seat's recorded working directory, never the request's Dir.
 func runCarveOut(sess api.Session, _ api.RunSandboxedRequest) []string {
@@ -149,12 +142,13 @@ func (d *Daemon) handleRunSandboxed(ctx context.Context, params json.RawMessage)
 	go d.watchRunSeat(runCtx, cancel, sess.Key(), req.Token)
 
 	argv := append(append([]string{}, plan.Prefix...), req.Argv...)
-	exec := d.runExec
-	if exec == nil {
-		exec = runChild
-	}
 	start := time.Now()
-	res, err := exec(runCtx, argv, dir, req.Env, timeout, api.MaxRunOutputBytes)
+	var res api.RunSandboxedResult
+	if d.runExec != nil {
+		res, err = d.runExec(runCtx, argv, dir, req.Env, timeout, api.MaxRunOutputBytes)
+	} else {
+		res, err = session.RunChild(runCtx, plan, req.Argv, dir, req.Env, timeout, api.MaxRunOutputBytes)
+	}
 	took := time.Since(start)
 	if err != nil {
 		log.Printf("%s", runLogRecord(sess, req, plan.Composed, -1, took)+" start_failed=true")

@@ -29,7 +29,7 @@ func realExec(t *testing.T, profile string, argv ...string) (rc int, out string)
 	if err := os.WriteFile(f, []byte(profile), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res, err := RunChild(context.Background(), append([]string{runRealSandboxExec, "-f", f}, argv...), "/",
+	res, err := RunChild(context.Background(), &RunPlan{Prefix: []string{runRealSandboxExec, "-f", f}}, argv, "/",
 		[]string{"PATH=/usr/bin:/bin"}, 20*time.Second, 1<<16)
 	if err != nil {
 		t.Fatalf("run %v: %v", argv, err)
@@ -42,8 +42,8 @@ func skipIfNested(t *testing.T) {
 	if _, err := os.Stat(runRealSandboxExec); err != nil {
 		t.Skip("no sandbox-exec")
 	}
-	res, err := RunChild(context.Background(),
-		[]string{runRealSandboxExec, "-p", "(version 1)(allow default)", "/usr/bin/true"}, "/", []string{"PATH=/usr/bin:/bin"}, 10*time.Second, 4096)
+	res, err := RunChild(context.Background(), &RunPlan{Prefix: []string{runRealSandboxExec, "-p", "(version 1)(allow default)"}},
+		[]string{"/usr/bin/true"}, "/", []string{"PATH=/usr/bin:/bin"}, 10*time.Second, 4096)
 	if err != nil || res.ExitCode != 0 {
 		t.Skipf("sandbox-exec cannot start from here (already inside a profile?): rc=%d err=%v out=%q", res.ExitCode, err, res.Stderr)
 	}

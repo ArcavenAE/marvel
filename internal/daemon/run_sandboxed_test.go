@@ -407,3 +407,10 @@ func TestHandleRunSandboxedPassesCtxEndToTheRunner(t *testing.T) {
 		t.Fatal("the runner did not see ctx end")
 	}
 }
+
+// runChild is the test-side way to run a bare argv through session.RunChild: the
+// plan's prefix is the program, so these tests exercise the same route the
+// handler uses.
+func runChild(ctx context.Context, argv []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error) {
+	return session.RunChild(ctx, &session.RunPlan{Prefix: argv[:1]}, argv[1:], dir, env, timeout, maxOut)
+}

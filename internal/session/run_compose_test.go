@@ -124,6 +124,17 @@ func TestComposeRunProfileRefusesNetworkAllowsOverARoleNetworkRule(t *testing.T)
 			t.Errorf("%s over a role with only network allows: err = %v, want ErrRunProfileRefused", req, err)
 		}
 	}
+	// V1: a deny-default role with no network rule is not given localhost.
+	denyDefault := "(version 1)\n(deny default)\n(allow file-read* (subpath \"/usr\"))\n(allow process-exec (literal \"/bin/sh\"))\n"
+	for _, req := range []string{netAllow, bindAllow, inAllow} {
+		if _, err := ComposeRunProfile(denyDefault, req+"\n", testBlock); !errors.Is(err, ErrRunProfileRefused) {
+			t.Errorf("%s over a (deny default) role with no network rule: err = %v, want ErrRunProfileRefused", req, err)
+		}
+	}
+	// A role of a bare version form, which names neither default, is refused too.
+	if _, err := ComposeRunProfile("(version 1)\n", netAllow+"\n", testBlock); !errors.Is(err, ErrRunProfileRefused) {
+		t.Errorf("the network form over a role that names no (allow default): err = %v, want ErrRunProfileRefused", err)
+	}
 	// A role that names no network operation is not widened by the same form.
 	if _, err := ComposeRunProfile("(version 1)\n(allow default)\n", netAllow+"\n", testBlock); err != nil {
 		t.Errorf("the network form over a role with no network rules was refused: %v", err)

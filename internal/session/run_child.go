@@ -34,11 +34,11 @@ func (w *capWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// RunChild runs argv in its own process group and returns when it exits. The
+// runArgv runs argv in its own process group and returns when it exits. The
 // group is killed at the timeout and when ctx ends, and each stream is capped
 // at maxOut bytes. A command that cannot be started is an error, never a
 // result with an exit status.
-func RunChild(ctx context.Context, argv []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error) {
+func runArgv(ctx context.Context, argv []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error) {
 	if len(argv) == 0 {
 		return api.RunSandboxedResult{}, errors.New("no command")
 	}
@@ -89,4 +89,11 @@ func RunChild(ctx context.Context, argv []string, dir string, env []string, time
 		return res, fmt.Errorf("wait %s: %w", argv[0], werr)
 	}
 	return res, nil
+}
+
+// RunChild is the one route that starts a run: it prepends the plan's staged
+// sandbox-exec prefix to argv and runs the whole, so no caller can run a command
+// without a composed profile. A nil plan or an empty prefix is an error.
+func RunChild(ctx context.Context, plan *RunPlan, argv []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error) {
+	return runArgv(ctx, argv, dir, env, timeout, maxOut) // red: the prefix is not applied
 }
