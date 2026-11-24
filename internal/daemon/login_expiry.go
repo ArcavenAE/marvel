@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
@@ -209,7 +211,54 @@ func (d *Daemon) accountLogins(now time.Time) api.AccountLogins {
 }
 
 // loginVitalsRow is the "login expiry" row of get vitals
-// (docs/design/native-checks.md section 2.5).
+// (docs/design/native-checks.md section 2.5). It reads over while any login is
+// expiring or lapsed, gap while no login has been read or one is unreadable,
+// and under otherwise; the detail names the soonest expiry and its key, which
+// is the string marvel already prints, and nothing else about the login.
 func loginVitalsRow(res api.AccountLogins, now time.Time) hostvitals.Threshold {
-	return hostvitals.Threshold{}
+	row := hostvitals.Threshold{Name: "login expiry", Line: "72 hours"}
+	if len(res.Logins) == 0 {
+		row.State, row.Detail = "gap", "no login read yet"
+		return row
+	}
+	var (
+		soonest    *api.AccountLogin
+		crossed    bool
+		unreadable int
+	)
+	for i := range res.Logins {
+		l := &res.Logins[i]
+		switch l.State {
+		case string(loginexpiry.StateExpiring), string(loginexpiry.StateLapsed):
+			crossed = true
+		case string(loginexpiry.StateUnreadable):
+			unreadable++
+		}
+		if l.ExpiresAt != nil && (soonest == nil || l.ExpiresAt.Before(*soonest.ExpiresAt)) {
+			soonest = l
+		}
+	}
+	if soonest != nil {
+		row.Detail = "soonest " + soonest.Account + " " + loginLeft(soonest, now)
+	}
+	switch {
+	case crossed:
+		row.State = "over"
+	case unreadable > 0:
+		row.State = "gap"
+		row.Detail = strings.TrimSpace(row.Detail + fmt.Sprintf(" (%d of %d unreadable)", unreadable, len(res.Logins)))
+	default:
+		row.State = "under"
+	}
+	return row
+}
+
+// loginLeft says when a login expires: the time, and the hours left or that it
+// has passed.
+func loginLeft(l *api.AccountLogin, now time.Time) string {
+	at := l.ExpiresAt.UTC().Format(time.RFC3339)
+	if !l.ExpiresAt.After(now) {
+		return "expired " + at
+	}
+	return fmt.Sprintf("expires %s (%d hours left)", at, int(l.ExpiresAt.Sub(now).Hours()))
 }
