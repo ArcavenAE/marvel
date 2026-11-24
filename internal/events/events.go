@@ -121,6 +121,15 @@ const (
 	KindHostVitalsCrossed Kind = "host.vitals.crossed"
 	// KindHostVitalsCleared records the same reading no longer passing its line.
 	KindHostVitalsCleared Kind = "host.vitals.cleared"
+	// KindAccountLoginExpiring records a login's expiry coming within 72 hours,
+	// once per login, ahead of the lapse. KindAccountLoginLapsed records the
+	// harness reporting it logged out or its expiry past. KindAccountLoginRenewed
+	// records the expiry moving later, or a lapsed login reading ok again. They
+	// carry the account key and times, never an email or organization
+	// (docs/design/native-checks.md section 2.4). Reports; they block nothing.
+	KindAccountLoginExpiring Kind = "account.login-expiring"
+	KindAccountLoginLapsed   Kind = "account.login-lapsed"
+	KindAccountLoginRenewed  Kind = "account.login-renewed"
 	// KindAccountWindowNearLimit records an account's rate-limit window reaching
 	// the cluster's warning level, once per window. It is a report and blocks
 	// nothing (diagnostic-not-gate).
@@ -572,6 +581,9 @@ var allKinds = []Kind{
 	KindViewRefreshFailed,
 	KindHostVitalsCrossed,
 	KindHostVitalsCleared,
+	KindAccountLoginExpiring,
+	KindAccountLoginLapsed,
+	KindAccountLoginRenewed,
 	KindAccountWindowNearLimit,
 	KindViewUnavailable,
 	KindViewRetentionHeld,
