@@ -84,9 +84,36 @@ func renderTotals(rows []api.Session, shown []sessionColumn, now time.Time, opts
 	return b.String()
 }
 
+// totalsCell is one column's sum: the text of the total, how many rows had a
+// value (n), and how many of those were lower bounds (partial).
+type totalsCell struct {
+	text       string
+	n, partial int
+}
+
 // totalsFieldFor is one column's field, and false for a column that is never
 // summed.
 func totalsFieldFor(rows []api.Session, c sessionColumn, now time.Time) (string, bool) {
+	cell, ok := totalsCellFor(rows, c, now)
+	if !ok {
+		return "", false
+	}
+	if cell.n == 0 {
+		return c.header + " -", true
+	}
+	count := fmt.Sprintf("%d", cell.n)
+	switch {
+	case c.name == "rate":
+		count += " fresh"
+	case cell.partial > 0:
+		count += fmt.Sprintf(", %d partial", cell.partial)
+	}
+	return fmt.Sprintf("%s %s (%s)", c.header, cell.text, count), true
+}
+
+// totalsCellFor sums one column over rows, and reports false for a column that
+// is never summed. A column no row has a value for has n 0 and the text "-".
+func totalsCellFor(rows []api.Session, c sessionColumn, now time.Time) (totalsCell, bool) {
 	var sum totalsSum
 	var text func(totalsSum) string
 	switch c.name {
@@ -121,7 +148,7 @@ func totalsFieldFor(rows []api.Session, c sessionColumn, now time.Time) (string,
 	default:
 		pick, ok := totalsTokenColumns[c.name]
 		if !ok {
-			return "", false
+			return totalsCell{}, false
 		}
 		for _, s := range rows {
 			if v := pick(s); v != nil {
@@ -137,16 +164,9 @@ func totalsFieldFor(rows []api.Session, c sessionColumn, now time.Time) (string,
 		}
 	}
 	if sum.n == 0 {
-		return c.header + " -", true
+		return totalsCell{text: "-"}, true
 	}
-	count := fmt.Sprintf("%d", sum.n)
-	switch {
-	case c.name == "rate":
-		count += " fresh"
-	case sum.partial > 0:
-		count += fmt.Sprintf(", %d partial", sum.partial)
-	}
-	return fmt.Sprintf("%s %s (%s)", c.header, text(sum), count), true
+	return totalsCell{text: text(sum), n: sum.n, partial: sum.partial}, true
 }
 
 // totalsFieldGap separates the fields of a totals line.

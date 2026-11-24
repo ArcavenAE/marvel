@@ -1,6 +1,6 @@
 ## marvel get
 
-List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, account-readings, vitals)
+List resources (sessions, teams, workspaces, endpoints, policies, credentials, budgets, account-readings, account-logins, vitals)
 
 ### Synopsis
 
@@ -12,6 +12,12 @@ on disk and read back at start, so the list and the stale rows of get budgets su
 --account keeps the accounts whose key contains the text, and --since 1h keeps readings no older
 than that. -o json prints the same list. It reads the history only and asks nothing of any
 harness; nothing gates or acts on it.
+
+get account-logins lists each login's expiry state as the daemon's login expiry service last read it:
+the state (ok, expiring, lapsed or unreadable), the expiry in UTC, whole hours left, when it was last
+read, and why a read failed and since when. It reads the daemon's memory only and asks nothing of any
+harness; -o json prints the same document. Login expiry is off unless the cluster config sets
+login_expiry.
 
 get vitals shows the daemon's latest host vitals sample (swap, memory pressure, fseventsd RSS and
 the largest process's RSS, orphan CPU), its time, each threshold with its state, the top processes by
@@ -104,6 +110,14 @@ a bill and covers statusline seats only. HIT% is never summed. TOUT and COST are
 separate fields and nothing converts tokens to dollars. A wide line breaks between
 fields onto a second totals line. Every total is diagnostic only: nothing gates or acts
 on it.
+
+With --all-clusters or a cluster list, the one-shot read prints a summary table above the
+merged sessions table instead, on a terminal or with --header: one aligned row per
+cluster that answered, a TOTAL row, and a note under it for each column, for a + lower
+bound, for a column that covers fewer sessions than its row, for a cluster that was
+still starting and for a cluster that shares a daemon with another. A cluster that
+answered gets no status line on stderr then; every other outcome keeps its line, and the
+lines follow the table. The single-cluster line and the watch frame are unchanged.
 
 A trailing * on a LAST-ACTIVE or ACTIVE% value means a statusline or heartbeat reported
 it, which is weaker than token flow: * reported by statusline or heartbeat,
