@@ -1315,6 +1315,35 @@ ssh: client connected: <user>@10.0.0.42 (SHA256:abc...)  # remote connection
 inject: dev/squad-worker-g1-0 <- 42 bytes                # executive injection
 ```
 
+### Host vitals
+
+`marvel get vitals` reads the daemon's latest host sample. It is off until the
+cluster entry in `~/.marvel/config.yaml` sets `host_vitals: true`. It shows swap
+used in GiB (with swap-ins between samples where the host keeps a counter), the
+summed RSS of the seats against physical memory, the free space of the volumes
+under marvel's home and the teams' work directories, the top processes by RSS
+with the seat each belongs to, and the orphans with their memory, start time and
+parent chain. Nothing gates or acts on these figures.
+
+A process of the user's own that started under a seat and lost its parent shows
+up as an orphan, since marvel cannot tell a wanted app from a leftover. To keep
+such a process out of the list, name its bundle or executable path in the cluster
+entry:
+
+```yaml
+clusters:
+  - name: local
+    host_vitals: true
+    host_vitals_orphan_exclude:
+      - /path/to/Some.app
+      - /path/to/bin/model-server
+```
+
+A process is excluded when the path it runs from equals an entry or sits under
+it, matched on whole path elements (`/path/to/Some.app` does not match
+`/path/to/Some.app2`). The list is empty by default, and marvel carries no app
+names of its own.
+
 ## Troubleshooting
 
 ### "connect to daemon: no such file or directory"

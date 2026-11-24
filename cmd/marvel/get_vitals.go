@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/arcavenae/marvel/internal/daemonrpc"
@@ -89,15 +90,23 @@ func printVitals(w io.Writer, snap hostvitals.Snapshot, now time.Time) error {
 // printTop writes the top processes by RSS: pid, parent, RSS, elapsed time, CPU
 // time and command name. The name is the command name only.
 func printTop(w io.Writer, top []hostvitals.Proc) error {
-	if _, err := fmt.Fprintf(w, "top processes by RSS:\n  %-8s %-8s %-10s %-10s %-8s %s\n", "PID", "PPID", "RSS", "ELAPSED", "CPU", "NAME"); err != nil {
+	if _, err := fmt.Fprintf(w, "top processes by RSS:\n  %-8s %-8s %-10s %-10s %-8s %-18s %s\n", "PID", "PPID", "RSS", "ELAPSED", "CPU", "NAME", "SEAT"); err != nil {
 		return err
 	}
 	for _, p := range top {
-		if _, err := fmt.Fprintf(w, "  %-8d %-8d %-10s %-10s %-8s %s\n", p.PID, p.PPID, rssText(p.RSSBytes), spanText(p.ElapsedSeconds), cpuText(p.CPUSeconds), p.Name); err != nil {
+		if _, err := fmt.Fprintf(w, "  %-8d %-8d %-10s %-10s %-8s %-18s %s\n", p.PID, p.PPID, rssText(p.RSSBytes), spanText(p.ElapsedSeconds), cpuText(p.CPUSeconds), p.Name, dash(p.Seat)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// dash prints "-" for empty text.
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 // rssText prints bytes as GiB at a GiB or more, else as whole MiB.
@@ -139,7 +148,7 @@ func cpuText(sec float64) string {
 // watched that long). An unattributed orphan gets a second line with its
 // arguments, working directory and age.
 func printOrphans(w io.Writer, orphans []hostvitals.Orphan) error {
-	if _, err := fmt.Fprintf(w, "orphans:\n  %-8s %-18s %-12s %-32s %-21s %-12s %s\n", "PID", "NAME", "REASON", "SESSION", "MARKED", "CPU SINCE", "SHARE"); err != nil {
+	if _, err := fmt.Fprintf(w, "orphans:\n  %-8s %-18s %-12s %-32s %-21s %-21s %-10s %-12s %-7s %s\n", "PID", "NAME", "REASON", "SESSION", "MARKED", "STARTED", "RSS", "CPU SINCE", "SHARE", "PARENTS"); err != nil {
 		return err
 	}
 	for _, o := range orphans {
@@ -150,10 +159,17 @@ func printOrphans(w io.Writer, orphans []hostvitals.Orphan) error {
 		if session == "" {
 			session = "-"
 		}
+		started, parents := "-", "-"
+		if !o.StartedAt.IsZero() {
+			started = o.StartedAt.UTC().Format(time.RFC3339)
+		}
+		if len(o.Parents) > 0 {
+			parents = strings.Join(o.Parents, " < ")
+		}
 		if o.Share != nil {
 			share = fmt.Sprintf("%.0f%%", *o.Share*100)
 		}
-		if _, err := fmt.Fprintf(w, "  %-8d %-18s %-12s %-32s %-21s %-12s %s\n", o.PID, o.Name, o.Reason, session, o.MarkedAt.UTC().Format(time.RFC3339), cpuText(o.CPUSecondsSinceMarked), share); err != nil {
+		if _, err := fmt.Fprintf(w, "  %-8d %-18s %-12s %-32s %-21s %-21s %-10s %-12s %-7s %s\n", o.PID, o.Name, o.Reason, session, o.MarkedAt.UTC().Format(time.RFC3339), started, rssText(o.RSSBytes), cpuText(o.CPUSecondsSinceMarked), share, parents); err != nil {
 			return err
 		}
 		if o.Reason == hostvitals.ReasonUnattributed {

@@ -55,3 +55,21 @@ func TestParsePSISomeAvg10(t *testing.T) {
 		}
 	}
 }
+
+func TestParseMeminfoTotal(t *testing.T) {
+	if got := parseMeminfoTotal("MemTotal:       16384 kB\nMemFree: 1 kB\n"); got != 16384*1024 {
+		t.Errorf("MemTotal = %d, want %d", got, 16384*1024)
+	}
+	if got := parseMeminfoTotal("MemFree: 1 kB\n"); got != 0 {
+		t.Errorf("no MemTotal line = %d, want 0", got)
+	}
+}
+
+func TestParseVmstatSwapIns(t *testing.T) {
+	if v, ok := parseVmstatSwapIns("pgpgin 5\npswpin 600\npswpout 7\n"); !ok || v != 600 {
+		t.Errorf("pswpin = %d, %v, want 600, true", v, ok)
+	}
+	if _, ok := parseVmstatSwapIns("pgpgin 5\n"); ok {
+		t.Error("no pswpin line read as present")
+	}
+}
