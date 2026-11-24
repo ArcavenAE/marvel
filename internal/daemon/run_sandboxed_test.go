@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -79,9 +82,13 @@ func TestAuthorizeRunRefusesWhatIsNotABoundRunningSeat(t *testing.T) {
 		}
 	}
 	// A record with no token hash is never found by token, so an unbound seat
-	// cannot ask for a run (the heartbeat fail-open does not carry over).
-	if _, err := d.authorizeRun(""); err == nil {
-		t.Error("an empty token matched an unbound record")
+	// cannot ask for a run (the heartbeat fail-open does not carry over). With
+	// only the unbound record's key known, no token reaches it.
+	for _, tok := range []string{unbound.Key(), "x", strings.Repeat("0", 64)} {
+		got, err := d.authorizeRun(tok)
+		if err == nil && got.HeartbeatTokenHash == "" {
+			t.Errorf("token %q admitted the unbound record %s", tok, got.Key())
+		}
 	}
 	if err := store.UpdateSession(sess.Key(), func(s *api.Session) error {
 		s.State = api.SessionSucceeded
@@ -101,18 +108,17 @@ func TestRunLogRecordCarriesNoValues(t *testing.T) {
 	req := api.RunSandboxedRequest{
 		Argv:    []string{"/usr/bin/true", "ARG-SECRET-1"},
 		Env:     []string{"TOKEN=ENV-SECRET-2"},
-		Stdin:   []byte("STDIN-SECRET-3"),
 		Profile: "(deny network*) ;PROFILE-TEXT-4",
 	}
 	composed := "(version 1)\n" + req.Profile
 	sum := sha256.Sum256([]byte(composed))
 	line := runLogRecord(sess, req, composed, 7, 1500*time.Millisecond)
-	for _, want := range []string{sess.Key(), "/usr/bin/true", hex.EncodeToString(sum[:]), "7"} {
+	for _, want := range []string{"seat=" + sess.Key(), "argv0=/usr/bin/true", "profile_sha256=" + hex.EncodeToString(sum[:]), "rc=7 ", "took=1.5s"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("log line lacks %q: %q", want, line)
 		}
 	}
-	for _, leak := range []string{"ARG-SECRET-1", "ENV-SECRET-2", "STDIN-SECRET-3", "PROFILE-TEXT-4", sess.HeartbeatToken} {
+	for _, leak := range []string{"ARG-SECRET-1", "ENV-SECRET-2", "PROFILE-TEXT-4", sess.HeartbeatToken} {
 		if strings.Contains(line, leak) {
 			t.Errorf("log line carries %q: %q", leak, line)
 		}
@@ -122,13 +128,13 @@ func TestRunLogRecordCarriesNoValues(t *testing.T) {
 // Fidelity: output and exit status come back as a direct run gives them.
 func TestRunChildReturnsOutputAndExitStatus(t *testing.T) {
 	res, err := runChild(context.Background(),
-		[]string{"/bin/sh", "-c", "cat; echo out; echo err >&2; exit 3"},
-		t.TempDir(), []string{"PATH=/usr/bin:/bin"}, []byte("in\n"), 10*time.Second, api.MaxRunOutputBytes)
+		[]string{"/bin/sh", "-c", "echo out; echo err >&2; exit 3"},
+		t.TempDir(), []string{"PATH=/usr/bin:/bin"}, 10*time.Second, api.MaxRunOutputBytes)
 	if err != nil {
 		t.Fatalf("runChild: %v", err)
 	}
-	if res.ExitCode != 3 || res.Stdout != "in\nout\n" || res.Stderr != "err\n" {
-		t.Fatalf("got rc=%d stdout=%q stderr=%q, want rc=3 stdout=%q stderr=%q", res.ExitCode, res.Stdout, res.Stderr, "in\nout\n", "err\n")
+	if res.ExitCode != 3 || res.Stdout != "out\n" || res.Stderr != "err\n" {
+		t.Fatalf("got rc=%d stdout=%q stderr=%q, want rc=3 stdout=%q stderr=%q", res.ExitCode, res.Stdout, res.Stderr, "out\n", "err\n")
 	}
 }
 
@@ -139,7 +145,7 @@ func TestRunChildUsesTheRequestedDirAndEnv(t *testing.T) {
 	t.Setenv("MARVEL_RUN_LEAK_PROBE", "daemon-value")
 	res, err := runChild(context.Background(),
 		[]string{"/bin/sh", "-c", `pwd -P; echo "$ASKED"; echo "${MARVEL_RUN_LEAK_PROBE-unset}"`},
-		dir, []string{"PATH=/usr/bin:/bin", "ASKED=yes"}, nil, 10*time.Second, api.MaxRunOutputBytes)
+		dir, []string{"PATH=/usr/bin:/bin", "ASKED=yes"}, 10*time.Second, api.MaxRunOutputBytes)
 	if err != nil {
 		t.Fatalf("runChild: %v", err)
 	}
@@ -157,7 +163,7 @@ func TestRunChildKillsTheGroupAtTheTimeout(t *testing.T) {
 	start := time.Now()
 	res, err := runChild(context.Background(),
 		[]string{"/bin/sh", "-c", "sleep 60 & echo $!; wait"},
-		t.TempDir(), []string{"PATH=/usr/bin:/bin"}, nil, 300*time.Millisecond, api.MaxRunOutputBytes)
+		t.TempDir(), []string{"PATH=/usr/bin:/bin"}, 300*time.Millisecond, api.MaxRunOutputBytes)
 	if err != nil {
 		t.Fatalf("runChild: %v", err)
 	}
@@ -176,7 +182,7 @@ func TestRunChildKillsTheGroupWhenTheRequestEnds(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(300 * time.Millisecond); cancel() }()
 	res, err := runChild(ctx, []string{"/bin/sh", "-c", "sleep 60 & echo $!; wait"},
-		t.TempDir(), []string{"PATH=/usr/bin:/bin"}, nil, time.Minute, api.MaxRunOutputBytes)
+		t.TempDir(), []string{"PATH=/usr/bin:/bin"}, time.Minute, api.MaxRunOutputBytes)
 	if err != nil {
 		t.Fatalf("runChild: %v", err)
 	}
@@ -204,11 +210,63 @@ func assertGone(t *testing.T, stdout string) {
 func TestRunChildCapsOutput(t *testing.T) {
 	res, err := runChild(context.Background(),
 		[]string{"/bin/sh", "-c", "head -c 100000 /dev/zero | tr '\\0' x"},
-		t.TempDir(), []string{"PATH=/usr/bin:/bin"}, nil, 10*time.Second, 1024)
+		t.TempDir(), []string{"PATH=/usr/bin:/bin"}, 10*time.Second, 1024)
 	if err != nil {
 		t.Fatalf("runChild: %v", err)
 	}
 	if len(res.Stdout) != 1024 || !res.Truncated {
 		t.Fatalf("stdout is %d bytes, truncated=%v, want 1024 and true", len(res.Stdout), res.Truncated)
+	}
+}
+
+// R10: the stderr cap, and a command that cannot start is an error and not a
+// child's exit status.
+func TestRunChildCapsStderrToo(t *testing.T) {
+	res, err := runChild(context.Background(),
+		[]string{"/bin/sh", "-c", "head -c 100000 /dev/zero | tr '\\0' x >&2"},
+		t.TempDir(), []string{"PATH=/usr/bin:/bin"}, 10*time.Second, 1024)
+	if err != nil {
+		t.Fatalf("runChild: %v", err)
+	}
+	if len(res.Stderr) != 1024 || !res.Truncated {
+		t.Fatalf("stderr is %d bytes, truncated=%v, want 1024 and true", len(res.Stderr), res.Truncated)
+	}
+}
+
+func TestRunChildReportsAnExecFailureAsAnError(t *testing.T) {
+	res, err := runChild(context.Background(), []string{"/no/such/binary"}, t.TempDir(), nil, 10*time.Second, 1024)
+	if err == nil {
+		t.Fatalf("a missing program gave no error, result %+v", res)
+	}
+}
+
+// R7: the carve-out is the seat's recorded workdir, never the request's Dir.
+func TestRunCarveOutIsTheRecordedWorkDir(t *testing.T) {
+	_, _, sess := runDaemon(t)
+	sess.WorkDir = "/work/tree"
+	got := runCarveOut(sess, api.RunSandboxedRequest{Dir: "/Users/x/Documents"})
+	if len(got) != 1 || got[0] != "/work/tree" {
+		t.Fatalf("carve-out = %q, want only the recorded workdir", got)
+	}
+}
+
+// R8, handler level: a request the daemon cannot authorize is answered with an
+// error and runs nothing. The marker file is created only if the command ran.
+func TestHandleRunSandboxedRefusesAnUnknownTokenAndRunsNothing(t *testing.T) {
+	d, _, _ := runDaemon(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	body, err := json.Marshal(api.RunSandboxedRequest{Token: "not-a-token", Argv: []string{"/usr/bin/touch", marker}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := d.handleRunSandboxed(context.Background(), body)
+	if resp.Error == "" {
+		t.Fatalf("an unknown token was answered without an error: %+v", resp)
+	}
+	if _, serr := os.Stat(marker); serr == nil {
+		t.Fatal("the command ran for an unauthorized request")
+	}
+	if strings.Contains(resp.Error, "not-a-token") {
+		t.Errorf("the refusal echoes the token: %q", resp.Error)
 	}
 }

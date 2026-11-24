@@ -23,8 +23,6 @@ type RunSandboxedRequest struct {
 	Profile string `json:"profile,omitempty"`
 	// TimeoutSeconds bounds the run; the daemon kills the child at the limit.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
-	// Stdin is fed to the child and then closed.
-	Stdin []byte `json:"stdin,omitempty"`
 }
 
 // RunSandboxedResult is the daemon's answer to a run it carried out.
