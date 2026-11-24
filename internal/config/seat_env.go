@@ -28,6 +28,25 @@ type SeatEnv struct {
 	Secrets map[string]string `yaml:"secrets,omitempty"`
 }
 
+// seatEnvYAML is SeatEnv as it is written. Secrets is a pointer so an absent map
+// (the bd default) and an empty one (secrets: {}, the opt-out) stay apart: omitempty
+// drops a nil pointer and keeps a pointer to an empty map.
+type seatEnvYAML struct {
+	PathPrepend []string           `yaml:"path_prepend,omitempty"`
+	Unset       []string           `yaml:"unset,omitempty"`
+	Secrets     *map[string]string `yaml:"secrets,omitempty"`
+}
+
+// MarshalYAML writes a nil Secrets as no key and an empty, non-nil Secrets as
+// `secrets: {}`, so a save does not turn an opt-out back into the default.
+func (s SeatEnv) MarshalYAML() (any, error) {
+	out := seatEnvYAML{PathPrepend: s.PathPrepend, Unset: s.Unset}
+	if s.Secrets != nil {
+		out.Secrets = &s.Secrets
+	}
+	return out, nil
+}
+
 // ErrInvalidSeatEnv marks a seat_env block that names something that cannot be
 // a variable name or a directory on PATH. Like ErrInvalidService it rides beside
 // the parsed config, and the daemon reads the cluster with no seat_env.
