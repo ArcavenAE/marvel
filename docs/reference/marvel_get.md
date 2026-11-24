@@ -27,6 +27,10 @@ sampler does not hold yet. It reads the daemon's memory only, and -o json prints
 document. It is diagnostic: nothing gates or acts on it. host vitals is off unless the cluster
 config sets host_vitals.
 
+A value that is the literal redaction marker a tracked copy of a manifest carries (<value>)
+shows as unset (placeholder) in the workdir, home, login and account cells, and marvel doctor
+warns for each seat whose env holds it.
+
 AGE is the time since the session was created, as 45s, 9m, 2h9m or 3d4h; a - means
 the row has no creation time.
 

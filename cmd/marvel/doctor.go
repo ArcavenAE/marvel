@@ -487,6 +487,9 @@ func checkSeats(r *doctorReport, in doctorInput) {
 		if s.SecretNote != "" {
 			r.line(statWarn, "seat-secret", fmt.Sprintf("seat %s started without its secret: %s", s.Name, firstLine(s.SecretNote)), "")
 		}
+		if keys := api.EnvPlaceholderKeys(s.Runtime.Env); len(keys) > 0 {
+			r.line(statWarn, "env-placeholder", fmt.Sprintf("seat %s holds the redaction marker %s in env %s; it was applied from a tracked copy, so apply the manifest that holds the real values", s.Name, api.EnvPlaceholder, strings.Join(keys, ", ")), "")
+		}
 		name := "seat " + s.Name
 		switch s.Pane {
 		case "prompt":
