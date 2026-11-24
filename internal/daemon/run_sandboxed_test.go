@@ -324,12 +324,12 @@ func TestHandleRunSandboxedRefusesAHostThatCannotSandbox(t *testing.T) {
 	}
 	d.runGOOS = "linux"
 	resp := d.handleRunSandboxed(context.Background(), body)
-	if !strings.Contains(resp.Error, "sandbox") {
+	if !strings.Contains(resp.Error, "no sandbox on this host") {
 		t.Fatalf("error = %q, want it to name the sandbox host check", resp.Error)
 	}
 	d.runGOOS, d.runSandboxExec = "darwin", filepath.Join(t.TempDir(), "missing")
 	resp = d.handleRunSandboxed(context.Background(), body)
-	if !strings.Contains(resp.Error, "sandbox") {
+	if !strings.Contains(resp.Error, "no sandbox on this host") {
 		t.Fatalf("a missing sandbox-exec: error = %q, want it to name the sandbox host check", resp.Error)
 	}
 	for _, p := range []string{marker, invoked} {
