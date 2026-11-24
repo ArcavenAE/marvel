@@ -84,12 +84,15 @@ func TestDoctorLoginStatesMapToWarnAndFail(t *testing.T) {
 	}
 }
 
-// A daemon whose service is off, or that does not answer, leaves today's
-// exit-status check in place.
+// A daemon whose service is off, that has read no login, or that does not
+// answer, leaves today's exit-status check in place.
 func TestDoctorLoginFallsBackToTheStatusCommand(t *testing.T) {
 	off := func() (api.AccountLogins, error) { return api.AccountLogins{}, nil }
 	down := func() (api.AccountLogins, error) { return api.AccountLogins{}, errors.New("no daemon") }
-	for name, fn := range map[string]func() (api.AccountLogins, error){"off": off, "down": down} {
+	// The service is on and has read no login yet: an empty block would say
+	// nothing about the login, so the status command still runs.
+	unread := func() (api.AccountLogins, error) { return api.AccountLogins{Enabled: true}, nil }
+	for name, fn := range map[string]func() (api.AccountLogins, error){"off": off, "down": down, "unread": unread} {
 		t.Run(name, func(t *testing.T) {
 			out, failed, ran := doctorWithDaemonLogins(t, fn)
 			if len(*ran) != 1 {
