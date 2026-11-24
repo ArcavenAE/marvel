@@ -117,6 +117,13 @@ func TestComposeRunProfileRefusesNetworkAllowsOverARoleNetworkRule(t *testing.T)
 			t.Errorf("%s over a role with network rules: err = %v, want ErrRunProfileRefused", req, err)
 		}
 	}
+	// G2: a role that names network only through allows is also not widened.
+	allowOnly := "(version 1)\n(deny default)\n(allow network-outbound (remote ip \"localhost:11434\"))\n"
+	for _, req := range []string{netAllow, bindAllow, inAllow} {
+		if _, err := ComposeRunProfile(allowOnly, req+"\n", testBlock); !errors.Is(err, ErrRunProfileRefused) {
+			t.Errorf("%s over a role with only network allows: err = %v, want ErrRunProfileRefused", req, err)
+		}
+	}
 	// A role that names no network operation is not widened by the same form.
 	if _, err := ComposeRunProfile("(version 1)\n(allow default)\n", netAllow+"\n", testBlock); err != nil {
 		t.Errorf("the network form over a role with no network rules was refused: %v", err)

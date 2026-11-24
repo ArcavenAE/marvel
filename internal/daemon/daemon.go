@@ -86,6 +86,11 @@ type Daemon struct {
 	// exit replaces os.Exit after a stop request, for tests.
 	exit func(int)
 
+	// runGOOS and runSandboxExec are the host facts run.sandboxed checks before
+	// it starts anything; empty means runtime.GOOS and /usr/bin/sandbox-exec.
+	// Tests set them.
+	runGOOS, runSandboxExec string
+
 	// views follows each seat's read-only views (marvel#609).
 	views *view.Keeper
 

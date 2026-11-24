@@ -270,3 +270,70 @@ func TestHandleRunSandboxedRefusesAnUnknownTokenAndRunsNothing(t *testing.T) {
 		t.Errorf("the refusal echoes the token: %q", resp.Error)
 	}
 }
+
+// handlerFixture is a daemon whose seat holds a role, with a fake sandbox-exec
+// that records every invocation, so a refusal can be told from a run.
+func handlerFixture(t *testing.T) (d *Daemon, sess api.Session, invoked string) {
+	t.Helper()
+	d, store, sess := runDaemon(t)
+	if err := store.CreateTeam(&api.Team{
+		Name: "squad", Workspace: "ws", Generation: 1, CreatedAt: time.Now().UTC(),
+		Roles: []api.Role{{Name: "builder", Replicas: 1, Runtime: api.Runtime{Name: "claude", Command: "claude"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	invoked = filepath.Join(dir, "invoked")
+	fakeExec := filepath.Join(dir, "sandbox-exec")
+	if err := os.WriteFile(fakeExec, []byte("#!/bin/sh\necho x >> "+invoked+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d.runGOOS, d.runSandboxExec = "darwin", fakeExec
+	return d, sess, invoked
+}
+
+// G1 (i): with a valid token, a request whose profile is outside the grammar is
+// refused before anything is started.
+func TestHandleRunSandboxedRefusesARefusedProfileWithAValidToken(t *testing.T) {
+	d, sess, invoked := handlerFixture(t)
+	body, err := json.Marshal(api.RunSandboxedRequest{
+		Token: sess.HeartbeatToken, Argv: []string{"/usr/bin/true"}, Profile: "(allow default)\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := d.handleRunSandboxed(context.Background(), body)
+	if !strings.Contains(resp.Error, "run profile refused") {
+		t.Fatalf("error = %q, want it to name the refused run profile", resp.Error)
+	}
+	if _, serr := os.Stat(invoked); serr == nil {
+		t.Fatal("sandbox-exec was started for a refused profile")
+	}
+}
+
+// G1 (ii): a host that cannot sandbox refuses the run; nothing runs unwrapped.
+func TestHandleRunSandboxedRefusesAHostThatCannotSandbox(t *testing.T) {
+	d, sess, invoked := handlerFixture(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	body, err := json.Marshal(api.RunSandboxedRequest{
+		Token: sess.HeartbeatToken, Argv: []string{"/usr/bin/touch", marker}, Profile: "(deny network*)\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.runGOOS = "linux"
+	resp := d.handleRunSandboxed(context.Background(), body)
+	if !strings.Contains(resp.Error, "sandbox") {
+		t.Fatalf("error = %q, want it to name the sandbox host check", resp.Error)
+	}
+	d.runGOOS, d.runSandboxExec = "darwin", filepath.Join(t.TempDir(), "missing")
+	resp = d.handleRunSandboxed(context.Background(), body)
+	if !strings.Contains(resp.Error, "sandbox") {
+		t.Fatalf("a missing sandbox-exec: error = %q, want it to name the sandbox host check", resp.Error)
+	}
+	for _, p := range []string{marker, invoked} {
+		if _, serr := os.Stat(p); serr == nil {
+			t.Fatalf("something ran on a host that cannot sandbox: %s exists", p)
+		}
+	}
+}
