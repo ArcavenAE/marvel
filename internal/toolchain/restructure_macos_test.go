@@ -849,33 +849,54 @@ func hasTests(t *testing.T, dir string) bool {
 // still fails the job, only later.
 const macOSGoTestTimeout = "20m"
 
-// restructureTimeoutGaps returns why the macOS restructure job's go test line
-// does not set the go test timeout, or nothing when it does.
+// restructureTimeoutGaps returns why the restructure-macos job's go test
+// command does not set the go test timeout, or nothing when it does. It reads
+// only that job's step run text, so a timeout on a go test line in another job
+// does not count. -timeout 20m and -timeout=20m both pass, since go test takes
+// either spelling; the command is read as fields, with a continued line
+// joined, and comment lines skipped.
 func restructureTimeoutGaps(path string) []string {
-	data, err := os.ReadFile(path)
+	jobs, err := ciJobs(path)
 	if err != nil {
 		return []string{err.Error()}
 	}
-	// The macOS restructure job's test line is the one go test line in ci.yml
-	// that continues onto the next line with a backslash.
-	var found []string
-	var macLine string
-	for _, line := range strings.Split(string(data), "\n") {
-		l := strings.TrimSpace(line)
-		if strings.HasPrefix(l, "go test -json -count=1 -race") {
-			found = append(found, l)
-			if strings.HasSuffix(l, "\\") {
-				macLine = l
+	job, ok := jobs["restructure-macos"]
+	if !ok {
+		return []string{"ci.yml has no restructure-macos job"}
+	}
+	var gaps []string
+	commands := 0
+	for _, step := range job.Steps {
+		var lines []string
+		for _, line := range strings.Split(strings.ReplaceAll(step.Run, "\\\n", " "), "\n") {
+			if l := strings.TrimSpace(line); !strings.HasPrefix(l, "#") {
+				lines = append(lines, l)
+			}
+		}
+		for _, l := range lines {
+			f := strings.Fields(l)
+			if len(f) < 2 || f[0] != "go" || f[1] != "test" {
+				continue
+			}
+			commands++
+			timeout := ""
+			for i, w := range f {
+				switch {
+				case w == "-timeout" && i+1 < len(f):
+					timeout = f[i+1]
+				case strings.HasPrefix(w, "-timeout="):
+					timeout = strings.TrimPrefix(w, "-timeout=")
+				}
+			}
+			if timeout != macOSGoTestTimeout {
+				gaps = append(gaps, fmt.Sprintf("the restructure-macos go test command %q has -timeout %q, want %s", l, timeout, macOSGoTestTimeout))
 			}
 		}
 	}
-	if macLine == "" {
-		return []string{fmt.Sprintf("no continued go test -json -count=1 -race line found in ci.yml; lines seen: %q", found)}
+	if commands == 0 {
+		gaps = append(gaps, "the restructure-macos job runs no go test command")
 	}
-	if !strings.Contains(macLine, " -timeout "+macOSGoTestTimeout+" ") {
-		return []string{fmt.Sprintf("the macOS restructure go test line %q lacks -timeout %s", macLine, macOSGoTestTimeout)}
-	}
-	return nil
+	return gaps
 }
 
 // TestMacOSRestructureTestLineSetsAGoTimeout holds the restructure job's
