@@ -28,7 +28,7 @@ func accountCell(s api.Session) string {
 	if name, ok := accountNames[id]; ok {
 		return name
 	}
-	if s.Runtime.AccountLabel != "" {
+	if s.Runtime.AccountLabel != "" && !api.IsEnvPlaceholder(s.Runtime.AccountLabel) {
 		return s.Runtime.AccountLabel
 	}
 	return acctKeyIn(clientAccountKey(s), s.Cluster)
