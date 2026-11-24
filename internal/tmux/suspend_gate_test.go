@@ -14,9 +14,7 @@ func fakeTmux(t *testing.T) (*Driver, string) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls")
 	bin := filepath.Join(dir, "tmux")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho \"$@\" >> '"+log+"'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, bin, []byte("#!/bin/sh\necho \"$@\" >> '"+log+"'\n"))
 	return &Driver{binary: bin}, log
 }
 

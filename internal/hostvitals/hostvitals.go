@@ -29,6 +29,15 @@ type Reading struct {
 	SwapUsed  uint64 `json:"swap_used"`  // bytes
 	SwapTotal uint64 `json:"swap_total"` // bytes
 
+	// MemTotal is the host's physical memory in bytes; 0 when the host did not say.
+	MemTotal uint64 `json:"mem_total,omitempty"`
+
+	// SwapInsOK is true when the host keeps a cumulative swap-in counter;
+	// SwapIns is that counter in pages. The snapshot shows the change between
+	// two samples.
+	SwapInsOK bool   `json:"swap_ins_ok,omitempty"`
+	SwapIns   uint64 `json:"swap_ins,omitempty"`
+
 	// KernelPressureOK is true on macOS, where the kernel reports a pressure
 	// level (1 normal, 2 warning, 4 critical) and the free share of memory
 	// behind the figure `memory_pressure` prints.
@@ -69,6 +78,21 @@ type Sampler struct {
 	fseventsdRSS  uint64
 	fseventsdSeen bool
 
+	// The seat memory vital: how many seats were found in the table and the RSS
+	// of their trees. seatsOK is false when no table was read.
+	seatCount int
+	seatRSS   uint64
+
+	// The disk free vital: the lines of the last sample, and the paths to stat.
+	diskPaths func() []string
+	diskStat  DiskStat
+	disk      []diskLine
+
+	// Swap-ins between the last two samples: haveIns is true once two samples
+	// carried the counter.
+	prevIns, deltaIns  uint64
+	prevInsOK, haveIns bool
+
 	// The orphan vital: the sources it reads, the tracker that keeps state
 	// across passes (touched by SampleProcs alone), and the view Snapshot reads.
 	orphanSrc OrphanSources
@@ -103,16 +127,35 @@ func (s *Sampler) SampleProcs(procs []Proc, ok bool) {
 		return
 	}
 	r := s.read()
-	top, fsev, fseen := summarize(procs)
 	s.mu.Lock()
 	src := s.orphanSrc
+	diskPaths, diskStat := s.diskPaths, s.diskStat
 	s.mu.Unlock()
+	var roots []int
+	if src.Roots != nil {
+		roots = src.Roots()
+	}
+	seats, seatRSS := 0, uint64(0)
+	if ok {
+		seats, seatRSS = SeatRSS(procs, roots)
+		procs = append([]Proc(nil), procs...)
+		nameSeats(procs, roots, src.RootSession)
+	}
+	top, fsev, fseen := summarize(procs)
+	disk := readDisks(diskPaths, diskStat)
 	var ov orphanView
 	if ok {
 		ov = s.orph.update(s.now(), procs, src)
 	}
 
 	s.mu.Lock()
+	s.haveIns = r.SwapInsOK && s.prevInsOK && r.SwapIns >= s.prevIns
+	if s.haveIns {
+		s.deltaIns = r.SwapIns - s.prevIns
+	}
+	s.prevIns, s.prevInsOK = r.SwapIns, r.SwapInsOK
+	s.disk = disk
+	s.seatCount, s.seatRSS = seats, seatRSS
 	s.latest, s.have = r, true
 	s.latestAt = s.now()
 	s.procsOK, s.top, s.fseventsdRSS, s.fseventsdSeen = ok, nil, 0, false

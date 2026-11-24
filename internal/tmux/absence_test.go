@@ -51,9 +51,7 @@ func absentDriver(t *testing.T, text string, procs procList) *Driver {
 	t.Helper()
 	script := filepath.Join(t.TempDir(), "tmux")
 	body := "#!/bin/sh\necho \"" + text + "\" >&2\nexit 1\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, script, []byte(body))
 	return &Driver{binary: script, socket: "unit", procs: procs}
 }
 
@@ -163,9 +161,7 @@ func TestNewSessionRefusesToCreateOnAnOutage(t *testing.T) {
 			log := filepath.Join(dir, "calls")
 			script := filepath.Join(dir, "tmux")
 			body := "#!/bin/sh\necho \"$*\" >> " + log + "\necho \"" + text + "\" >&2\nexit 1\n"
-			if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			writeExecutable(t, script, []byte(body))
 			d := &Driver{binary: script, socket: "unit", procs: procLines(" 1234 /opt/homebrew/bin/tmux -L unit new-session -d")}
 			if err := d.NewSession("s"); err == nil {
 				t.Error("NewSession returned nil with a server alive and unreachable; want an error")

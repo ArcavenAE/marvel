@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"time"
+
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/hostvitals"
@@ -19,19 +21,62 @@ func hostVitalsEnabled(cl *config.Cluster) bool {
 	return cl != nil && cl.HostVitals
 }
 
+// hostVitalsOrphanExclude reads the cluster's host_vitals_orphan_exclude list.
+// No cluster entry, or an unset key, is the empty list.
+func hostVitalsOrphanExclude(cl *config.Cluster) []string {
+	if cl == nil {
+		return nil
+	}
+	return cl.HostVitalsOrphanExclude
+}
+
 // loadHostVitals builds the daemon's host vitals sampler from the cluster
 // entry whose socket is ours, found the way loadScheduleHistoryMax finds it
 // and under the same tolerance for a config that loads with a validation
 // error. A config that cannot be read at all leaves it off.
 func (d *Daemon) loadHostVitals(socketPath string) {
 	on := false
+	var exclude []string
 	if cfg, err := config.Load(); configLoadUsable(err) && cfg != nil {
-		on = hostVitalsEnabled(cfg.ClusterForSocket(socketPath))
+		cl := cfg.ClusterForSocket(socketPath)
+		on = hostVitalsEnabled(cl)
+		exclude = hostVitalsOrphanExclude(cl)
 	}
 	d.vitals = hostvitals.New(on, hostvitals.Read, d.events)
 	d.readTable = procstat.ReadTable
 	d.readMarker = procargs.ReadMarker
 	d.wireOrphanSources()
+	d.wireOrphanExclude(exclude)
+	d.wireDiskPaths()
+}
+
+// wireOrphanExclude gives the sampler the paths the cluster's config says are
+// never orphans. The list is empty unless the host sets it.
+func (d *Daemon) wireOrphanExclude(exclude []string) {
+	d.vitals.SetOrphanExclude(exclude)
+}
+
+// wireDiskPaths names the paths the disk free vital reads: marvel's own home
+// and the work directory of each team, so the volume that holds the seats'
+// checkouts shows beside the one that holds marvel's state.
+func (d *Daemon) wireDiskPaths() {
+	d.vitals.SetDiskPathsFunc(func() []string {
+		var paths []string
+		seen := map[string]bool{}
+		add := func(p string) {
+			if p != "" && !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+		add(d.home)
+		if d.store != nil {
+			for _, t := range d.store.ListTeams() {
+				add(t.WorkDir)
+			}
+		}
+		return paths
+	}, hostvitals.StatVolume)
 }
 
 // wireOrphanSources gives the sampler the seat roots and the marker reader the
@@ -118,5 +163,13 @@ func vitalsProcs(table []procstat.Proc) []hostvitals.Proc {
 // nothing from the host and writes nothing, and a daemon whose sampler is off
 // or was never built answers the off snapshot, not an error.
 func (d *Daemon) handleHostVitals() daemonrpc.Response {
-	return respond(d.vitals.Snapshot())
+	snap := d.vitals.Snapshot()
+	// The login expiry row comes from the login service's memory, and only
+	// while that service runs: a daemon with it off has nothing to say, and a
+	// row would read as a login that is fine.
+	if snap.Enabled && d.logins != nil && d.logins.enabled {
+		now := time.Now().UTC()
+		snap.Thresholds = append(snap.Thresholds, loginVitalsRow(d.logins.result(now), now))
+	}
+	return respond(snap)
 }
