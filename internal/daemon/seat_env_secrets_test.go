@@ -20,7 +20,8 @@ func TestLoadSeatEnvKeepsADeclaredSecretOutOfTheServerAndPanes(t *testing.T) {
 		want       bool
 	}{
 		{"declared", "clusters:\n  - name: mine\n    socket: " + sock + "\n    seat_env:\n      secrets:\n        bd: BEADS_DOLT_PASSWORD\n", true},
-		{"not declared", "clusters:\n  - name: mine\n    socket: " + sock + "\n", false},
+		{"default, no seat_env at all", "clusters:\n  - name: mine\n    socket: " + sock + "\n", true},
+		{"opted out", "clusters:\n  - name: mine\n    socket: " + sock + "\n    seat_env:\n      secrets: {}\n", false},
 		{"a bad mapping is ignored whole", "clusters:\n  - name: mine\n    socket: " + sock + "\n    seat_env:\n      secrets:\n        bd: \"not a name\"\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,6 +47,7 @@ func TestLoadSeatEnvKeepsADeclaredSecretOutOfTheServerAndPanes(t *testing.T) {
 			}
 			d := &Daemon{driver: drv}
 			d.loadSeatEnv(sock)
+			d.seatStrip.Wait()
 			if _, err := drv.NewPaneAt("sess", "claude", "t", "", nil, false); err != nil {
 				t.Fatalf("NewPaneAt: %v", err)
 			}

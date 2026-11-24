@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 )
 
@@ -63,6 +64,24 @@ func validateDuties(where string, duties []string) error {
 			return fmt.Errorf("%s.duties: %q appears twice", where, d)
 		}
 		seen[d] = true
+	}
+	return nil
+}
+
+var seatSecretNeedRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+
+// validateSeatSecrets checks the needs a role names. A need is a short name the
+// cluster maps to a variable, never a value, so a refusal quotes no entry.
+func validateSeatSecrets(where string, needs []string) error {
+	seen := make(map[string]bool, len(needs))
+	for k, n := range needs {
+		if !seatSecretNeedRE.MatchString(n) {
+			return fmt.Errorf("%s.seat_secrets[%d] is not a need name (lower case letters, digits, - and _, starting with a letter)", where, k)
+		}
+		if seen[n] {
+			return fmt.Errorf("%s.seat_secrets[%d] repeats an earlier entry", where, k)
+		}
+		seen[n] = true
 	}
 	return nil
 }

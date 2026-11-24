@@ -24,6 +24,7 @@ import (
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/runtime"
 	rtevents "github.com/arcavenae/marvel/internal/runtime/events"
+	"github.com/arcavenae/marvel/internal/seatsecret"
 	"github.com/arcavenae/marvel/internal/tmux"
 	"github.com/arcavenae/marvel/internal/usage"
 	"github.com/arcavenae/marvel/internal/view"
@@ -62,7 +63,17 @@ type Manager struct {
 	// zero Manager leaves launches as they were. NetMounts lists the network
 	// mount points at launch; nil means read the host's mount table. A seam for
 	// tests.
-	TCCDeny   bool
+	TCCDeny bool
+	// SeatSecrets, SeatSecretDir and SeatSecretWait feed wrapSeatSecrets: where a
+	// declared need's value comes from, the private directory its FIFO is made in,
+	// and how long the pane and the writer wait for each other.
+	SeatSecrets    SeatSecretSource
+	SeatSecretDir  string
+	SeatSecretWait time.Duration
+	// SpawnGate, when set, is called before a seat's pane is made and returns a
+	// note when what it waits for did not finish, which the seat carries as its
+	// SecretNote. A nil gate waits for nothing.
+	SpawnGate func() string
 	NetMounts func() []string
 
 	// roleReader replaces the store read that answers which role a session is
@@ -1129,6 +1140,23 @@ func (m *Manager) Create(sess *api.Session) error {
 		}
 	}
 
+	// A role that declares a secret reads it from a private FIFO in its pane.
+	// The pane is made only after the gate answers; a gate that gave up leaves its
+	// note on the seat.
+	gateNote := ""
+	if m.SpawnGate != nil {
+		gateNote = m.SpawnGate()
+	}
+	if role, ok := m.roleOf(sess); ok {
+		m.wrapSeatSecrets(sess, role, &plan)
+	}
+	if gateNote != "" {
+		if sess.SecretNote != "" {
+			sess.SecretNote += "; "
+		}
+		sess.SecretNote += gateNote
+	}
+
 	// Log the exact command line we're about to exec so post-hoc
 	// debugging has the argv — operators otherwise had to guess what
 	// tmux new-window was actually running when a pane died quickly.
@@ -1220,6 +1248,8 @@ func commitLaunchRecord(live, sess *api.Session, paneID string, pid int) {
 	live.SystemPromptSha256 = sess.SystemPromptSha256
 	// Why this launch started without the privacy-folder deny, kept for doctor.
 	live.TCCDenyNote = sess.TCCDenyNote
+	// Why this launch started without a secret its role declares, for doctor.
+	live.SecretNote = sess.SecretNote
 }
 
 // recordResume writes sess's entry in the resume journal
@@ -1646,6 +1676,79 @@ func (m *Manager) assignSessionID(lctx *runtime.LaunchContext, adapter runtime.A
 	}
 	lctx.HarnessSessionID = id
 	lctx.Session.HarnessSessionID = id
+}
+
+// SeatSecretSource says what a seat that declares a need receives: the
+// environment variable that carries it and the value, held in memory by the
+// daemon. ok is false when the cluster maps no such need or holds no value.
+type SeatSecretSource interface {
+	SeatSecret(need string) (name string, value []byte, ok bool)
+}
+
+// wrapSeatSecrets wraps the launch command so the pane reads each secret its
+// role declares from a private FIFO, and starts the writers.
+func (m *Manager) wrapSeatSecrets(sess *api.Session, role api.Role, plan *launchPlan) {
+	sess.SecretNote = ""
+	if len(role.SeatSecrets) == 0 {
+		return
+	}
+	fail := func(need, name, why string) {
+		note := secretNote(need, name, why)
+		sess.SecretNote = joinSecretNotes(sess.SecretNote, note)
+		log.Printf("session %s: %s", sess.Key(), note)
+	}
+	if m.SeatSecrets == nil {
+		fail(role.SeatSecrets[0], "", "this daemon holds no seat secrets")
+		return
+	}
+	wait := m.SeatSecretWait
+	if wait <= 0 {
+		wait = 10 * time.Second
+	}
+	for _, need := range role.SeatSecrets {
+		name, value, ok := m.SeatSecrets.SeatSecret(need)
+		if !ok || name == "" || len(value) == 0 {
+			fail(need, name, "the cluster maps no value for it (seat_env.secrets) or the daemon holds none")
+			continue
+		}
+		h, err := seatsecret.Prepare(m.SeatSecretDir)
+		if err != nil {
+			fail(need, name, "no private directory for the hand-over")
+			clear(value)
+			continue
+		}
+		plan.command = h.Wrap(name, plan.command, wait)
+		key := sess.Key()
+		go func() {
+			defer clear(value)
+			if err := h.Deliver(value, wait+time.Second); err != nil {
+				// Deliver's error names its cause and never holds the value.
+				note := secretNote(need, name, err.Error())
+				log.Printf("session %s: %s", key, note)
+				_ = m.store.UpdateSession(key, func(live *api.Session) error {
+					live.SecretNote = joinSecretNotes(live.SecretNote, note)
+					return nil
+				})
+			}
+		}()
+	}
+}
+
+// secretNote is one line about a seat secret that did not arrive: the need, the
+// variable it fills when the cluster maps one, and the cause. Never the value.
+func secretNote(need, name, why string) string {
+	if name != "" {
+		return fmt.Sprintf("the seat starts without the secret %q (%s): %s", need, name, why)
+	}
+	return fmt.Sprintf("the seat starts without the secret %q: %s", need, why)
+}
+
+// joinSecretNotes keeps every failure of a launch, not only the last.
+func joinSecretNotes(old, add string) string {
+	if old == "" {
+		return add
+	}
+	return old + "; " + add
 }
 
 // planLaunch uses the adapter registry when team/role context is

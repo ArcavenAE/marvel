@@ -195,3 +195,35 @@ func TestStripServerEnvLeavesNoNameForTheNextPane(t *testing.T) {
 		t.Errorf("a pane started after the strip still carries %s", fakeSecretName)
 	}
 }
+
+// The first window of a session a cold server creates (what the session manager's
+// NewSession does before any seat pane) holds no secret either. A pane starts
+// with the server's global environment plus its session's, and tmux adds only the
+// update-environment names (display and ssh variables) from the client. The
+// panes' own shell is a platform binary that ps -E cannot read, so the proof is
+// those two tables, by name. The control shows the probe sees the name when it
+// is there.
+func TestTheFirstWindowOfAColdServerHoldsNoSecret(t *testing.T) {
+	t.Setenv(fakeSecretName, "mxfake-0042")
+	holds := func(d *Driver) (global, session bool) {
+		t.Helper()
+		g, _ := d.cmd("show-environment", "-g", fakeSecretName).CombinedOutput()
+		s, _ := d.cmd("show-environment", "-t", "probe", fakeSecretName).CombinedOutput()
+		return strings.Contains(string(g), fakeSecretName+"="), strings.Contains(string(s), fakeSecretName+"=")
+	}
+	control := realDriver(t, "mxfwc")
+	if err := control.NewSession("probe"); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := holds(control); !g {
+		t.Fatal("the control server does not hold the variable globally, so the proof below would pass without the change")
+	}
+	d := realDriver(t, "mxfws")
+	d.SetSeatSecretNames([]string{fakeSecretName})
+	if err := d.NewSession("probe"); err != nil {
+		t.Fatal(err)
+	}
+	if g, s := holds(d); g || s {
+		t.Errorf("a cold server's first window would inherit %s (global %v, session %v)", fakeSecretName, g, s)
+	}
+}

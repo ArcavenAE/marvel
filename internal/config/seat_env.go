@@ -23,8 +23,28 @@ type SeatEnv struct {
 	// Secrets maps the name a role declares it needs (seat_secrets) to the
 	// environment variable that carries the value in a seat. The daemon keeps the
 	// variable out of the tmux server and out of every pane that does not
-	// declare it; a manifest names a need and never a value.
+	// declare it; a manifest names a need and never a value. Left out, it maps bd
+	// to BEADS_DOLT_PASSWORD; an empty map (secrets: {}) opts out.
 	Secrets map[string]string `yaml:"secrets,omitempty"`
+}
+
+// seatEnvYAML is SeatEnv as it is written. Secrets is a pointer so an absent map
+// (the bd default) and an empty one (secrets: {}, the opt-out) stay apart: omitempty
+// drops a nil pointer and keeps a pointer to an empty map.
+type seatEnvYAML struct {
+	PathPrepend []string           `yaml:"path_prepend,omitempty"`
+	Unset       []string           `yaml:"unset,omitempty"`
+	Secrets     *map[string]string `yaml:"secrets,omitempty"`
+}
+
+// MarshalYAML writes a nil Secrets as no key and an empty, non-nil Secrets as
+// `secrets: {}`, so a save does not turn an opt-out back into the default.
+func (s SeatEnv) MarshalYAML() (any, error) {
+	out := seatEnvYAML{PathPrepend: s.PathPrepend, Unset: s.Unset}
+	if s.Secrets != nil {
+		out.Secrets = &s.Secrets
+	}
+	return out, nil
 }
 
 // ErrInvalidSeatEnv marks a seat_env block that names something that cannot be
@@ -42,7 +62,7 @@ var seatNeedRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 // nil cluster or an unset block is the zero value.
 func (c *Cluster) SeatEnvSpec() (SeatEnv, error) {
 	if c == nil || c.SeatEnv == nil {
-		return SeatEnv{}, nil
+		return SeatEnv{Secrets: defaultSeatSecrets()}, nil
 	}
 	var out SeatEnv
 	var errs []error
@@ -92,7 +112,18 @@ func (c *Cluster) SeatEnvSpec() (SeatEnv, error) {
 	if len(errs) > 0 {
 		return SeatEnv{}, errors.Join(errs...)
 	}
+	if c.SeatEnv.Secrets == nil {
+		out.Secrets = defaultSeatSecrets()
+	}
 	return out, nil
+}
+
+// defaultSeatSecrets is the mapping a cluster gets when its seat_env says nothing
+// about secrets: the bd need fills the dolt password variable, so the password
+// reaches only the seats whose role declares seat_secrets: [bd]. A cluster that
+// wants every seat to keep inheriting it writes secrets: {}.
+func defaultSeatSecrets() map[string]string {
+	return map[string]string{"bd": "BEADS_DOLT_PASSWORD"}
 }
 
 // SecretVars is the variable names the cluster maps its seat secrets to, in
