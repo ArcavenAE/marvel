@@ -59,6 +59,9 @@ type doctorInput struct {
 	// errRemoteNotDialed for a remote daemon that was not asked for, and any
 	// other error when the daemon does not answer. Nil means no read.
 	Sessions func() ([]api.Session, error)
+	// Logins reads the daemon's login expiry answer. It returns an error when
+	// no daemon answers. Nil means no read.
+	Logins func() (api.AccountLogins, error)
 	// Installs names the installed-copies records doctor reads. The zero
 	// value reads nothing.
 	Installs installSource

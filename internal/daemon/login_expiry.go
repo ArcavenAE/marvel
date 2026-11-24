@@ -8,6 +8,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/hostvitals"
 	"github.com/arcavenae/marvel/internal/loginexpiry"
 )
 
@@ -205,4 +206,10 @@ func (d *Daemon) startLoginExpiry(ctx context.Context) {
 // that it is off.
 func (d *Daemon) accountLogins(now time.Time) api.AccountLogins {
 	return d.logins.result(now)
+}
+
+// loginVitalsRow is the "login expiry" row of get vitals
+// (docs/design/native-checks.md section 2.5).
+func loginVitalsRow(res api.AccountLogins, now time.Time) hostvitals.Threshold {
+	return hostvitals.Threshold{}
 }
