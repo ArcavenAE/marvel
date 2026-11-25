@@ -14,6 +14,14 @@ type AttachIO struct {
 	In         io.Reader
 	Out        io.Writer
 	Rows, Cols int
+	// Resize carries each new terminal size to the remote pty. Nil means
+	// the size never changes.
+	Resize <-chan Size
+}
+
+// Size is a terminal size in character cells.
+type Size struct {
+	Rows, Cols int
 }
 
 var errAttachNotBuilt = errors.New("remote attach is not built")

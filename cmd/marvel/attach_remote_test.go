@@ -99,3 +99,11 @@ func TestAttachHelpDescribesTheRemoteRunForm(t *testing.T) {
 		t.Errorf("help dropped the printed ssh form:\n%s", long)
 	}
 }
+
+// The process default runs the channel through daemonrpc.Attach; a nil Mrvl
+// would make the verb print nothing and succeed on a remote desk.
+func TestProcessAttachEnvWiresTheChannel(t *testing.T) {
+	if processAttachEnv().Mrvl == nil {
+		t.Error("processAttachEnv().Mrvl is nil, want the daemonrpc.Attach runner")
+	}
+}

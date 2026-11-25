@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"io"
 	"os"
@@ -17,17 +18,21 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
 // attachRig is a daemon SSH server with the attach seams set, and a client
 // connected with a key of the given scope. spawned records each command the
 // attach channel built, as socket and desk.
 type attachRig struct {
-	srv     *SSHServer
-	client  *ssh.Client
-	mu      sync.Mutex
-	spawned [][2]string
-	resolve int
+	srv      *SSHServer
+	client   *ssh.Client
+	identity string // the client's private key, as an OpenSSH PEM file
+	mu       sync.Mutex
+	spawned  [][2]string
+	resolve  int
 }
 
 func (r *attachRig) spawnedCommands() [][2]string {
@@ -48,7 +53,7 @@ func (r *attachRig) resolveCalls() int {
 func newAttachRig(t *testing.T, scope Scope, command func(socket, desk string) *exec.Cmd) *attachRig {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	pub, signer := newClientKey(t)
+	pub, signer, identity := newClientKey(t)
 	if err := AddAuthorizedKey(pub, "attach-test", scope); err != nil {
 		t.Fatalf("authorize key: %v", err)
 	}
@@ -56,7 +61,7 @@ func newAttachRig(t *testing.T, scope Scope, command func(socket, desk string) *
 	if err != nil {
 		t.Fatalf("newSSHServer: %v", err)
 	}
-	r := &attachRig{srv: srv}
+	r := &attachRig{srv: srv, identity: identity}
 	srv.attachResolve = func(desk string) (string, error) {
 		r.mu.Lock()
 		r.resolve++
@@ -320,9 +325,9 @@ func TestAttachChannelDoesNotBlockTheConnection(t *testing.T) {
 	}
 }
 
-// newClientKey returns a fresh ed25519 key as an authorized_keys line and a
-// signer for the client side.
-func newClientKey(t *testing.T) ([]byte, ssh.Signer) {
+// newClientKey returns a fresh ed25519 key as an authorized_keys line, a
+// signer for the client side and the path of its private key file.
+func newClientKey(t *testing.T) ([]byte, ssh.Signer, string) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -336,5 +341,178 @@ func newClientKey(t *testing.T) ([]byte, ssh.Signer) {
 	if err != nil {
 		t.Fatalf("signer: %v", err)
 	}
-	return ssh.MarshalAuthorizedKey(sshPub), signer
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatalf("marshal private key: %v", err)
+	}
+	identity := filepath.Join(t.TempDir(), "id")
+	if err := os.WriteFile(identity, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatalf("write identity: %v", err)
+	}
+	return ssh.MarshalAuthorizedKey(sshPub), signer, identity
+}
+
+// openBare opens an attach channel for desk 23 without any request on it.
+func openBare(t *testing.T, r *attachRig) ssh.Channel {
+	t.Helper()
+	ch, reqs, err := openAttach(r.client, "23")
+	if err != nil {
+		t.Fatalf("open attach channel for desk 23: %v", err)
+	}
+	go ssh.DiscardRequests(reqs)
+	t.Cleanup(func() { _ = ch.Close() })
+	return ch
+}
+
+// The attach channel answers only pty-req, shell and window-change. Every
+// other request is refused with a reply of false, never the blanket yes the
+// RPC channels give, so exec, env, a subsystem or agent forwarding never
+// reaches a command.
+func TestAttachChannelRefusesOtherRequests(t *testing.T) {
+	r := newAttachRig(t, ScopeAdmin, shellCommand("exec cat"))
+	ch := startAttach(t, r)
+	for _, typ := range []string{"exec", "env", "subsystem", "auth-agent-req@openssh.com", "x11-req", "signal"} {
+		ok, err := ch.SendRequest(typ, true, nil)
+		if err != nil {
+			t.Fatalf("%s: send: %v", typ, err)
+		}
+		if ok {
+			t.Errorf("%s request was accepted on the attach channel, want a reply of false", typ)
+		}
+	}
+	ok, err := ch.SendRequest("shell", true, nil)
+	if err != nil {
+		t.Fatalf("second shell: send: %v", err)
+	}
+	if ok {
+		t.Error("a second shell request was accepted, want a reply of false")
+	}
+}
+
+// The command needs its pty first: a shell request before pty-req is refused.
+func TestAttachChannelRefusesShellBeforePty(t *testing.T) {
+	r := newAttachRig(t, ScopeAdmin, shellCommand("exec cat"))
+	ch := openBare(t, r)
+	ok, err := ch.SendRequest("shell", true, nil)
+	if err != nil {
+		t.Fatalf("shell: send: %v", err)
+	}
+	if ok {
+		t.Error("shell before pty-req was accepted, want a reply of false")
+	}
+	if n := len(r.spawnedCommands()); n != 0 {
+		t.Errorf("spawned %d commands before a pty was granted, want 0", n)
+	}
+}
+
+// The daemon-backed resolver reads the daemon's own session rows and its own
+// tmux socket: a desk that is a row's pane gives the driver's socket, and a
+// desk that is not a row is refused. Nothing a client sends names a socket.
+func TestResolveAttachDeskReadsTheDaemonsRows(t *testing.T) {
+	d := statusDaemon(t)
+	if err := d.store.CreateSession(&api.Session{Workspace: "ws", Name: "s1", PaneID: "%23"}); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	got, err := d.resolveAttachDesk("23")
+	if err != nil {
+		t.Fatalf("resolveAttachDesk(23): %v", err)
+	}
+	if want := d.driver.Socket(); got != want || want == "" {
+		t.Errorf("socket = %q, want the driver's %q", got, want)
+	}
+	if sock, err := d.resolveAttachDesk("24"); err == nil {
+		t.Errorf("desk 24 is no row of this daemon and resolved to %q", sock)
+	}
+}
+
+// attachOut is a goroutine-safe buffer for what the client writes to the
+// terminal.
+type attachOut struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (o *attachOut) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.b.Write(p)
+}
+
+func (o *attachOut) String() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.b.String()
+}
+
+func (o *attachOut) waitFor(t *testing.T, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(o.String(), want) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("client output %q never held %q within 5s", o.String(), want)
+}
+
+// runClientAttach drives daemonrpc.Attach against the rig's server and returns
+// the pieces a test reads and writes.
+func runClientAttach(t *testing.T, r *attachRig, resize <-chan daemonrpc.Size) (in *io.PipeWriter, out *attachOut, done <-chan error) {
+	t.Helper()
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pw.Close() })
+	out = &attachOut{}
+	res := make(chan error, 1)
+	addr := "mrvl://op@" + r.srv.Addr().String()
+	go func() {
+		res <- daemonrpc.Attach(addr, "23",
+			daemonrpc.DialOptions{Identity: r.identity, TrustUnknownHost: true},
+			daemonrpc.AttachIO{In: pr, Out: out, Rows: 24, Cols: 80, Resize: resize})
+	}()
+	return pw, out, res
+}
+
+func waitAttachDone(t *testing.T, done <-chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Attach returned %v, want nil after the command ended", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Attach did not return within 5s of the command ending")
+	}
+}
+
+// End to end: the client's own pty-req and open payload are the ones the
+// server reads. The command reports its pty size, then echoes what it is
+// sent; Ctrl-D ends it and Attach returns nil.
+func TestDaemonrpcAttachRoundTripsBytesAndInitialSize(t *testing.T) {
+	r := newAttachRig(t, ScopeAdmin, shellCommand("echo ready; stty size; exec cat"))
+	in, out, done := runClientAttach(t, r, nil)
+	out.waitFor(t, "24 80")
+	if _, err := in.Write([]byte("ping-desk\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	out.waitFor(t, "ping-desk")
+	if _, err := in.Write([]byte{4}); err != nil {
+		t.Fatalf("write ctrl-d: %v", err)
+	}
+	waitAttachDone(t, done)
+}
+
+// End to end: a size sent on Resize reaches the pty as a window-change.
+func TestDaemonrpcAttachForwardsAResize(t *testing.T) {
+	r := newAttachRig(t, ScopeAdmin, shellCommand("echo ready; read x; stty size"))
+	resize := make(chan daemonrpc.Size, 1)
+	in, out, done := runClientAttach(t, r, resize)
+	out.waitFor(t, "ready")
+	resize <- daemonrpc.Size{Rows: 50, Cols: 132}
+	time.Sleep(300 * time.Millisecond)
+	if _, err := in.Write([]byte("\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	out.waitFor(t, "50 132")
+	waitAttachDone(t, done)
 }
