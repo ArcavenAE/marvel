@@ -198,3 +198,23 @@ func TestComposeRunProfileRefusesAProfileTooLargeForArgv(t *testing.T) {
 		t.Errorf("err = %v, want ErrRunProfileRefused naming argv", err)
 	}
 }
+
+// A deny default with a modifier is still a deny default: a role that names
+// both defaults, the deny with `(with no-log)`, is read as deny-default and the
+// network allows are refused (marvel#1601 review, gap 1).
+func TestComposeRunProfileReadsADenyDefaultWithAModifierAsDenyDefault(t *testing.T) {
+	role := "(version 1)\n(allow default)\n(deny default (with no-log))\n"
+	if _, err := ComposeRunProfile(role, netAllow+"\n", testBlock); !errors.Is(err, ErrRunProfileRefused) {
+		t.Errorf("err = %v, want ErrRunProfileRefused for a role holding a modified deny default", err)
+	}
+}
+
+// The text of a string literal is not a form: `(allow default)` inside a path
+// literal must not make a role count as allow-default (marvel#1601 review,
+// gap 2).
+func TestComposeRunProfileIgnoresADefaultFormInsideAStringLiteral(t *testing.T) {
+	role := "(version 1)\n(deny file-read* (literal \"/tmp/(allow default)\"))\n"
+	if _, err := ComposeRunProfile(role, netAllow+"\n", testBlock); !errors.Is(err, ErrRunProfileRefused) {
+		t.Errorf("err = %v, want ErrRunProfileRefused for a role whose only (allow default) is inside a literal", err)
+	}
+}
