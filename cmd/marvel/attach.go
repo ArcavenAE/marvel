@@ -37,6 +37,11 @@ type attachPlan struct {
 	Argv []string
 	Exec bool
 	Note string
+	// Mrvl says the verb runs the attach over the daemon's mrvl:// channel
+	// for Desk. Argv then holds the printed ssh line, kept only as the
+	// readable fallback against a daemon that lacks the channel.
+	Mrvl bool
+	Desk string
 }
 
 // deskArg is a desk as typed: the digits of a tmux pane id, with or without
@@ -144,6 +149,11 @@ func remoteAttach(desk, host, socket string) (argv []string, printOnly bool) {
 	return []string{"ssh", "-t", host, "tmux", "-L", socket, "attach", "-t", "%" + desk}, true
 }
 
+// runRemoteAttach runs a remote plan over the mrvl:// channel.
+func runRemoteAttach(w, stderr io.Writer, addr string, plan attachPlan, env attachEnv) error {
+	return errors.New("remote attach is not built")
+}
+
 // quoteArgv renders argv as one shell line a person can paste. A word of
 // plain characters stays bare, so the common command reads as typed.
 func quoteArgv(argv []string) string {
@@ -165,6 +175,8 @@ func quoteArgv(argv []string) string {
 type attachEnv struct {
 	Getenv func(string) string
 	Exec   func(argv []string) error
+	// Mrvl runs the attach for a desk over the mrvl:// channel at addr.
+	Mrvl func(addr, desk string) error
 	// Stderr is where the verb says which session a desk resolved to. Nil
 	// means os.Stderr.
 	Stderr io.Writer

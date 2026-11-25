@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"sync/atomic"
 
@@ -32,6 +33,14 @@ type SSHServer struct {
 	addr   atomic.Pointer[net.Addr]
 	daemon *Daemon
 	layout paths.Layout
+
+	// attachResolve names the tmux socket a desk lives on, from the daemon's
+	// own session rows, or refuses the desk. attachCommand builds the command
+	// the attach channel runs on a pty. Both are fields so a test never
+	// needs a tmux server; newSSHServer leaves them nil until the channel
+	// handler sets the daemon-backed defaults.
+	attachResolve func(desk string) (socket string, err error)
+	attachCommand func(socket, desk string) *exec.Cmd
 }
 
 // newSSHServer creates an SSH server with the daemon's host key and
