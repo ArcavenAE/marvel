@@ -13,7 +13,10 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
+	"github.com/arcavenae/marvel/internal/session"
+	"github.com/arcavenae/marvel/internal/suspend"
 )
 
 // The wire of each RPC method, pinned as one JSON fixture per method under
@@ -82,6 +85,15 @@ var rpcGoldens = map[string]func() any{
 	"orphans.result":           func() any { return &orphansResult{} },
 	"plan.result":              func() any { return &planResult{} },
 	"version.result":           func() any { return &BuildInfo{} },
+
+	// The methods that had no fixture before aae-orc-va2sz. reap takes an
+	// anonymous struct, so its fixture is the result of the homes sweep.
+	"bus.leaf.connect.result":    func() any { return &bus.Status{} },
+	"bus.leaf.disconnect.result": func() any { return &bus.Status{} },
+	"credential.list.result":     func() any { return &[]api.Credential{} },
+	"events.watch.params":        func() any { return &daemonrpc.EventsParams{} },
+	"reap.result":                func() any { return &session.HomeSweep{} },
+	"suspend.status.result":      func() any { return &suspend.Status{} },
 }
 
 func TestRPCWireGoldens(t *testing.T) {

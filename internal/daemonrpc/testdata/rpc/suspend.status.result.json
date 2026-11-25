@@ -1,0 +1,36 @@
+{
+  "state": "state",
+  "record": {
+    "state": "state",
+    "actor": "actor",
+    "source": "source",
+    "since": "2026-01-02T03:04:05Z",
+    "server": {
+      "pid": 7,
+      "identity": {
+        "Start": "Start",
+        "Exe": "Exe",
+        "Argv": [
+          "Argv"
+        ],
+        "Pgid": 7,
+        "Ppid": 7
+      }
+    },
+    "seats": [
+      {
+        "pid": 7,
+        "identity": {
+          "Start": "Start",
+          "Exe": "Exe",
+          "Argv": [
+            "Argv"
+          ],
+          "Pgid": 7,
+          "Ppid": 7
+        }
+      }
+    ]
+  },
+  "unsettled": "unsettled"
+}
