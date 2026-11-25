@@ -52,10 +52,6 @@ type DaemonStatus struct {
 	// Bus is the same value bus.status returns, absent when the cluster has
 	// no bus.
 	Bus *bus.Status `json:"bus,omitempty"`
-	// Services is one row per attached cluster Services entry, read through
-	// the provider interface. Consumer: display only, `marvel` prints no
-	// column from it yet. Added beside Bus, which is unchanged (MS-8 (h)).
-	Services []ServiceStatus `json:"services,omitempty"`
 	// AdoptingSince is when the daemon began serving ahead of start-time
 	// adoption. Present only while adoption is still running.
 	AdoptingSince *time.Time `json:"adopting_since,omitempty"`
@@ -133,7 +129,6 @@ func (d *Daemon) handleDaemonStatus() daemonrpc.Response {
 	if b, ok := d.busStatus(); ok {
 		st.Bus = &b
 	}
-	st.Services = d.servicesStatus(time.Now().UTC())
 	if ns := d.adoptingSince.Load(); ns != 0 {
 		since := time.Unix(0, ns).UTC()
 		st.AdoptingSince = &since

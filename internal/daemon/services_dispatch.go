@@ -2,10 +2,7 @@ package daemon
 
 import (
 	"fmt"
-	"sort"
-	"time"
 
-	"github.com/arcavenae/marvel/internal/asof"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/paths"
 	"github.com/arcavenae/marvel/internal/service"
@@ -31,33 +28,10 @@ var classCap = map[string]struct {
 	service.ClassMessageBus: {max: 1, noun: "bus"},
 }
 
-// servicesReadingTTL is how long a services row holds before it reads stale.
-// Display only and arbitrary: a few seconds past the bus health tick, so a
-// poll between ticks reads fresh. No decision reads it.
-const servicesReadingTTL = 30 * time.Second
-
 // attachedService is one attached entry.
 type attachedService struct {
 	svc config.Service
 	lc  service.Lifecycle
-}
-
-// ServiceReading is the value of a services row. A field the provider did
-// not measure is absent, never zero.
-type ServiceReading struct {
-	State    string `json:"state,omitempty"`
-	Ready    *bool  `json:"ready,omitempty"`
-	PID      *int   `json:"pid,omitempty"`
-	Restarts *int   `json:"restarts,omitempty"`
-}
-
-// ServiceStatus is one row of daemon.status services.
-type ServiceStatus struct {
-	Name     string                    `json:"name"`
-	Class    string                    `json:"class"`
-	Provider string                    `json:"provider"`
-	Mode     string                    `json:"mode"`
-	Reading  asof.Cell[ServiceReading] `json:"reading"`
 }
 
 // attachEntries attaches each entry through the arm its provider names, in
@@ -90,36 +64,4 @@ func (d *Daemon) attachEntries(cl *config.Cluster, entries []config.Service, lay
 		}
 	}
 	return nil
-}
-
-// servicesStatus reads every attached entry through its provider interface,
-// in name order. An entry with no child reports its source and nothing
-// measured; a field the provider has no value for is absent, never zero.
-func (d *Daemon) servicesStatus(now time.Time) []ServiceStatus {
-	names := make([]string, 0, len(d.services))
-	for n := range d.services {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	rows := make([]ServiceStatus, 0, len(names))
-	for _, n := range names {
-		a := d.services[n]
-		row := ServiceStatus{Name: n, Class: a.svc.Class, Provider: a.svc.Provider, Mode: a.svc.Mode}
-		row.Reading.Source = "provider:" + a.svc.Provider
-		row.Reading.ObservedAt = now
-		if a.lc != nil {
-			st := a.lc.Status()
-			if !st.ObservedAt.IsZero() {
-				row.Reading.ObservedAt = st.ObservedAt.UTC()
-			}
-			v := ServiceReading{State: string(st.State), Ready: &st.Ready, Restarts: &st.Restarts}
-			if st.PID > 0 {
-				v.PID = &st.PID
-			}
-			row.Reading.Value = v
-		}
-		row.Reading.ValidUntil = row.Reading.ObservedAt.Add(servicesReadingTTL)
-		rows = append(rows, row)
-	}
-	return rows
 }
