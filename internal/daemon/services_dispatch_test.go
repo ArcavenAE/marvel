@@ -94,7 +94,7 @@ func TestAttachEntriesKeepsTheLoudDefaultForAProviderWithNoArm(t *testing.T) {
 	}
 }
 
-func TestAnAdoptedArmWithNoChildReportsOnlyStateAndSource(t *testing.T) {
+func TestAnAdoptedArmWithNoChildReportsOnlySource(t *testing.T) {
 	t.Parallel()
 	arms := map[string]attachArm{"fake": func(*Daemon, *config.Cluster, *config.Service, paths.Layout) (service.Lifecycle, error) {
 		return nil, nil
@@ -120,10 +120,12 @@ func TestAnAdoptedArmWithNoChildReportsOnlyStateAndSource(t *testing.T) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatal(err)
 	}
-	if m.Reading.Value["state"] != "adopted" || m.Reading.Source != "provider:fake" {
-		t.Errorf("reading = %s, want state adopted and source provider:fake", raw)
+	if m.Reading.Source != "provider:fake" {
+		t.Errorf("reading = %s, want source provider:fake", raw)
 	}
-	for _, k := range []string{"pid", "restarts", "ready"} {
+	// State is unmeasured too: the vocabulary is up, down and backoff, and the
+	// row's mode already says adopted.
+	for _, k := range []string{"state", "pid", "restarts", "ready"} {
 		if _, ok := m.Reading.Value[k]; ok {
 			t.Errorf("an unmeasured %q is on the wire as a value: %s", k, raw)
 		}
@@ -190,8 +192,30 @@ func TestTheNATSArmRowCarriesValidUntilAndSource(t *testing.T) {
 	if err := d.attachEntries(&config.Cluster{Name: "kinu"}, []config.Service{fakeEntry("bus", service.ClassMessageBus, service.ProviderNATSServer, "managed")}, paths.Layout{}, arms); err != nil {
 		t.Fatal(err)
 	}
+	if d.lifecycle != service.Lifecycle(lc) || d.services["bus"].lc != d.lifecycle {
+		t.Errorf("d.lifecycle = %v, d.services[bus].lc = %v, want both the one Lifecycle the bus arm returned", d.lifecycle, d.services["bus"].lc)
+	}
 	rows := d.servicesStatus(now)
 	if len(rows) != 1 || rows[0].Reading.Source != "provider:nats-server" || rows[0].Reading.ValidUntil.IsZero() {
 		t.Fatalf("rows = %+v, want one row with source provider:nats-server and a valid_until", rows)
+	}
+}
+
+// The cap is on one class. Two entries of a class with no cap both attach.
+func TestAClassWithNoCapAttachesTwoEntries(t *testing.T) {
+	t.Parallel()
+	arm := func(*Daemon, *config.Cluster, *config.Service, paths.Layout) (service.Lifecycle, error) {
+		return nil, nil
+	}
+	d := newDispatchDaemon()
+	err := d.attachEntries(&config.Cluster{Name: "kinu"}, []config.Service{
+		fakeEntry("a", "fake-class", "fake", "adopted"),
+		fakeEntry("b", "fake-class", "fake", "adopted"),
+	}, paths.Layout{}, map[string]attachArm{"fake": arm})
+	if err != nil {
+		t.Fatalf("a class with no cap refused a second entry: %v", err)
+	}
+	if rows := d.servicesStatus(time.Now().UTC()); len(rows) != 2 {
+		t.Errorf("rows = %d, want 2", len(rows))
 	}
 }

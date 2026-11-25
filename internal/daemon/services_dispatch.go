@@ -17,6 +17,8 @@ type attachArm func(d *Daemon, cl *config.Cluster, svc *config.Service, layout p
 var attachArms = map[string]attachArm{}
 
 // servicesReadingTTL is how long a services row holds before it reads stale.
+// Display only and arbitrary: a few seconds past the bus health tick, so a
+// poll between ticks reads fresh. No decision reads it.
 const servicesReadingTTL = 30 * time.Second
 
 // The stub reads nothing yet; the green change removes this line.
@@ -31,7 +33,7 @@ type attachedService struct {
 // ServiceReading is the value of a services row. A field the provider did
 // not measure is absent, never zero.
 type ServiceReading struct {
-	State    string `json:"state"`
+	State    string `json:"state,omitempty"`
 	Ready    *bool  `json:"ready,omitempty"`
 	PID      *int   `json:"pid,omitempty"`
 	Restarts *int   `json:"restarts,omitempty"`
