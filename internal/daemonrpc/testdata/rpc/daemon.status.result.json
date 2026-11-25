@@ -1,0 +1,78 @@
+{
+  "home": "home",
+  "cluster": "cluster",
+  "mrvl": {
+    "state": "state",
+    "addr": "addr"
+  },
+  "tmux_socket": "tmux_socket",
+  "bus": {
+    "managed": true,
+    "class": "class",
+    "provider": "provider",
+    "mode": "mode",
+    "caller_identity": "caller_identity",
+    "version": "version",
+    "binary": "binary",
+    "binary_configured": true,
+    "binary_realpath": "binary_realpath",
+    "binary_exists": true,
+    "serving_version": "serving_version",
+    "pidfile": "pidfile",
+    "hub_status": [
+      "hub_status"
+    ],
+    "seat": "seat",
+    "seat_pass_file": "seat_pass_file",
+    "listen": "listen",
+    "url": "url",
+    "domain": "domain",
+    "conf_path": "conf_path",
+    "pid": 7,
+    "adopted": true,
+    "ready": true,
+    "write_failed": "write_failed",
+    "write_skipped": "write_skipped",
+    "headroom_low": "headroom_low",
+    "leaf": "leaf",
+    "hub_declared": true,
+    "leaf_since": "leaf_since",
+    "leaf_for": "leaf_for",
+    "leaf_observed_at": "leaf_observed_at",
+    "leaf_valid_until": "leaf_valid_until",
+    "leaf_source": "leaf_source",
+    "structure": {
+      "provisioned": true,
+      "authorized": true,
+      "tls": true,
+      "missing": [
+        "missing"
+      ]
+    },
+    "restarts": 7,
+    "backoff_until": "backoff_until"
+  },
+  "adopting_since": "2026-01-02T03:04:05Z",
+  "timings": {
+    "sites": [
+      {
+        "name": "name",
+        "budget": 7,
+        "count": 7,
+        "sum": 7,
+        "max": 7,
+        "overruns": 7,
+        "buckets": [
+          {
+            "upper_bound": 7,
+            "count": 7
+          }
+        ],
+        "overflow": 7
+      }
+    ],
+    "counters": {
+      "k": 7
+    }
+  }
+}

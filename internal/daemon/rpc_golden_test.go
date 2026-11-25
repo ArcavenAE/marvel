@@ -15,6 +15,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
+	"github.com/arcavenae/marvel/internal/hostvitals"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/suspend"
 )
@@ -94,6 +95,10 @@ var rpcGoldens = map[string]func() any{
 	"events.watch.params":        func() any { return &daemonrpc.EventsParams{} },
 	"reap.result":                func() any { return &session.HomeSweep{} },
 	"suspend.status.result":      func() any { return &suspend.Status{} },
+	"bus.status.result":          func() any { return &bus.Status{} },
+	"daemon.status.result":       func() any { return &DaemonStatus{} },
+	"host.vitals.result":         func() any { return &hostvitals.Snapshot{} },
+	"get.result":                 func() any { return &[]api.Session{} },
 }
 
 func TestRPCWireGoldens(t *testing.T) {

@@ -1,0 +1,204 @@
+[
+  {
+    "SettingSources": "SettingSources",
+    "SettingSourcesDelivery": "SettingSourcesDelivery",
+    "FirstPromptSha256": "FirstPromptSha256",
+    "SystemPromptSha256": "SystemPromptSha256",
+    "tcc_deny_note": "tcc_deny_note",
+    "secret_note": "secret_note",
+    "setting_sources_note": "setting_sources_note",
+    "WorkDir": "WorkDir",
+    "task": "task",
+    "Name": "Name",
+    "Workspace": "Workspace",
+    "Team": "Team",
+    "Role": "Role",
+    "Generation": 7,
+    "Runtime": {
+      "Name": "Name",
+      "Command": "Command",
+      "Args": [
+        "Args"
+      ],
+      "Script": "Script",
+      "Mode": "Mode",
+      "Prompt": "Prompt",
+      "SuccessorPrompt": true,
+      "FirstRunAnswers": true,
+      "PromptArtifactSha256": "PromptArtifactSha256",
+      "ContextWindow": 7,
+      "ContextFeed": "ContextFeed",
+      "Env": {
+        "k": "Env"
+      },
+      "Backend": "Backend",
+      "account_label": "account_label",
+      "Goose": {
+        "Posture": "Posture",
+        "ToolsAllow": [
+          "ToolsAllow"
+        ],
+        "ToolsDeny": [
+          "ToolsDeny"
+        ],
+        "Extensions": [
+          "Extensions"
+        ]
+      }
+    },
+    "State": "State",
+    "PaneID": "PaneID",
+    "PID": 7,
+    "LastHeartbeat": "2026-01-02T03:04:05Z",
+    "LastBusBeat": "2026-01-02T03:04:05Z",
+    "cost_total_usd": 1.5,
+    "cost_samples": [
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "usd": 1.5
+      }
+    ],
+    "cost_seen_at": "2026-01-02T03:04:05Z",
+    "cost_gap_at": "2026-01-02T03:04:05Z",
+    "api_duration_ms": 7,
+    "harness_version": "harness_version",
+    "harness_version_at": "2026-01-02T03:04:05Z",
+    "api_samples": [
+      {
+        "at": "2026-01-02T03:04:05Z",
+        "ms": 7
+      }
+    ],
+    "api_seen_at": "2026-01-02T03:04:05Z",
+    "api_gap_at": "2026-01-02T03:04:05Z",
+    "totals_changed_at": "2026-01-02T03:04:05Z",
+    "HealthState": "HealthState",
+    "ActivityState": "ActivityState",
+    "harness_state": {
+      "state": "state",
+      "confidence": "confidence",
+      "harness": "harness",
+      "harness_version": "harness_version",
+      "pattern_id": "pattern_id",
+      "pattern_version": 7,
+      "pattern_for": "pattern_for",
+      "reason": "reason",
+      "covered": [
+        "covered"
+      ],
+      "pane_width": 7,
+      "evidence": [
+        "evidence"
+      ],
+      "captured_at": "2026-01-02T03:04:05Z",
+      "context_at": "2026-01-02T03:04:05Z",
+      "source": "source"
+    },
+    "FailureCount": 7,
+    "RestartCount": 7,
+    "LastHealthCheck": "2026-01-02T03:04:05Z",
+    "CreatedAt": "2026-01-02T03:04:05Z",
+    "transcript_gap": "transcript_gap",
+    "PausedTotal": 7,
+    "PauseAppliedSince": "2026-01-02T03:04:05Z",
+    "ring_claim": {
+      "ring_at": "2026-01-02T03:04:05Z",
+      "ringer": "ringer",
+      "result": "result"
+    },
+    "Predecessor": "Predecessor",
+    "HandoffRequestedAt": "2026-01-02T03:04:05Z",
+    "exit_status": "exit_status",
+    "firing": "firing",
+    "reason": "reason",
+    "kill_error": "kill_error",
+    "harness_session_id": "harness_session_id",
+    "harness_home": "harness_home",
+    "account_home": "account_home",
+    "condition": "condition",
+    "limit": {
+      "source": "source",
+      "window": "window",
+      "used_percent": 1.5,
+      "resets_at": "2026-01-02T03:04:05Z",
+      "reported_by": "reported_by",
+      "reading_at": "2026-01-02T03:04:05Z",
+      "account": "account",
+      "sample_version": "sample_version",
+      "captured_at": "2026-01-02T03:04:05Z",
+      "span": "span",
+      "zone": "zone",
+      "until_note": "until_note",
+      "activity_at": "2026-01-02T03:04:05Z"
+    },
+    "limit_reading": "limit_reading",
+    "limit_reading_text": "limit_reading_text",
+    "limit_windows": [
+      {
+        "name": "name",
+        "used_percent": 1.5,
+        "resets_at": "2026-01-02T03:04:05Z"
+      }
+    ],
+    "limit_read_at": "2026-01-02T03:04:05Z",
+    "limit_stale": true,
+    "active_ticks": {
+      "active": 7,
+      "total": 7,
+      "window": 7,
+      "observable": true,
+      "full": true,
+      "at": "2026-01-02T03:04:05Z"
+    },
+    "spec": "spec",
+    "spec_diff": [
+      "spec_diff"
+    ],
+    "composer": "composer",
+    "composer_gap": "composer_gap",
+    "pane": "pane",
+    "pane_gap": "pane_gap",
+    "HeartbeatTokenHash": "HeartbeatTokenHash",
+    "BackendRedirection": "BackendRedirection",
+    "backend_intended": "backend_intended",
+    "backend_resolved": "backend_resolved",
+    "backend_overlay_path": "backend_overlay_path",
+    "projection_path": "projection_path",
+    "backend_credential_source": "backend_credential_source",
+    "ambient_bearer": "ambient_bearer",
+    "CPUPercent": 1.5,
+    "Millicpu": 7,
+    "RSSBytes": 7,
+    "IOReadBytes": 7,
+    "IOWriteBytes": 7,
+    "IOAvailable": true,
+    "MetricsAt": "2026-01-02T03:04:05Z",
+    "ContextSource": "ContextSource",
+    "ContextPercent": 1.5,
+    "ContextTokens": 7,
+    "ContextLimit": 7,
+    "ContextLimitSource": "ContextLimitSource",
+    "ContextModel": "ContextModel",
+    "ContextRequests": 7,
+    "ContextCompactions": 7,
+    "ContextPeak": 1.5,
+    "ContextAt": "2026-01-02T03:04:05Z",
+    "reading_changed_at": "2026-01-02T03:04:05Z",
+    "SpendOut": 7,
+    "SpendPromptTokens": 7,
+    "SpendFresh": 7,
+    "SpendCacheRead": 7,
+    "SpendCacheWrite": 7,
+    "spend_partial": true,
+    "spend_tail": {
+      "offset": 7,
+      "inode": 7
+    },
+    "OutRate": {
+      "value": 1.5,
+      "observed_at": "2026-01-02T03:04:05Z",
+      "valid_until": "2026-01-02T03:04:05Z",
+      "source": "source"
+    }
+  }
+]
