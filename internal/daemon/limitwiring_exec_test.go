@@ -65,22 +65,33 @@ func TestAnOsExecImportInAnyOtherFileIsStillRefused(t *testing.T) {
 		}
 		return pkgFiles{fset: fset, files: map[string]*ast.File{name: f}}
 	}
-	if got := execImportViolations(plant(execAllowedFile)); len(got) != 0 {
-		t.Errorf("the allowed file was refused: %v", got)
+	// Two files may import os/exec: the reexec probe's, and the attach
+	// command's (director ruling 01M88CD904, item 1). A name that only
+	// resembles either is refused.
+	for _, allowed := range []string{execAllowedFile, "attach_exec.go"} {
+		if got := execImportViolations(plant(allowed)); len(got) != 0 {
+			t.Errorf("the allowed file %s was refused: %v", allowed, got)
+		}
 	}
-	for _, other := range []string{"daemon.go", "reexec_handoff_extra.go", "planted.go"} {
+	for _, other := range []string{"daemon.go", "reexec_handoff_extra.go", "planted.go", "attach_exec_extra.go", "sshattach.go", "sshserver.go"} {
 		if got := execImportViolations(plant(other)); len(got) != 1 || !strings.Contains(got[0], other) {
 			t.Errorf("os/exec in %s: violations = %v, want one naming the file", other, got)
 		}
 	}
 }
 
-// The inventory: exactly one exec call in the package, in the probe's command
-// builder, with argv0 the resolved exe and the three fixed arguments.
-func TestTheOnlyProcessTheDaemonStartsIsTheProbeWithItsPinnedArguments(t *testing.T) {
+// The inventory: exactly two exec calls in the package, each in one function
+// of one file, each with its arguments pinned. The probe's command builder
+// takes the resolved exe and the three fixed arguments. The attach command
+// builder takes the tmux binary, the socket name the resolver returned, and
+// the desk, which the channel has already checked is digits only (director
+// ruling 01M88CD904, item 2). Nothing else in the package starts a process.
+func TestTheOnlyProcessesTheDaemonStartsAreTheProbeAndTheAttachClient(t *testing.T) {
 	t.Parallel()
+	const probeKey = "exec.CommandContext in probeCommand (reexec_handoff.go)"
+	const attachKey = "exec.Command in attachCommand (attach_exec.go)"
 	got := map[string]int{}
-	var args []string
+	args := map[string][]string{}
 	p := parseDaemon(t)
 	p.eachFunc(func(file, fun string, n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -91,13 +102,14 @@ func TestTheOnlyProcessTheDaemonStartsIsTheProbeWithItsPinnedArguments(t *testin
 		if !ok || !isSel(sel, "exec", sel.Sel.Name) || !strings.HasPrefix(sel.Sel.Name, "Command") {
 			return true
 		}
-		got["exec."+sel.Sel.Name+" in "+fun+" ("+file+")"]++
+		key := "exec." + sel.Sel.Name + " in " + fun + " (" + file + ")"
+		got[key]++
 		for _, a := range call.Args {
-			args = append(args, strings.Trim(strings.ReplaceAll(exprText(a), `"`, ""), " "))
+			args[key] = append(args[key], strings.Trim(strings.ReplaceAll(exprText(a), `"`, ""), " "))
 		}
 		return true
 	})
-	want := map[string]int{"exec.CommandContext in probeCommand (reexec_handoff.go)": 1}
+	want := map[string]int{probeKey: 1, attachKey: 1}
 	for k, n := range got {
 		if want[k] != n {
 			t.Errorf("%s: %d calls, inventoried as %d", k, n, want[k])
@@ -108,8 +120,14 @@ func TestTheOnlyProcessTheDaemonStartsIsTheProbeWithItsPinnedArguments(t *testin
 			t.Errorf("inventoried %q: %d calls, now %d", k, n, got[k])
 		}
 	}
-	if wantArgs := []string{"ctx", "exe", "version", "--capabilities", "--json"}; strings.Join(args, ",") != strings.Join(wantArgs, ",") {
-		t.Errorf("the probe's call arguments are %v, pinned as %v", args, wantArgs)
+	wantArgs := map[string][]string{
+		probeKey:  {"ctx", "exe", "version", "--capabilities", "--json"},
+		attachKey: {"tmux", "-L", "socket", "attach", "-t", "%+desk"},
+	}
+	for k, w := range wantArgs {
+		if strings.Join(args[k], ",") != strings.Join(w, ",") {
+			t.Errorf("%s: call arguments are %v, pinned as %v", k, args[k], w)
+		}
 	}
 }
 
@@ -151,6 +169,8 @@ func exprText(e ast.Expr) string {
 		return v.Name
 	case *ast.BasicLit:
 		return v.Value
+	case *ast.BinaryExpr:
+		return exprText(v.X) + v.Op.String() + exprText(v.Y)
 	}
 	return "?"
 }

@@ -347,6 +347,7 @@ func TestDriverIsReachedOnlyThroughTheInventory(t *testing.T) {
 		"*Daemon.notifyHandoff d.driver.SendKeys":                    true,
 		"*Daemon.startWatchdog d.driver.PaneForeground":              true,
 		"*Daemon.handleDaemonStatus d.driver.Socket":                 true, // read-only: the name, never a pane
+		"*Daemon.resolveAttachDesk d.driver.Socket":                  true, // read-only: the name the attach channel's tmux client is told, never a pane
 		"*Daemon.startWatchdog d.driver.CapturePaneJoined":           true,
 		"preflightRefusal driver.CapturePaneJoined":                  true,
 		"bareDigitRefusal driver.CapturePaneEscapes":                 true,
@@ -570,7 +571,13 @@ func TestInjectPathHasOnlyItsInventoriedCallers(t *testing.T) {
 		"dispatch":        {},
 		"handleRWCAs":     {"*Daemon.handleConn": 1, "*Daemon.handleRWC": 1, "*SSHServer.handleConnection": 1},
 		"handleRWC":       {},
-		"handleConn":      {"*Daemon.Start": 1},
+		// The one terminal route into a pane besides the inventoried key
+		// presses: an admin key's attach channel (director ruling 01M88CD904,
+		// item 5). It is reached from the SSH connection handler, once, in the
+		// marvel-attach branch; the next test pins that it checks the key's
+		// scope and the gate before anything else.
+		"handleAttach": {"*SSHServer.handleConnection": 1},
+		"handleConn":   {"*Daemon.Start": 1},
 		// The client lives in internal/daemonrpc, which carries its own inventory
 		// of the same entry points and of every dial. Nothing in this package
 		// calls them (the tests that talk to a daemon are _test files, which this
@@ -871,5 +878,32 @@ func TestNotifyHandoffGuardCatchesANewCaller(t *testing.T) {
 				t.Errorf("uses = %v, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// The attach handler is the one route that gives a client a terminal in a pane.
+// Its first statement is the refusal of any key that is not admin, and its
+// second is the refusal while the gate is off: nothing is read from the
+// client's payload, resolved or built before both (director ruling 01M88CD904,
+// item 5).
+func TestAttachHandlerChecksScopeThenGateBeforeAnythingElse(t *testing.T) {
+	t.Parallel()
+	p := parseDaemon(t)
+	var body *ast.BlockStmt
+	p.each(func(file string, n ast.Node) bool {
+		if fd, ok := n.(*ast.FuncDecl); ok && enclosing(fd) == "*SSHServer.handleAttach" {
+			body = fd.Body
+			return false
+		}
+		return true
+	})
+	if body == nil || len(body.List) < 2 {
+		t.Fatal("the attach handler (*SSHServer.handleAttach) is missing or has fewer than two statements")
+	}
+	for i, want := range []string{"c.scope != ScopeAdmin", "!s.attachEnabled()"} {
+		ifs, ok := body.List[i].(*ast.IfStmt)
+		if !ok || types.ExprString(ifs.Cond) != want {
+			t.Errorf("statement %d of handleAttach is not `if %s`", i+1, want)
+		}
 	}
 }

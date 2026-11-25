@@ -52,16 +52,33 @@ func (r *attachRig) resolveCalls() int {
 // 99, which the daemon's rows do not hold.
 func newAttachRig(t *testing.T, scope Scope, command func(socket, desk string) *exec.Cmd) *attachRig {
 	t.Helper()
+	return newAttachRigGate(t, scope, true, command)
+}
+
+// newAttachRigGate is newAttachRig with the daemon's attach switch set to
+// gate: the tests of the attach channel run with it on, and the gate's own
+// tests run with it off.
+func newAttachRigGate(t *testing.T, scope Scope, gate bool, command func(socket, desk string) *exec.Cmd) *attachRig {
+	t.Helper()
+	return newAttachRigDaemon(t, scope, gate, nil, command)
+}
+
+// newAttachRigDaemon is newAttachRigGate with a daemon behind the listener,
+// for a test that opens an RPC channel: the RPC reader needs one to close
+// cleanly. A nil daemon serves the attach channel alone.
+func newAttachRigDaemon(t *testing.T, scope Scope, gate bool, d *Daemon, command func(socket, desk string) *exec.Cmd) *attachRig {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	pub, signer, identity := newClientKey(t)
 	if err := AddAuthorizedKey(pub, "attach-test", scope); err != nil {
 		t.Fatalf("authorize key: %v", err)
 	}
-	srv, err := newSSHServer(nil)
+	srv, err := newSSHServer(d)
 	if err != nil {
 		t.Fatalf("newSSHServer: %v", err)
 	}
 	r := &attachRig{srv: srv, identity: identity}
+	srv.attachGate = func() bool { return gate }
 	srv.attachResolve = func(desk string) (string, error) {
 		r.mu.Lock()
 		r.resolve++

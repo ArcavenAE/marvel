@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/arcavenae/marvel/internal/config"
 )
 
 // attachChannelType is the SSH channel type that carries a terminal to one
@@ -43,6 +45,20 @@ type attachWindowChange struct {
 // attachDeskPattern is the only shape of desk that reaches a command line:
 // the digits of a tmux pane id.
 var attachDeskPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
+
+// errRemoteAttachNotEnabled is the fixed reason an attach open and a pty
+// request are refused with while the gate is off.
+const errRemoteAttachNotEnabled = "remote attach is not enabled: set allow_remote_attach: true on this cluster's entry in the config and restart the daemon"
+
+// attachGateEnabled reads the cluster entry's allow_remote_attach switch. No
+// entry, or an unset or false switch, is off. Not read yet.
+func attachGateEnabled(cl *config.Cluster) bool {
+	return false
+}
+
+// loadRemoteAttach sets the daemon's attach switch from the cluster entry whose
+// socket is ours. Not read yet.
+func (d *Daemon) loadRemoteAttach(socketPath string) {}
 
 // attachKillGrace is how long a command that ignores SIGHUP gets before it
 // is killed.

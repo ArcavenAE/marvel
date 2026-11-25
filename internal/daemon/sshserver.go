@@ -38,6 +38,9 @@ type SSHServer struct {
 	// and the tmux command of the attach channel, so a test needs no tmux
 	// server. Nil means the daemon's own rows and `tmux attach`.
 	attachResolve func(desk string) (socket string, err error)
+	// attachGate says whether the daemon serves a terminal at all. Nil means
+	// the daemon's own switch. Not read yet.
+	attachGate    func() bool
 	attachCommand func(socket, desk string) *exec.Cmd
 }
 
