@@ -34,11 +34,9 @@ type SSHServer struct {
 	daemon *Daemon
 	layout paths.Layout
 
-	// attachResolve names the tmux socket a desk lives on, from the daemon's
-	// own session rows, or refuses the desk. attachCommand builds the command
-	// the attach channel runs on a pty. Both are fields so a test never
-	// needs a tmux server; newSSHServer leaves them nil until the channel
-	// handler sets the daemon-backed defaults.
+	// attachResolve and attachCommand replace the daemon-backed desk resolver
+	// and the tmux command of the attach channel, so a test needs no tmux
+	// server. Nil means the daemon's own rows and `tmux attach`.
 	attachResolve func(desk string) (socket string, err error)
 	attachCommand func(socket, desk string) *exec.Cmd
 }
@@ -147,6 +145,10 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 
 	// Handle channels — each channel is one RPC request.
 	for newCh := range chans {
+		if newCh.ChannelType() == attachChannelType {
+			go s.handleAttach(newCh, clientCaller)
+			continue
+		}
 		if newCh.ChannelType() != "session" {
 			_ = newCh.Reject(ssh.UnknownChannelType, "only session channels are supported")
 			continue
