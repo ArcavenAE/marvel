@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-package daemon
+package pty
 
 import (
 	"fmt"
@@ -9,16 +9,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ptyPair is a pseudo-terminal: the master the daemon reads and writes, and
+// Pair is a pseudo-terminal: the master the daemon reads and writes, and
 // the slave the attach command gets as its terminal.
-type ptyPair struct {
-	master, slave *os.File
+type Pair struct {
+	Master, Slave *os.File
 }
 
-// openPty opens a pty with x/sys alone, so the daemon needs no pty library
+// Open opens a pty with x/sys alone, so the daemon needs no pty library
 // and no cgo. The per-OS step, ptsName, grants and unlocks the master and
 // names its slave.
-func openPty() (*ptyPair, error) {
+func Open() (*Pair, error) {
 	fd, err := unix.Open("/dev/ptmx", unix.O_RDWR|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open /dev/ptmx: %w", err)
@@ -40,15 +40,15 @@ func openPty() (*ptyPair, error) {
 		_ = master.Close()
 		return nil, fmt.Errorf("open pty slave %s: %w", name, err)
 	}
-	return &ptyPair{master: master, slave: os.NewFile(uintptr(sfd), name)}, nil
+	return &Pair{Master: master, Slave: os.NewFile(uintptr(sfd), name)}, nil
 }
 
-// resize sets the window size the slave reports. The kernel signals the
+// Resize sets the window size the slave reports. The kernel signals the
 // foreground process group, so the attached client redraws. It goes through
 // SyscallConn: File.Fd would flip the master to blocking mode and race with a
 // close.
-func (p *ptyPair) resize(rows, cols uint16) error {
-	rc, err := p.master.SyscallConn()
+func (p *Pair) Resize(rows, cols uint16) error {
+	rc, err := p.Master.SyscallConn()
 	if err != nil {
 		return fmt.Errorf("set pty size: %w", err)
 	}

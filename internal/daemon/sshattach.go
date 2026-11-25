@@ -3,19 +3,14 @@ package daemon
 import (
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"os"
-	"os/exec"
 	"regexp"
 	"strings"
-	"sync"
-	"syscall"
-	"time"
 
 	"golang.org/x/crypto/ssh"
 
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/pty"
 )
 
 // attachChannelType is the SSH channel type that carries a terminal to one
@@ -51,18 +46,10 @@ var attachDeskPattern = regexp.MustCompile(`^[0-9]{1,9}$`)
 const errRemoteAttachNotEnabled = "remote attach is not enabled: set allow_remote_attach: true on this cluster's entry in the config and restart the daemon"
 
 // attachGateEnabled reads the cluster entry's allow_remote_attach switch. No
-// entry, or an unset or false switch, is off. Not read yet.
+// entry, or an unset or false switch, is off.
 func attachGateEnabled(cl *config.Cluster) bool {
-	return false
+	return cl != nil && cl.AllowRemoteAttach
 }
-
-// loadRemoteAttach sets the daemon's attach switch from the cluster entry whose
-// socket is ours. Not read yet.
-func (d *Daemon) loadRemoteAttach(socketPath string) {}
-
-// attachKillGrace is how long a command that ignores SIGHUP gets before it
-// is killed.
-const attachKillGrace = 2 * time.Second
 
 // resolveAttachDesk names the tmux socket of the daemon's own server for a
 // desk that is a pane id of exactly one of its session rows, and refuses any
@@ -80,7 +67,7 @@ func (d *Daemon) resolveAttachDesk(desk string) (string, error) {
 	case matches > 1:
 		return "", fmt.Errorf("desk %s names more than one session row on this daemon", desk)
 	}
-	if d.driver == nil || d.driver.Socket() == "" {
+	if d.driver.Socket() == "" {
 		return "", errors.New("this daemon has no tmux server to attach to")
 	}
 	return d.driver.Socket(), nil
@@ -98,33 +85,6 @@ func (s *SSHServer) resolveDesk(desk string) (string, error) {
 	return s.daemon.resolveAttachDesk(desk)
 }
 
-// attachCmd builds the command the channel runs on its pty.
-func (s *SSHServer) attachCmd(socket, desk string) *exec.Cmd {
-	if s.attachCommand != nil {
-		return s.attachCommand(socket, desk)
-	}
-	return exec.Command("tmux", "-L", socket, "attach", "-t", "%"+desk)
-}
-
-// attachEnvAllow is what the attach command inherits from the daemon: enough
-// to find tmux and its socket directory, and nothing a seat or the bus
-// carries. TMUX is absent on purpose, so the client never believes it is
-// nested.
-var attachEnvAllow = []string{"PATH", "HOME", "USER", "LOGNAME", "LANG", "TMUX_TMPDIR", "TMPDIR"}
-
-func attachEnviron(term string) []string {
-	var env []string
-	for _, k := range attachEnvAllow {
-		if v, ok := os.LookupEnv(k); ok {
-			env = append(env, k+"="+v)
-		}
-	}
-	if term == "" {
-		term = "xterm"
-	}
-	return append(env, "TERM="+term)
-}
-
 // handleAttach answers one attach channel open. It runs in its own goroutine
 // so a live terminal never holds up the rest of the connection.
 //
@@ -134,6 +94,10 @@ func attachEnviron(term string) []string {
 func (s *SSHServer) handleAttach(newCh ssh.NewChannel, c caller) {
 	if c.scope != ScopeAdmin {
 		_ = newCh.Reject(ssh.Prohibited, "attach needs an admin key")
+		return
+	}
+	if !s.attachEnabled() {
+		_ = newCh.Reject(ssh.Prohibited, errRemoteAttachNotEnabled)
 		return
 	}
 	var open attachOpen
@@ -153,31 +117,6 @@ func (s *SSHServer) handleAttach(newCh ssh.NewChannel, c caller) {
 	}
 	log.Printf("ssh: attach desk %s for %s", open.Desk, c.fingerprint)
 	s.runAttach(ch, reqs, socket, open.Desk)
-}
-
-// attachRun is the state of one attach channel: its pty and its command.
-type attachRun struct {
-	pty  *ptyPair
-	term string
-	cmd  *exec.Cmd
-	once sync.Once
-}
-
-// teardown stops the command and closes the pty, once. Closing the master
-// hangs the terminal up; the process group is signalled too, and killed after
-// a grace period if it holds on. Wait runs in the waiter goroutine, so the
-// process is reaped.
-func (r *attachRun) teardown() {
-	r.once.Do(func() {
-		if r.cmd != nil && r.cmd.Process != nil {
-			pid := r.cmd.Process.Pid
-			_ = syscall.Kill(-pid, syscall.SIGHUP)
-			time.AfterFunc(attachKillGrace, func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
-		}
-		if r.pty != nil {
-			_ = r.pty.master.Close()
-		}
-	})
 }
 
 // runAttach serves the requests of an accepted attach channel. Only pty-req,
@@ -221,15 +160,15 @@ func (r *attachRun) grantPty(payload []byte) bool {
 	if err := ssh.Unmarshal(payload, &pr); err != nil {
 		return false
 	}
-	p, err := openPty()
+	p, err := pty.Open()
 	if err != nil {
 		log.Printf("ssh: attach: %v", err)
 		return false
 	}
-	if err := p.resize(clampSize(pr.Rows), clampSize(pr.Cols)); err != nil {
+	if err := p.Resize(clampSize(pr.Rows), clampSize(pr.Cols)); err != nil {
 		log.Printf("ssh: attach: %v", err)
-		_ = p.master.Close()
-		_ = p.slave.Close()
+		_ = p.Master.Close()
+		_ = p.Slave.Close()
 		return false
 	}
 	r.pty, r.term = p, pr.Term
@@ -244,7 +183,7 @@ func (r *attachRun) windowChange(payload []byte) bool {
 	if err := ssh.Unmarshal(payload, &wc); err != nil {
 		return false
 	}
-	return r.pty.resize(clampSize(wc.Rows), clampSize(wc.Cols)) == nil
+	return r.pty.Resize(clampSize(wc.Rows), clampSize(wc.Cols)) == nil
 }
 
 // clampSize fits a client-sent size into the uint16 the pty holds.
@@ -255,39 +194,23 @@ func clampSize(n uint32) uint16 {
 	return uint16(n)
 }
 
-// startAttach starts the command on the pty and bridges it to the channel.
-// The channel ends when the command's output does, and the command ends when
-// the channel closes or the client stops sending.
-func (s *SSHServer) startAttach(ch ssh.Channel, run *attachRun, socket, desk string, waited chan<- struct{}) bool {
-	cmd := s.attachCmd(socket, desk)
-	if cmd.Env == nil {
-		cmd.Env = attachEnviron(run.term)
+// attachEnabled says whether this listener serves a terminal: the test seam
+// when it is set, the daemon's switch otherwise. The switch is read once at
+// daemon start, so a change needs a restart.
+func (s *SSHServer) attachEnabled() bool {
+	if s.attachGate != nil {
+		return s.attachGate()
 	}
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = run.pty.slave, run.pty.slave, run.pty.slave
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
-	if err := cmd.Start(); err != nil {
-		log.Printf("ssh: attach desk %s: start: %v", desk, err)
-		_ = run.pty.master.Close()
-		_ = run.pty.slave.Close()
-		return false
-	}
-	_ = run.pty.slave.Close()
-	run.cmd = cmd
+	return s.daemon != nil && s.daemon.attachAllowed.Load()
+}
 
-	outDone := make(chan struct{})
-	go func() {
-		defer close(outDone)
-		_, _ = io.Copy(ch, run.pty.master)
-	}()
-	go func() {
-		_, _ = io.Copy(run.pty.master, ch)
-		run.teardown()
-	}()
-	go func() {
-		defer close(waited)
-		_ = cmd.Wait()
-		<-outDone
-		_ = ch.Close()
-	}()
-	return true
+// loadRemoteAttach sets the daemon's attach switch from the cluster entry whose
+// socket is ours, as loadCredentialReveal does for its own switch. An
+// unreadable config leaves it off.
+func (d *Daemon) loadRemoteAttach(socketPath string) {
+	on := false
+	if cfg, err := config.Load(); configLoadUsable(err) && cfg != nil {
+		on = attachGateEnabled(cfg.ClusterForSocket(socketPath))
+	}
+	d.attachAllowed.Store(on)
 }

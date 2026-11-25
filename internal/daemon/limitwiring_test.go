@@ -904,6 +904,13 @@ func TestAttachHandlerChecksScopeThenGateBeforeAnythingElse(t *testing.T) {
 		ifs, ok := body.List[i].(*ast.IfStmt)
 		if !ok || types.ExprString(ifs.Cond) != want {
 			t.Errorf("statement %d of handleAttach is not `if %s`", i+1, want)
+			continue
+		}
+		// A refusal must end the handler: the body's last statement is a return.
+		if n := len(ifs.Body.List); n == 0 {
+			t.Errorf("`if %s` in handleAttach has an empty body", want)
+		} else if _, isRet := ifs.Body.List[n-1].(*ast.ReturnStmt); !isRet {
+			t.Errorf("`if %s` in handleAttach does not end in a return", want)
 		}
 	}
 }

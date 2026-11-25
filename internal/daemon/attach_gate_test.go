@@ -61,6 +61,21 @@ func TestPtyRequestOnAnRPCChannelIsRefusedWhileTheGateIsOff(t *testing.T) {
 	}
 }
 
+// With the gate on, an RPC channel still refuses a pty request: attach is the
+// one channel that carries a terminal (architect Q1, round 3).
+func TestPtyRequestOnAnRPCChannelIsRefusedWhileTheGateIsOn(t *testing.T) {
+	d := statusDaemon(t)
+	r := newAttachRigDaemon(t, ScopeAdmin, true, d, shellCommand("exec cat"))
+	sess, err := r.client.NewSession()
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+	if err := sess.RequestPty("xterm", 24, 80, ssh.TerminalModes{}); err == nil {
+		t.Error("a pty request on an RPC channel was accepted with the gate on, want it refused")
+	}
+}
+
 // The client says why: the daemon's reason reaches the caller and does not
 // read as an older daemon.
 func TestDaemonrpcAttachSaysWhyWhenTheGateIsOff(t *testing.T) {

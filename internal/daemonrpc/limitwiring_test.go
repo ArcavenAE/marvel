@@ -135,6 +135,10 @@ func TestClientEntryPointsHaveOnlyTheirInventoriedCallers(t *testing.T) {
 			if name == "SendRequest" && types.ExprString(f.X) == "ch" && len(c.Args) > 0 {
 				if lit, ok := c.Args[0].(*ast.BasicLit); ok {
 					gotChan[fun+" "+strings.Trim(lit.Value, `"`)]++
+				} else {
+					// A name that is not a literal cannot be pinned: count it
+					// so the inventory fails on it.
+					gotChan[fun+" ?"]++
 				}
 				return true
 			}

@@ -1,6 +1,6 @@
 //go:build darwin
 
-package daemon
+package pty
 
 import (
 	"bytes"

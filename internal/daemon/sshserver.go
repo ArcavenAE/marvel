@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
 	"sync/atomic"
 
@@ -41,7 +40,7 @@ type SSHServer struct {
 	// attachGate says whether the daemon serves a terminal at all. Nil means
 	// the daemon's own switch. Not read yet.
 	attachGate    func() bool
-	attachCommand func(socket, desk string) *exec.Cmd
+	attachCommand attachCommandFunc
 }
 
 // newSSHServer creates an SSH server with the daemon's host key and
@@ -168,7 +167,9 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 		go func() {
 			for req := range chReqs {
 				if req.WantReply {
-					_ = req.Reply(true, nil)
+					// A pty request is never granted here: the attach channel
+					// is the one route that carries a terminal.
+					_ = req.Reply(req.Type != "pty-req", nil)
 				}
 			}
 		}()

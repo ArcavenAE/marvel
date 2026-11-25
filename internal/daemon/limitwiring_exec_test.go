@@ -19,8 +19,13 @@ import (
 // pinned argument list, while every other file keeps the ban
 // (marvel#556 routes W2 and W3 were closed the same way).
 
-// execAllowedFile is the one non-test file allowed to import os/exec.
+// execAllowedFile is the reexec probe's file. With attachExecFile it is one of
+// the two non-test files allowed to import os/exec (director ruling
+// 01M88CD904, item 1).
 const execAllowedFile = "reexec_handoff.go"
+
+// attachExecFile holds the attach channel's one process.
+const attachExecFile = "attach_exec.go"
 
 // execImportViolations lists every import in p that opens a route to a socket
 // or a process, except os/exec in execAllowedFile.
@@ -34,8 +39,8 @@ func execImportViolations(p pkgFiles) []string {
 		path, _ := strconv.Unquote(imp.Path.Value)
 		switch path {
 		case "os/exec":
-			if file != execAllowedFile {
-				out = append(out, file+" imports os/exec; only "+execAllowedFile+" may, for the reexec handoff probe")
+			if file != execAllowedFile && file != attachExecFile {
+				out = append(out, file+" imports os/exec; only "+execAllowedFile+" and "+attachExecFile+" may")
 			}
 		case "net/http", "net/rpc":
 			out = append(out, file+" imports "+path+"; the daemon package opens no other route to a socket or a process")
@@ -105,7 +110,8 @@ func TestTheOnlyProcessesTheDaemonStartsAreTheProbeAndTheAttachClient(t *testing
 		key := "exec." + sel.Sel.Name + " in " + fun + " (" + file + ")"
 		got[key]++
 		for _, a := range call.Args {
-			args[key] = append(args[key], strings.Trim(strings.ReplaceAll(exprText(a), `"`, ""), " "))
+			// Quotes are kept: "tmux" the literal and tmux an identifier differ.
+			args[key] = append(args[key], strings.Trim(exprText(a), " "))
 		}
 		return true
 	})
@@ -121,8 +127,8 @@ func TestTheOnlyProcessesTheDaemonStartsAreTheProbeAndTheAttachClient(t *testing
 		}
 	}
 	wantArgs := map[string][]string{
-		probeKey:  {"ctx", "exe", "version", "--capabilities", "--json"},
-		attachKey: {"tmux", "-L", "socket", "attach", "-t", "%+desk"},
+		probeKey:  {"ctx", "exe", `"version"`, `"--capabilities"`, `"--json"`},
+		attachKey: {`"tmux"`, `"-L"`, "socket", `"attach"`, `"-t"`, `"%"+desk`},
 	}
 	for k, w := range wantArgs {
 		if strings.Join(args[k], ",") != strings.Join(w, ",") {

@@ -775,6 +775,7 @@ func (d *Daemon) Start(socketPath string) (err error) {
 	d.loadScheduleHistoryMax(socketPath)
 	d.loadHostVitals(socketPath)
 	d.loadCredentialReveal(socketPath)
+	d.loadRemoteAttach(socketPath)
 	d.loadAccountWarn(socketPath)
 	d.loadSeatEnv(socketPath)
 	d.loadLoginExpiry(socketPath)

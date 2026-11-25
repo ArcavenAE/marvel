@@ -1,22 +1,22 @@
 //go:build !linux && !darwin
 
-package daemon
+package pty
 
 import (
 	"errors"
 	"os"
 )
 
-// ptyPair has no implementation off linux and darwin, the platforms marvel
+// Pair has no implementation off linux and darwin, the platforms marvel
 // ships on, so an attach there is refused instead of failing to build.
-type ptyPair struct {
-	master, slave *os.File
+type Pair struct {
+	Master, Slave *os.File
 }
 
-func openPty() (*ptyPair, error) {
+func Open() (*Pair, error) {
 	return nil, errors.New("attach needs a pty, which this platform does not provide")
 }
 
-func (p *ptyPair) resize(rows, cols uint16) error {
+func (p *Pair) Resize(rows, cols uint16) error {
 	return errors.New("attach needs a pty, which this platform does not provide")
 }
