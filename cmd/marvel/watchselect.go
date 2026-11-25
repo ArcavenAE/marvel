@@ -274,14 +274,22 @@ func (ws *watchSort) sessionsViewTotals(sessions []api.Session, header string, f
 	if h > 0 {
 		top0 := ws.top
 		for pass := 0; pass < 2; pass++ {
-			fixed := strings.Count(used, "\n") + strings.Count(pre, "\n") + 1 + strings.Count(post, "\n")
+			// The height is in physical rows: a line wider than the terminal
+			// wraps onto more than one (marvel#1598). Table rows share one
+			// width, so the widest sets what each costs.
+			w := fit.width
+			fixed := textPhysicalRows(used, w) + textPhysicalRows(pre, w) + linePhysicalRows(head, w) + textPhysicalRows(post, w)
 			if ws.status != "" {
-				fixed++
+				fixed += linePhysicalRows(ws.status, w)
 			}
-			budget := max(h-fixed, 1)
+			per := 1
+			for _, r := range rows {
+				per = max(per, linePhysicalRows(r, w))
+			}
+			budget := max((h-fixed)/per, 1)
 			cut = false
 			if len(rows) > budget {
-				budget = max(h-fixed-1, 1) // one line says which rows are shown
+				budget = max((h-fixed-1)/per, 1) // one line says which rows are shown
 				cut = true
 			}
 			top := top0
