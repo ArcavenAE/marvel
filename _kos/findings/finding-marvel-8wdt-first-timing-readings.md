@@ -112,7 +112,7 @@ marked INFERRED is arithmetic on the histogram, not a measurement of a cause.
   "finding-marvel-8wdt (2026-11-25): the first I-451 readings put the
   reconciler's pass at about 27 ms mean on two daemons with 65 to 75 percent
   of the hold in tmux list-panes, and the heartbeat at about 60 times a bus
-  beat on the same synced write. The backplane's meter function now has a
+  beat on host B on the same synced write. The backplane's meter function now has a
   first reading of its first citizen; the measurement fabric's dual (parts
   emit observations) is the surface these came through."
 - `elem-agentic-resource-matrix` (bedrock). Back-reference text:
