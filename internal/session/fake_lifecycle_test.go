@@ -20,6 +20,10 @@ import (
 // the manager, with no tmux server, and pins which of the twelve TmuxDriver
 // methods each phase reaches (aae-orc-6qxr4, I-797 S2). It has no red state; it
 // is judged by what it kills when the code under it changes.
+//
+// What a pin records is what the code does at the commit it was written on, not
+// a requirement. A pin that a change breaks is updated in the PR that changes the
+// behaviour, with the reason in that PR.
 
 // twelveMethods is the TmuxDriver method set: eight declared on the interface
 // and the four runtime.PaneController adds.
@@ -116,7 +120,10 @@ func (c *callLog) CapturePane(p string) (string, error) {
 // are what the code does at the commit this was written on (observed, not
 // argued to be right): ListPanes, SendKeys and CapturePane are not reached by
 // this path, and Delete kills the pane but leaves the tmux session, which only
-// CleanupWorkspace kills.
+// CleanupWorkspace kills. Also not reached: Delete's fallback for a session with
+// no runtime instance, which kills the pane through the driver directly
+// (manager.go, the !had branch after retireInstance); here the pane dies through
+// the instance, so KillPane arrives by that route.
 func TestManagerLifecycleOnTheFakeDriver(t *testing.T) {
 	store := api.NewStore()
 	cl := &callLog{Driver: fake.New(), n: map[string]int{}}
@@ -182,7 +189,7 @@ func TestManagerLifecycleOnTheFakeDriver(t *testing.T) {
 		t.Errorf("delete: store holds %d sessions, want 0", n)
 	}
 	if got := sessions(); !slices.Equal(got, []string{"marvel-" + ws}) {
-		t.Errorf("after delete the fake still lists %v, want [marvel-%s] until CleanupWorkspace", got, ws)
+		t.Errorf("after delete the fake lists %v; observed at this commit: Delete leaves the tmux session (see the comment above), which was [marvel-%s]", got, ws)
 	}
 	if n := cl.PaneCount(); n != 0 {
 		t.Errorf("after delete the fake holds %d panes, want 0", n)
