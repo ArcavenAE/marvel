@@ -355,7 +355,18 @@ func TestHandleRunSandboxedRefusesAHostThatCannotSandbox(t *testing.T) {
 // profile directory, and a runner seam that records what it was asked to exec.
 func greenFixture(t *testing.T) (d *Daemon, sess api.Session, got *[]string) {
 	t.Helper()
-	d, sess, _ = handlerFixture(t)
+	profile := filepath.Join(t.TempDir(), "role.sb")
+	if err := os.WriteFile(profile, []byte("(version 1)\n(allow default)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return greenFixtureWith(t, profile)
+}
+
+// greenFixtureWith is greenFixture with the role's sandbox_profile path, "" for
+// a role that names none. A role with a profile reaches the runner seam.
+func greenFixtureWith(t *testing.T, profilePath string) (d *Daemon, sess api.Session, got *[]string) {
+	t.Helper()
+	d, sess, _ = handlerFixtureWith(t, profilePath)
 	m := session.NewManager(d.store, nil)
 	m.GOOS, m.SandboxExec = "darwin", d.runSandboxExec
 	m.SandboxDir, m.RealHome = t.TempDir(), t.TempDir()
@@ -468,20 +479,28 @@ func TestRunSandboxedConnectionCloseEndsTheRun(t *testing.T) {
 
 // Director ruling (marvel#1601): a role with no sandbox_profile gets a refusal
 // that names it, and nothing is started. Neither an empty nor a given request
-// profile changes that.
+// profile changes that. The fixture reaches the runner seam for a role with a
+// profile (TestHandleRunSandboxedExecsTheComposedProfile), so a run that was
+// not refused would be seen.
 func TestHandleRunSandboxedRefusesARoleWithNoSandboxProfile(t *testing.T) {
-	for name, profile := range map[string]string{"empty request": "", "deny request": "(deny network*)\n"} {
-		d, sess, invoked := handlerFixtureWith(t, "")
-		body, err := json.Marshal(api.RunSandboxedRequest{Token: sess.HeartbeatToken, Argv: []string{"/usr/bin/true"}, Profile: profile})
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp := d.handleRunSandboxed(context.Background(), body)
-		if !strings.Contains(resp.Error, "sandbox_profile") {
-			t.Errorf("%s: error = %q, want it to name the missing sandbox_profile", name, resp.Error)
-		}
-		if _, serr := os.Stat(invoked); serr == nil {
-			t.Errorf("%s: sandbox-exec was started for a role with no profile", name)
+	emptyFile := filepath.Join(t.TempDir(), "empty.sb")
+	if err := os.WriteFile(emptyFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{"no profile set": "", "profile file is empty": emptyFile} {
+		for rname, profile := range map[string]string{"empty request": "", "deny request": "(deny network*)\n"} {
+			d, sess, got := greenFixtureWith(t, path)
+			body, err := json.Marshal(api.RunSandboxedRequest{Token: sess.HeartbeatToken, Argv: []string{"/usr/bin/true"}, Profile: profile})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp := d.handleRunSandboxed(context.Background(), body)
+			if !strings.Contains(resp.Error, "sandbox_profile") {
+				t.Errorf("%s, %s: error = %q, want it to name the missing sandbox_profile", name, rname, resp.Error)
+			}
+			if len(*got) != 0 {
+				t.Errorf("%s, %s: the runner was reached with %q for a role with no profile", name, rname, *got)
+			}
 		}
 	}
 }

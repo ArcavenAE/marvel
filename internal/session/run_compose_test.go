@@ -227,3 +227,29 @@ func TestComposeRunProfileIgnoresADefaultFormInsideAStringLiteral(t *testing.T) 
 		t.Errorf("err = %v, want ErrRunProfileRefused for a role whose only (allow default) is inside a literal", err)
 	}
 }
+
+// The scan that finds the default forms is sbplCode's own: a backslash escape
+// inside a literal does not end it, so an (allow default) after an escaped
+// quote is still inside the string and must not count as the form.
+func TestComposeRunProfileIgnoresADefaultFormAfterAnEscapedQuoteInALiteral(t *testing.T) {
+	role := "(version 1)\n(deny file-read* (literal \"a\\\" (allow default) \\\"\"))\n"
+	if _, err := ComposeRunProfile(role, netAllow+"\n", testBlock); !errors.Is(err, ErrRunProfileRefused) {
+		t.Errorf("err = %v, want ErrRunProfileRefused for a role whose only (allow default) follows an escaped quote inside a literal\nrole:\n%s", err, role)
+	}
+}
+
+// A comment is not code: an (allow default) in a ; comment does not count.
+func TestComposeRunProfileIgnoresADefaultFormInAComment(t *testing.T) {
+	role := "(version 1)\n; (allow default)\n(deny file-read* (literal \"/x\"))\n"
+	if _, err := ComposeRunProfile(role, netAllow+"\n", testBlock); !errors.Is(err, ErrRunProfileRefused) {
+		t.Errorf("err = %v, want ErrRunProfileRefused for a role whose only (allow default) is in a comment", err)
+	}
+}
+
+// (deny default(with no-log)) has no space before the modifier.
+func TestComposeRunProfileReadsADenyDefaultWithNoSpaceBeforeTheModifier(t *testing.T) {
+	role := "(version 1)\n(allow default)\n(deny default(with no-log))\n"
+	if _, err := ComposeRunProfile(role, netAllow+"\n", testBlock); !errors.Is(err, ErrRunProfileRefused) {
+		t.Errorf("err = %v, want ErrRunProfileRefused", err)
+	}
+}
