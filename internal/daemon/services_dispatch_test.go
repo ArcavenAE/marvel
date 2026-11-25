@@ -143,3 +143,33 @@ func TestAClassWithNoCapAttachesTwoEntries(t *testing.T) {
 		t.Errorf("attached entries = %d, want 2", len(d.services))
 	}
 }
+
+// A later class whose arm returns a Lifecycle must not take d.lifecycle over:
+// stop, restart and reload still act on the bus through it.
+func TestANonBusLifecycleLeavesDLifecycleAsTheBuses(t *testing.T) {
+	t.Parallel()
+	busLC := &dispatchFakeLifecycle{}
+	otherLC := &dispatchFakeLifecycle{}
+	arms := map[string]attachArm{
+		"fake-bus": func(*Daemon, *config.Cluster, *config.Service, paths.Layout) (service.Lifecycle, error) {
+			return busLC, nil
+		},
+		"fake-other": func(*Daemon, *config.Cluster, *config.Service, paths.Layout) (service.Lifecycle, error) {
+			return otherLC, nil
+		},
+	}
+	d := newDispatchDaemon()
+	err := d.attachEntries(&config.Cluster{Name: "kinu"}, []config.Service{
+		fakeEntry("bus", service.ClassMessageBus, "fake-bus", "managed"),
+		fakeEntry("other", "fake-class", "fake-other", "managed"),
+	}, paths.Layout{}, arms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.lifecycle != service.Lifecycle(busLC) {
+		t.Errorf("d.lifecycle = %v, want the bus's Lifecycle after a non-bus entry attached", d.lifecycle)
+	}
+	if d.services["other"].lc != service.Lifecycle(otherLC) {
+		t.Errorf("d.services[other].lc = %v, want the other entry's own Lifecycle", d.services["other"].lc)
+	}
+}
