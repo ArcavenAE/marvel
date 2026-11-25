@@ -1,4 +1,8 @@
-package api
+// Package seatenv names the environment a seat does and does not inherit: the
+// session variables a seat must never carry, and the variable that holds its
+// heartbeat token. It is a leaf (standard library only), so the stored model
+// and the tmux driver can both import it without importing each other.
+package seatenv
 
 import (
 	"os"
@@ -93,3 +97,11 @@ func UnsetInheritedSessionEnv() ([]string, error) {
 	}
 	return removed, nil
 }
+
+// HeartbeatTokenEnv is the environment variable adapters inject the
+// session's heartbeat token into. Environment rather than a command-line
+// flag: an argv is readable from the process table, and every agent on
+// the host can list it. It lives here, in a leaf both internal/api and
+// internal/tmux import, so the tmux driver need not import the stored model
+// to name the variable it keeps off a command line.
+const HeartbeatTokenEnv = "MARVEL_HEARTBEAT_TOKEN"

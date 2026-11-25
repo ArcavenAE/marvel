@@ -19,9 +19,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/arcavenae/marvel/internal/api"
-
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/seatenv"
 	"github.com/arcavenae/marvel/internal/timing"
 )
 
@@ -191,7 +190,7 @@ func (d *Driver) lockPane(paneID string) func() {
 // scoping is enforced in exactly one place.
 //
 // Every tmux exec runs with the parent Claude Code session's identity and
-// messaging credential removed (api.InheritedSessionEnv): a tmux server
+// messaging credential removed (seatenv.InheritedSessionEnv): a tmux server
 // takes the environment of the process that starts it and hands it to every
 // pane, so the first command to start the server decides what every seat
 // inherits (marvel#381).
@@ -210,7 +209,7 @@ func (d *Driver) cmd(args ...string) *tmuxCmd {
 	}
 	full = append(full, args...)
 	c := exec.CommandContext(ctx, d.binary, full...)
-	c.Env = dropEnv(api.ScrubInheritedSessionEnv(os.Environ()), d.secretNames)
+	c.Env = dropEnv(seatenv.ScrubInheritedSessionEnv(os.Environ()), d.secretNames)
 	// A killed tmux client can leave a child holding its output pipe open;
 	// without a wait delay the read would outlive the kill.
 	c.WaitDelay = time.Second
@@ -367,7 +366,7 @@ var seatEnvPrefix = seatEnvPrefixFor(nil)
 func seatEnvPrefixFor(extra []string) string {
 	var b strings.Builder
 	b.WriteString("env")
-	for _, n := range api.InheritedSessionEnv {
+	for _, n := range seatenv.InheritedSessionEnv {
 		b.WriteString(" -u ")
 		b.WriteString(n)
 	}
@@ -625,7 +624,7 @@ func (d *Driver) NewPane(session, command, title string, envs map[string]string,
 
 // secretValueKeys are the environment names whose value is a secret. Their
 // *_FILE companions carry only a path and are allowed.
-var secretValueKeys = []string{api.HeartbeatTokenEnv, "DIRECTOR_NATS_PASS"}
+var secretValueKeys = []string{seatenv.HeartbeatTokenEnv, "DIRECTOR_NATS_PASS"}
 
 // NewPaneAt is NewPane with a start directory (new-window -c). An empty dir
 // starts the pane where the tmux server is, as NewPane always did.
