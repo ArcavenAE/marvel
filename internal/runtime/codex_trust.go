@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/hostprobe"
 )
 
 // codexTrust is how a codex seat's start directory was judged against the
@@ -26,12 +26,12 @@ type codexTrust struct {
 // closed: anything it cannot establish is untrusted with a reason. A listed
 // entry that cannot be resolved here is skipped, never matched.
 func resolveCodexTrust(start string, listed []string, home, wsRoot string) codexTrust {
-	root, reason := api.GitMainRoot(start)
+	root, reason := hostprobe.GitMainRoot(start)
 	if reason != "" {
 		return codexTrust{Reason: reason}
 	}
 	for _, entry := range listed {
-		abs, err := api.ExpandTrustedFolder(entry, home, wsRoot)
+		abs, err := hostprobe.ExpandTrustedFolder(entry, home, wsRoot)
 		if err != nil {
 			continue
 		}
