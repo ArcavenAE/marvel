@@ -13,6 +13,9 @@ const (
 	bindAllow = `(allow network-bind (local ip "localhost:*"))`
 	inAllow   = `(allow network-inbound (local ip "localhost:*"))`
 	testBlock = "(deny file-read* (subpath \"/Volumes\"))\n"
+	// allowRole is the smallest role profile a run accepts: one that names its own
+	// (allow default). A role with no profile is refused.
+	allowRole = "(version 1)\n(allow default)\n"
 )
 
 // Order: role, then the request, then the deny block, one text, block last.
@@ -32,23 +35,29 @@ func TestComposeRunProfileOrdersRoleRequestBlock(t *testing.T) {
 	}
 }
 
-// D4: a role with no profile gets the base (version 1)(allow default), once,
-// ahead of the request.
-func TestComposeRunProfileSuppliesTheBaseForARoleWithNoProfile(t *testing.T) {
-	got, err := ComposeRunProfile("", "(deny network*)\n", testBlock)
+// Director ruling (marvel#1601): a role with no sandbox_profile is refused, not
+// given an (allow default) base, so no seat can leave its harness layer through
+// the endpoint before the allowlist exists. A request profile that is empty,
+// over a role that names its own profile, still composes.
+func TestComposeRunProfileRefusesARoleWithNoProfile(t *testing.T) {
+	for name, role := range map[string]string{"empty": "", "blank": " \n\t", "comment only": "; nothing here\n"} {
+		_, err := ComposeRunProfile(role, "(deny network*)\n", testBlock)
+		if !errors.Is(err, ErrRunProfileRefused) || !strings.Contains(err.Error(), "sandbox_profile") {
+			t.Errorf("%s role: err = %v, want ErrRunProfileRefused naming sandbox_profile", name, err)
+		}
+		if _, err := ComposeRunProfile(role, "", testBlock); !errors.Is(err, ErrRunProfileRefused) {
+			t.Errorf("%s role with an empty request: err = %v, want ErrRunProfileRefused", name, err)
+		}
+	}
+}
+
+func TestComposeRunProfileAcceptsAnEmptyRequestOverARoleWithAProfile(t *testing.T) {
+	got, err := ComposeRunProfile("(version 1)\n(deny network*)\n", "", testBlock)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("an empty request over a role with a profile was refused: %v", err)
 	}
-	v, a, d := strings.Index(got, "(version 1)"), strings.Index(got, "(allow default)"), strings.Index(got, "(deny network*)")
-	if v < 0 || a < 0 || d < 0 || v >= a || a >= d || strings.Count(got, "(version 1)") != 1 {
-		t.Fatalf("version=%d allow-default=%d request=%d, want the base once ahead of the request\n%s", v, a, d, got)
-	}
-	got, err = ComposeRunProfile("(version 1)\n(deny network*)\n", "(deny process-fork)\n", testBlock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Count(got, "(version 1)") != 1 || strings.Contains(got, "(allow default)") {
-		t.Fatalf("a role that names its own profile must not get the base added:\n%s", got)
+	if strings.Count(got, "(version 1)") != 1 || strings.Contains(got, "(allow default)") || !strings.HasSuffix(got, testBlock) {
+		t.Fatalf("composed text is not the role's profile then the block, with no base added:\n%s", got)
 	}
 }
 
@@ -57,7 +66,7 @@ func TestComposeRunProfileSuppliesTheBaseForARoleWithNoProfile(t *testing.T) {
 func TestComposeRunProfileAcceptsTheRunConditionsForm(t *testing.T) {
 	req := "; run conditions\n(deny network*)\n" + netAllow + "\n" + bindAllow + "\n" + inAllow +
 		"\n(deny network-outbound (remote ip \"localhost:4222\"))\n(deny file-write* (require-not (subpath \"/private/tmp/x\")))\n"
-	got, err := ComposeRunProfile("", req, testBlock)
+	got, err := ComposeRunProfile(allowRole, req, testBlock)
 	if err != nil {
 		t.Fatalf("the run-conditions form was refused: %v", err)
 	}
@@ -98,7 +107,7 @@ func TestComposeRunProfileRefusesWhatIsNotDenyOrTheNetworkForm(t *testing.T) {
 		"bare atom":            `deny`,
 		"string-append":        `(deny file-read* (subpath (string-append "/a" "/b")))`,
 	} {
-		got, err := ComposeRunProfile("", req+"\n", testBlock)
+		got, err := ComposeRunProfile(allowRole, req+"\n", testBlock)
 		if !errors.Is(err, ErrRunProfileRefused) {
 			t.Errorf("%s: err = %v, want ErrRunProfileRefused", name, err)
 		}

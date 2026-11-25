@@ -277,10 +277,21 @@ func TestHandleRunSandboxedRefusesAnUnknownTokenAndRunsNothing(t *testing.T) {
 // that records every invocation, so a refusal can be told from a run.
 func handlerFixture(t *testing.T) (d *Daemon, sess api.Session, invoked string) {
 	t.Helper()
+	profile := filepath.Join(t.TempDir(), "role.sb")
+	if err := os.WriteFile(profile, []byte("(version 1)\n(allow default)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return handlerFixtureWith(t, profile)
+}
+
+// handlerFixtureWith is handlerFixture with the role's sandbox_profile path, ""
+// for a role that names none.
+func handlerFixtureWith(t *testing.T, profilePath string) (d *Daemon, sess api.Session, invoked string) {
+	t.Helper()
 	d, store, sess := runDaemon(t)
 	if err := store.CreateTeam(&api.Team{
 		Name: "squad", Workspace: "ws", Generation: 1, CreatedAt: time.Now().UTC(),
-		Roles: []api.Role{{Name: "builder", Replicas: 1, Runtime: api.Runtime{Name: "claude", Command: "claude"}}},
+		Roles: []api.Role{{Name: "builder", Replicas: 1, SandboxProfile: profilePath, Runtime: api.Runtime{Name: "claude", Command: "claude"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -452,5 +463,25 @@ func TestRunSandboxedConnectionCloseEndsTheRun(t *testing.T) {
 	case <-served:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the connection handler did not return")
+	}
+}
+
+// Director ruling (marvel#1601): a role with no sandbox_profile gets a refusal
+// that names it, and nothing is started. Neither an empty nor a given request
+// profile changes that.
+func TestHandleRunSandboxedRefusesARoleWithNoSandboxProfile(t *testing.T) {
+	for name, profile := range map[string]string{"empty request": "", "deny request": "(deny network*)\n"} {
+		d, sess, invoked := handlerFixtureWith(t, "")
+		body, err := json.Marshal(api.RunSandboxedRequest{Token: sess.HeartbeatToken, Argv: []string{"/usr/bin/true"}, Profile: profile})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := d.handleRunSandboxed(context.Background(), body)
+		if !strings.Contains(resp.Error, "sandbox_profile") {
+			t.Errorf("%s: error = %q, want it to name the missing sandbox_profile", name, resp.Error)
+		}
+		if _, serr := os.Stat(invoked); serr == nil {
+			t.Errorf("%s: sandbox-exec was started for a role with no profile", name)
+		}
 	}
 }

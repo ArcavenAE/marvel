@@ -88,7 +88,7 @@ func nc(port int) []string {
 func TestRealExecComposedDenyHolds(t *testing.T) {
 	skipIfNested(t)
 	denied, free, blocked := scratchDir(t), scratchDir(t), scratchDir(t)
-	composed, err := ComposeRunProfile("", fmt.Sprintf("(deny file-write* (subpath %q))\n", denied),
+	composed, err := ComposeRunProfile(allowRole, fmt.Sprintf("(deny file-write* (subpath %q))\n", denied),
 		fmt.Sprintf("(deny file-read* file-write* (subpath %q))\n", blocked))
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestRealExecRunConditionsNetworkForm(t *testing.T) {
 		`(allow network-inbound (local ip "localhost:*"))`,
 		fmt.Sprintf(`(deny network-outbound (remote ip "localhost:%d"))`, deniedPort),
 	}, "\n") + "\n"
-	composed, err := ComposeRunProfile("", req, "(deny file-write* (subpath \"/nonexistent-run-block\"))\n")
+	composed, err := ComposeRunProfile(allowRole, req, "(deny file-write* (subpath \"/nonexistent-run-block\"))\n")
 	if err != nil {
 		t.Fatalf("the run-conditions form was refused: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestRealExecProbeDefineRebindsDeny(t *testing.T) {
 	skipIfNested(t)
 	dir := scratchDir(t)
 	req := "(define (deny . a) #t)\n"
-	if _, err := ComposeRunProfile("", req, ""); !errors.Is(err, ErrRunProfileRefused) {
+	if _, err := ComposeRunProfile(allowRole, req, ""); !errors.Is(err, ErrRunProfileRefused) {
 		t.Errorf("the composer accepted a define: %v", err)
 	}
 	prof := fmt.Sprintf("(version 1)\n(allow default)\n%s(deny file-write* (subpath %q))\n", req, dir)
