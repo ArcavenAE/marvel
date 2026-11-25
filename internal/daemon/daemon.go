@@ -223,6 +223,9 @@ type Daemon struct {
 	// for the next daemon to adopt (reexec, `marvel stop --keep-bus`).
 	lifecycle service.Lifecycle
 	keepBus   bool
+	// services holds every attached entry by name (MS-8 (a), (h)). The bus
+	// entry's Lifecycle is the same value as d.lifecycle, never a second one.
+	services map[string]attachedService
 
 	// In-memory ring of the most recent log lines. Always non-nil.
 	logs *logbuf.Buffer

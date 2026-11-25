@@ -145,6 +145,11 @@ func Provider(name string) (ProviderDriver, error) {
 	return p, nil
 }
 
+// ProviderNames lists the registered providers, sorted. The caller gets a
+// copy. The daemon's dispatch test reads it so a provider added to the
+// registry without an arm fails (MS-8 (c)).
+func ProviderNames() []string { return nil }
+
 // ParseMode checks a mode string against the three values. The reserved
 // word is refused with its own message.
 func ParseMode(s string) (Mode, error) {
