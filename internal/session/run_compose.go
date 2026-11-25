@@ -202,7 +202,9 @@ func checkForm(f sexp) error {
 var (
 	roleNetworkWord   = regexp.MustCompile(`network`)
 	roleAllowsDefault = regexp.MustCompile(`\(\s*allow\s+default\s*\)`)
-	roleDeniesDefault = regexp.MustCompile(`\(\s*deny\s+default\s*\)`)
+	// roleDeniesDefault matches the head of a deny default with any tail, so
+	// (deny default (with no-log)) and (deny default(with no-log)) count.
+	roleDeniesDefault = regexp.MustCompile(`\(\s*deny\s+default[\s()]`)
 	roleVersionForm   = regexp.MustCompile(`\(\s*version\s+1\s*\)`)
 	roleParamForm     = regexp.MustCompile(`\(\s*param\s+"([A-Za-z0-9_]+)"\s*\)`)
 )
@@ -212,33 +214,36 @@ var (
 // The request is read into forms and re-serialized, never copied as text, and
 // refused unless every form is a deny or one of the three localhost network
 // allows the run conditions use (seat-tcc-deny.md, sections 5 and 14; marvel#1596
-// rulings Q1 and Q3). The network allows are also refused unless the role has no
-// profile or is (allow default) with no network rule, since they would widen it. A role
-// with no profile gets (version 1)(allow default).
+// rulings Q1 and Q3). The network allows are also refused unless the role is
+// (allow default) with no network rule, since they would widen it. A role with no
+// profile text is refused, naming sandbox_profile: no run gets a base profile of
+// its own, so no seat leaves its harness layer through this call (director,
+// marvel#1601).
 func ComposeRunProfile(role, requested, block string) (string, error) {
 	forms, err := readForms(requested)
 	if err != nil {
 		return "", err
 	}
 	roleCode := sbplCode([]byte(role))
-	// The network allows are accepted only where they cannot widen the role: a
-	// role with no profile (the base allows everything), or one that is
-	// (allow default) and names no network operation. A deny-default role, a role
-	// with a network rule, and a role naming neither default are refused.
-	networkAllowOK := strings.TrimSpace(roleCode) == "" ||
-		(roleAllowsDefault.MatchString(roleCode) && !roleDeniesDefault.MatchString(roleCode) && !roleNetworkWord.MatchString(roleCode))
+	// The default forms are matched over code with string literals blanked, so
+	// text inside a path literal is never read as a form. The network word stays
+	// on the unblanked code: it can only refuse more.
+	roleShape := sbplCodeBlanked([]byte(role))
+	if strings.TrimSpace(roleCode) == "" {
+		return "", refuse("the role names no sandbox_profile text (none is set, or its file is empty), and a run never gets a base profile")
+	}
+	// The network allows are accepted only where they cannot widen the role: one
+	// that is (allow default) and names no network operation. A deny-default
+	// role (any tail after the head), a role with a network rule, and a role
+	// naming neither default are refused.
+	networkAllowOK := roleAllowsDefault.MatchString(roleShape) && !roleDeniesDefault.MatchString(roleShape) && !roleNetworkWord.MatchString(roleCode)
 	var b strings.Builder
-	switch {
-	case strings.TrimSpace(roleCode) == "":
-		b.WriteString("(version 1)\n(allow default)\n")
-	default:
-		if !roleVersionForm.MatchString(roleCode) {
-			b.WriteString("(version 1)\n")
-		}
-		b.WriteString(role)
-		if !strings.HasSuffix(role, "\n") {
-			b.WriteString("\n")
-		}
+	if !roleVersionForm.MatchString(roleShape) {
+		b.WriteString("(version 1)\n")
+	}
+	b.WriteString(role)
+	if !strings.HasSuffix(role, "\n") {
+		b.WriteString("\n")
 	}
 	for _, f := range forms {
 		if err := checkForm(f); err != nil {
