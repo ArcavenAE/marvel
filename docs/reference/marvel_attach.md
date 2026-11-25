@@ -30,8 +30,10 @@ the pane.
   - --print prints the command and exits 0 in every case.
 
 A desk on a remote cluster is run over the cluster's mrvl:// channel (port 6785)
-with the key the cluster pins, which must be an admin key on that daemon. It
-needs no ssh login on the remote host. --print shows the ssh form instead,
+with the key the cluster pins, which must be an admin key on that daemon. The
+daemon refuses unless its own cluster entry sets allow_remote_attach: true, which
+it reads at start, so a change needs a daemon restart. It needs no ssh login on
+the remote host. --print shows the ssh form instead,
 `ssh -t <host> tmux -L <socket> attach -t %<desk>`, which uses your own ssh
 access: the host is the one in the cluster's address, so it may need a login
 name or an ssh config entry of your own. Against a daemon too old to serve the
