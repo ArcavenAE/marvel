@@ -39,5 +39,5 @@ provenance:
 notes: >
   finding-marvel-8wdt (2026-11-25): the time row has its first measured
   per-site histograms (I-451 slice 1) and two readings; the controller mutex
-  hold is 1.3 to 1.4 percent of wall time and the store lock about 0.8 to 2.3
-  percent, before any enforcement locus beyond spawn-time construction.
+  hold is 1.3 to 1.4 percent of wall time and heartbeat handler time, an upper
+  bound on the store lock, about 0.8 to 2.3 percent (inferred), before any enforcement locus beyond spawn-time construction.

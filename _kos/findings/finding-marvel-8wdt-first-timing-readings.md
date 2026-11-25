@@ -1,4 +1,4 @@
-# finding-marvel-8wdt: the first I-451 timing readings put the reconcile pass at 27 ms with its tail in tmux, and the heartbeat at 60 times a bus beat on the same synced write
+# finding-marvel-8wdt: the first I-451 timing readings put the reconcile pass at 27 ms with its tail in tmux, and the heartbeat at 60 times a bus beat on host B on the same synced write
 
 **Date:** 2026-11-25
 **Confidence:** frontier. Two cumulative readings from two daemons on two
@@ -82,9 +82,9 @@ of it, and they say something different about each row.
    heartbeat's 12 ms, and the remaining cost is in the heartbeat's own path,
    which a static read does not place (no I/O beyond `persistPut`, the
    context resolver has no production caller, the same record is marshalled).
-   The load is still material: INFERRED, heartbeats held the store lock about
-   2.3 percent of wall time on host B, growing with fed seats. The review's
-   remedy as written (note a dirty key, flush on the tick) would remove about
+   The load is still material: INFERRED, heartbeat handler time, an upper
+   bound on the store lock, was about 2.3 percent of wall time on host B,
+   growing with fed seats. The review's remedy as written (note a dirty key, flush on the tick) would remove about
    0.2 ms per beat. A breakdown of the heartbeat path (timing sites around
    lock acquire, the field arithmetic, the encodes and the bolt transaction,
    or a profile) comes before that change.
@@ -118,8 +118,8 @@ marked INFERRED is arithmetic on the histogram, not a measurement of a cause.
 - `elem-agentic-resource-matrix` (bedrock). Back-reference text:
   "finding-marvel-8wdt (2026-11-25): the time row has its first measured
   per-site histograms (I-451 slice 1) and two readings; the controller mutex
-  hold is 1.3 to 1.4 percent of wall time and the store lock about 0.8 to 2.3
-  percent, before any enforcement locus beyond spawn-time construction."
+  hold is 1.3 to 1.4 percent of wall time and heartbeat handler time, an upper
+  bound on the store lock, about 0.8 to 2.3 percent (inferred), before any enforcement locus beyond spawn-time construction."
 - `docs/design/code-restructure-plan.md`, status header, successor record:
   "The November 2026 status review found the plan implemented in full, two
   side items open, and habit (a) unexercised; see finding-marvel-8wdt for the
