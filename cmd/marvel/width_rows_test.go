@@ -52,15 +52,16 @@ func TestExactWidthLineCountsOneRow(t *testing.T) {
 	}
 }
 
-// The -w frame fits the terminal's height in physical rows. With 64-character
-// names the set table is wider than 120, so each row wraps onto a second row,
+// The -w frame fits the terminal's height in physical rows. With 130-character
+// names the table is wider than 120, so each row wraps onto a second row,
 // and a budget that counts logical lines overruns the screen.
 func TestFanWatchBudgetCountsPhysicalRows(t *testing.T) {
 	withRateClock(t)
 	setWidth(t, 120)
-	// The columns are named, KEY and AGENT NAME, so the overflow does not
-	// depend on what the default set shows (marvel#1598, I-794).
-	cols, explicit, err := loadSessionColumnsSel("key,name")
+	// One named column and names wider than the terminal: no choice of what
+	// the default set shows, and no fit that keeps a column, can stop the rows
+	// wrapping (marvel#1598).
+	cols, explicit, err := loadSessionColumnsSel("name")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func TestFanWatchBudgetCountsPhysicalRows(t *testing.T) {
 	for _, c := range []string{"kinu", "corporate", "mokuzai"} {
 		var rows []api.Session
 		for i := 0; i < 12; i++ {
-			s := sampled(fmt.Sprintf("builder-%02d-%s", i, strings.Repeat("n", 64-len("builder-00-"))), api.SessionRunning, 12, 300<<20)
+			s := sampled(fmt.Sprintf("builder-%02d-%s", i, strings.Repeat("n", 130-len("builder-00-"))), api.SessionRunning, 12, 300<<20)
 			s.Cluster = c
 			rows = append(rows, s)
 		}
