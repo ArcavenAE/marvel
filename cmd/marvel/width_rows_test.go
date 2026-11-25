@@ -58,11 +58,14 @@ func TestExactWidthLineCountsOneRow(t *testing.T) {
 func TestFanWatchBudgetCountsPhysicalRows(t *testing.T) {
 	withRateClock(t)
 	setWidth(t, 120)
-	cols, _, err := loadSessionColumnsSel("")
+	// The columns are named, KEY and AGENT NAME, so the overflow does not
+	// depend on what the default set shows (marvel#1598, I-794).
+	cols, explicit, err := loadSessionColumnsSel("key,name")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ws := newWatchState(cols)
+	ws.explicit = explicit
 	ws.height = 20
 	cfg := fanWatchConfig{interval: 2 * time.Second, keyOf: func(c, fp string) string { return c }}
 	var states []*fanState
