@@ -148,7 +148,14 @@ func Provider(name string) (ProviderDriver, error) {
 // ProviderNames lists the registered providers, sorted. The caller gets a
 // copy. The daemon's dispatch test reads it so a provider added to the
 // registry without an arm fails (MS-8 (c)).
-func ProviderNames() []string { return nil }
+func ProviderNames() []string {
+	names := make([]string, 0, len(providers))
+	for n := range providers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
 
 // ParseMode checks a mode string against the three values. The reserved
 // word is refused with its own message.
