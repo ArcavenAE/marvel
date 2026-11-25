@@ -177,7 +177,7 @@ const totalsFieldGap = "   "
 // never cut. With no width (off a terminal) the line is returned as it is.
 func wrapTotals(line string, width int) string {
 	line = strings.TrimSuffix(line, "\n")
-	if width <= 0 || len(line) <= width {
+	if width <= 0 || displayWidth(line) <= width {
 		return line + "\n"
 	}
 	parts := strings.Split(line, totalsFieldGap)
@@ -185,7 +185,7 @@ func wrapTotals(line string, width int) string {
 	var b strings.Builder
 	cur := lead
 	for _, f := range fields {
-		if cur != lead && len(cur)+len(totalsFieldGap)+len(f) > width {
+		if cur != lead && displayWidth(cur)+displayWidth(totalsFieldGap)+displayWidth(f) > width {
 			b.WriteString(cur + "\n")
 			cur = lead
 		}

@@ -157,11 +157,39 @@ func namedColumns(names []string) []sessionColumn {
 	return out
 }
 
+// displayWidth is the width of one printed line: its rune count. It is the one
+// width function the table fit, the totals wrap and the watch height budget
+// share (marvel#1598). Wide characters and ambiguous-width ones are not
+// counted wider; that is a recorded follow-up.
+func displayWidth(s string) int { return utf8.RuneCountInString(s) }
+
+// linePhysicalRows is the rows a terminal width columns wide spends on one printed
+// line: max(1, ceil(width/columns)). A line exactly columns wide takes one,
+// because terminals defer the wrap. With no width every line is one row.
+func linePhysicalRows(line string, columns int) int {
+	if columns <= 0 {
+		return 1
+	}
+	return max(1, (displayWidth(line)+columns-1)/columns)
+}
+
+// textPhysicalRows is linePhysicalRows summed over the lines of text.
+func textPhysicalRows(text string, columns int) int {
+	if text == "" {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
+		n += linePhysicalRows(line, columns)
+	}
+	return n
+}
+
 // tableWidth is the widest printed line of a rendered table.
 func tableWidth(table string) int {
 	w := 0
 	for _, line := range strings.Split(strings.TrimRight(table, "\n"), "\n") {
-		w = max(w, utf8.RuneCountInString(line))
+		w = max(w, displayWidth(line))
 	}
 	return w
 }
