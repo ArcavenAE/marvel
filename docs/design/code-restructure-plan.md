@@ -15,6 +15,9 @@ Closed 2026-10-25: pointers closed (rule d adopted)
     carries what this plan left open (the provider-map dispatch and the status
     accessor through the interface, clauses (c) and (h) of MS-8 in
     `services-shape-requirements.md`, among them).
+  - Successor record: the November 2026 status review found the plan implemented
+    in full, two side items open, and habit (a) unexercised; see
+    finding-marvel-8wdt for the readings that decide the held moves.
 - **Ruling it implements:** the operator chose (b) plus (d) from
   finding-marvel-4m2m section 6, on 2026-10-09:
   - two package moves;
