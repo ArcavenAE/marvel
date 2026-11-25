@@ -87,3 +87,45 @@ func TestFanWatchBudgetCountsPhysicalRows(t *testing.T) {
 		t.Errorf("the frame takes %d physical rows on a 120x20 terminal:\n%s", got, frame)
 	}
 }
+
+// Guard, green before and after the fix: a frame whose table lines are exactly
+// as wide as the terminal takes one row per line, so a height that holds the
+// whole frame shows every row. It catches an off-by-one in the budget's row
+// count, which TestExactWidthLineCountsOneRow (wrapTotals only) does not reach.
+func TestFanWatchBudgetExactWidthLineIsOneRow(t *testing.T) {
+	withRateClock(t)
+	setWidth(t, 120)
+	cols, explicit, err := loadSessionColumnsSel("name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := func(height int) string {
+		ws := newWatchState(cols)
+		ws.explicit = explicit
+		ws.height = height
+		cfg := fanWatchConfig{interval: 2 * time.Second, keyOf: func(c, fp string) string { return c }}
+		var rows []api.Session
+		for i := 0; i < 8; i++ {
+			s := sampled(fmt.Sprintf("%02d%s", i, strings.Repeat("n", 118)), api.SessionRunning, 12, 300<<20)
+			s.Cluster = "kinu"
+			rows = append(rows, s)
+		}
+		st := &fanState{
+			fanWatchCluster: fanWatchCluster{name: "kinu"},
+			rec:             clusterRecord{Cluster: "kinu", Outcome: outcomeAnswered},
+			rows:            rows, asOf: rateNow, have: true, fetched: true,
+		}
+		return renderFanFrame(ws, cfg, []*fanState{st}, rateNow)
+	}
+	whole := build(0)
+	n := physicalRows(whole, 120)
+	if lines := strings.Count(whole, "\n"); n != lines {
+		t.Fatalf("fixture has %d lines but %d physical rows; a line is not exactly 120 wide:\n%s", lines, n, whole)
+	}
+	if !strings.Contains(build(n-3), "showing rows") {
+		t.Fatalf("fixture is too loose: a height of %d does not cut the frame", n-3)
+	}
+	if got := build(n); strings.Contains(got, "showing rows") {
+		t.Errorf("a height of %d holds the whole frame, but the budget cut it:\n%s", n, got)
+	}
+}
