@@ -35,3 +35,20 @@ func TestEveryServedMethodHasAWireFixture(t *testing.T) {
 			len(missing), len(methodTable), rpcGoldenDir, strings.Join(missing, ", "))
 	}
 }
+
+// TestResultsOfTheReadMethodsAreFixtures pins the five read methods whose
+// result the CLI and other daemons decode: a params file alone satisfies
+// TestEveryServedMethodHasAWireFixture, and would leave the shape that comes
+// back unpinned (I-458 row 24, aae-orc-va2sz).
+func TestResultsOfTheReadMethodsAreFixtures(t *testing.T) {
+	t.Parallel()
+	var missing []string
+	for _, name := range []string{"get", "plan", "bus.status", "daemon.status", "host.vitals"} {
+		if _, err := os.Stat(filepath.Join(rpcGoldenDir, name+".result.json")); err != nil {
+			missing = append(missing, name+".result.json")
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("no result fixture under %s for: %s", rpcGoldenDir, strings.Join(missing, ", "))
+	}
+}
