@@ -10,6 +10,8 @@
 // start failing.
 package requiretool
 
+import "testing"
+
 // EnvVar names the list of tools the environment promises to provide.
 const EnvVar = "MARVEL_REQUIRED_TOOLS"
 
@@ -39,3 +41,7 @@ func pathFor(r reporter, lookPath func(string) (string, error), list, name strin
 
 // IsRequired reports whether the environment promises name.
 func IsRequired(name string) bool { return false }
+
+// Path returns the path of the named program. When it is missing, the test
+// fails if the environment promises it and skips otherwise.
+func Path(t testing.TB, name string) string { return "" }

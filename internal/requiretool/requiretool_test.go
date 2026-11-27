@@ -90,8 +90,9 @@ func TestAFoundToolReturnsItsPathWhateverTheList(t *testing.T) {
 // has to be recorded first.
 func TestPreserveKeepsTheListAcrossAScrub(t *testing.T) {
 	t.Setenv(EnvVar, "nats-server")
+	prior := captured
 	Preserve()
-	t.Cleanup(func() { captured = nil })
+	t.Cleanup(func() { captured = prior })
 	t.Setenv(EnvVar, "")
 	if got := current(); got != "nats-server" {
 		t.Errorf("current() = %q after a scrub, want the preserved list", got)
@@ -99,7 +100,9 @@ func TestPreserveKeepsTheListAcrossAScrub(t *testing.T) {
 }
 
 func TestWithNothingPreservedTheLiveEnvironmentIsRead(t *testing.T) {
+	prior := captured
 	captured = nil
+	t.Cleanup(func() { captured = prior })
 	t.Setenv(EnvVar, "tmux")
 	if got := current(); got != "tmux" {
 		t.Errorf("current() = %q, want the live value", got)
