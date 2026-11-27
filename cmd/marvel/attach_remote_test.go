@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
@@ -105,5 +106,26 @@ func TestAttachHelpDescribesTheRemoteRunForm(t *testing.T) {
 func TestProcessAttachEnvWiresTheChannel(t *testing.T) {
 	if processAttachEnv().Mrvl == nil {
 		t.Error("processAttachEnv().Mrvl is nil, want the daemonrpc.Attach runner")
+	}
+}
+
+// A lost link reads as one fixed line on stderr, with nothing on stdout (no ssh
+// line: the daemon was there a moment ago) and a nonzero exit.
+func TestRunRemoteAttachLostContactPrintsTheFixedLine(t *testing.T) {
+	env := attachEnv{Mrvl: func(string, string) error {
+		return &daemonrpc.LostContactError{Silent: 15 * time.Second}
+	}}
+	var out, errw bytes.Buffer
+	plan := attachPlan{Mrvl: true, Desk: "23", Argv: strings.Fields(remoteSSHLine)}
+	err := runRemoteAttach(&out, &errw, "mrvl://box.example", plan, env)
+	if err == nil {
+		t.Fatal("runRemoteAttach returned nil after a lost link, want an error for a nonzero exit")
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing", out.String())
+	}
+	const want = "attach: lost contact with mrvl://box.example (no reply for 15s)\n"
+	if errw.String() != want {
+		t.Errorf("stderr = %q, want %q", errw.String(), want)
 	}
 }

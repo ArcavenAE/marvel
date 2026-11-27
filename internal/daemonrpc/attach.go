@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -18,6 +19,22 @@ const AttachChannelType = "marvel-attach"
 // attach channel type, which an older daemon does.
 var ErrAttachUnsupported = errors.New("daemon does not support remote attach")
 
+// ErrLostContact is what a LostContactError matches: the daemon stopped
+// answering keepalives and the link was given up.
+var ErrLostContact = errors.New("lost contact with the daemon")
+
+// LostContactError says how long the daemon was silent before Attach gave up.
+type LostContactError struct {
+	Silent time.Duration
+}
+
+func (e *LostContactError) Error() string {
+	return fmt.Sprintf("no reply for %s", e.Silent)
+}
+
+// Is makes errors.Is(err, ErrLostContact) true for a LostContactError.
+func (e *LostContactError) Is(target error) bool { return target == ErrLostContact }
+
 // AttachIO is the terminal Attach connects to a remote desk.
 type AttachIO struct {
 	In         io.Reader
@@ -26,6 +43,10 @@ type AttachIO struct {
 	// Resize carries each new terminal size to the remote pty. Nil means
 	// the size never changes.
 	Resize <-chan Size
+	// KeepAlive is the interval between keepalive requests, and KeepAliveMisses
+	// how many unanswered intervals end the attach. Zero means 5s and 3.
+	KeepAlive       time.Duration
+	KeepAliveMisses int
 }
 
 // Size is a terminal size in character cells.
