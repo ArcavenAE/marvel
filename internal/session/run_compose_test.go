@@ -238,6 +238,16 @@ func TestComposeRunProfileIgnoresADefaultFormAfterAnEscapedQuoteInALiteral(t *te
 	}
 }
 
+// The network-word check reads the role's code as written, literals included:
+// a role that allows default and names "network" only inside a literal still
+// refuses the network allow, because the check is deliberately conservative.
+func TestComposeRunProfileRefusesTheNetworkAllowWhenTheRolesOnlyNetworkWordIsInALiteral(t *testing.T) {
+	role := "(version 1)\n(allow default)\n(deny file-read* (literal \"/x/network\"))\n"
+	if _, err := ComposeRunProfile(role, netAllow+"\n", testBlock); !errors.Is(err, ErrRunProfileRefused) {
+		t.Errorf("err = %v, want ErrRunProfileRefused for a role whose only network word is inside a literal\nrole:\n%s", err, role)
+	}
+}
+
 // A comment is not code: an (allow default) in a ; comment does not count.
 func TestComposeRunProfileIgnoresADefaultFormInAComment(t *testing.T) {
 	role := "(version 1)\n; (allow default)\n(deny file-read* (literal \"/x\"))\n"
