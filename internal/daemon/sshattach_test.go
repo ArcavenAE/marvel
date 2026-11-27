@@ -575,3 +575,16 @@ func TestAttachTeardownDoesNotKillAReapedCommand(t *testing.T) {
 		t.Error("the pending kill timer was still armed after the command was reaped")
 	}
 }
+
+// A pty granted and a channel closed before any shell: teardown closes both
+// ends of the pty, not only the master (review note 1 on marvel#1617).
+func TestAttachTeardownWithNoShellClosesTheSlaveToo(t *testing.T) {
+	r := &attachRun{}
+	if !r.grantPty(ssh.Marshal(attachPtyReq{Term: "xterm", Cols: 80, Rows: 24})) {
+		t.Fatal("grantPty refused a plain pty request")
+	}
+	r.teardown()
+	if _, err := r.pty.Slave.Write([]byte("x")); !errors.Is(err, os.ErrClosed) {
+		t.Errorf("slave write after teardown = %v, want os.ErrClosed (the slave was left open)", err)
+	}
+}
