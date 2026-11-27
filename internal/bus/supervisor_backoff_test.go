@@ -1,7 +1,6 @@
 package bus
 
 import (
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -9,14 +8,13 @@ import (
 	"github.com/arcavenae/marvel/internal/backoff"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // A broker that crash-loops waits as long as a role does: the supervisor's
 // default schedule is the shared one.
 func TestNewSupervisorRestartsOnTheSharedSchedule(t *testing.T) {
-	if _, err := exec.LookPath("nats-server"); err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	requiretool.Path(t, "nats-server")
 	root := t.TempDir()
 	dir := filepath.Join(root, "state", "nats")
 	listen := "127.0.0.1:" + strconv.Itoa(freePort(t))

@@ -86,6 +86,13 @@ type Daemon struct {
 	// exit replaces os.Exit after a stop request, for tests.
 	exit func(int)
 
+	// runGOOS and runSandboxExec are the host facts run.sandboxed checks before
+	// it starts anything; empty means runtime.GOOS and /usr/bin/sandbox-exec.
+	// Tests set them.
+	runGOOS, runSandboxExec string
+	// runExec starts a composed run; nil means runChild. Tests replace it.
+	runExec func(ctx context.Context, argv []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error)
+
 	// views follows each seat's read-only views (marvel#609).
 	views *view.Keeper
 
@@ -1281,6 +1288,14 @@ func (d *Daemon) handleRWCAs(rwc io.ReadWriteCloser, c caller) {
 		return
 	}
 
+	if req.Method == daemonrpc.MethodRunSandboxed {
+		// A run lives as long as its connection: the seat hanging up, or dying,
+		// ends the request and the daemon kills the child.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() { _, _ = io.Copy(io.Discard, rwc); cancel() }()
+		c.ctx = ctx
+	}
 	resp := d.recoverRequest(req.Method, func() daemonrpc.Response { return d.dispatchAs(req, c) })
 	_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
 }

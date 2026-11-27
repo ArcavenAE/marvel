@@ -17,6 +17,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // startScratchBroker runs a plain nats-server on a random localhost port in
@@ -32,10 +33,7 @@ func startScratchBroker(t *testing.T, maxFileStore int) string {
 // monitor, and returns its address.
 func startScratchBrokerMon(t *testing.T, maxFileStore int) (string, string) {
 	t.Helper()
-	ns, err := exec.LookPath("nats-server")
-	if err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	ns := requiretool.Path(t, "nats-server")
 	port, mon := freePort(t), freePort(t)
 	dir := t.TempDir()
 	conf := filepath.Join(dir, "n.conf")

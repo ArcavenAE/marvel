@@ -18,7 +18,7 @@ import (
 // internal/bus to internal/workload, with the restart schedule in
 // internal/backoff. CI tests them only on Linux unless a macOS job runs them,
 // so a move that behaves differently on darwin would merge green
-// (aae-orc-xe1pw). All five exist on main; a package the restructure adds
+// (aae-orc-xe1pw). Every entry exists on main; a package the restructure adds
 // later joins this list in the PR that creates it.
 var restructurePackages = []string{
 	"internal/daemon",
@@ -28,6 +28,8 @@ var restructurePackages = []string{
 	"internal/backoff",
 	"internal/team",
 	"internal/session",
+	"internal/api",
+	"internal/tmux",
 	"internal/tmux/tmuxtest",
 	"internal/tmux/tmuxtest/fake",
 }

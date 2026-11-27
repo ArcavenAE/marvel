@@ -20,6 +20,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // The three objects keep the exact parameters of precondition 6; adding
@@ -214,10 +215,7 @@ func TestRenderConfLeafRemoteCarriesTheHubCAFile(t *testing.T) {
 		t.Errorf("ca_file appears outside the leaf remote:\n%s", conf)
 	}
 
-	ns, err := exec.LookPath("nats-server")
-	if err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	ns := requiretool.Path(t, "nats-server")
 	auth, err := RenderAuth(s)
 	if err != nil {
 		t.Fatal(err)
