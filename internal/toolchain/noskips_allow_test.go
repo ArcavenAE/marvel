@@ -11,6 +11,13 @@ import (
 
 const sessionPkg = modulePath + "/internal/session"
 
+// internal/tmux skips one test by design on darwin, which has no ETXTBSY to
+// wait out (director ruling 2026-11-25, aae-orc-jn1lf).
+const (
+	tmuxPkg        = modulePath + "/internal/tmux"
+	tmuxDesignSkip = "TestWaitExecutableOutlastsAnOpenWriter"
+)
+
 // internal/session skips four tests by design: three need a real agent binary
 // and one is a helper process the sweep tests start. scripts/no-skips.allow
 // names them, per package and test, so the macOS job can run the package
@@ -71,7 +78,7 @@ func TestNoSkipsReportsANamedTestThatDidNotSkip(t *testing.T) {
 
 // The list names exact tests, one per line as "<import path> <TestName>", for
 // packages that exist, and each name is a test function in that package. It
-// holds session's four and nothing more.
+// holds session's four and internal/tmux's one, and nothing more.
 func TestNoSkipsAllowListNamesExactRealTests(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile(filepath.Join("..", "..", "scripts", "no-skips.allow"))
@@ -116,9 +123,10 @@ func TestNoSkipsAllowListNamesExactRealTests(t *testing.T) {
 	for _, n := range sessionDesignSkips {
 		want = append(want, sessionPkg+" "+n)
 	}
+	want = append(want, tmuxPkg+" "+tmuxDesignSkip)
 	slices.Sort(got)
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
-		t.Errorf("allow list is %v, want exactly session's four %v", got, want)
+		t.Errorf("allow list is %v, want exactly session's four and tmux's one %v", got, want)
 	}
 }
