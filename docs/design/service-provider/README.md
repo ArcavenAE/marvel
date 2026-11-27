@@ -32,6 +32,9 @@ everything.
    the buy-not-build surveys, the dissenting views preserved on purpose, a
    sequencing draft against the real roadmap tracks, and the list of documents,
    code, and nodes that may need updating to fit.
+4. **[04-code-graph-provider-brief.md](04-code-graph-provider-brief.md)** - a
+   proposal for a `code-graph` class and a `kos-scip` provider: an ingest
+   pipeline into existing stores, not a graph database marvel runs.
 
 Read them as brief then architecture then probes, or jump to the one that matches
 your role: an administrator or user wants the brief; a maintainer wants the

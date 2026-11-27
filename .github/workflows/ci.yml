@@ -82,7 +82,21 @@ jobs:
         run: tmux -V
 
       - name: Run tests with race detector
-        run: go test ./... -v -count=1 -race -coverprofile=coverage.out -covermode=atomic
+        # Tools this job installs: a test that needs one fails when it is
+        # missing, where it would skip off CI (internal/requiretool, marvel#646).
+        env:
+          MARVEL_REQUIRED_TOOLS: nats-server
+        # The default shell has no pipefail, so go test's status survives tee
+        # only because the step asks for it.
+        run: |
+          set -o pipefail
+          go test ./... -v -count=1 -race -coverprofile=coverage.out -covermode=atomic | tee "${RUNNER_TEMP}/go-test.log"
+
+      - name: Print skip counts per package
+        # Information only: nothing here has a threshold or sets the exit code.
+        if: always()
+        continue-on-error: true
+        run: scripts/skip-counts.sh "${RUNNER_TEMP}/go-test.log"
 
       - name: Fail if an internal/bus test skipped
         # nats-server is installed above, so every broker-backed bus test can
@@ -231,6 +245,8 @@ jobs:
         # 10m a package gets otherwise: a slow hosted runner ran this job two to
         # three times slower end to end and internal/daemon and internal/bus hit
         # the default with nothing hung. A hung test still fails, at 20m.
+        env:
+          MARVEL_REQUIRED_TOOLS: nats-server,tmux
         run: |
           set +e
           go test -json -count=1 -race -timeout 20m \
@@ -241,6 +257,8 @@ jobs:
             ./internal/backoff/... \
             ./internal/team/... \
             ./internal/session/... \
+            ./internal/api/... \
+            ./internal/tmux/... \
             ./internal/tmux/tmuxtest/... \
             ./internal/tmux/tmuxtest/fake/... \
             ./internal/childproof/... \
@@ -254,6 +272,8 @@ jobs:
             github.com/arcavenae/marvel/internal/backoff \
             github.com/arcavenae/marvel/internal/team \
             github.com/arcavenae/marvel/internal/session \
+            github.com/arcavenae/marvel/internal/api \
+            github.com/arcavenae/marvel/internal/tmux \
             github.com/arcavenae/marvel/internal/tmux/tmuxtest \
             github.com/arcavenae/marvel/internal/tmux/tmuxtest/fake \
             github.com/arcavenae/marvel/internal/childproof \

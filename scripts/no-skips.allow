@@ -7,7 +7,11 @@
 #
 # internal/session: three tests need a real agent binary, one is a helper
 # process the sweep tests start (aae-orc-1wz40).
+#
+# internal/tmux: darwin has no ETXTBSY; the test skips by design (director
+# ruling 2026-11-25, aae-orc-jn1lf).
 github.com/arcavenae/marvel/internal/session TestManagerSmokeRealClaude
 github.com/arcavenae/marvel/internal/session TestManagerSmokeRealCodex
 github.com/arcavenae/marvel/internal/session TestManagerSmokeRealOpenCode
 github.com/arcavenae/marvel/internal/session TestSweepHelperProcess
+github.com/arcavenae/marvel/internal/tmux TestWaitExecutableOutlastsAnOpenWriter

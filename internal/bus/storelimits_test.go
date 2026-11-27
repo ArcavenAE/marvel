@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // With no limits set the jetstream block is what it has always been, so a
@@ -54,10 +55,7 @@ func TestRenderConfRendersTheStoreLimitsInsideTheJetstreamBlock(t *testing.T) {
 // A real nats-server accepts the rendered conf and reports the cap it was
 // given, so the numbers are in the unit the broker reads.
 func TestRenderedStoreLimitsAreAcceptedByNatsServer(t *testing.T) {
-	ns, err := exec.LookPath("nats-server")
-	if err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	ns := requiretool.Path(t, "nats-server")
 	s := baseSpec()
 	s.StoreDir = filepath.Join(t.TempDir(), "nats")
 	s.MaxFileStore, s.MaxMemoryStore = 2<<30, 256<<20

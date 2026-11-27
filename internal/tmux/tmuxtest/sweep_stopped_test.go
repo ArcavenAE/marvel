@@ -8,15 +8,15 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // marvel#805: a server a killed test binary left stopped (SIGSTOP) never
 // answers kill-server, and an unbounded client waits on it at full CPU. The
 // sweep must give up on such a server within its deadline and move on.
 func TestSweepNamesGivesUpOnAStoppedServer(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
+	requiretool.Path(t, "tmux")
 	// Under /tmp and not TMPDIR: a tmux socket path must fit in 104 bytes. The dir is private and removed below.
 	dir, err := os.MkdirTemp("/tmp", "mxsw")
 	if err != nil {
