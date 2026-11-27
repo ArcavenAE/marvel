@@ -95,6 +95,7 @@ jobs:
       - name: Print skip counts per package
         # Information only: nothing here has a threshold or sets the exit code.
         if: always()
+        continue-on-error: true
         run: scripts/skip-counts.sh "${RUNNER_TEMP}/go-test.log"
 
       - name: Fail if an internal/bus test skipped

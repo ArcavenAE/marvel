@@ -78,16 +78,21 @@ func TestQualityGatePrintsSkipCounts(t *testing.T) {
 	}
 	j := jobs["quality-gate"]
 	var tests, counts string
+	var countsContinues bool
 	for _, s := range j.Steps {
 		switch s.Name {
 		case "Run tests with race detector":
 			tests = s.Run
 		case "Print skip counts per package":
 			counts = s.Run
+			countsContinues = s.ContinueOnError == true
 		}
 	}
 	if !strings.Contains(tests, "tee") {
 		t.Errorf("the test step does not keep its log:\n%s", tests)
+	}
+	if !countsContinues {
+		t.Error("the skip-count step does not set continue-on-error: true, so a script error could fail the job")
 	}
 	if !strings.Contains(counts, "scripts/skip-counts.sh") {
 		t.Errorf("no step runs scripts/skip-counts.sh:\n%s", counts)
