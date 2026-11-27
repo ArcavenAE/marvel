@@ -333,7 +333,7 @@ type Cluster struct {
 	AllowCredentialReveal bool `yaml:"allow_credential_reveal,omitempty"`
 	// AllowRemoteAttach lets the daemon serve a terminal on its mrvl:// listener
 	// (marvel attach on a remote cluster). Unset or false means an attach open
-	// and a pty request are refused. Not read yet.
+	// and a pty request are refused. The daemon reads it at start.
 	AllowRemoteAttach bool `yaml:"allow_remote_attach,omitempty"`
 	// AccountWarnPercent is the used percentage at which an account's
 	// rate-limit window reads as near its limit in get budgets and is reported

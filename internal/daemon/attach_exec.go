@@ -68,23 +68,46 @@ type attachRun struct {
 	term string
 	cmd  *exec.Cmd
 	once sync.Once
+
+	mu     sync.Mutex
+	reaped bool
+	kill   *time.Timer
 }
 
 // teardown stops the command and closes the pty, once. Closing the master
-// hangs the terminal up; the process group is signalled too, and killed after
-// a grace period if it holds on. Wait runs in the waiter goroutine, so the
-// process is reaped.
+// makes the kernel hang the terminal up, which sends SIGHUP to the command's
+// session, so no signal of ours is needed for that. A command that holds on
+// is killed after a grace period, unless it has been reaped by then: a pid
+// that has been reaped may belong to another process group by now.
 func (r *attachRun) teardown() {
 	r.once.Do(func() {
-		if r.cmd != nil && r.cmd.Process != nil {
-			pid := r.cmd.Process.Pid
-			_ = syscall.Kill(-pid, syscall.SIGHUP)
-			time.AfterFunc(attachKillGrace, func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
-		}
 		if r.pty != nil {
 			_ = r.pty.Master.Close()
 		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.cmd != nil && r.cmd.Process != nil && !r.reaped {
+			pid := r.cmd.Process.Pid
+			r.kill = time.AfterFunc(attachKillGrace, func() {
+				r.mu.Lock()
+				defer r.mu.Unlock()
+				if !r.reaped {
+					_ = syscall.Kill(-pid, syscall.SIGKILL)
+				}
+			})
+		}
 	})
+}
+
+// markReaped records that the command has been waited for and stops a pending
+// kill, so the signal never reaches a recycled pid.
+func (r *attachRun) markReaped() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reaped = true
+	if r.kill != nil {
+		r.kill.Stop()
+	}
 }
 
 // startAttach starts the command on the pty and bridges it to the channel.
@@ -118,6 +141,7 @@ func (s *SSHServer) startAttach(ch ssh.Channel, run *attachRun, socket, desk str
 	go func() {
 		defer close(waited)
 		_ = cmd.Wait()
+		run.markReaped()
 		<-outDone
 		_ = ch.Close()
 	}()

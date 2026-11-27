@@ -170,3 +170,50 @@ func TestStartReadsTheAttachSwitchFromTheClusterConfig(t *testing.T) {
 		t.Fatal("a daemon started under a cluster with allow_remote_attach: true still refuses attach")
 	}
 }
+
+// With no test seam, the listener reads the daemon's own switch: off refuses
+// the attach channel with the fixed reason, on accepts it (architect M1).
+func TestAttachChannelFollowsTheDaemonsOwnSwitch(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		d := statusDaemon(t)
+		d.attachAllowed.Store(on)
+		r := newAttachRigSeam(t, ScopeAdmin, nil, d, shellCommand("exec cat"))
+		ch, _, err := openAttach(r.client, "7")
+		if on {
+			if err != nil {
+				t.Fatalf("switch on: open refused: %v", err)
+			}
+			_ = ch.Close()
+			continue
+		}
+		if err == nil {
+			_ = ch.Close()
+			t.Fatal("switch off: the attach open was accepted")
+		}
+		if !strings.Contains(err.Error(), errRemoteAttachNotEnabled) {
+			t.Errorf("switch off: error = %v, want the reason %q", err, errRemoteAttachNotEnabled)
+		}
+	}
+}
+
+// The command inherits a short allowlist: not TMUX, not MARVEL_SOCKET, and
+// the client's TERM (architect M8).
+func TestAttachEnvironPassesOnlyTheAllowlist(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1/default,1,0")
+	t.Setenv("MARVEL_SOCKET", "/tmp/live.sock")
+	t.Setenv("NATS_URL", "nats://x")
+	env := attachEnviron("screen-256color")
+	have := map[string]string{}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		have[k] = v
+	}
+	for _, k := range []string{"TMUX", "MARVEL_SOCKET", "NATS_URL"} {
+		if _, ok := have[k]; ok {
+			t.Errorf("%s reached the attach command's environment", k)
+		}
+	}
+	if have["TERM"] != "screen-256color" {
+		t.Errorf("TERM = %q, want screen-256color", have["TERM"])
+	}
+}

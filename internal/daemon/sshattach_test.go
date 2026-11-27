@@ -68,6 +68,14 @@ func newAttachRigGate(t *testing.T, scope Scope, gate bool, command func(socket,
 // cleanly. A nil daemon serves the attach channel alone.
 func newAttachRigDaemon(t *testing.T, scope Scope, gate bool, d *Daemon, command func(socket, desk string) *exec.Cmd) *attachRig {
 	t.Helper()
+	return newAttachRigSeam(t, scope, &gate, d, command)
+}
+
+// newAttachRigSeam is newAttachRigDaemon where a nil gate leaves the
+// attachGate seam unset, so the listener reads the daemon's own switch, the
+// production branch of attachEnabled.
+func newAttachRigSeam(t *testing.T, scope Scope, gate *bool, d *Daemon, command func(socket, desk string) *exec.Cmd) *attachRig {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	pub, signer, identity := newClientKey(t)
 	if err := AddAuthorizedKey(pub, "attach-test", scope); err != nil {
@@ -78,7 +86,10 @@ func newAttachRigDaemon(t *testing.T, scope Scope, gate bool, d *Daemon, command
 		t.Fatalf("newSSHServer: %v", err)
 	}
 	r := &attachRig{srv: srv, identity: identity}
-	srv.attachGate = func() bool { return gate }
+	if gate != nil {
+		on := *gate
+		srv.attachGate = func() bool { return on }
+	}
 	srv.attachResolve = func(desk string) (string, error) {
 		r.mu.Lock()
 		r.resolve++
@@ -532,4 +543,35 @@ func TestDaemonrpcAttachForwardsAResize(t *testing.T) {
 	}
 	out.waitFor(t, "50 132")
 	waitAttachDone(t, done)
+}
+
+// A command that is already reaped is never signalled: the kill timer is not
+// armed after the reap, and a pending one is stopped (architect K1).
+func TestAttachTeardownDoesNotKillAReapedCommand(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", "exit 0")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	r := &attachRun{cmd: cmd}
+	_ = cmd.Wait()
+	r.markReaped()
+	r.teardown()
+	if r.kill != nil {
+		t.Error("teardown armed a kill timer for a command that was already reaped")
+	}
+
+	live := exec.Command("/bin/sh", "-c", "exec sleep 30")
+	if err := live.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = live.Process.Kill(); _ = live.Wait() })
+	r2 := &attachRun{cmd: live}
+	r2.teardown()
+	if r2.kill == nil {
+		t.Fatal("teardown of a live command armed no kill timer")
+	}
+	r2.markReaped()
+	if r2.kill.Stop() {
+		t.Error("the pending kill timer was still armed after the command was reaped")
+	}
 }
