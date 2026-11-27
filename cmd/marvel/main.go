@@ -284,6 +284,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(busCmd())
 	root.AddCommand(backendCmd())
 	root.AddCommand(handoffCmd())
+	root.AddCommand(runSandboxedCmd())
 	root.AddCommand(mcpCmd())
 	root.AddCommand(deleteCmd())
 	root.AddCommand(scaleCmd())

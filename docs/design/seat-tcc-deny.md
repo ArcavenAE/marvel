@@ -1,6 +1,6 @@
 # Seats do not read the macOS privacy folders: a default deny profile
 
-- **Status:** built in the pull request that carries this note (marvel#1574), 2026-11-23. Measured on one darwin host. The seat-run proof in section 11 has not been run.
+- **Status:** built in the pull request that carries this note (marvel#1574), 2026-11-23. Option 4 of section 5 is built under marvel#1596 (section 15). Measured on one darwin host. The seat-run proof in section 11 has not been run.
 - **Scope:** darwin seats. Linux is a no-op (section 7).
 
 ## 1. Why
@@ -139,7 +139,7 @@ One thing to note: `du -sh ~` under the profile exits 1 and prints errors for th
 
 Built in this change: the path table and the block renderer (`internal/session/tcc_deny.go`); the mount table read through `getfsstat` on darwin, and nothing elsewhere; the `tcc_deny` role key, in TOML and YAML, absent meaning on; staging of the deny alone for a role with no profile, and appended after a role's own profile for one that names it; the manager switch the daemon sets; the admin-guide section. Tests came first: the block names every row and mount, drops a path that would break the quoting, allows the working directory back after the deny, comes after a role's own allow, leaves an opted-out profile byte for byte, does nothing on Linux or with the switch off, and is not read as containment by the goose posture rule.
 
-Not built: option 4 (section 5), which goes to the operator as its own decision.
+Not built in that change: option 4 (section 5), built later under marvel#1596 (section 15).
 
 A test that runs the real `sandbox-exec` with the rendered profile is not in the suite, because a run under the run conditions is already inside a profile and cannot start another (section 5). The rendered profile for the real home was run once by hand, outside a test, as section 9 records.
 
@@ -206,4 +206,23 @@ A broker that runs a command for a seat widens what a seat can do, so it needs i
 - A seat that can ask the daemon to run any command can read the folders this change denies, by asking. The deny block stays on the composed profile for that reason, and the broker refuses a request whose profile removes it.
 - Output and exit status come back through the daemon, so the broker must not echo environment values or file contents it was not asked for.
 
-No code for it is in this change.
+Two costs the first build states and does not remove:
+
+- **A run leaves any harness-level sandbox.** The endpoint starts the command outside the seat's process tree, so a harness that contains its own shell (a seat's built-in seatbelt, for one) does not contain the run. A role that relies on the harness for containment, and not on `sandbox_profile`, gets a wider run than its own shell. Director ruled that this cost is stated here (marvel#1596, 2026-11-24).
+- **The heartbeat token now carries more than liveness.** It was proof that a seat is the seat it names; it is now also the right to ask the daemon to run a command under the section 15 grammar. Delivery already avoids argv, and a file for harnesses that publish their environment, so the delivery is unchanged. A reader of the token can run commands as the daemon's user, inside the composed profile.
+
+## 15. Option 4 as built (marvel#1596)
+
+Status: built in the pull request for marvel#1596, 2026-11-24. The real `sandbox-exec` tests in `internal/session/run_real_exec_darwin_test.go` skip inside a seat's profile; director ran all four from its own shell at 32cad6a2 and they pass. Rulings that fix the shape, valid to 2026-12-08: the request is checked at request time only (a manifest allowlist is a follow-up); a run profile holds deny forms and the three localhost network allows; output returns whole at exit, capped at 1 MiB per stream, with no stdin and no tty; the three network allows are accepted only for an `(allow default)` role that names no network operation, and refused for every other role (a deny-default role included); a role with no `sandbox_profile` is refused outright, naming it (director, marvel#1601, 2026-11-25), so no seat leaves its harness layer through this call before a manifest allowlist exists. An empty request runs under the role's own profile plus the deny block.
+
+- **Call.** `run.sandboxed`, local socket only, never the `mrvl://` tunnel or a credential-push key. `marvel run-sandboxed [--profile f] [--dir d] [--timeout n] -- <program> [args]` sends it. The seat is the one the heartbeat token names; the request names no session or role.
+- **Grammar.** The requested profile is read into forms and re-serialized, never copied. Accepted: `(deny <operation> <filter>...)` with the filters `subpath`, `literal`, `prefix` (one string literal each), `require-not`, `require-all`, `require-any`, and `remote` or `local` over `ip`, `tcp` or `udp` and one string; and exactly `(allow network* (remote ip "localhost:*"))`, `(allow network-bind (local ip "localhost:*"))` and `(allow network-inbound (local ip "localhost:*"))`. Refused: every other allow, `define`, `import`, `load`, `version`, `param`, `string-append`, a bare atom, an unbalanced or unterminated form or string, a backslash or control byte in a string. Comments are dropped. Unix-socket allows are refused in v1.
+- **Composition.** The role's profile (a role with none, or an empty file, is refused, and no base is supplied), then the accepted forms, then the section 3 deny block, handed to `sandbox-exec -p` as one text so no profile file exists for a seat to rewrite, with its carve-out taken from the seat's recorded working directory and never from the request. The role's `(param ...)` names are filled from the seat's record (`SESSION_DIR`, `WORKDIR`, `REALHOME`); a role that names any other parameter is refused, since a run has no launch environment to fill it from.
+- **Why `define` is refused (measured).** Director ran the real `sandbox-exec` on kinu outside any profile (commit 32cad6a2): a profile `(allow default)`, then `(define (deny . a) #t)`, then `(deny file-write* (subpath <dir>))` let `touch` write into `<dir>` (rc 0). A `define` can neutralise a later deny, so refusing it is what keeps the deny block meaningful, and it is load-bearing.
+- **Why the network allows are refused over a role's network rules (measured, and what it does not show).** The same run used a role of `(allow default)` and a deny of one localhost port, followed by `(allow network* (remote ip "localhost:*"))`: the connect to that port still failed (rc 1), with and without the allow. So the kernel kept the role's port deny in that one case, and the refusal is not justified by a measured widening. It is a guard on the rule that a request must not ask for what the role could not ask for, held without a parse of the role's own text; a role whose rules are ordered differently was not measured.
+- **Reading the role's text.** The default forms are matched over the role's code with comments dropped and string-literal contents blanked, by the one scanner that drops comments, so an `(allow default)` inside a path literal or a `;` comment is not a form. A deny default counts with any tail, `(deny default (with no-log))` and `(deny default(with no-log))` included. The `network` word is matched on the unblanked code, so it can only refuse more. SBPL rejects `#| |#` block comments at parse (director's probe on kinu, rc 65), so `;` is the one comment form.
+- **Fail closed.** Not darwin, no `sandbox-exec`, a profile that cannot be composed, or a role profile that cannot be read: the run is refused, never started unwrapped.
+- **Lifetime.** The child runs in its own process group. The daemon kills the group at the time limit (default 10 minutes, at most 1 hour), when the seat's connection closes, and within about a second of the seat's session ending.
+- **Log.** One line per run: seat, program, argument count, the digest of the composed profile, exit status and duration. No environment, argument, or profile text.
+- **Deferred.** Stdin, tty and streamed output; a cap on concurrent runs per seat (each may last up to an hour); a manifest allowlist of run profiles; a run that is live when the daemon restarts (the child is in its own group and is not adopted); re-checking a requested profile against the role's with a parse of the role's own text.
+
