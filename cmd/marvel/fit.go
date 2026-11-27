@@ -196,8 +196,10 @@ func tableWidth(table string) int {
 
 // fitSessionTable renders the table for the options. With no width it is
 // renderSessionTableCols unchanged. The default is fitted to the width by
-// dropping columns from the tail of the priority list; a list the operator
-// named is never cut, and warns when it does not fit.
+// dropping columns from the tail of the priority list. A list the operator
+// named is fitted the same way once its `rest` columns are gone: columns are
+// hidden by the default fit's order, and a list cut to its last column that is
+// still too wide prints whole with a warning (marvel#1598, I-799 R1a C, interim).
 func fitSessionTable(sessions []api.Session, cols []sessionColumn, o fitOptions) fitResult {
 	if o.width <= 0 {
 		// Not a terminal: byte for byte what get sessions printed before the
@@ -208,12 +210,13 @@ func fitSessionTable(sessions []api.Session, cols []sessionColumn, o fitOptions)
 	if o.explicit {
 		cols = append(append([]sessionColumn(nil), o.lead...), cols...)
 		cols, cut := fitRestColumns(sessions, cols, o)
+		cols, hid := hideNamedColumns(sessions, cols, o)
 		table := renderTrimmed(sessions, cols, o)
 		var warn string
 		if w := tableWidth(table); w > o.width {
 			warn = fmt.Sprintf("note: the selected columns are %d wide, wider than the terminal (%d); printing them all", w, o.width)
 		}
-		return fitResult{table: table, warn: warn, cols: cols, hidden: cut}
+		return fitResult{table: table, warn: warn, cols: cols, hidden: cut + hid}
 	}
 
 	fitted := append(append([]sessionColumn(nil), o.lead...), tierColumns(o.width)...)
@@ -279,6 +282,48 @@ func fitRestColumns(sessions []api.Session, cols []sessionColumn, o fitOptions) 
 		cut++
 	}
 	return cols, cut
+}
+
+// namedHideSequence is the order the columns of a named list are hidden in,
+// after the `rest` columns: the list's columns inside fitPriority from its
+// tail, AGENT NAME excepted; then the list's columns outside fitPriority, in
+// reverse registry order; AGENT NAME last. Lead columns are never in it.
+func namedHideSequence(cols []sessionColumn, lead int) []string {
+	have := make(map[string]bool, len(cols))
+	for _, c := range cols[lead:] {
+		have[c.name] = true
+	}
+	var order []string
+	for i := len(fitPriority) - 1; i >= 0; i-- {
+		if n := fitPriority[i]; n != "name" && have[n] {
+			order = append(order, n)
+		}
+	}
+	for i := len(sessionColumnRegistry) - 1; i >= 0; i-- {
+		if n := sessionColumnRegistry[i].name; have[n] && n != "name" && !slices.Contains(fitPriority, n) {
+			order = append(order, n)
+		}
+	}
+	if have["name"] {
+		order = append(order, "name")
+	}
+	return order
+}
+
+// hideNamedColumns hides columns of a named list, in namedHideSequence order,
+// until the table fits the width, and returns the list in its printed order
+// with the number hidden. Like the default fit it stops at one column after
+// the lead ones; a table still too wide then is the caller's to note.
+func hideNamedColumns(sessions []api.Session, cols []sessionColumn, o fitOptions) ([]sessionColumn, int) {
+	hidden := 0
+	for _, name := range namedHideSequence(cols, len(o.lead)) {
+		if len(cols) <= len(o.lead)+1 || tableWidth(renderTrimmed(sessions, cols, o)) <= o.width {
+			break
+		}
+		cols = slices.DeleteFunc(slices.Clone(cols), func(c sessionColumn) bool { return c.name == name })
+		hidden++
+	}
+	return cols, hidden
 }
 
 // renderTrimmed renders cols, cutting RUNTIME and WORKDIR unless --no-trunc.

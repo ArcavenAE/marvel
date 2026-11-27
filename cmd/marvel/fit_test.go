@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -172,28 +173,40 @@ func TestNoTruncRestores(t *testing.T) {
 	}
 }
 
-// A column list the operator named is never cut by the fit. When it does not
-// fit, the whole table prints and one line says so.
+// A column list the operator named is fitted like the default (marvel#1598,
+// I-799 R1a C): columns are hidden by the default fit's order until the table
+// fits, and the note counts them. Only a list cut to its last column that is
+// still too wide prints whole with a warning.
 func TestColumnsOverflowWarns(t *testing.T) {
 	cols := columnsOrFatal(t, "wide", nil)
 	s := fitSession("agent-0")
 	got := fitSessionTable([]api.Session{s}, cols, fitOptions{width: 40, explicit: true})
-	if len(fitHeaders(got.table)) != len(cols) {
-		t.Errorf("an explicit list lost columns at 40: %v", fitHeaders(got.table))
+	if w := widest(got.table); w > 40 {
+		t.Errorf("a named list is fitted: the table is %d wide at 40:\n%s", w, got.table)
 	}
-	if !strings.Contains(got.warn, "wider than the terminal") {
-		t.Errorf("an overflowing explicit list should warn, got %q", got.warn)
+	if got.hidden == 0 || len(fitHeaders(got.table)) >= len(cols) {
+		t.Errorf("a named list that does not fit hides columns, hidden = %d, shown %v", got.hidden, fitHeaders(got.table))
 	}
-	edge := widest(got.table)
-	if w := fitSessionTable([]api.Session{s}, cols, fitOptions{width: edge, explicit: true}); w.warn != "" {
-		t.Errorf("a list exactly as wide as the terminal fits, got %q", w.warn)
+	if !slices.Contains(fitHeaders(got.table), "AGENT NAME") {
+		t.Errorf("AGENT NAME is kept to the last: %v", fitHeaders(got.table))
 	}
-	if w := fitSessionTable([]api.Session{s}, cols, fitOptions{width: edge - 1, explicit: true}); w.warn == "" {
-		t.Error("a list one column too wide should warn")
+	if got.warn != "" {
+		t.Errorf("a list that was fitted does not warn, got %q", got.warn)
+	}
+	edge := widest(fitSessionTable([]api.Session{s}, cols, fitOptions{width: 400, explicit: true}).table)
+	if w := fitSessionTable([]api.Session{s}, cols, fitOptions{width: edge, explicit: true}); w.warn != "" || w.hidden != 0 {
+		t.Errorf("a list exactly as wide as the terminal fits whole, hidden %d, warn %q", w.hidden, w.warn)
+	}
+	if w := fitSessionTable([]api.Session{s}, cols, fitOptions{width: edge - 1, explicit: true}); w.hidden == 0 {
+		t.Error("a list one column too wide should hide a column")
 	}
 	roomy := fitSessionTable([]api.Session{s}, cols, fitOptions{width: 400, explicit: true})
-	if roomy.warn != "" {
-		t.Errorf("a list that fits should not warn, got %q", roomy.warn)
+	if roomy.warn != "" || roomy.hidden != 0 {
+		t.Errorf("a list that fits should hide and warn about nothing, hidden %d, warn %q", roomy.hidden, roomy.warn)
+	}
+	last := fitSessionTable([]api.Session{fitSession(strings.Repeat("n", 50))}, cols, fitOptions{width: 40, explicit: true})
+	if !strings.Contains(last.warn, "wider than the terminal") {
+		t.Errorf("the last column, still too wide, prints with the warning, got %q", last.warn)
 	}
 }
 
@@ -329,8 +342,8 @@ func TestNoSelectionIsNotExplicit(t *testing.T) {
 // The overflow warning is TTY chrome on the header's stream, stdout, after
 // the table, so a pipe never carries it.
 func TestOverflowWarningGoesToStdoutOnATTY(t *testing.T) {
-	out := getSessionsAtWidth(t, 30, "--columns", "wide")
-	if !strings.HasPrefix(out, "WORKSPACE") || !strings.Contains(out, "wider than the terminal") {
+	out := getSessionsAtWidth(t, 5, "--columns", "wide")
+	if !strings.HasPrefix(out, "AGENT NAME") || !strings.Contains(out, "wider than the terminal") {
 		t.Errorf("a TTY should get the table then the warning:\n%s", out)
 	}
 	if piped := getSessionsAtWidth(t, 0, "--columns", "wide"); strings.Contains(piped, "wider than") {
