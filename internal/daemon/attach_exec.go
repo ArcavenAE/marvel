@@ -83,6 +83,10 @@ func (r *attachRun) teardown() {
 	r.once.Do(func() {
 		if r.pty != nil {
 			_ = r.pty.Master.Close()
+			// With no command started, nothing else closes the slave.
+			if r.cmd == nil {
+				_ = r.pty.Slave.Close()
+			}
 		}
 		r.mu.Lock()
 		defer r.mu.Unlock()
