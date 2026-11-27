@@ -62,12 +62,23 @@ not.
 - `external`: the same, reached over a link marvel can observe.
 
 **Lifecycle fit.** `service.Lifecycle` (Start, Stop, Restart, Reload, Status) was
-built around a process that stays up. An index pass runs to completion. The
-proposal is to map the verbs onto one pass: Start begins a pass for the declared
-repositories, Stop ends one that is running, Reload re-reads which repositories
-are declared, Restart is Stop then Start, and Status reports the last pass and
-the running one. The alternative is not to make this a service at all but a
-scheduled headless role (`docs/design/scheduled-runs.md`). Section 7 asks which.
+built around a process that stays up, and an index pass runs to completion. So
+the verbs act on the provider's supervision and not on a pass:
+
+- Start arms the provider for its declared repositories. It runs no pass.
+- Stop with `keep=false` ends a running pass by its proven pid (MS-9). With
+  `keep=true` a running pass is left to finish, and the successor adopts the
+  pass's result, not its pid.
+- Reload re-reads which repositories are declared. Restart is Stop then Start.
+- Status reports the last pass and any running one.
+- A pass is its own request verb, outside the Lifecycle interface (section 7,
+  question 4 says who may ask).
+
+The alternative is not to make this a service but a scheduled headless role
+(`docs/design/scheduled-runs.md`). A scheduled role has run status of its own
+(`ScheduleStatus`, with `schedule.stale` and `schedule.fresh`, S-2, #529); what
+it lacks is the `adopted` and `external` modes and a per-repository as-of cell.
+Section 7 asks which.
 
 **Readings (MS-18).** Every reading is an as-of cell. Per repository: the
 commit last indexed, when, the indexer and its version, document and fact counts
@@ -112,8 +123,9 @@ a different host or version will differ.
 
 What the provider does about it:
 
-- A pass starts only on an explicit trigger. It never runs on a timer in this
-  proposal, so no one pays for a run they did not ask for.
+- A pass starts only on an explicit request (section 7, question 4). It never
+  runs on a timer, and a daemon start, reexec or Reload never triggers one, so
+  no one pays for a run they did not ask for.
 - Repositories run one at a time by default, so peak memory is one indexer's.
 - A zero exit is not completeness. The provider reads the indexer log and marks
   the index `degraded` when it finds the standard-library error, and says so in
@@ -134,46 +146,77 @@ What the provider does about it:
 | the child's environment and run conditions | Serena, in any mode but adopted |
 
 Because marvel does not host the store, the state duties of MS-10 (graceful stop,
-what a kill may lose, backup, schema pin) belong to the store's owner. The
-provider's own duty is narrower: a killed pass leaves the store as the ingest
-leaves it, and the provider says so in the verb table MS-6 requires. Whether
-`kos facts ingest-scip` is atomic on a kill is not stated in the recipe and has
-to be confirmed before a `managed` claim ships.
+what a kill may lose, backup, schema pin) belong to the store's owner.
+
+**Store owner (decided by director, 2026-11-27).** The owner is kos, the project
+whose schema the store holds. Whether kos wants a different arrangement is open
+on kos's side. Until kos rules otherwise, the provider refuses a target that does
+not exist, and refuses when the store's `user_version` is behind the schema kos
+now writes, and it never upgrades a store itself. The reason, as the architect
+reads it: `FactStore::open` creates a missing file, and `init` upgrades an older
+schema on open (kos `src/facts/mod.rs:130-157`).
+
+**A killed pass (the architect's reading).** The ingest is atomic by SQLite's
+guarantee: one transaction with the commit last (`src/facts/mod.rs:177-205`,
+`src/facts/scip_ingest.rs:811`), and not by a kos test. The MS-6 verb line for
+Stop is therefore "a killed pass leaves the store at its prior version". kos has
+no kill-midway test yet, and the brief does not claim one. These line references
+are the architect's reading, which the author re-read at kos `69d7b01`; they are
+not a marvel measurement.
 
 ## 6. Fit with the provider map
 
 #1602 put provider dispatch behind a map in `internal/daemon` with a test that
 every registered provider has an arm. This provider would be one more arm and
-one more registered class, with the one-per-class cap decided in section 7. It
-would be the second managed provider, so MS-8 applies in full: clauses (a) and
-(c) have landed, and clauses (d), the fake-provider test that drives every verb,
-and (h), status through the interface with as-of cells, are still open. The
-provider cannot merge before them. The brief does not propose a schedule for
-that work.
+one more registered class, with the one-per-class cap decided in section 7.
+
+It would be the second managed provider, so MS-8 applies in full, and its clause
+(a) has not landed. #1602 records a lifecycle for every entry in `d.services`
+(`internal/daemon/services_dispatch.go:61`), but every daemon verb still reaches
+only `d.lifecycle`, which is set for the bus class alone (`services_dispatch.go:62-63`):
+stop at `daemon.go:3494-3495`, restart at `:3505-3508`, status at `:3376` and
+`:3404`. Clause (c), the provider map, has landed. Clauses (a), (d) (a
+fake-provider test that drives every verb) and (h) (status through the interface
+with as-of cells) are open. Decided by director, 2026-11-27: a second managed
+provider does not ship until (a) is done. The brief does not propose a schedule
+for that work. The MS-8 list is the one in
+[services-shape-requirements.md](../services-shape-requirements.md), where (a)
+is already marked as a deferred seam.
 
 ## 7. Open questions
 
-Each is a recommendation with a sell-by date, not a default that takes effect on
-silence. Each goes to the architect through the supervisor.
+Questions 1, 3 and 5 are recommendations with a sell-by date, not defaults that
+take effect on silence. Questions 2, 4 and 6 carry the architect's reading or a
+director decision, as marked. Items for the architect go through the supervisor.
 
 1. **Service or scheduled role?** Recommend a service of class `code-graph` with
-   the verb mapping in section 2, because status and the `adopted` and
-   `external` modes come with the class and a scheduled role has neither. Valid
-   until 2026-12-11; the architect re-checks it then.
-2. **Where does the store live?** Recommend the entry names the target and marvel
-   treats it as an adopted dependency of the job, never a managed one. Valid
-   until 2026-12-11; the architect re-checks it then.
+   the verb mapping in section 2, because the `adopted` and `external` modes and
+   a per-repository as-of cell come with the class. Valid until 2026-12-11; the
+   architect re-checks it then.
+2. **Where does the store live, and who owns it?** Decided by director,
+   2026-11-27: kos owns it (section 5). The entry names the target, and marvel
+   treats the store as an adopted dependency of the job, never a managed one. The
+   provider refuses a missing target and a store whose `user_version` is behind,
+   and never upgrades. Whether a schema upgrade should instead surface as an
+   event is open on kos's side.
 3. **One index per repository or per cluster?** Recommend per repository, since
-   the recipe and the ingest are per repository and commit. Valid until
-   2026-12-11; the architect re-checks it then.
-4. **Who triggers a pass?** Recommend an explicit request only (an operator verb
-   or a seat's request through the class), with no timer. A timer is a separate
-   decision about spend. Valid until 2026-12-11; the architect re-checks it then.
-5. **Cap per cluster.** Recommend one `code-graph` entry per cluster to start,
-   as the bus has, so the cap is a decision to relax later. Valid until
-   2026-12-11; the architect re-checks it then.
-6. **Is the ingest atomic on a kill?** A fact to confirm in kos, not a decision.
-   The `managed` claim waits on the answer.
+   the recipe and the ingest are per repository and commit. The store's version
+   is global to the store: the ingest refuses `--at` below the store's latest
+   (`src/facts/mod.rs:322-331`, the architect's reading), so the provider
+   allocates `--at`, monotonic per store. Valid until 2026-12-11; the architect
+   re-checks it then.
+4. **Who may request a pass?** Decided by director, 2026-11-27: explicit
+   requests only, with no timer. The requesters are the operator verb, and seats
+   whose role declares the permission `code-graph.index`. That name is
+   provisional and changes only by an edit to this brief before the class lands.
+   A daemon start, a reexec or a Reload never triggers a pass.
+5. **Cap per cluster.** Recommend one `code-graph` entry per cluster to start, as
+   the bus has, so the cap is a decision to relax later. Also one running pass
+   per store target, because the ingest reads earlier facts outside its
+   transaction (`src/facts/scip_ingest.rs:801-809`, the architect's reading).
+   Valid until 2026-12-11; the architect re-checks it then.
+6. **Is the ingest atomic on a kill?** Answered in section 5, as the architect's
+   reading: yes, by SQLite's guarantee, with no kos kill-midway test yet.
 
 ## 8. Out of scope and follow-ups
 
@@ -181,7 +224,7 @@ silence. Each goes to the architect through the supervisor.
 - A query server, and anything that manages Serena.
 - Marvel as a consumer of changed-symbol reachability (02-architecture.md notes
   it); a later brief.
-- The fake-provider test and as-of status that MS-8 (d) and (h) require.
+- MS-8 (a), (d) and (h), which a second managed provider waits on.
 
 ## Opportunities
 
