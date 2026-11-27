@@ -16,6 +16,7 @@ import (
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // The end-to-end side of aae-orc-4h9xp, against a real nats-server: a leafed
@@ -301,9 +302,7 @@ func TestAChildSpawnedBetweenPrepareAndExecInheritsNoHandoffDescriptor(t *testin
 // The cause the successor can name reaches the supervisor through attachBus,
 // the path production takes: an announced handoff that cannot be read.
 func TestAttachBusHandsTheUnreadCauseToTheSupervisor(t *testing.T) {
-	if _, err := exec.LookPath("nats-server"); err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	requiretool.Path(t, "nats-server")
 	_, port := freeBrokerPort(t)
 
 	d1 := newHandlerDaemon(t)

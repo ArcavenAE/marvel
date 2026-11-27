@@ -44,6 +44,7 @@ const (
 	MethodResetHealth       = "reset-health"
 	MethodResume            = "resume"
 	MethodRun               = "run"
+	MethodRunSandboxed      = "run.sandboxed"
 	MethodScale             = "scale"
 	MethodShift             = "shift"
 	MethodStop              = "stop"

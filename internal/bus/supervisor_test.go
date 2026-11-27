@@ -18,6 +18,7 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 func TestComputeBackoffMatchesRoleSchedule(t *testing.T) {
@@ -102,9 +103,7 @@ func hasKind(r *events.Ring, k events.Kind) bool {
 // Skips without nats-server: the contract under test is with the binary.
 func newTestSupervisor(t *testing.T, hub string) (*Supervisor, *Manager, *events.Ring) {
 	t.Helper()
-	if _, err := exec.LookPath("nats-server"); err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	requiretool.Path(t, "nats-server")
 	root := t.TempDir()
 	dir := filepath.Join(root, "state", "nats")
 	listen := "127.0.0.1:" + strconv.Itoa(freePort(t))

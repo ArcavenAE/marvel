@@ -44,6 +44,7 @@ Agent orchestration control plane
 * [marvel reset-health](marvel_reset-health.md)	 - Clear a role's crash-loop restart count and backoff without deleting the team
 * [marvel resume](marvel_resume.md)	 - Resume a suspended cluster
 * [marvel run](marvel_run.md)	 - Run a one-off agent session
+* [marvel run-sandboxed](marvel_run-sandboxed.md)	 - Run a command under a sandbox profile the daemon composes, outside this seat's own profile
 * [marvel scale](marvel_scale.md)	 - Scale a team role to N replicas
 * [marvel shift](marvel_shift.md)	 - Initiate a rolling shift for a team
 * [marvel status](marvel_status.md)	 - Say whether the cluster is running or suspended

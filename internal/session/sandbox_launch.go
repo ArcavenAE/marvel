@@ -111,19 +111,36 @@ type sandboxLaunch struct {
 // sbplCode returns profile text with its comments removed. A comment starts at a
 // semicolon outside a double-quoted string and ends at the line's end, so a
 // semicolon inside a path literal is kept.
-func sbplCode(text []byte) string {
+func sbplCode(text []byte) string { return sbplScan(text, false) }
+
+// sbplCodeBlanked is sbplCode with the inside of every string literal replaced
+// by spaces, the quotes kept. It is for matching a form by its shape: a form
+// that appears only inside a literal is not a form. It shares sbplCode's one
+// scanner, so a backslash escape ends a literal the same way in both.
+func sbplCodeBlanked(text []byte) string { return sbplScan(text, true) }
+
+func sbplScan(text []byte, blank bool) string {
 	var b strings.Builder
 	inString := false
+	put := func(c byte) {
+		if blank && inString {
+			c = ' '
+		}
+		b.WriteByte(c)
+	}
 	for i := 0; i < len(text); i++ {
 		c := text[i]
 		switch {
 		case inString:
-			b.WriteByte(c)
 			if c == '\\' && i+1 < len(text) {
+				put(c)
 				i++
-				b.WriteByte(text[i])
+				put(text[i])
 			} else if c == '"' {
 				inString = false
+				b.WriteByte(c)
+			} else {
+				put(c)
 			}
 		case c == '"':
 			inString = true

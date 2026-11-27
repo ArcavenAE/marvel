@@ -16,6 +16,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 func eventually(t *testing.T, what string, cond func() bool) {
@@ -205,10 +206,7 @@ func TestStructuralAuthMissReloadsOnceThenHolds(t *testing.T) {
 // missing, authorization off. This is the finding-166 fleet, read
 // honestly.
 func TestCheckStructureReadsABareBroker(t *testing.T) {
-	ns, err := exec.LookPath("nats-server")
-	if err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	ns := requiretool.Path(t, "nats-server")
 	port := freePort(t)
 	mon := freePort(t)
 	store := filepath.Join(t.TempDir(), "js")

@@ -12,6 +12,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/arcavenae/marvel/contracts/go/envelope"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 func TestRoleInboxSubject(t *testing.T) {
@@ -122,10 +123,7 @@ func TestPublishSeatInboxRefusesBeforeDialing(t *testing.T) {
 // returns its URL, or skips when the binary is not on PATH.
 func startJetStream(t *testing.T) string {
 	t.Helper()
-	bin, err := exec.LookPath("nats-server")
-	if err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	bin := requiretool.Path(t, "nats-server")
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
