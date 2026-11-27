@@ -19,23 +19,38 @@ func TestJobsListTheToolsTheyInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string][]string{
-		"quality-gate":      {"nats-server"},
-		"restructure-macos": {"nats-server", "tmux"},
+	// The guards on the Linux and macOS jobs refuse a job-level env, so the
+	// list is set on the step that runs the tests.
+	want := map[string]struct{ step, tools string }{
+		"quality-gate":      {"Run tests with race detector", "nats-server"},
+		"restructure-macos": {"Run the restructure packages' tests with the race detector", "nats-server,tmux"},
 	}
-	for job, tools := range want {
+	for job, w := range want {
 		j, ok := ci[job]
 		if !ok {
 			t.Errorf("ci.yml has no job %q", job)
 			continue
 		}
-		got := j.Env["MARVEL_REQUIRED_TOOLS"]
-		if got != strings.Join(tools, ",") {
-			t.Errorf("job %s: MARVEL_REQUIRED_TOOLS = %q, want %q", job, got, strings.Join(tools, ","))
+		got, found := "", false
+		for _, s := range j.Steps {
+			if s.Name == w.step {
+				got, found = s.Env["MARVEL_REQUIRED_TOOLS"], true
+			}
+		}
+		if !found {
+			t.Errorf("job %s has no step %q", job, w.step)
+		}
+		if got != w.tools {
+			t.Errorf("job %s, step %q: MARVEL_REQUIRED_TOOLS = %q, want %q", job, w.step, got, w.tools)
 		}
 	}
 	for job, j := range ci {
-		list := j.Env["MARVEL_REQUIRED_TOOLS"]
+		list := ""
+		for _, s := range j.Steps {
+			if v := s.Env["MARVEL_REQUIRED_TOOLS"]; v != "" {
+				list = v
+			}
+		}
 		if list == "" {
 			continue
 		}
