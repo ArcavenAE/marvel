@@ -3,7 +3,6 @@ package bus
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // Stage 2 of per-role broker users (docs/design/per-role-broker-users.md,
@@ -280,9 +280,7 @@ func TestSupervisorUserIsPrunedWhenTheRoleGoes(t *testing.T) {
 // publish another cluster's supervisor inbox, may subscribe its own inbox, and
 // may not subscribe the rest of the global domain.
 func TestSupervisorUserAgainstARealBroker(t *testing.T) {
-	if _, err := exec.LookPath("nats-server"); err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	requiretool.Path(t, "nats-server")
 	root := t.TempDir()
 	dir := filepath.Join(root, "state", "nats")
 	listen := "127.0.0.1:" + strconv.Itoa(freePort(t))

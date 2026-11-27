@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // deadPid returns the pid of a process that has exited.
@@ -67,9 +69,7 @@ func serverUp(name string) bool {
 // A server whose test binary is gone is swept; a server named for a live
 // test binary, and a server with any other name, are left alone.
 func TestSweepDeadStopsOnlyDeadTestServers(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
+	requiretool.Path(t, "tmux")
 	dir, err := os.MkdirTemp("/tmp", "mxsw")
 	if err != nil {
 		t.Fatal(err)
@@ -127,9 +127,7 @@ func TestSweepDeadStopsOnlyDeadTestServers(t *testing.T) {
 // left alone: a looser pattern, a missing anchor or a -L read from anywhere in
 // the arguments would each stop one of them.
 func TestSweepDeadLeavesNamesThatOnlyLookLikeTestServers(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
+	requiretool.Path(t, "tmux")
 	dir, err := os.MkdirTemp("/tmp", "mxsw")
 	if err != nil {
 		t.Fatal(err)
@@ -167,9 +165,7 @@ func TestSweepDeadLeavesNamesThatOnlyLookLikeTestServers(t *testing.T) {
 // A server this process cannot reach (here, under another TMUX_TMPDIR) is
 // selected by name but not stopped, so it must not be reported as swept.
 func TestSweepDeadReportsOnlyServersItStopped(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
+	requiretool.Path(t, "tmux")
 	other, err := os.MkdirTemp("/tmp", "mxsw")
 	if err != nil {
 		t.Fatal(err)
