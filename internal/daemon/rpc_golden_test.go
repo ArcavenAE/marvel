@@ -51,6 +51,8 @@ var rpcGoldens = map[string]func() any{
 	"scale.params":             func() any { return &daemonrpc.ScaleParams{} },
 	"converge.params":          func() any { return &daemonrpc.ConvergeParams{} },
 	"run.params":               func() any { return &daemonrpc.RunParams{} },
+	"run.sandboxed.params":     func() any { return &api.RunSandboxedRequest{} },
+	"run.sandboxed.result":     func() any { return &api.RunSandboxedResult{} },
 	"shift.params":             func() any { return &daemonrpc.ShiftParams{} },
 	"reset-health.params":      func() any { return &daemonrpc.ResetHealthParams{} },
 	"inject.params":            func() any { return &daemonrpc.InjectParams{} },
