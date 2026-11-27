@@ -2,7 +2,6 @@ package bus
 
 import (
 	"context"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // The supervises grant against a real scratch broker on loopback, with no hub
@@ -20,9 +20,7 @@ import (
 
 func supervisesBroker(t *testing.T, live *teams) *Manager {
 	t.Helper()
-	if _, err := exec.LookPath("nats-server"); err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	requiretool.Path(t, "nats-server")
 	root := t.TempDir()
 	dir := filepath.Join(root, "state", "nats")
 	listen := "127.0.0.1:" + strconv.Itoa(freePort(t))
