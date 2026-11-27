@@ -331,6 +331,14 @@ type Cluster struct {
 	// AllowCredentialReveal lets the daemon answer credential.reveal on its
 	// local socket. Unset or false means reveal is refused.
 	AllowCredentialReveal bool `yaml:"allow_credential_reveal,omitempty"`
+	// AllowRemoteAttach lets the daemon serve a terminal on its mrvl:// listener
+	// (marvel attach on a remote cluster). Unset or false means an attach open
+	// and a pty request are refused. The daemon reads it at start.
+	// What it reaches: the attach runs a full interactive tmux client, and
+	// nothing unbinds its prefix or command prompt. An admin key with this on can
+	// open windows, run commands and switch to any session on this daemon's tmux
+	// server, so it is a shell as the daemon's user, not one desk.
+	AllowRemoteAttach bool `yaml:"allow_remote_attach,omitempty"`
 	// AccountWarnPercent is the used percentage at which an account's
 	// rate-limit window reads as near its limit in get budgets and is reported
 	// once. Unset means DefaultAccountWarnPercent; 0 turns it off; 1 to 100 is

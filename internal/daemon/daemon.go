@@ -157,6 +157,10 @@ type Daemon struct {
 	// revealAllowed is whether credential.reveal is answered: off until the
 	// cluster's allow_credential_reveal switch is read at start.
 	revealAllowed atomic.Bool
+
+	// attachAllowed is whether the mrvl:// listener serves a terminal: off
+	// until the cluster's allow_remote_attach switch is read at start.
+	attachAllowed atomic.Bool
 	// freezer stops and resumes recorded processes; nil means suspend.New().
 	freezer *suspend.Freezer
 	// suspendMu serializes suspend and resume. collectorFor builds the pid
@@ -781,6 +785,7 @@ func (d *Daemon) Start(socketPath string) (err error) {
 	d.loadScheduleHistoryMax(socketPath)
 	d.loadHostVitals(socketPath)
 	d.loadCredentialReveal(socketPath)
+	d.loadRemoteAttach(socketPath)
 	d.loadAccountWarn(socketPath)
 	d.loadSeatEnv(socketPath)
 	d.loadLoginExpiry(socketPath)

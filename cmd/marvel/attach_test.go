@@ -328,29 +328,27 @@ func TestPlanAttachSocketMatchIsExact(t *testing.T) {
 	}
 }
 
-// A remote desk always prints the ssh command and never runs anything, under
-// any flag and from inside any tmux.
-func TestPlanAttachRemoteAlwaysPrintsSSH(t *testing.T) {
+// A remote desk under --print prints the ssh command and never runs anything,
+// from inside any tmux. Without --print it runs over mrvl:// (see
+// attach_remote_test.go).
+func TestPlanAttachRemotePrintShowsSSH(t *testing.T) {
 	for _, tmuxEnv := range []string{"", "/private/tmp/tmux-501/marvel-ff00ff00,1,0", "/private/tmp/tmux-501/default,1,0"} {
-		for _, printOnly := range []bool{false, true} {
-			plan, err := planAttach("23", deskRows("%23"), remoteTarget, tmuxEnv, printOnly)
-			if err != nil {
-				t.Fatalf("planAttach: %v", err)
-			}
-			want := []string{"ssh", "-t", "box.example", "tmux", "-L", "marvel-ff00ff00", "attach", "-t", "%23"}
-			if !reflect.DeepEqual(plan.Argv, want) || plan.Exec {
-				t.Errorf("TMUX=%q print=%v: plan = %+v, want print of %v", tmuxEnv, printOnly, plan, want)
-			}
+		plan, err := planAttach("23", deskRows("%23"), remoteTarget, tmuxEnv, true)
+		if err != nil {
+			t.Fatalf("planAttach: %v", err)
+		}
+		want := []string{"ssh", "-t", "box.example", "tmux", "-L", "marvel-ff00ff00", "attach", "-t", "%23"}
+		if !reflect.DeepEqual(plan.Argv, want) || plan.Exec || plan.Mrvl {
+			t.Errorf("TMUX=%q: plan = %+v, want print of %v and nothing run", tmuxEnv, plan, want)
 		}
 	}
 }
 
-// The remote branch is one function that says it is print-only, so a later
-// integration replaces one body.
-func TestRemoteAttachIsPrintOnly(t *testing.T) {
-	argv, printOnly := remoteAttach("23", "box.example", "marvel-ff00ff00")
-	if !printOnly || argv[0] != "ssh" {
-		t.Errorf("remoteAttach = %v, %v, want an ssh command and printOnly", argv, printOnly)
+// The ssh form is one function, shared by --print and the older-daemon note.
+func TestRemoteSSHArgv(t *testing.T) {
+	want := []string{"ssh", "-t", "box.example", "tmux", "-L", "marvel-ff00ff00", "attach", "-t", "%23"}
+	if got := remoteSSHArgv("23", "box.example", "marvel-ff00ff00"); !reflect.DeepEqual(got, want) {
+		t.Errorf("remoteSSHArgv = %v, want %v", got, want)
 	}
 }
 

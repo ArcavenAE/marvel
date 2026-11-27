@@ -29,10 +29,23 @@ the pane.
     the attach to marvel's server.
   - --print prints the command and exits 0 in every case.
 
-A desk on a remote cluster is always printed, never run:
-`ssh -t <host> tmux -L <socket> attach -t %<desk>`. marvel adds no remote
-terminal; the host is the one in the cluster's address, so it may need a login
-name or an ssh config entry of your own.
+A desk on a remote cluster is run over the cluster's mrvl:// channel (port 6785)
+with the key the cluster pins, which must be an admin key on that daemon. The
+daemon refuses unless its own cluster entry sets allow_remote_attach: true, which
+it reads at start, so a change needs a daemon restart. It needs no ssh login on
+the remote host.
+
+What a remote attach reaches: the session is a full tmux client of the daemon's
+tmux server, and nothing unbinds its prefix or command prompt. With the gate on,
+an admin key can open windows, run commands and switch to any session on that
+server, so it is a shell as the daemon's user and not one desk. --print shows the ssh form instead,
+`ssh -t <host> tmux -L <socket> attach -t %<desk>`, which uses your own ssh
+access: the host is the one in the cluster's address, so it may need a login
+name or an ssh config entry of your own. Against a daemon too old to serve the
+channel, the verb prints that ssh line, says to upgrade the daemon, and exits
+nonzero. A remote attach checks the link every 5 seconds; if the daemon stops
+answering for 15 seconds (a closed lid, a dropped route), the verb prints
+"attach: lost contact with <address> (no reply for 15s)" and exits nonzero.
 
 A desk is unique only within one cluster's tmux server, so a desk number is
 never looked up across clusters.
