@@ -275,7 +275,7 @@ Per the ruling, Linux is tested and does not hold the build up.
 
 **Why this is here.** The snapshot source for views (a reader pulls a published snapshot with `marvel cp` and unpacks it read-only) shows a reader the owner's files as of the last pull. The operator ruled a one-way live mirror as the third part of that answer, next to cp and the snapshots. A mirror is the first place marvel would delete files on a reader's host on the strength of what an owner's host publishes, so the rules that keep a bad publish from reaching anything else are written down before any code.
 
-**What is decided.** Three rules, each of which holds whatever the open points below turn out to be.
+**What is decided.** Three rules that hold whatever else changes, then six rulings from the operator's Desk (mirror-1 to mirror-6). Each ruling keeps the label of the open point it closes, and names the cost its card gave.
 
 - M1. Deletes reach only the reader's mirror directory, never the source. The flow is one way: the owner's paths are read by the publish verb and are never written by a mirror, and a delete applied on the reader's side removes a file from the mirror directory and from nothing else.
 - M2. The mirror directory is marvel-owned and holds no reader files. A reader's own files live elsewhere, so a clobber (a replace, a delete, a refresh from a bad publish) overwrites mirror content only.
@@ -283,28 +283,15 @@ Per the ruling, Linux is tested and does not hold the build up.
 
 Everything under a published path is published, including anything written there later, and a mirror carries it to the reader as it is. Readers treat mirror content as untrusted data, since a publish set can hold third-party text.
 
-**Open points.** None of these is decided here. Each is a choice for the operator, and each is listed with its options so it can be put to them as a ruling.
+**Rulings.** Each was decided by the operator on the Desk. The source for mirror-2 to mirror-6 is the ticket aae-orc-j491x, which records the rulings from the Desk read of 2026-11-14; mirror-1 was ruled on 2026-11-06.
 
-- O1. Whether the 15-minute pull (Desk card fileshare-4) still runs once a mirror exists.
-  - (a) It still runs, so the snapshots stay the history and the mirror is the current copy.
-  - (b) It stops, and a snapshot is taken only when the owner publishes one.
-  - (c) It runs at a different interval that the owner sets.
-- O2. What triggers a mirror update, and so what live means. Each option states the lag it gives.
-  - (a) The reader's daemon pulls on a timer shorter than the snapshot pull. The lag is bounded by that interval.
-  - (b) The owner's daemon pushes to the reader's cp jail when it sees a change. A change reaches the mirror as it is seen, with no stated bound.
-  - (c) The owner's daemon sends a notice, and the reader's daemon pulls on receipt. A change reaches the mirror as it is seen, with no stated bound.
-- O3. Where the mirror directory sits.
-  - (a) Under marvel's own state directory, one per view.
-  - (b) At a path the reader's owner names in the policy file, which cp's jail refusals (C12 in `marvel-cp.md`) would then have to check against the mirror's rules as well.
-- O4. How the mirror treats a publish that looks wrong, such as one that is empty or far smaller than the one before. M3 protects the snapshots; it does not say what happens to the mirror.
-  - (a) Apply it as published.
-  - (b) Hold the last mirror and emit an event, until the owner publishes again.
-  - (c) Apply it only below a threshold the owner sets in the policy file.
-- O5. How a seat reads the mirror.
-  - (a) Through the same `MARVEL_VIEW_<NAME>` path, the notice and the sealing of section 6, treating a mirror update as a refresh.
-  - (b) Through a separate path that changes in place and carries no notice, since section 8 notes that content changing under a held directory may make the notice unnecessary.
-- O6. How many mirrors a host holds.
-  - (a) One mirror per host, shared by every seat's view.
-  - (b) One per seat, as a view is today (section 2).
+- O1 (mirror-1). Keep the pull. The 15-minute pull of Desk card fileshare-4 still runs once a mirror exists, so the snapshots stay the history and the mirror is the current copy. The cost: both run, so there is somewhat more load.
+- O2 (mirror-2). The owner's daemon sends a notice, and the reader's daemon pulls on receipt. A change reaches the mirror as it is seen, with no stated bound, and there are no inbound writes. The cost: a new notice path between daemons.
+- O3 (mirror-3). Under marvel's own state directory, one per view. This is where views live today.
+- O4 (mirror-4). A publish that looks wrong (an empty one, or one far smaller than the one before) is not applied. The mirror holds its last content and marvel emits an event until the owner publishes again. The cost: a correct but large deletion waits for the owner to publish again.
+- O5 (mirror-5). A seat reads the mirror through the same `MARVEL_VIEW_<NAME>` path, notice and sealing that section 6 describes, with each mirror update treated as a refresh. The cost: a view keeps at most five readable old trees, then pauses that seat's refreshes and emits `view.retention-held` until the seat takes the notice (section 6). With frequent mirror updates, a slow seat reaches that pause sooner. A seat sees at most five old trees, even though 24 snapshots are retained.
+- O6 (mirror-6). One mirror per host, shared by every seat's view. The cost: a shared copy across seats, which views have avoided so far.
 
-**Not in this section.** The publish set (the owner's, in the policy file), any real path, the wire format of a publish, and any code. The build waits on the open points above and on the cp build.
+**How O3 and O6 hold together.** O3 says where the mirror sits (under marvel's own state directory, one per view) and O6 says how many mirrors a host holds (one, shared by every seat's view). Together: one mirror directory per host, under marvel's own state directory, and each seat's view reads that one directory. This reading was relayed by director (01M7G8M2WH, 2026-11-15) and is open to correction by the operator.
+
+**Not in this section.** The publish set (the owner's, in the policy file), any real path, the wire format of a publish, the event name O4 emits, the threshold for a wrong-looking publish, and any code. The build waits on the cp build (aae-orc-wrzec).
