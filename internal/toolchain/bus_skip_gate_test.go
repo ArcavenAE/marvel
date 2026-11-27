@@ -540,7 +540,9 @@ func shellEnv(job ciJob, step ciJobStep) []string {
 // allowedEnv is every env name ci.yml sets on a step the guards read, its job
 // or the workflow, as of this change. A new name needs adding here, which puts
 // it in front of a reviewer.
-var allowedEnv = []string{"HOMEBREW_NO_AUTO_UPDATE", "NATS_SERVER_SHA256", "NATS_SERVER_VERSION"}
+// MARVEL_REQUIRED_TOOLS only turns a skip for a missing tool into a failure, so
+// it cannot hide one (internal/requiretool).
+var allowedEnv = []string{"HOMEBREW_NO_AUTO_UPDATE", "MARVEL_REQUIRED_TOOLS", "NATS_SERVER_SHA256", "NATS_SERVER_VERSION"}
 
 // stepShell is the shell a step's script runs under: its own, else the job's
 // default, which ciJobs fills from the workflow's when the job names none.

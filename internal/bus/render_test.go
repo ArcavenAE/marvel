@@ -12,6 +12,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 func baseSpec() Spec {
@@ -384,10 +385,7 @@ func TestManagerSetLeafAttachedTogglesBlockPersistsAndReloads(t *testing.T) {
 // parser, not with this package's idea of it. Skipped without the binary.
 func TestRenderedConfPassesNatsServerCheck(t *testing.T) {
 	t.Parallel()
-	ns, err := exec.LookPath("nats-server")
-	if err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	ns := requiretool.Path(t, "nats-server")
 	dir := filepath.Join(t.TempDir(), "nats")
 	s := baseSpec()
 	s.StoreDir = dir

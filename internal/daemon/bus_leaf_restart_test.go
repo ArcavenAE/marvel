@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/config"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // startTestLeafBroker wires a managed broker the way attachBus does and starts
@@ -29,9 +29,7 @@ import (
 // when nats-server is not on PATH.
 func startTestLeafBroker(t *testing.T, d *Daemon, hub string, preEnroll bool) (*bus.Supervisor, string) {
 	t.Helper()
-	if _, err := exec.LookPath("nats-server"); err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	requiretool.Path(t, "nats-server")
 	root := t.TempDir()
 	dir := filepath.Join(root, "state", "nats")
 	// Any free loopback port works: the config renderer relocates the +4000

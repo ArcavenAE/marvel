@@ -3,7 +3,6 @@ package bus
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // Supervisor peer publish on one cluster. A per-role supervisor user may
@@ -279,9 +279,7 @@ func mustPrincipals(t *testing.T, s Spec) []Principal {
 // and a connect helper that presents the credential a seat of a role gets.
 func peerBroker(t *testing.T, live *teams) *Manager {
 	t.Helper()
-	if _, err := exec.LookPath("nats-server"); err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	requiretool.Path(t, "nats-server")
 	root := t.TempDir()
 	dir := filepath.Join(root, "state", "nats")
 	listen := "127.0.0.1:" + strconv.Itoa(freePort(t))

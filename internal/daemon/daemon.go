@@ -87,6 +87,13 @@ type Daemon struct {
 	// exit replaces os.Exit after a stop request, for tests.
 	exit func(int)
 
+	// runGOOS and runSandboxExec are the host facts run.sandboxed checks before
+	// it starts anything; empty means runtime.GOOS and /usr/bin/sandbox-exec.
+	// Tests set them.
+	runGOOS, runSandboxExec string
+	// runExec starts a composed run; nil means runChild. Tests replace it.
+	runExec func(ctx context.Context, argv []string, dir string, env []string, timeout time.Duration, maxOut int) (api.RunSandboxedResult, error)
+
 	// views follows each seat's read-only views (marvel#609).
 	views *view.Keeper
 
@@ -224,6 +231,9 @@ type Daemon struct {
 	// for the next daemon to adopt (reexec, `marvel stop --keep-bus`).
 	lifecycle service.Lifecycle
 	keepBus   bool
+	// services holds every attached entry by name (MS-8 (a), (h)). The bus
+	// entry's Lifecycle is the same value as d.lifecycle, never a second one.
+	services map[string]attachedService
 
 	// In-memory ring of the most recent log lines. Always non-nil.
 	logs *logbuf.Buffer
@@ -1274,6 +1284,14 @@ func (d *Daemon) handleRWCAs(rwc io.ReadWriteCloser, c caller) {
 		return
 	}
 
+	if req.Method == daemonrpc.MethodRunSandboxed {
+		// A run lives as long as its connection: the seat hanging up, or dying,
+		// ends the request and the daemon kills the child.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() { _, _ = io.Copy(io.Discard, rwc); cancel() }()
+		c.ctx = ctx
+	}
 	resp := d.recoverRequest(req.Method, func() daemonrpc.Response { return d.dispatchAs(req, c) })
 	_ = json.NewEncoder(rwc).Encode(d.stamp(resp))
 }
@@ -3267,52 +3285,35 @@ func (d *Daemon) attachServices(socketPath string) error {
 		log.Printf("services: resolve layout: %v", lerr)
 		return nil
 	}
-	busSeen := false
-	for i := range entries {
-		svc := &entries[i]
-		switch svc.Provider {
-		case service.ProviderNATSServer:
-			if busSeen {
-				return fmt.Errorf("services: cluster %s declares a second %s entry %q; one bus per cluster today", cl.Name, service.ClassMessageBus, svc.Name)
-			}
-			busSeen = true
-			if err := d.attachBus(cl, svc, layout); err != nil {
-				return err
-			}
-		default:
-			// Unreachable after ValidateServices; named so a registry
-			// addition without a daemon arm fails loudly at start.
-			return fmt.Errorf("services: cluster %s: service %q: no daemon arm for provider %q", cl.Name, svc.Name, svc.Provider)
-		}
-	}
-	return nil
+	return d.attachEntries(cl, entries, layout, attachArms)
 }
 
 // attachBus is the nats-server arm of attachServices: it renders the
 // broker configuration once and supervises the broker, or for an adopted
-// or external bus hands sessions the URL and nothing else.
-func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths.Layout) error {
+// or external bus hands sessions the URL and nothing else. It returns the
+// broker's Lifecycle, nil when there is no child; attachEntries records it.
+func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths.Layout) (service.Lifecycle, error) {
 	spec, err := svc.BusSpec()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rb := spec.Resolve(layout.StateDir())
 	if !rb.Managed {
 		// Sessions still learn the URL; there is no authorization to hand out.
 		d.sessMgr.Bus = bus.NewAdopted(rb)
 		log.Printf("bus: cluster %s reaches an existing broker at %s (mode %s); sessions receive NATS_URL, nothing rendered", cl.Name, rb.URL, rb.Mode)
-		return nil
+		return nil, nil
 	}
 	mgr, merr := bus.NewManager(filepath.Join(layout.StateDir(), "nats"), cl.Name, rb, d.store, func() bool {
 		_, gerr := d.store.GetCredential(busLeafCredential)
 		return gerr == nil
 	})
 	if merr != nil {
-		return merr
+		return nil, merr
 	}
 	sup, serr := bus.NewSupervisor(mgr, layout.RunDir(), layout.LogDir(), d.events)
 	if serr != nil {
-		return serr
+		return nil, serr
 	}
 	mgr.Events = d.events
 	sup.SetLeafLossCause(d.leafLossCause)
@@ -3350,9 +3351,8 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		return nil
 	}
 	if err := lc.Start(context.Background()); err != nil {
-		return err
+		return nil, err
 	}
-	d.lifecycle = lc
 	// The escalation publisher dials the broker as the admin identity on its
 	// first publish, and reads the address and credential each time it dials.
 	d.teamCtrl.Publisher = bus.NewRoleInboxPublisher(func() (string, string, string) {
@@ -3381,7 +3381,7 @@ func (d *Daemon) attachBus(cl *config.Cluster, svc *config.Service, layout paths
 		}
 		return false, fmt.Sprintf("bus %s is not ready", rb.Listen)
 	}
-	return nil
+	return lc, nil
 }
 
 // busStatus is the bus.Status both bus.status and daemon.status return, and

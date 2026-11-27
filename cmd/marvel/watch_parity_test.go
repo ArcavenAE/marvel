@@ -174,8 +174,9 @@ func TestWatchFramePicksUpAResize(t *testing.T) {
 	}
 }
 
-// An explicit column list that does not fit warns and prints in full, as
-// plain output does; --no-trunc reaches the watch frame too.
+// An explicit column list is fitted like plain output (marvel#1598, I-799 R1a
+// C): hidden by the default fit's order with the note, and a list cut to one
+// column that is still too wide warns; --no-trunc reaches the watch frame too.
 func TestWatchFrameHonorsExplicitColumnsAndNoTrunc(t *testing.T) {
 	parityDaemon(t, newCluster())
 	setWidth(t, 80)
@@ -183,9 +184,14 @@ func TestWatchFrameHonorsExplicitColumnsAndNoTrunc(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fitted := renderWatch(newWatchScreen(cols, explicit, false))
+	if !strings.Contains(fitted, "columns hidden at this width") || strings.Contains(fitted, "wider than the terminal") {
+		t.Errorf("an explicit list wider than the terminal is fitted and the note counts what it hid:\n%s", fitted)
+	}
+	setWidth(t, 5)
 	frame := renderWatch(newWatchScreen(cols, explicit, false))
 	if !strings.Contains(frame, "wider than the terminal") {
-		t.Errorf("an explicit list wider than the terminal should warn, as plain does:\n%s", frame)
+		t.Errorf("an explicit list cut to one column that is still too wide should warn, as plain does:\n%s", frame)
 	}
 
 	setWidth(t, 120)
