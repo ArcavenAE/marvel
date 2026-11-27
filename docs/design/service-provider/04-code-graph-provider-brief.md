@@ -18,6 +18,15 @@ ingest fresh and say so honestly. This brief proposes the smallest class and
 provider that does it, so a reviewer can say yes or no to the shape before any
 code is written.
 
+Two kos findings carry the evidence. finding-kos-ndz7 measured what an index
+costs. finding-kos-h57b (probe R1, 2026-11-16) asked the decision-forcing half,
+whether the facts are worth ingesting: it loaded SCIP facts into the kos fact
+store, passed its checks C0 to C2, served the cross-repo question W7 in one query
+with document-level recall and precision of 1.000 in both repos, and partly
+served the history and why questions. By its own rule it recommends a production
+ingest ticket, and the operator approved its promotion out of draft (I-796,
+2026-11-25).
+
 The brief is also the first real use of the provider map from the extraction
 gate (MS-8 in [services-shape-requirements.md](../services-shape-requirements.md)).
 It tests whether the class, provider and lifecycle seams hold for a service that
@@ -35,6 +44,14 @@ server: consumers read the facts through kos. It does not manage Serena. Serena
 is adopted-only (operator, 2026-10-16): if an operator already runs one, marvel
 may observe it as an adopted entry, and marvel never starts, stops or configures
 one. Nothing in this brief changes that.
+
+**The 2026-10-16 ruling has two halves.** marvel's finding on the code graph as a
+managed service (wi64, section "Next") records "Ruled 2026-10-16: trial outside
+marvel first; Serena adopted-only." The Serena half is the paragraph above. The
+first half is met by h57b: the trial ran outside marvel, in kos, with the
+results quoted above. The precondition for a marvel provider is therefore met,
+not skipped. Whether the operator wants a production ingest is the operator's to
+rule, and this brief does not assume it.
 
 This matches the earlier framing in [01-brief-prd.md](01-brief-prd.md): the code
 graph "should not be a new graph database marvel operates; it is an ingest
@@ -65,10 +82,20 @@ not.
 built around a process that stays up, and an index pass runs to completion. So
 the verbs act on the provider's supervision and not on a pass:
 
-- Start arms the provider for its declared repositories. It runs no pass.
-- Stop with `keep=false` ends a running pass by its proven pid (MS-9). With
-  `keep=true` a running pass is left to finish, and the successor adopts the
-  pass's result, not its pid.
+- Start arms the provider for its declared repositories. It runs no pass. The
+  interface says Start "returns once it is ready or has failed". For this
+  provider, ready means the declaration is armed: each repository path exists,
+  each indexer is found, and the store target exists at a schema the provider
+  accepts (section 5). Failed means any of those is refused. Start never waits
+  for an index pass to finish.
+- Stop with `keep=false` ends a running pass by its proven pid (MS-9). The
+  interface says that with `keep` set the child is "left running for a successor
+  to adopt". For a pass, keep=true leaves a running pass to finish, and the
+  successor adopts its result, not its pid: it reads the pass's log and the
+  store's version for that repository, and reports a pass whose log lacks its
+  final `exit:` line as not complete. A pass is not supervised after the daemon
+  that started it is gone. Whether that reading of keep is acceptable, or keep
+  should be refused while a pass runs, is for the architect (question 1).
 - Reload re-reads which repositories are declared. Restart is Stop then Start.
 - Status reports the last pass and any running one.
 - A pass is its own request verb, outside the Lifecycle interface (section 7,
@@ -116,7 +143,8 @@ a different host or version will differ.
 - Rust is memory-bound. Every Rust run cost between 0.55 and 2.2 GB peak RSS
   regardless of crate size, and warm times ran 1.72 to 8.46 seconds. Running the
   Rust repositories concurrently would need roughly 12 GB resident.
-- Cold cost tracks dependency fetching, not source size.
+- Cold cost is not source size. For Rust the finding says it tracks dependency
+  graph population; for Go, a cold build cache and module download.
 - rust-analyzer can degrade silently. Without `rust-src` it logged "can't load
   standard library", exited 0, and wrote a plausible index with every standard
   library reference unresolved.
@@ -131,8 +159,9 @@ What the provider does about it:
   the index `degraded` when it finds the standard-library error, and says so in
   status. `degraded` is never reported as `complete`.
 - Each pass runs under a recognizable process name, logs its purpose and pid, and
-  has its resident size watched by that pid, with a stated stop threshold. It is
-  stopped by pid, never by pattern.
+  has its resident size watched by that pid. Past a ceiling, the entry's
+  `max_rss`, it is ended with SIGTERM by pid, never by pattern. The ceiling's
+  starting value is question 7.
 - Metering stays diagnostic (MS-22): pass counts and durations are readings, and
   nothing blocks on them.
 
@@ -185,13 +214,14 @@ is already marked as a deferred seam.
 
 ## 7. Open questions
 
-Questions 1, 3 and 5 are recommendations with a sell-by date, not defaults that
+Questions 1, 3, 5 and 7 are recommendations with a sell-by date, not defaults that
 take effect on silence. Questions 2, 4 and 6 carry the architect's reading or a
 director decision, as marked. Items for the architect go through the supervisor.
 
 1. **Service or scheduled role?** Recommend a service of class `code-graph` with
    the verb mapping in section 2, because the `adopted` and `external` modes and
-   a per-repository as-of cell come with the class. Valid until 2026-12-11; the
+   a per-repository as-of cell come with the class. The same question covers what
+   Start counts as ready and what `keep` means for a running pass (section 2). Valid until 2026-12-11; the
    architect re-checks it then.
 2. **Where does the store live, and who owns it?** Decided by director,
    2026-11-27: kos owns it (section 5). The entry names the target, and marvel
@@ -217,6 +247,12 @@ director decision, as marked. Items for the architect go through the supervisor.
    Valid until 2026-12-11; the architect re-checks it then.
 6. **Is the ingest atomic on a kill?** Answered in section 5, as the architect's
    reading: yes, by SQLite's guarantee, with no kos kill-midway test yet.
+7. **The resident-size ceiling.** Recommend the entry carries `max_rss`, with no
+   default in the class, and that the first value an operator sets is twice the
+   highest Rust peak ndz7 measured (2.2 GB), so 4.4 GB. That leaves room for a
+   larger crate and still stops a runaway well below a laptop's memory. A fraction
+   of host memory is the alternative; it needs a host reading marvel does not
+   take today. Valid until 2026-12-11; the architect re-checks it then.
 
 ## 8. Out of scope and follow-ups
 
