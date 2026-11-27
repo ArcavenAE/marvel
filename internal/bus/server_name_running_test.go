@@ -18,6 +18,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // A render puts server_name into the conf only where the broker that reads it
@@ -253,10 +254,7 @@ func (r sighupReloader) Reload() error {
 // The measured hazard: a broker running with no name, a team added, and the
 // conf must reload cleanly so the new user is in force.
 func TestACredentialRenderNeverRidesAReloadTheBrokerRefuses(t *testing.T) {
-	bin, err := exec.LookPath("nats-server")
-	if err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	bin := requiretool.Path(t, "nats-server")
 	m := scratchManager(t)
 	m.Broker = namedBroker{running: true, name: ""}
 	if _, err := m.Regenerate(); err != nil {
