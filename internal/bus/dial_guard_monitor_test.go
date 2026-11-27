@@ -14,6 +14,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/arcavenae/marvel/internal/config"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // The test dial guard covers every dial the package makes (marvel#1007). Three
@@ -120,10 +121,7 @@ func TestPollLeafAsksTheDialGuard(t *testing.T) {
 // guard knows, then reads /varz at a monitor address no test started. The
 // broker's own monitor is left off, so the read has nowhere to go either way.
 func TestCheckStructureAsksTheDialGuardForTheMonitor(t *testing.T) {
-	ns, err := exec.LookPath("nats-server")
-	if err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	ns := requiretool.Path(t, "nats-server")
 	port := freePort(t)
 	store := filepath.Join(t.TempDir(), "js")
 	cmd := exec.Command(ns, "-a", "127.0.0.1", "-p", strconv.Itoa(port), "-js", "-sd", store)
@@ -143,7 +141,7 @@ func TestCheckStructureAsksTheDialGuardForTheMonitor(t *testing.T) {
 	})
 	monitor := "127.0.0.1:" + strconv.Itoa(closedLoopbackPort(t))
 	t.Cleanup(func() { forgetRefused(monitor) })
-	_, err = CheckStructure(context.Background(), url, "anyone", "anything", monitor)
+	_, err := CheckStructure(context.Background(), url, "anyone", "anything", monitor)
 	if !errors.Is(err, errNotStarted) {
 		t.Fatalf("CheckStructure read /varz at %s = %v, want the dial guard's refusal", monitor, err)
 	}

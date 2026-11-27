@@ -2,12 +2,12 @@ package daemon
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/bus"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // The reload after a render goes through the lifecycle the daemon holds. The
@@ -15,9 +15,7 @@ import (
 // and checks that the manager's reloader is the daemon's lifecycle and not the
 // concrete supervisor behind it.
 func TestAttachServicesReloadsThroughTheLifecycle(t *testing.T) {
-	if _, err := exec.LookPath("nats-server"); err != nil {
-		t.Skip("nats-server not on PATH")
-	}
+	requiretool.Path(t, "nats-server")
 	_, port := freeBrokerPort(t)
 
 	d := newHandlerDaemon(t)

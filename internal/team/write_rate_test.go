@@ -3,7 +3,6 @@ package team
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/requiretool"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/tmux"
 )
@@ -37,10 +37,7 @@ const (
 // It must run before tmux.NewDriver, which captures the binary path.
 func countingTmux(t *testing.T) string {
 	t.Helper()
-	real, err := exec.LookPath("tmux")
-	if err != nil {
-		t.Skip("tmux not available")
-	}
+	real := requiretool.Path(t, "tmux")
 	dir := t.TempDir()
 	log := filepath.Join(dir, "execs.log")
 	shim := `#!/bin/sh

@@ -12,15 +12,14 @@ import (
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/backoff"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/requiretool"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/tmux"
 )
 
 func skipIfNoTmux(t *testing.T) {
 	t.Helper()
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
+	requiretool.Path(t, "tmux")
 	if why := psProblem(func() error { return exec.Command("ps", "-p", strconv.Itoa(os.Getpid())).Run() }); why != "" {
 		t.Skip(why)
 	}
