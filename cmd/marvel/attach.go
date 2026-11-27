@@ -171,6 +171,16 @@ func runRemoteAttach(w, stderr io.Writer, addr string, plan attachPlan, env atta
 		_, _ = fmt.Fprintln(w, quoteArgv(plan.Argv))
 		_, _ = fmt.Fprintln(stderr, "marvel attach: the daemon at "+addr+" is too old to serve a remote attach; upgrade it, or run the ssh command above yourself")
 		return fmt.Errorf("remote attach is not supported by the daemon at %s", addr)
+	case errors.Is(err, daemonrpc.ErrLostContact):
+		// One fixed line; the terminal is already restored. No ssh line: the
+		// daemon answered a moment ago, so this is the link, not the version.
+		var lc *daemonrpc.LostContactError
+		reason := "no reply"
+		if errors.As(err, &lc) {
+			reason = lc.Error()
+		}
+		_, _ = fmt.Fprintf(stderr, "attach: lost contact with %s (%s)\n", addr, reason)
+		return fmt.Errorf("lost contact with %s", addr)
 	default:
 		return fmt.Errorf("attach desk %s over %s: %w", plan.Desk, addr, err)
 	}
@@ -388,7 +398,9 @@ the remote host. --print shows the ssh form instead,
 access: the host is the one in the cluster's address, so it may need a login
 name or an ssh config entry of your own. Against a daemon too old to serve the
 channel, the verb prints that ssh line, says to upgrade the daemon, and exits
-nonzero.
+nonzero. A remote attach checks the link every 5 seconds; if the daemon stops
+answering for 15 seconds (a closed lid, a dropped route), the verb prints
+"attach: lost contact with <address> (no reply for 15s)" and exits nonzero.
 
 A desk is unique only within one cluster's tmux server, so a desk number is
 never looked up across clusters.

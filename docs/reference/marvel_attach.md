@@ -38,7 +38,9 @@ the remote host. --print shows the ssh form instead,
 access: the host is the one in the cluster's address, so it may need a login
 name or an ssh config entry of your own. Against a daemon too old to serve the
 channel, the verb prints that ssh line, says to upgrade the daemon, and exits
-nonzero.
+nonzero. A remote attach checks the link every 5 seconds; if the daemon stops
+answering for 15 seconds (a closed lid, a dropped route), the verb prints
+"attach: lost contact with <address> (no reply for 15s)" and exits nonzero.
 
 A desk is unique only within one cluster's tmux server, so a desk number is
 never looked up across clusters.

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -133,12 +134,80 @@ func Attach(addr, desk string, opts DialOptions, tio AttachIO) error {
 	if tio.In != nil {
 		go func() { _, _ = io.Copy(ch, tio.In) }()
 	}
+
+	// A closed lid or a dead route leaves the connection open and silent, so
+	// the copy below would block on it. Keepalives find that: the daemon's
+	// SSH layer answers each one (true or false), and enough unanswered
+	// intervals close the connection, which ends the copy.
+	every, misses := tio.KeepAlive, tio.KeepAliveMisses
+	if every <= 0 {
+		every = defaultKeepAlive
+	}
+	if misses <= 0 {
+		misses = defaultKeepAliveMisses
+	}
+	var lost atomic.Bool
+	stopKeepAlive := make(chan struct{})
+	defer close(stopKeepAlive)
+	go keepAlive(func() error {
+		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+		return err
+	}, every, misses, stopKeepAlive, func() {
+		lost.Store(true)
+		_ = client.Close()
+	})
+
 	_, copyErr := io.Copy(tio.Out, ch)
 	_ = ch.Close()
+	if lost.Load() {
+		return &LostContactError{Silent: every * time.Duration(misses)}
+	}
 	if copyErr != nil && !errors.Is(copyErr, io.EOF) {
 		return fmt.Errorf("read terminal output: %w", copyErr)
 	}
 	return nil
+}
+
+const (
+	defaultKeepAlive       = 5 * time.Second
+	defaultKeepAliveMisses = 3
+)
+
+// keepAlive calls send every interval and gives up when misses intervals pass
+// after a send with no reply. send blocks until the peer answers, so each call
+// runs in its own goroutine and a dead link never stalls the loop. A reply of
+// any kind resets the count. gaveUp runs once, then keepAlive returns.
+func keepAlive(send func() error, every time.Duration, misses int, stop <-chan struct{}, gaveUp func()) {
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	replies := make(chan struct{}, 1)
+	inFlight, missed := false, 0
+	for {
+		select {
+		case <-stop:
+			return
+		case <-replies:
+			inFlight, missed = false, 0
+		case <-tick.C:
+			if inFlight {
+				missed++
+				if missed >= misses {
+					gaveUp()
+					return
+				}
+				continue
+			}
+			inFlight = true
+			go func() {
+				if send() == nil {
+					select {
+					case replies <- struct{}{}:
+					default:
+					}
+				}
+			}()
+		}
+	}
 }
 
 // errOrNil keeps a refusal that carries no transport error readable.
