@@ -52,3 +52,36 @@ func TestAttachOffersOnlyThePinnedKey(t *testing.T) {
 		t.Errorf("the agent got %d connections, want 0", n)
 	}
 }
+
+// A pinned key the daemon does not accept is a refusal, not a cue to try
+// another key: a key in the ssh-agent and one under ~/.ssh that the listener
+// WOULD accept are never offered, and the caller gets a typed auth error
+// (i556r-4-c, the card's revoked-key check).
+func TestAttachWithARevokedKeyDoesNotFallBackToAnotherKey(t *testing.T) {
+	resetKnownHosts(t)
+	agentConns, other := otherKeys(t)
+	pinned, pemBytes := newSigner(t)
+	// The listener accepts some other key, as after the pinned one is revoked.
+	rig := oneKeyRig(t, mustPublic(t))
+	err := Attach(rig.addr, "23",
+		DialOptions{Identity: writeIdentity(t, pemBytes), StrictHostKey: true},
+		AttachIO{In: strings.NewReader(""), Out: &bytes.Buffer{}, Rows: 24, Cols: 80})
+	var ref *AuthRefusedError
+	if !errors.As(err, &ref) {
+		t.Fatalf("Attach error = %v (%T), want an *AuthRefusedError in its chain", err, err)
+	}
+	_, keys := rig.log.seen()
+	if len(keys) != 1 || keys[0] != ssh.FingerprintSHA256(pinned.PublicKey()) {
+		t.Errorf("listener saw keys %v, want only the pinned key", keys)
+	}
+	for _, f := range other {
+		for _, k := range keys {
+			if k == f {
+				t.Errorf("a key from the agent or ~/.ssh was offered after the pinned key was refused")
+			}
+		}
+	}
+	if n := agentConns.Load(); n != 0 {
+		t.Errorf("the agent got %d connections, want 0", n)
+	}
+}
