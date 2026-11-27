@@ -396,9 +396,12 @@ it reads at start, so a change needs a daemon restart. It needs no ssh login on
 the remote host.
 
 What a remote attach reaches: the session is a full tmux client of the daemon's
-tmux server, and nothing unbinds its prefix or command prompt. With the gate on,
-an admin key can open windows, run commands and switch to any session on that
-server, so it is a shell as the daemon's user and not one desk. --print shows the ssh form instead,
+tmux server, and marvel unbinds nothing in it (the daemon user's own
+~/.tmux.conf may change that). With the gate on, an admin key can open windows,
+run commands and switch to any session on that server, so it is a shell as the
+daemon's user and not one desk.
+
+--print shows the ssh form instead,
 ` + "`ssh -t <host> tmux -L <socket> attach -t %<desk>`" + `, which uses your own ssh
 access: the host is the one in the cluster's address, so it may need a login
 name or an ssh config entry of your own. Against a daemon too old to serve the

@@ -335,7 +335,8 @@ type Cluster struct {
 	// (marvel attach on a remote cluster). Unset or false means an attach open
 	// and a pty request are refused. The daemon reads it at start.
 	// What it reaches: the attach runs a full interactive tmux client, and
-	// nothing unbinds its prefix or command prompt. An admin key with this on can
+	// marvel unbinds nothing in it (the daemon user's own ~/.tmux.conf may
+	// change that). An admin key with this on can
 	// open windows, run commands and switch to any session on this daemon's tmux
 	// server, so it is a shell as the daemon's user, not one desk.
 	AllowRemoteAttach bool `yaml:"allow_remote_attach,omitempty"`
