@@ -334,6 +334,10 @@ type Cluster struct {
 	// AllowRemoteAttach lets the daemon serve a terminal on its mrvl:// listener
 	// (marvel attach on a remote cluster). Unset or false means an attach open
 	// and a pty request are refused. The daemon reads it at start.
+	// What it reaches: the attach runs a full interactive tmux client, and
+	// nothing unbinds its prefix or command prompt. An admin key with this on can
+	// open windows, run commands and switch to any session on this daemon's tmux
+	// server, so it is a shell as the daemon's user, not one desk.
 	AllowRemoteAttach bool `yaml:"allow_remote_attach,omitempty"`
 	// AccountWarnPercent is the used percentage at which an account's
 	// rate-limit window reads as near its limit in get budgets and is reported
