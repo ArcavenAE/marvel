@@ -181,6 +181,19 @@ func init() {
 			Handle:    func(d *Daemon, p json.RawMessage, _ caller) daemonrpc.Response { return d.handleHandoffPut(p) },
 			LocalOnly: true,
 		},
+		// run.sandboxed starts a command for a seat under a profile the daemon
+		// composes. The token decides which seat, so it is local-socket only and
+		// never a credential-push call (marvel#1596).
+		daemonrpc.MethodRunSandboxed: {
+			Handle: func(d *Daemon, p json.RawMessage, c caller) daemonrpc.Response {
+				ctx := c.ctx
+				if ctx == nil {
+					ctx = context.Background()
+				}
+				return d.handleRunSandboxed(ctx, p)
+			},
+			LocalOnly: true,
+		},
 		daemonrpc.MethodHeartbeat: {
 			Handle:   func(d *Daemon, p json.RawMessage, _ caller) daemonrpc.Response { return d.handleHeartbeat(p) },
 			Deferred: true,

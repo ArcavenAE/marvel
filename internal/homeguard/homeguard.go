@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 // Run is a TestMain body: it installs the scratch HOME, runs the tests,
@@ -51,6 +52,9 @@ func RunWith(m *testing.M, setup func() error) int {
 		return 1
 	}
 	defer func() { _ = os.RemoveAll(home) }()
+	// The scrub removes MARVEL_REQUIRED_TOOLS with the rest; record it first so
+	// requiretool.Path can still act on it.
+	requiretool.Preserve()
 	if err := scrubProcessEnv(); err != nil {
 		fmt.Fprintf(os.Stderr, "homeguard: scrub env: %v\n", err)
 		return 1
