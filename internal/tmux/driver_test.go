@@ -11,13 +11,12 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/paths"
+	"github.com/arcavenae/marvel/internal/requiretool"
 )
 
 func skipIfNoTmux(t *testing.T) {
 	t.Helper()
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not available")
-	}
+	requiretool.Path(t, "tmux")
 }
 
 func TestNewDriver(t *testing.T) {

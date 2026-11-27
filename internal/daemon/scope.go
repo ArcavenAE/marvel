@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -84,6 +85,9 @@ type caller struct {
 	// (brief 9 S3): a credential value leaves the daemon only to the operator
 	// at the local socket, never back out through the mrvl:// tunnel.
 	local bool
+	// ctx ends when the caller's connection does. Only a method that holds the
+	// connection open (run.sandboxed) reads it; nil means no connection to watch.
+	ctx context.Context
 }
 
 // localCaller is the implicit admin caller for the local unix socket.
