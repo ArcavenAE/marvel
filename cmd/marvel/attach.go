@@ -9,12 +9,14 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemon"
@@ -37,6 +39,11 @@ type attachPlan struct {
 	Argv []string
 	Exec bool
 	Note string
+	// Mrvl says the verb runs the attach over the daemon's mrvl:// channel
+	// for Desk. Argv then holds the printed ssh line, kept only as the
+	// readable fallback against a daemon that lacks the channel.
+	Mrvl bool
+	Desk string
 }
 
 // deskArg is a desk as typed: the digits of a tmux pane id, with or without
@@ -76,11 +83,14 @@ func planAttach(desk string, sessions []api.Session, tgt attachTarget, tmuxEnv s
 	}
 
 	if tgt.Remote {
-		argv, printOnly := remoteAttach(desk, tgt.Host, tgt.Socket)
+		argv := remoteSSHArgv(desk, tgt.Host, tgt.Socket)
 		if strings.HasPrefix(tgt.Host, "-") || tgt.Host == "" {
 			return attachPlan{}, fmt.Errorf("cannot build an ssh command for host %q", tgt.Host)
 		}
-		return attachPlan{Argv: argv, Exec: !printOnly}, nil
+		// --print shows the ssh form and runs nothing. Without it the verb
+		// runs the attach over the mrvl:// channel, and keeps the ssh line
+		// only as what it prints against a daemon too old to serve it.
+		return attachPlan{Argv: argv, Mrvl: !printOnly, Desk: desk}, nil
 	}
 
 	pane := "%" + desk
@@ -135,13 +145,45 @@ func insideTmuxServer(tmuxEnv, socket string) bool {
 	return filepath.Base(path) == socket
 }
 
-// remoteAttach is the whole of the verb's remote branch. Today it returns
-// the ssh command and says it is print-only: marvel's mrvl:// listener
-// carries RPC and no terminal, so there is nothing for it to run. A later
-// integration that hands the terminal to switchboard replaces this body and
-// nothing around it.
-func remoteAttach(desk, host, socket string) (argv []string, printOnly bool) {
-	return []string{"ssh", "-t", host, "tmux", "-L", socket, "attach", "-t", "%" + desk}, true
+// remoteSSHArgv is the ssh command that opens a remote desk with the
+// operator's own ssh access. It is what --print shows for a remote cluster,
+// and what a daemon too old for the mrvl:// attach gets printed.
+func remoteSSHArgv(desk, host, socket string) []string {
+	return []string{"ssh", "-t", host, "tmux", "-L", socket, "attach", "-t", "%" + desk}
+}
+
+// runRemoteAttach runs a remote plan over the mrvl:// channel. A success
+// writes nothing: the terminal was the output. A daemon without the channel
+// gets the readable failure, the ssh line on stdout and a note naming the
+// upgrade, with a nonzero exit. Any other failure is returned as it is, with
+// no ssh line in its place, so a revoked key never reads as a working
+// fallback.
+func runRemoteAttach(w, stderr io.Writer, addr string, plan attachPlan, env attachEnv) error {
+	if env.Mrvl == nil {
+		return errors.New("this build cannot run a remote attach; use --print")
+	}
+	err := env.Mrvl(addr, plan.Desk)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, daemonrpc.ErrAttachUnsupported):
+		// A failed write must not hide the error returned below.
+		_, _ = fmt.Fprintln(w, quoteArgv(plan.Argv))
+		_, _ = fmt.Fprintln(stderr, "marvel attach: the daemon at "+addr+" is too old to serve a remote attach; upgrade it, or run the ssh command above yourself")
+		return fmt.Errorf("remote attach is not supported by the daemon at %s", addr)
+	case errors.Is(err, daemonrpc.ErrLostContact):
+		// One fixed line; the terminal is already restored. No ssh line: the
+		// daemon answered a moment ago, so this is the link, not the version.
+		var lc *daemonrpc.LostContactError
+		reason := "no reply"
+		if errors.As(err, &lc) {
+			reason = lc.Error()
+		}
+		_, _ = fmt.Fprintf(stderr, "attach: lost contact with %s (%s)\n", addr, reason)
+		return fmt.Errorf("lost contact with %s", addr)
+	default:
+		return fmt.Errorf("attach desk %s over %s: %w", plan.Desk, addr, err)
+	}
 }
 
 // quoteArgv renders argv as one shell line a person can paste. A word of
@@ -165,13 +207,61 @@ func quoteArgv(argv []string) string {
 type attachEnv struct {
 	Getenv func(string) string
 	Exec   func(argv []string) error
+	// Mrvl runs the attach for a desk over the mrvl:// channel at addr.
+	Mrvl func(addr, desk string) error
 	// Stderr is where the verb says which session a desk resolved to. Nil
 	// means os.Stderr.
 	Stderr io.Writer
 }
 
 func processAttachEnv() attachEnv {
-	return attachEnv{Getenv: os.Getenv, Exec: execArgv}
+	return attachEnv{Getenv: os.Getenv, Exec: execArgv, Mrvl: attachOverMrvl}
+}
+
+// attachOverMrvl gives the caller's terminal to a desk on a remote daemon: it
+// puts stdin in raw mode, follows window-size changes, and restores the
+// terminal when the attach ends.
+func attachOverMrvl(addr, desk string) error {
+	_, opts, err := resolveDaemonAddr()
+	if err != nil {
+		return err
+	}
+	fd := int(os.Stdin.Fd()) //nolint:gosec // a file descriptor number fits an int
+	if !term.IsTerminal(fd) {
+		return errors.New("marvel attach needs a terminal on stdin; use --print for the command")
+	}
+	cols, rows, err := term.GetSize(fd)
+	if err != nil {
+		return fmt.Errorf("read terminal size: %w", err)
+	}
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return fmt.Errorf("set terminal raw: %w", err)
+	}
+	defer func() { _ = term.Restore(fd, state) }()
+
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	defer signal.Stop(winch)
+	resize := make(chan daemonrpc.Size, 1)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		for {
+			select {
+			case <-winch:
+				if c, r, err := term.GetSize(fd); err == nil {
+					select {
+					case resize <- daemonrpc.Size{Rows: r, Cols: c}:
+					default:
+					}
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+	return daemonrpc.Attach(addr, desk, opts, daemonrpc.AttachIO{In: os.Stdin, Out: os.Stdout, Rows: rows, Cols: cols, Resize: resize})
 }
 
 // execArgv replaces this process with argv, so the terminal belongs to tmux
@@ -253,6 +343,9 @@ func runAttach(w io.Writer, arg string, printOnly bool, env attachEnv) error {
 	}
 	// A failed write to stderr must not stop the attach it only announces.
 	_, _ = fmt.Fprintf(stderr, "%s is desk %s\n", resolved.Key, resolved.Desk)
+	if plan.Mrvl {
+		return runRemoteAttach(w, stderr, addr, plan, env)
+	}
 	if plan.Exec {
 		if err := checkNewWindowTarget(plan, st.TmuxSocket, resolved.Desk); err != nil {
 			return err
@@ -296,10 +389,32 @@ the pane.
     the attach to marvel's server.
   - --print prints the command and exits 0 in every case.
 
-A desk on a remote cluster is always printed, never run:
-` + "`ssh -t <host> tmux -L <socket> attach -t %<desk>`" + `. marvel adds no remote
-terminal; the host is the one in the cluster's address, so it may need a login
-name or an ssh config entry of your own.
+A desk on a remote cluster is run over the cluster's mrvl:// channel (port 6785)
+with the key the cluster pins, which must be an admin key on that daemon. The
+daemon refuses unless its own cluster entry sets allow_remote_attach: true, which
+it reads at start, so a change needs a daemon restart. It needs no ssh login on
+the remote host.
+
+What a remote attach reaches: the session is a full tmux client of the daemon's
+tmux server, and marvel unbinds nothing in it (the daemon user's own
+~/.tmux.conf may change that). With the gate on, an admin key can open windows,
+run commands and switch to any session on that server, so it is a shell as the
+daemon's user and not one desk.
+
+--print shows the ssh form instead,
+` + "`ssh -t <host> tmux -L <socket> attach -t %<desk>`" + `, which uses your own ssh
+access: the host is the one in the cluster's address, so it may need a login
+name or an ssh config entry of your own. Against a daemon too old to serve the
+channel, the verb prints that ssh line, says to upgrade the daemon, and exits
+nonzero. A remote attach checks the link every 5 seconds; if the daemon stops
+answering for 15 seconds (a closed lid, a dropped route), the verb prints
+"attach: lost contact with <address> (no reply for 15s)" and exits nonzero.
+
+The daemon has no such deadline of its own: when the client vanishes, the daemon's
+end of the connection and its tmux client stay attached until TCP keepalive drops
+the socket, about 2 to 3 minutes by Go's documented defaults (read, not
+measured), and tmux may size the window to that client meanwhile. A server-side
+deadline is a separate ticket.
 
 A desk is unique only within one cluster's tmux server, so a desk number is
 never looked up across clusters.

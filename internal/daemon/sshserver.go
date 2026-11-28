@@ -32,6 +32,15 @@ type SSHServer struct {
 	addr   atomic.Pointer[net.Addr]
 	daemon *Daemon
 	layout paths.Layout
+
+	// attachResolve and attachCommand replace the daemon-backed desk resolver
+	// and the tmux command of the attach channel, so a test needs no tmux
+	// server. Nil means the daemon's own rows and `tmux attach`.
+	attachResolve func(desk string) (socket string, err error)
+	// attachGate says whether the daemon serves a terminal at all. Nil means
+	// the daemon's own switch.
+	attachGate    func() bool
+	attachCommand attachCommandFunc
 }
 
 // newSSHServer creates an SSH server with the daemon's host key and
@@ -138,6 +147,10 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 
 	// Handle channels — each channel is one RPC request.
 	for newCh := range chans {
+		if newCh.ChannelType() == attachChannelType {
+			go s.handleAttach(newCh, clientCaller)
+			continue
+		}
 		if newCh.ChannelType() != "session" {
 			_ = newCh.Reject(ssh.UnknownChannelType, "only session channels are supported")
 			continue
@@ -154,7 +167,9 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 		go func() {
 			for req := range chReqs {
 				if req.WantReply {
-					_ = req.Reply(true, nil)
+					// A pty request is never granted here: the attach channel
+					// is the one route that carries a terminal.
+					_ = req.Reply(req.Type != "pty-req", nil)
 				}
 			}
 		}()
