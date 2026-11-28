@@ -9,7 +9,7 @@
 # A case passes only when all of these hold, so a refused push, a missing hook
 # or a hook that never ran cannot read as a skip:
 #   - the push exits 0;
-#   - the bare remote's ref equals the local HEAD;
+#   - the bare remote's ref equals the pushed local branch;
 #   - .git/hooks/pre-push exists and is lefthook's;
 #   - the suite ran (marker printed), or lefthook's own output says it ran
 #     pre-push and skipped test-race.
@@ -51,26 +51,39 @@ newrepo() {
     git add lefthook.yml
     git -c commit.gpgsign=false commit -qm base
     printf 'module example.invalid/t\n\ngo 1.22\n' >go.mod
-    git add go.mod
+    printf 'package a\n' >a.go
+    git add go.mod a.go
     git -c commit.gpgsign=false commit -qm gomod
     git push -q origin main >/dev/null 2>&1 </dev/null
   )
   echo "$d"
 }
 
-# check <label> <want: ran|skipped> <branch> <file> [dest-ref]
+# check <label> <want: ran|skipped> <branch> <file> [dest-ref] [mode]
+# mode: "" (append to file), delete (git rm file), from-docs (push <branch> from
+# a checkout whose HEAD is a docs-only branch)
 check() {
-  local label=$1 want=$2 branch=$3 file=$4 dest=${5:-$3}
+  local label=$1 want=$2 branch=$3 file=$4 dest=${5:-$3} mode=${6:-}
   n=$((n + 1))
   local d out rc=0 why=""
   d=$(newrepo "case$n")
   out=$(
     cd "$d"
     git switch -q "$branch" 2>/dev/null || git switch -q -c "$branch"
-    mkdir -p "$(dirname "$file")"
-    echo "x $n" >>"$file"
-    git add "$file"
+    if [[ "$mode" == delete ]]; then
+      git rm -q "$file"
+    else
+      mkdir -p "$(dirname "$file")"
+      echo "x $n" >>"$file"
+      git add "$file"
+    fi
     git -c commit.gpgsign=false commit -qm "change $file"
+    if [[ "$mode" == from-docs ]]; then
+      git switch -q -c docs-checkout main
+      echo "docs $n" >>doc.md
+      git add doc.md
+      git -c commit.gpgsign=false commit -qm "docs only"
+    fi
     # Install after the commit, so only the push hook is under test.
     lefthook install >/dev/null 2>&1 </dev/null || echo "LEFTHOOK-INSTALL-FAILED"
     git push origin "$branch:$dest" 2>&1 </dev/null || echo "PUSH-EXIT-NONZERO"
@@ -86,9 +99,9 @@ check() {
   fi
   if [[ -z "$why" ]]; then
     local head remote
-    head=$(git -C "$d" rev-parse HEAD)
+    head=$(git -C "$d" rev-parse "refs/heads/$branch")
     remote=$(git -C "$d.git" rev-parse "refs/heads/$dest" 2>/dev/null || echo none)
-    [[ "$head" == "$remote" ]] || why="remote refs/heads/$dest is $remote, local HEAD is $head"
+    [[ "$head" == "$remote" ]] || why="remote refs/heads/$dest is $remote, local $branch is $head"
   fi
 
   local got=unknown
@@ -116,6 +129,9 @@ check "(iii) go.mod-only push to a build branch"    ran     build/marvel/x   go.
 check "(iv) Go file push on a redgate/ branch"      skipped redgate/x        a.go
 check "(v) redgate/ branch pushed to remote main"   ran     redgate/x        a.go  main
 check "(vi) Go file push on main to remote main"    ran     main             a.go
+check "(vii) docs-only build branch pushed to main" ran     build/marvel/x   doc.md main
+check "(viii) Go branch pushed to main from a docs checkout" ran build/marvel/x a.go main from-docs
+check "(ix) push whose only change deletes a.go"    ran     build/marvel/x   a.go  build/marvel/x delete
 
 if ((fails > 0)); then
   echo "$fails of $n cases failed"
