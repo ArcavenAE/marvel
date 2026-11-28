@@ -25,7 +25,42 @@ pre-commit:
 pre-push:
   commands:
     test-race:
-      # Always run the race suite on push. No glob → no file-scoped
-      # skipping; doc/yaml-only pushes still exercise the tests because
-      # nothing except `go test` catches a flaky test regression.
-      run: go test ./... -race -count=1
+      # One command decides, from the refs git is pushing, which arrive on
+      # stdin as "<local ref> <local sha> <remote ref> <remote sha>" lines.
+      # lefthook's own file and branch conditions read the checked-out HEAD,
+      # not the pushed refs, so they cannot be trusted here.
+      # The suite runs when any line says so (an OR; a skipped line only
+      # continues to the next):
+      #   - the remote ref is main or master, whatever else the line says;
+      #   - origin/main does not resolve, or the diff cannot be read;
+      #   - git diff origin/main...<local sha> holds a .go, go.mod or go.sum
+      #     path (deletes included).
+      # Lines that never run the suite: a branch delete, a local ref under
+      # redgate/ (a red-gate draft, gated by CI), and a diff with no Go path.
+      # When nothing runs it, it prints "test-race: skipped, <reason>".
+      use_stdin: true
+      run: |
+        zero=0000000000000000000000000000000000000000
+        run=0
+        why=""
+        while read -r lref lsha rref rsha; do
+          case "$rref" in
+            refs/heads/main|refs/heads/master) run=1; continue ;;
+          esac
+          if [ "$lsha" = "$zero" ]; then why="a branch delete"; continue; fi
+          case "$lref" in
+            refs/heads/redgate/*) why="a redgate/ branch, gated by CI"; continue ;;
+          esac
+          if ! git rev-parse -q --verify origin/main >/dev/null 2>&1; then run=1; continue; fi
+          if ! files=$(git diff --name-only "origin/main...$lsha" </dev/null 2>/dev/null); then run=1; continue; fi
+          if printf '%s\n' "$files" | grep -Eq '(\.go$|^go\.(mod|sum)$)'; then
+            run=1
+          else
+            why="no .go, go.mod or go.sum change in the pushed refs"
+          fi
+        done
+        if [ "$run" = 1 ]; then
+          go test ./... -race -count=1
+        else
+          echo "test-race: skipped, ${why:-nothing pushed}"
+        fi
