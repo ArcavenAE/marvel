@@ -45,16 +45,16 @@ section 5, the resume journal) and is out of scope.
 - The comment names this work: "tu2e (resume-on-power) will let an operator opt
   a team out of the hold default" (`controller.go:712-713`).
 
-### 1.2 The posture records no source and no time
+### 1.2 Before RB1 the posture records no source and no time
 
-Four sites write it, and none records who or when:
+Four sites write it, and before RB1 none recorded who or when:
 
 | writer | sets | cite |
 |---|---|---|
-| `marvel apply` | `converge` | `daemon.go:1744-1757` |
-| `marvel converge` and `converge --hold` | either | `daemon.go:2125-2138`, `controller.go:745-775` |
+| `marvel apply` | `converge` | `daemon.go:1799` |
+| `marvel converge` and `converge --hold` | either | `daemon.go:2175-2188`, `controller.go:779` |
 | `marvel wake` | `converge` | `internal/team/hibernate.go:523` |
-| daemon start | derived from live panes | `controller.go:728` |
+| daemon start | derived from live panes | `controller.go:729` |
 
 So a team the operator held and a team the last cold start held both read
 `hold`, and a team that was running reads `converge` in bolt only until the

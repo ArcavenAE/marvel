@@ -724,8 +724,11 @@ func (c *Controller) InitConvergencePosture() error {
 			continue // already correct (incl. a pre-field "" record that reads hold)
 		}
 		key := t.Key()
+		now := c.nowUTC()
 		if err := c.store.UpdateTeam(key, func(live *api.Team) error {
 			live.ConvergencePosture = want
+			live.PostureSource = api.PostureSourceStart
+			live.PostureSetAt = now
 			return nil
 		}); err != nil {
 			return fmt.Errorf("init convergence posture for %s: %w", key, err)
@@ -771,8 +774,11 @@ func (c *Controller) SetConvergencePosture(teamKey string, posture api.Convergen
 			continue
 		}
 		key := targets[i].Key()
+		now := c.nowUTC()
 		if err := c.store.UpdateTeam(key, func(live *api.Team) error {
 			live.ConvergencePosture = posture
+			live.PostureSource = api.PostureSourceOperator
+			live.PostureSetAt = now
 			return nil
 		}); err != nil {
 			return nil, fmt.Errorf("set convergence posture for %s: %w", key, err)

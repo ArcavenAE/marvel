@@ -1296,6 +1296,11 @@ type Team struct {
 	// Posture(), which normalizes the zero value to the safe default.
 	// See question-convergence-posture, aae-orc-rwiw / cxdf.
 	ConvergencePosture ConvergencePosture `toml:"-"`
+	// PostureSource and PostureSetAt record which writer set the posture and
+	// when. Status, not spec, persisted with the team. Empty and zero for a
+	// team written before the fields existed.
+	PostureSource PostureSource `toml:"-"`
+	PostureSetAt  time.Time     `toml:"-"`
 	// Claims records which manifest sources have applied this team. nil means
 	// the team predates claims, or was last applied by a client that sent no
 	// source: it is never pruned (docs/design/work-prune.md section 3.2).
@@ -1398,6 +1403,20 @@ const (
 	// stance a team with surviving panes is given at start so its steady-state
 	// maintenance (crash-loop restarts, replica top-ups) is never suppressed.
 	PostureConverge ConvergencePosture = "converge"
+)
+
+// PostureSource records which writer last set a team's convergence posture
+// (docs/design/resume-on-boot.md section 2.1, RB1). Status, not spec.
+type PostureSource string
+
+const (
+	// PostureSourceOperator: apply, converge, hold or wake.
+	PostureSourceOperator PostureSource = "operator"
+	// PostureSourceStart: the start-time derivation from live panes.
+	PostureSourceStart PostureSource = "start"
+	// PostureSourceBoot: resume on boot. Declared by RB1; nothing writes it
+	// until the boot decision lands.
+	PostureSourceBoot PostureSource = "boot"
 )
 
 // DesiredReplicas is how many seats of role r the team wants: the declared

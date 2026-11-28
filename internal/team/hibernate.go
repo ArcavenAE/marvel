@@ -521,6 +521,8 @@ func (c *Controller) Wake(teamKey string, opt WakeOptions) error {
 	hibernatedSince, rerun := t.Hibernate.Since, t.Hibernate.State == api.HibernateWaking
 	if err := c.store.UpdateTeam(teamKey, func(live *api.Team) error {
 		live.ConvergencePosture = api.PostureConverge
+		live.PostureSource = api.PostureSourceOperator
+		live.PostureSetAt = now
 		live.Hibernate.State = api.HibernateWaking
 		live.Hibernate.Since = now
 		live.Hibernate.Actor = opt.Actor

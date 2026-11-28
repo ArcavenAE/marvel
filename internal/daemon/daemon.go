@@ -1797,6 +1797,8 @@ func (d *Daemon) handleApply(params json.RawMessage) daemonrpc.Response {
 		teamKey := m.Workspace.Name + "/" + mt.Name
 		if err := d.store.UpdateTeam(teamKey, func(live *api.Team) error {
 			live.ConvergencePosture = api.PostureConverge
+			live.PostureSource = api.PostureSourceOperator
+			live.PostureSetAt = time.Now().UTC()
 			return nil
 		}); err != nil {
 			log.Printf("apply: set convergence posture for %s: %v", teamKey, err)
