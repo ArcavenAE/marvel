@@ -20,7 +20,12 @@ pre-commit:
 
     lint:
       glob: "*.go"
-      run: golangci-lint run ./...
+      # The linter's result cache lives in this checkout's own git directory
+      # (a linked worktree gets its own, removed with it). This overrides any
+      # GOLANGCI_LINT_CACHE already set: golangci-lint's default is one
+      # directory per user, and a shared cache replays findings from other or
+      # removed worktrees (finding-026), which is the defect.
+      run: GOLANGCI_LINT_CACHE="$(git rev-parse --absolute-git-dir)/golangci-lint-cache" golangci-lint run ./...
 
 pre-push:
   commands:
