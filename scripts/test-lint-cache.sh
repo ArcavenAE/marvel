@@ -38,7 +38,10 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 # Only the lint command is under test; fmt-check and vet are left out.
 export LEFTHOOK_EXCLUDE=fmt-check,vet
-unset GOLANGCI_LINT_CACHE
+# A cache the caller already set, which the hook has to override (director
+# ruling 01M8HR9Z73: always per worktree).
+inherited="$base/inherited-cache"
+export GOLANGCI_LINT_CACHE="$inherited"
 
 calls="$base/calls.log"
 : >"$calls"
@@ -123,6 +126,11 @@ verdict "(ii) linked worktree lints with a cache under its own git dir" "$r" "GO
 r=0
 [[ -n "$main_cache" && -n "$wt_cache" && "$main_cache" != "$wt_cache" ]] || r=1
 verdict "(iii) the two checkouts use different caches" "$r" "main='$main_cache' worktree='$wt_cache'"
+
+# (iv) A GOLANGCI_LINT_CACHE set by the caller does not reach the linter.
+r=0
+[[ "$main_cache" != "$inherited" && "$wt_cache" != "$inherited" ]] || r=1
+verdict "(iv) an inherited GOLANGCI_LINT_CACHE is overridden" "$r" "linter saw the inherited value $inherited"
 
 if ((fails > 0)); then
   echo "$fails of $n checks failed"
