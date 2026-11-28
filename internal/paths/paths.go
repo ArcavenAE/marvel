@@ -144,6 +144,10 @@ func (l Layout) StreamsDir() string { return filepath.Join(l.Home, "s") }
 // OverlaysDir is the base for the backend overlays.
 func (l Layout) OverlaysDir() string { return filepath.Join(l.Home, "o") }
 
+// SecretsDir is the base for the per-seat secret files (heartbeat token and bus
+// password). Unset until the move out of the temp directory lands.
+func (l Layout) SecretsDir() string { return "" }
+
 // VersionsDir holds the version store: the prior build the direct install
 // channel keeps when it replaces one, and the record naming the active and
 // prior builds (docs/design/zero-downtime-upgrade.md section 5).

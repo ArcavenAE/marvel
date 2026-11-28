@@ -363,3 +363,13 @@ func TestRegisterDirSitsBesideViewsUnderTheState(t *testing.T) {
 		t.Fatalf("RegisterDir %q and ViewsDir %q are not siblings", l.RegisterDir(), l.ViewsDir())
 	}
 }
+
+// The per-seat secret files sit under the marvel home, which nothing sweeps,
+// and not under the shared temp directory, which macOS purges after three days.
+func TestSecretsDirIsUnderTheMarvelHome(t *testing.T) {
+	l := WithHome("/root/.marvel")
+
+	if got, want := l.SecretsDir(), "/root/.marvel/t"; got != want {
+		t.Errorf("SecretsDir() = %q, want %q", got, want)
+	}
+}

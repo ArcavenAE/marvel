@@ -316,6 +316,11 @@ func (m *Manager) removeTokenFile(key string) {
 	}
 }
 
+// RestoreSecretFiles rewrites the token and bus password files of live
+// sessions whose files are missing, and returns how many it wrote. Not yet
+// implemented.
+func (m *Manager) RestoreSecretFiles() int { return 0 }
+
 func defaultTokenDir() string {
 	if dir := os.Getenv("MARVEL_TOKEN_DIR"); dir != "" {
 		return dir
