@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
 )
 
@@ -240,5 +242,32 @@ func TestApplyFromAClientOnlyRootDoesNotWarnOfAMove(t *testing.T) {
 	}
 	if ws, err := d.store.GetWorkspace("placed"); err != nil || ws.Root != home {
 		t.Errorf("stored root = %q (%v), want it left at %q", ws.Root, err, home)
+	}
+}
+
+// RB1 of docs/design/resume-on-boot.md: apply sets the posture to converge as
+// the operator, with the time it did so.
+func TestHandleApplyStampsOperatorPosture(t *testing.T) {
+	d := newHandlerDaemon(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now().UTC()
+	if resp := applyWithRoot(t, d, workDirManifestYAML, root); resp.Error != "" {
+		t.Fatalf("apply: %s", resp.Error)
+	}
+	team, err := d.store.GetTeam("placed/crew")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if team.PostureSource != api.PostureSourceOperator {
+		t.Errorf("PostureSource = %q, want %q", team.PostureSource, api.PostureSourceOperator)
+	}
+	if team.PostureSetAt.Before(before) || team.PostureSetAt.After(time.Now().UTC()) {
+		t.Errorf("PostureSetAt = %v, want between %v and now", team.PostureSetAt, before)
 	}
 }

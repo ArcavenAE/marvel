@@ -307,3 +307,62 @@ func TestRefreshLivenessReapsDeadPaneRecordsBeforePosture(t *testing.T) {
 		t.Fatalf("rebooted team posture = %q, want hold (its pane did not survive)", tm.Posture())
 	}
 }
+
+// TestPostureSourceStampedByEveryWriter is RB1 of docs/design/resume-on-boot.md:
+// each writer of a team's posture records who set it and when, so a team the
+// operator held and a team the last cold start held stop reading the same. The
+// apply writer lives in the daemon package (TestHandleApplyStampsOperatorPosture).
+func TestPostureSourceStampedByEveryWriter(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 11, 28, 9, 30, 0, 0, time.UTC)
+	check := func(t *testing.T, store *api.Store, key string, want api.PostureSource) {
+		t.Helper()
+		tm, err := store.GetTeam(key)
+		if err != nil {
+			t.Fatalf("get team %s: %v", key, err)
+		}
+		if tm.PostureSource != want {
+			t.Errorf("%s PostureSource = %q, want %q", key, tm.PostureSource, want)
+		}
+		if !tm.PostureSetAt.Equal(at) {
+			t.Errorf("%s PostureSetAt = %v, want %v", key, tm.PostureSetAt, at)
+		}
+	}
+
+	t.Run("converge and hold are the operator", func(t *testing.T) {
+		t.Parallel()
+		store := api.NewStore()
+		ctrl := NewController(store, nil)
+		ctrl.now = newTestClock(at).Now
+		createPostureTeam(t, store, "a", api.PostureConverge, []api.Role{sleepRole("w", 1)})
+		if _, err := ctrl.SetConvergencePosture("ws/a", api.PostureHold); err != nil {
+			t.Fatalf("SetConvergencePosture(hold): %v", err)
+		}
+		check(t, store, "ws/a", api.PostureSourceOperator)
+	})
+
+	t.Run("the start derivation is start", func(t *testing.T) {
+		t.Parallel()
+		store := api.NewStore()
+		ctrl := NewController(store, nil)
+		ctrl.now = newTestClock(at).Now
+		// A team persisted at converge with no live seat: the start derivation
+		// overrides it to hold.
+		createPostureTeam(t, store, "a", api.PostureConverge, []api.Role{sleepRole("w", 1)})
+		if err := ctrl.InitConvergencePosture(); err != nil {
+			t.Fatalf("InitConvergencePosture: %v", err)
+		}
+		if tm, _ := store.GetTeam("ws/a"); tm.Posture() != api.PostureHold {
+			t.Fatalf("posture = %q, want hold", tm.Posture())
+		}
+		check(t, store, "ws/a", api.PostureSourceStart)
+	})
+
+	t.Run("wake is the operator", func(t *testing.T) {
+		t.Parallel()
+		f := newWakeFixture(t, "wk")
+		f.clock.t = at
+		f.wake()
+		check(t, f.store, "wk/squad", api.PostureSourceOperator)
+	})
+}
