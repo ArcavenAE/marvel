@@ -116,7 +116,8 @@ commit_file() {
 
 # check <label> <want: ran|skipped> <branch> <file> [dest-ref] [mode]
 # mode: "" (append to file), delete (git rm file), from-docs (push <branch> from
-# a checkout whose HEAD is a docs-only branch)
+# a checkout whose HEAD is a docs-only branch), sha-src (push the bare sha),
+# head-src (push HEAD)
 check() {
   local label=$1 want=$2 branch=$3 file=$4 dest=${5:-$3} mode=${6:-}
   n=$((n + 1))
@@ -137,7 +138,12 @@ check() {
     fi
     # Install after the commit, so only the push hook is under test.
     lefthook install >/dev/null 2>&1 </dev/null || echo "LEFTHOOK-INSTALL-FAILED"
-    git push origin "$branch:$dest" 2>&1 </dev/null || echo "PUSH-EXIT-NONZERO"
+    # The source of the refspec as typed: a branch name, a bare sha, or HEAD.
+    # Git hands the hook that text as the local ref for the last two.
+    local src="$branch"
+    if [[ "$mode" == sha-src ]]; then src=$(git rev-parse "$branch"); fi
+    if [[ "$mode" == head-src ]]; then src=HEAD; fi
+    git push origin "$src:refs/heads/$dest" 2>&1 </dev/null || echo "PUSH-EXIT-NONZERO"
   ) || rc=$?
   judge "$label" "$want" "$d" "$rc" "$out" "$dest=$branch"
 }
@@ -185,6 +191,11 @@ check "(ix) push whose only change deletes a.go"    ran     build/marvel/x   a.g
 check "(x) Go branch pushed to its own ref from a docs checkout" ran build/marvel/x a.go build/marvel/x from-docs
 check_two "(xi) one push of a docs branch and a Go branch" ran new
 check_two "(xii) one push that deletes a branch and pushes a Go branch" ran old
+
+check "(xiii) bare sha pushed to a redgate/ remote name"   skipped build/marvel/x a.go redgate/y sha-src
+check "(xiv) HEAD pushed to a redgate/ remote name"        skipped build/marvel/x a.go redgate/z head-src
+check "(xv) local redgate/ branch pushed to another name"  ran     redgate/x      a.go other
+check "(xvi) bare sha with docs only pushed to main"       ran     build/marvel/x doc.md main sha-src
 
 if ((fails > 0)); then
   echo "$fails of $n cases failed"

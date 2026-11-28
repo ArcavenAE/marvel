@@ -35,8 +35,10 @@ pre-push:
       #   - origin/main does not resolve, or the diff cannot be read;
       #   - git diff origin/main...<local sha> holds a .go, go.mod or go.sum
       #     path (deletes included).
-      # Lines that never run the suite: a branch delete, a local ref under
-      # redgate/ (a red-gate draft, gated by CI), and a diff with no Go path.
+      # Lines that never run the suite: a branch delete, a remote ref under
+      # redgate/ (a red-gate draft, gated by CI; the name pushed to, because
+      # the local ref is a bare sha or HEAD for some refspecs), and a diff
+      # with no Go path.
       # When nothing runs it, it prints "test-race: skipped, <reason>".
       use_stdin: true
       run: |
@@ -48,7 +50,7 @@ pre-push:
             refs/heads/main|refs/heads/master) run=1; continue ;;
           esac
           if [ "$lsha" = "$zero" ]; then why="a branch delete"; continue; fi
-          case "$lref" in
+          case "$rref" in
             refs/heads/redgate/*) why="a redgate/ branch, gated by CI"; continue ;;
           esac
           if ! git rev-parse -q --verify origin/main >/dev/null 2>&1; then run=1; continue; fi
