@@ -69,7 +69,7 @@ verdict() {
 }
 
 main="$base/main"
-wt="$base/wt"
+wt="$base/w t" # a space in the path, so the hook's quoting is exercised
 git init -q -b main "$main"
 cp "$src" "$main/lefthook.yml"
 (
