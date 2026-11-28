@@ -20,7 +20,7 @@ import (
 // Mutants each of them kills, read against CI's green (nobody runs them on the
 // host): "-L" to "-S" fails TestRealAttachBridgesATypedLine and every other
 // test here (tmux cannot find the pane); a target with the "%" dropped fails
-// TestRealAttachBridgesATypedLine and TestRealAttachOfAMissingDeskReportsAndCloses;
+// all five tests here (each attaches to the desk, or reports its absence);
 // socket and desk swapped fails all of them.
 
 // realTmux starts a tmux server on a scratch socket with one pane running cat
@@ -39,6 +39,10 @@ func realTmux(t *testing.T) (run func(args ...string) string, desk, socket strin
 	}
 	t.Setenv("TMUX_TMPDIR", dir)
 	t.Setenv("TMUX", "")
+	// A scratch HOME, for this helper's tmux and the daemon side that passes
+	// HOME through attachEnvAllow, so a user's ~/.tmux.conf cannot change the
+	// pane size or window-size option the tests read.
+	t.Setenv("HOME", t.TempDir())
 	b := make([]byte, 3)
 	_, _ = rand.Read(b)
 	socket = "ra" + hex.EncodeToString(b)

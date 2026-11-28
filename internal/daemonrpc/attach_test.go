@@ -54,8 +54,7 @@ func TestAttachOffersOnlyThePinnedKey(t *testing.T) {
 }
 
 // A pinned key the daemon does not accept is a refusal, not a cue to try
-// another key: a key in the ssh-agent and one under ~/.ssh that the listener
-// WOULD accept are never offered, and the caller gets a typed auth error
+// another key: the keys in the ssh-agent and under ~/.ssh are never offered, and the caller gets a typed auth error
 // (i556r-4-c, the card's revoked-key check).
 func TestAttachWithARevokedKeyDoesNotFallBackToAnotherKey(t *testing.T) {
 	resetKnownHosts(t)

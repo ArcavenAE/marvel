@@ -410,6 +410,12 @@ nonzero. A remote attach checks the link every 5 seconds; if the daemon stops
 answering for 15 seconds (a closed lid, a dropped route), the verb prints
 "attach: lost contact with <address> (no reply for 15s)" and exits nonzero.
 
+The daemon has no such deadline of its own: when the client vanishes, the daemon's
+end of the connection and its tmux client stay attached until TCP keepalive drops
+the socket, about 2 to 3 minutes by Go's documented defaults (read, not
+measured), and tmux may size the window to that client meanwhile. A server-side
+deadline is a separate ticket.
+
 A desk is unique only within one cluster's tmux server, so a desk number is
 never looked up across clusters.
 
