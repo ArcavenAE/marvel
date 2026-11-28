@@ -339,6 +339,11 @@ type Cluster struct {
 	// change that). An admin key with this on can
 	// open windows, run commands and switch to any session on this daemon's tmux
 	// server, so it is a shell as the daemon's user, not one desk.
+	// The daemon has no deadline of its own for a vanished client: its end of the
+	// connection and its tmux client stay attached until TCP keepalive drops the
+	// socket, about 2 to 3 minutes by Go's documented defaults (read, not
+	// measured), and tmux may size the window to that client meanwhile. A
+	// server-side deadline is a separate ticket.
 	AllowRemoteAttach bool `yaml:"allow_remote_attach,omitempty"`
 	// AccountWarnPercent is the used percentage at which an account's
 	// rate-limit window reads as near its limit in get budgets and is reported
