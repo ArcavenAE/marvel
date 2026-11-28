@@ -13,7 +13,11 @@ import (
 	"time"
 
 	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/bus"
 	"github.com/arcavenae/marvel/internal/daemonrpc"
+	"github.com/arcavenae/marvel/internal/hostvitals"
+	"github.com/arcavenae/marvel/internal/session"
+	"github.com/arcavenae/marvel/internal/suspend"
 )
 
 // The wire of each RPC method, pinned as one JSON fixture per method under
@@ -47,6 +51,8 @@ var rpcGoldens = map[string]func() any{
 	"scale.params":             func() any { return &daemonrpc.ScaleParams{} },
 	"converge.params":          func() any { return &daemonrpc.ConvergeParams{} },
 	"run.params":               func() any { return &daemonrpc.RunParams{} },
+	"run.sandboxed.params":     func() any { return &api.RunSandboxedRequest{} },
+	"run.sandboxed.result":     func() any { return &api.RunSandboxedResult{} },
 	"shift.params":             func() any { return &daemonrpc.ShiftParams{} },
 	"reset-health.params":      func() any { return &daemonrpc.ResetHealthParams{} },
 	"inject.params":            func() any { return &daemonrpc.InjectParams{} },
@@ -82,6 +88,19 @@ var rpcGoldens = map[string]func() any{
 	"orphans.result":           func() any { return &orphansResult{} },
 	"plan.result":              func() any { return &planResult{} },
 	"version.result":           func() any { return &BuildInfo{} },
+
+	// The methods that had no fixture before aae-orc-va2sz. reap takes an
+	// anonymous struct, so its fixture is the result of the homes sweep.
+	"bus.leaf.connect.result":    func() any { return &bus.Status{} },
+	"bus.leaf.disconnect.result": func() any { return &bus.Status{} },
+	"credential.list.result":     func() any { return &[]api.Credential{} },
+	"events.watch.params":        func() any { return &daemonrpc.EventsParams{} },
+	"reap.result":                func() any { return &session.HomeSweep{} },
+	"suspend.status.result":      func() any { return &suspend.Status{} },
+	"bus.status.result":          func() any { return &bus.Status{} },
+	"daemon.status.result":       func() any { return &DaemonStatus{} },
+	"host.vitals.result":         func() any { return &hostvitals.Snapshot{} },
+	"get.result":                 func() any { return &[]api.Session{} },
 }
 
 func TestRPCWireGoldens(t *testing.T) {
