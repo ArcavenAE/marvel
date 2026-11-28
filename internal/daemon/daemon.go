@@ -490,6 +490,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	tm.UseProvisionalBudgets()
 	driver.SetTiming(tm)
 	teamCtrl.Timing = tm
+	store.SetTiming(tm)
 	// The migration committed before this point; announce what it stamped,
 	// once, so an operator can see which teams were pinned to the old
 	// directory and declare a root for them.
