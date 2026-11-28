@@ -633,7 +633,11 @@ the same time.
 
 **The habit (a).** When a handler in `daemon.go`, `controller.go` or
 `manager.go` is next edited for a feature, it may move to its own file in the
-same package, in a separate commit inside that PR. Never as a sweep.
+same package, in a separate commit inside that PR. Never as a sweep. The same
+file habit covers a subcommand in `cmd/marvel/main.go`. The habit has a state
+half: when a feature adds two or more fields to `Daemon`, `Controller` or
+`Manager`, they land as one struct in the feature's file, as `watchdog` and
+`accountWarn` do, never as a sweep.
 
 ## 5. Decision D1, ruled
 
