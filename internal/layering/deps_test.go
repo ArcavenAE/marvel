@@ -76,11 +76,33 @@ func TestTmuxImportsNoApi(t *testing.T) {
 	})
 }
 
+// execImportersOutside returns each package in pkg's imports, other than
+// allowed, that imports os/exec.
+func execImportersOutside(t *testing.T, pkg, allowed string) []string {
+	t.Helper()
+	if pkg != allowed && slices.Contains(listed(t, "{{join .Imports \"\\n\"}}", false, pkg), "os/exec") {
+		return []string{pkg}
+	}
+	return nil
+}
+
 // The stored model does not start processes; the one place it ran git for the
 // trusted-folder check belongs in a leaf package.
 func TestApiImportsNoOsExec(t *testing.T) {
 	t.Parallel()
-	if slices.Contains(listed(t, "{{join .Imports \"\\n\"}}", false, "internal/api"), "os/exec") {
-		t.Error("internal/api imports os/exec: the stored model does not start processes")
+	for _, p := range execImportersOutside(t, "internal/api", "internal/hostprobe") {
+		t.Errorf("%s imports os/exec: the stored model does not start processes", p)
+	}
+}
+
+// Rule 4 has to see a second importer of os/exec anywhere under the package,
+// not only an import in the package itself. The fixture reaches one through the
+// allowed package and one two imports down.
+func TestExecRuleReportsASecondImporterUnderThePackage(t *testing.T) {
+	t.Parallel()
+	const fixture = "internal/layering/testdata/execrule/"
+	got := execImportersOutside(t, fixture+"root", fixture+"allowed")
+	if want := []string{fixture + "second"}; !slices.Equal(got, want) {
+		t.Errorf("os/exec importers under the fixture outside the allowed package = %v, want %v", got, want)
 	}
 }
