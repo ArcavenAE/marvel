@@ -366,3 +366,107 @@ func TestPostureSourceStampedByEveryWriter(t *testing.T) {
 		check(t, f.store, "wk/squad", api.PostureSourceOperator)
 	})
 }
+
+// stampPosture seeds a team's posture source and time as an earlier writer left
+// them.
+func stampPosture(t *testing.T, store *api.Store, key string, src api.PostureSource, at time.Time) {
+	t.Helper()
+	if err := store.UpdateTeam(key, func(live *api.Team) error {
+		live.PostureSource = src
+		live.PostureSetAt = at
+		return nil
+	}); err != nil {
+		t.Fatalf("stamp %s: %v", key, err)
+	}
+}
+
+// W1: the start derivation leaves an operator's hold alone. A team the operator
+// held, started cold with no live pane, keeps hold, source operator and the
+// operator's time. InitConvergencePosture skips a team whose posture already
+// matches, so a stamp placed before that skip would erase the one fact RB1
+// exists to keep.
+func TestStartLeavesAnOperatorHoldAlone(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	ctrl.now = newTestClock(t0.Add(48 * time.Hour)).Now
+	createPostureTeam(t, store, "a", api.PostureHold, []api.Role{sleepRole("w", 1)})
+	stampPosture(t, store, "ws/a", api.PostureSourceOperator, t0)
+
+	if err := ctrl.InitConvergencePosture(); err != nil {
+		t.Fatalf("InitConvergencePosture: %v", err)
+	}
+	tm, _ := store.GetTeam("ws/a")
+	if tm.Posture() != api.PostureHold {
+		t.Errorf("posture = %q, want hold", tm.Posture())
+	}
+	if tm.PostureSource != api.PostureSourceOperator {
+		t.Errorf("PostureSource = %q, want operator kept", tm.PostureSource)
+	}
+	if !tm.PostureSetAt.Equal(t0) {
+		t.Errorf("PostureSetAt = %v, want the operator's %v kept", tm.PostureSetAt, t0)
+	}
+}
+
+// W3: an operator hold restamps a team the last cold start held. Both read hold;
+// only the source tells them apart, so the operator's act must replace start.
+func TestOperatorHoldRestampsAStartHeldTeam(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
+	at := t0.Add(24 * time.Hour)
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	ctrl.now = newTestClock(at).Now
+	createPostureTeam(t, store, "a", api.PostureHold, []api.Role{sleepRole("w", 1)})
+	stampPosture(t, store, "ws/a", api.PostureSourceStart, t0)
+
+	if _, err := ctrl.SetConvergencePosture("ws/a", api.PostureHold); err != nil {
+		t.Fatalf("SetConvergencePosture(hold): %v", err)
+	}
+	tm, _ := store.GetTeam("ws/a")
+	if tm.PostureSource != api.PostureSourceOperator {
+		t.Errorf("PostureSource = %q, want operator", tm.PostureSource)
+	}
+	if !tm.PostureSetAt.Equal(at) {
+		t.Errorf("PostureSetAt = %v, want %v", tm.PostureSetAt, at)
+	}
+}
+
+// A1: converge stamps the operator for the one team it names and for every team
+// when no key is given, and leaves an untargeted team's stamp alone.
+func TestOperatorConvergeStampsTheNamedTeamAndAllTeams(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
+	clock := newTestClock(t0.Add(time.Hour))
+	store := api.NewStore()
+	ctrl := NewController(store, nil)
+	ctrl.now = clock.Now
+	createPostureTeam(t, store, "a", api.PostureHold, []api.Role{sleepRole("w", 1)})
+	createPostureTeam(t, store, "b", api.PostureHold, []api.Role{sleepRole("w", 1)})
+	stampPosture(t, store, "ws/a", api.PostureSourceStart, t0)
+	stampPosture(t, store, "ws/b", api.PostureSourceStart, t0)
+
+	if _, err := ctrl.SetConvergencePosture("ws/a", api.PostureConverge); err != nil {
+		t.Fatalf("converge ws/a: %v", err)
+	}
+	a, _ := store.GetTeam("ws/a")
+	if a.PostureSource != api.PostureSourceOperator || !a.PostureSetAt.Equal(clock.Now()) {
+		t.Errorf("ws/a = %q at %v, want operator at %v", a.PostureSource, a.PostureSetAt, clock.Now())
+	}
+	b, _ := store.GetTeam("ws/b")
+	if b.PostureSource != api.PostureSourceStart || !b.PostureSetAt.Equal(t0) {
+		t.Errorf("untargeted ws/b = %q at %v, want start at %v untouched", b.PostureSource, b.PostureSetAt, t0)
+	}
+
+	clock.Advance(time.Hour)
+	if _, err := ctrl.SetConvergencePosture("", api.PostureConverge); err != nil {
+		t.Fatalf("converge all: %v", err)
+	}
+	for _, key := range []string{"ws/a", "ws/b"} {
+		tm, _ := store.GetTeam(key)
+		if tm.PostureSource != api.PostureSourceOperator || !tm.PostureSetAt.Equal(clock.Now()) {
+			t.Errorf("%s after converge-all = %q at %v, want operator at %v", key, tm.PostureSource, tm.PostureSetAt, clock.Now())
+		}
+	}
+}

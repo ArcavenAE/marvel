@@ -51,8 +51,8 @@ Four sites write it, and none records who or when:
 
 | writer | sets | cite |
 |---|---|---|
-| `marvel apply` | `converge` | `daemon.go:1744-1757` |
-| `marvel converge` and `converge --hold` | either | `daemon.go:2125-2138`, `controller.go:745-775` |
+| `marvel apply` | `converge` | `daemon.go:1797` |
+| `marvel converge` and `converge --hold` | either | `daemon.go:2125-2138`, `controller.go:775` |
 | `marvel wake` | `converge` | `internal/team/hibernate.go:523` |
 | daemon start | derived from live panes | `controller.go:728` |
 
