@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -15,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/BurntSushi/toml"
+	"github.com/arcavenae/marvel/internal/hostprobe"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1038,7 +1038,7 @@ func validateCommand(command, dir string) (advisory string, err error) {
 		return "", nil
 	}
 	// Plain name: must resolve on $PATH.
-	if _, err := exec.LookPath(cmd); err != nil {
+	if _, err := hostprobe.LookPath(cmd); err != nil {
 		return "", fmt.Errorf("not on PATH: %w", err)
 	}
 	return "", nil

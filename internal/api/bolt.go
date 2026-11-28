@@ -12,6 +12,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/timing"
 	bolt "go.etcd.io/bbolt"
 	boltErrors "go.etcd.io/bbolt/errors"
 )
@@ -624,8 +625,20 @@ func (s *Store) DeleteRoleHealth(key string) error {
 // transactions, and so of syncs, the Store has started.
 func (s *Store) boltUpdate(fn func(tx *bolt.Tx) error) error {
 	s.boltUpdates.Add(1)
-	return s.bolt.Update(fn)
+	start := time.Now()
+	err := s.bolt.Update(fn)
+	// The duration is recorded once per transaction, whatever its outcome. An
+	// overrun event goes through events.Emit, which reads TaskOf, a lookup that
+	// takes no store lock, so recording here is safe under s.mu. Nil records
+	// nothing.
+	s.timing.Load().Record(timing.SiteStoreWrite, time.Since(start))
+	return err
 }
+
+// SetTiming sets where each bbolt write transaction's duration is recorded
+// (the store-write site, I-451). It may be set while the store is in use; nil
+// records nothing.
+func (s *Store) SetTiming(r *timing.Registry) { s.timing.Store(r) }
 
 // BoltUpdates reports how many bbolt write transactions this Store has
 // started since it was made. It is a measurement aid: the daemon never reads

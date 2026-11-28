@@ -1,0 +1,10 @@
+{
+  "n": 7,
+  "workspace": "workspace",
+  "team": "team",
+  "role": "role",
+  "session": "session",
+  "kind": "kind",
+  "min_severity": "min_severity",
+  "since_seq": 7
+}

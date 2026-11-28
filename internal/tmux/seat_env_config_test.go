@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/arcavenae/marvel/internal/api"
+	"github.com/arcavenae/marvel/internal/seatenv"
 )
 
 func newPaneArgs(t *testing.T, d *Driver, log string, envs map[string]string) string {
@@ -67,7 +67,7 @@ func TestSeatEnvUnsetJoinsTheBuiltInPrefix(t *testing.T) {
 	d, log := fakeTmux(t)
 	d.SetSeatEnv(nil, []string{"AWS_PROFILE", "BEADS_DOLT_PASSWORD"})
 	line := newPaneArgs(t, d, log, nil)
-	for _, n := range append([]string{"AWS_PROFILE", "BEADS_DOLT_PASSWORD"}, api.InheritedSessionEnv...) {
+	for _, n := range append([]string{"AWS_PROFILE", "BEADS_DOLT_PASSWORD"}, seatenv.InheritedSessionEnv...) {
 		if !strings.Contains(line, " -u "+n+" ") {
 			t.Errorf("the pane command does not unset %s: %s", n, line)
 		}

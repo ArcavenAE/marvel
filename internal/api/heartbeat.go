@@ -10,13 +10,15 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/arcavenae/marvel/internal/seatenv"
 )
 
 // HeartbeatTokenEnv is the environment variable adapters inject the
-// session's heartbeat token into. Environment rather than a command-line
-// flag: an argv is readable from the process table, and every agent on
-// the host can list it.
-const HeartbeatTokenEnv = "MARVEL_HEARTBEAT_TOKEN"
+// session's heartbeat token into. It is defined in internal/seatenv, which the
+// tmux driver imports without importing this package; the name stays here for
+// the callers that already use api.HeartbeatTokenEnv.
+const HeartbeatTokenEnv = seatenv.HeartbeatTokenEnv
 
 // HeartbeatTokenFileEnv names a file holding the session's heartbeat token. A
 // launch sets it in place of HeartbeatTokenEnv for a harness that may publish

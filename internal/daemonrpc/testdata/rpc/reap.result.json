@@ -1,0 +1,29 @@
+{
+  "confirmed": true,
+  "bases": [
+    "bases"
+  ],
+  "homes": [
+    {
+      "path": "path",
+      "state": "state",
+      "why": "why",
+      "daemons": [
+        {
+          "pid": 7,
+          "file": "file",
+          "action": "action",
+          "why": "why",
+          "signalled": true,
+          "settled": true
+        }
+      ],
+      "removed": true
+    }
+  ],
+  "notes": [
+    "notes"
+  ],
+  "other_bases": 7,
+  "other_homes": 7
+}

@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/arcavenae/marvel/internal/timing"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -87,6 +88,8 @@ type Store struct {
 	// started (see boltUpdate). It exists so a test or a scratch daemon can
 	// measure the write rate without root; nothing in the daemon reads it.
 	boltUpdates atomic.Int64
+	// timing records each bolt.Update transaction's duration (SetTiming).
+	timing atomic.Pointer[timing.Registry]
 	// persisted holds the bytes last written to bolt for each record, by
 	// bucket/key, so an update that changes nothing the file lacks can skip its
 	// transaction (persistPutIfChanged). Guarded by mu.

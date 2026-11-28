@@ -15,6 +15,9 @@ import (
 const (
 	// SiteReconcilePass is one pass of the team controller's reconcile loop.
 	SiteReconcilePass = "reconcile.pass"
+	// SiteStoreWrite is one bbolt write transaction of the daemon's store. It
+	// has no provisional budget: the figure is read before one is set.
+	SiteStoreWrite = "store.write"
 	// CounterMissedTicks counts reconcile ticks the Go ticker dropped because a
 	// pass ran longer than the interval.
 	CounterMissedTicks = "reconcile.missed-ticks"
