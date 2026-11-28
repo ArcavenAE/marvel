@@ -25,7 +25,29 @@ pre-commit:
 pre-push:
   commands:
     test-race:
-      # Always run the race suite on push. No glob → no file-scoped
-      # skipping; doc/yaml-only pushes still exercise the tests because
-      # nothing except `go test` catches a flaky test regression.
-      run: go test ./... -race -count=1
+      # Run the race suite when the push changes Go files (*.go, go.mod,
+      # go.sum). Lefthook's own push file list falls back to every tracked file
+      # for a branch with no upstream, which would always match go.mod, so the
+      # file list is the branch's diff against origin/main instead (a superset
+      # of what this push adds). With no origin/main it falls back to every
+      # tracked file, which runs the suite.
+      # A branch named redgate/* is a red-gate draft: CI is its gate, so the
+      # hook skips here. test-race-redgate-to-main below takes the skip back
+      # for a push to main or master. Every other branch keeps the suite.
+      files: git diff --name-only origin/main...HEAD 2>/dev/null || git ls-tree -r --name-only HEAD
+      glob: "{*.go,go.mod,go.sum}"
+      skip:
+        - ref: "redgate/*"
+      run: go test ./... -race -count=1 # {files}
+
+    test-race-redgate-to-main:
+      # A redgate/* branch never skips the suite on its way to main or master.
+      # git feeds the hook one "<local ref> <sha> <remote ref> <sha>" line per
+      # ref on stdin.
+      only:
+        - ref: "redgate/*"
+      use_stdin: true
+      run: |
+        if grep -Eq ' refs/heads/(main|master) '; then
+          go test ./... -race -count=1
+        fi
