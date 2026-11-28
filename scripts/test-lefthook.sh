@@ -132,6 +132,7 @@ check "(vi) Go file push on main to remote main"    ran     main             a.g
 check "(vii) docs-only build branch pushed to main" ran     build/marvel/x   doc.md main
 check "(viii) Go branch pushed to main from a docs checkout" ran build/marvel/x a.go main from-docs
 check "(ix) push whose only change deletes a.go"    ran     build/marvel/x   a.go  build/marvel/x delete
+check "(x) Go branch pushed to its own ref from a docs checkout" ran build/marvel/x a.go build/marvel/x from-docs
 
 if ((fails > 0)); then
   echo "$fails of $n cases failed"
