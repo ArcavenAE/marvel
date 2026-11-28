@@ -104,8 +104,8 @@ verdict "setup: lefthook pre-commit hook installed" "$hook" "no lefthook pre-com
 main_line=$(grep -F "$main|" "$calls" || true)
 wt_line=$(grep -F "$wt|" "$calls" || true)
 seen=0
-[[ -n "$main_line" && -n "$wt_line" ]] || seen=1
-verdict "setup: linter ran once in each checkout" "$seen" "calls.log has no line for $( [[ -z "$main_line" ]] && echo main || echo worktree )"
+[[ $(grep -cF "$main|" "$calls") -eq 1 && $(grep -cF "$wt|" "$calls") -eq 1 ]] || seen=1
+verdict "setup: linter ran exactly once in each checkout" "$seen" "calls.log has $(grep -cF "$main|" "$calls") line(s) for main and $(grep -cF "$wt|" "$calls") for the worktree, want 1 each"
 
 main_cache=${main_line#*|}
 wt_cache=${wt_line#*|}
