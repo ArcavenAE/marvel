@@ -230,3 +230,7 @@ This recommendation is valid until 2026-10-23, or until the marvel services part
 ## Appendix: commands
 
 The `go/ast` function lister and the test classifier were scratch programs that read files only. The PR data is `gh pr list` and `gh api .../pulls/<n>/commits` output, saved locally and not committed.
+
+## Later reading
+
+finding-marvel-8wdt (2026-11-25): the three large files grew by a net 282 lines after the planned moves, which that finding records as the habit's measured result.
