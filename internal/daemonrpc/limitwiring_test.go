@@ -113,6 +113,12 @@ func TestClientEntryPointsHaveOnlyTheirInventoriedCallers(t *testing.T) {
 	for name := range want {
 		got[name] = map[string]int{}
 	}
+	// The attach channel's own requests are a different SendRequest: the ssh
+	// channel's, called on the receiver ch. They are pinned by function and by
+	// request name, and are not a caller of the client entry point of that
+	// name (director ruling 01M88CD904, item 6).
+	wantChan := map[string]int{"Attach pty-req": 1, "Attach shell": 1, "Attach window-change": 1, "Attach keepalive@openssh.com": 1}
+	gotChan := map[string]int{}
 	p := parseClient(t)
 	called := map[ast.Node]bool{}
 	p.eachFunc(func(file, fun string, n ast.Node) bool {
@@ -126,6 +132,16 @@ func TestClientEntryPointsHaveOnlyTheirInventoriedCallers(t *testing.T) {
 		case *ast.SelectorExpr:
 			name = f.Sel.Name
 			called[f.Sel] = true
+			if name == "SendRequest" && (types.ExprString(f.X) == "ch" || types.ExprString(f.X) == "client") && len(c.Args) > 0 {
+				if lit, ok := c.Args[0].(*ast.BasicLit); ok {
+					gotChan[fun+" "+strings.Trim(lit.Value, `"`)]++
+				} else {
+					// A name that is not a literal cannot be pinned: count it
+					// so the inventory fails on it.
+					gotChan[fun+" ?"]++
+				}
+				return true
+			}
 		case *ast.Ident:
 			name = f.Name
 		}
@@ -159,6 +175,9 @@ func TestClientEntryPointsHaveOnlyTheirInventoriedCallers(t *testing.T) {
 		if !reflect.DeepEqual(got[name], w) {
 			t.Errorf("callers of %s are %v, inventoried as %v", name, got[name], w)
 		}
+	}
+	if !reflect.DeepEqual(gotChan, wantChan) {
+		t.Errorf("channel requests are %v, inventoried as %v", gotChan, wantChan)
 	}
 }
 

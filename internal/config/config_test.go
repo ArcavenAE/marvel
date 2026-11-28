@@ -525,3 +525,29 @@ func TestLoadLeavesTheRefusalUnsetForAGoodMap(t *testing.T) {
 		t.Errorf("Load = %v, refusal %v; want no error and no refusal", err, got.AccountNamesRefused)
 	}
 }
+
+// allow_remote_attach is the daemon-side switch for a terminal on the mrvl://
+// listener. It reads like allow_credential_reveal: a cluster entry key,
+// false when absent.
+func TestClusterAllowRemoteAttachParses(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".marvel"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "clusters:\n  - name: on\n    socket: /tmp/m-on.sock\n    allow_remote_attach: true\n  - name: off\n    socket: /tmp/m-off.sock\n"
+	if err := os.WriteFile(filepath.Join(home, ".marvel", "config.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := map[string]bool{}
+	for _, c := range cfg.Clusters {
+		got[c.Name] = c.AllowRemoteAttach
+	}
+	if !got["on"] || got["off"] {
+		t.Errorf("allow_remote_attach by cluster = %v, want on true and off false", got)
+	}
+}
