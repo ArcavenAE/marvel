@@ -11,6 +11,7 @@ import (
 
 	"github.com/arcavenae/marvel/internal/api"
 	"github.com/arcavenae/marvel/internal/events"
+	"github.com/arcavenae/marvel/internal/seatenv"
 )
 
 // TestSeatUnderDirtyDaemonIsCleanAndHeartbeats is BA1's positive and negative
@@ -26,7 +27,7 @@ import (
 // The daemon also reports what it scrubbed, names only.
 func TestSeatUnderDirtyDaemonIsCleanAndHeartbeats(t *testing.T) {
 	skipIfNoTmux(t)
-	for _, n := range api.InheritedSessionEnv {
+	for _, n := range seatenv.InheritedSessionEnv {
 		t.Setenv(n, "placeholder")
 	}
 	t.Setenv("CLAUDE_CODE_USE_BEDROCK", "1")
@@ -34,7 +35,7 @@ func TestSeatUnderDirtyDaemonIsCleanAndHeartbeats(t *testing.T) {
 	useFreshTmuxServer(t, fmt.Sprintf("marvel-test-seatenv-d-%d", os.Getpid()))
 
 	d := newHandlerDaemon(t)
-	for _, n := range api.InheritedSessionEnv {
+	for _, n := range seatenv.InheritedSessionEnv {
 		if _, ok := os.LookupEnv(n); ok {
 			t.Errorf("daemon still carries %s after start", n)
 		}
@@ -43,7 +44,7 @@ func TestSeatUnderDirtyDaemonIsCleanAndHeartbeats(t *testing.T) {
 	if len(ev) != 1 {
 		t.Fatalf("daemon.env-scrubbed events = %d, want 1", len(ev))
 	}
-	for _, n := range api.InheritedSessionEnv {
+	for _, n := range seatenv.InheritedSessionEnv {
 		if !strings.Contains(ev[0].Message, n) {
 			t.Errorf("scrub event does not name %s", n)
 		}
@@ -73,7 +74,7 @@ teams:
 	}
 
 	env := readSeatEnv(t, out)
-	for _, n := range api.InheritedSessionEnv {
+	for _, n := range seatenv.InheritedSessionEnv {
 		if _, ok := env[n]; ok {
 			t.Errorf("seat inherited %s", n)
 		}
@@ -137,7 +138,7 @@ teams:
 	if curTok == tok {
 		t.Fatal("replacement seat was given the previous session's token")
 	}
-	for _, n := range api.InheritedSessionEnv {
+	for _, n := range seatenv.InheritedSessionEnv {
 		if _, ok := env2[n]; ok {
 			t.Errorf("replacement seat inherited %s", n)
 		}

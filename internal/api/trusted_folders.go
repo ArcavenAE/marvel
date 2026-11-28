@@ -1,188 +1,13 @@
 package api
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
-	"strings"
-	"time"
+
+	"github.com/arcavenae/marvel/internal/hostprobe"
 )
-
-// The reasons GitMainRoot gives for not finding a root. They are the words an
-// event and an operator read, so they are fixed.
-const (
-	GitReasonNoGit             = "no git"
-	GitReasonError             = "git error"
-	GitReasonBare              = "bare repo"
-	GitReasonSymlinkUnresolved = "symlink unresolved"
-)
-
-// gitTimeout bounds one git call. The seed and apply paths must not hang on a
-// stuck filesystem.
-const gitTimeout = 5 * time.Second
-
-// gitOutSubcommands are the git subcommands gitOut runs. dir is a folder a
-// seat can write, so its repository config is not trusted: a subcommand that
-// reads the work tree (status and its relatives) can run a program that config
-// names. rev-parse reads only repository metadata. A new subcommand is added
-// here on purpose, with its own test.
-var gitOutSubcommands = map[string]bool{"rev-parse": true}
-
-var errGitSubcommand = errors.New("git subcommand not allowed")
-
-// gitOut runs git in dir and returns its trimmed stdout. The inherited
-// repository variables are dropped so the answer is about dir, not about the
-// environment the daemon happened to start in. Only the subcommands in
-// gitOutSubcommands run, and core.fsmonitor is cleared on the command line so
-// the repository's own config cannot start a program as a side effect.
-func gitOut(dir string, args ...string) (string, error) {
-	if len(args) == 0 || !gitOutSubcommands[args[0]] {
-		return "", fmt.Errorf("%w: git %s", errGitSubcommand, strings.Join(args, " "))
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=", "-C", dir}, args...)...)
-	for _, kv := range os.Environ() {
-		switch {
-		case strings.HasPrefix(kv, "GIT_DIR="), strings.HasPrefix(kv, "GIT_WORK_TREE="),
-			strings.HasPrefix(kv, "GIT_COMMON_DIR="), strings.HasPrefix(kv, "GIT_INDEX_FILE="):
-		default:
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
-	out, err := cmd.Output()
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && strings.Contains(string(ee.Stderr), "not a git repository") {
-			return "", errNotARepo
-		}
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-var errNotARepo = errors.New("not a git repository")
-
-// GitMainRoot is the main checkout's top-level for the repository start is in,
-// the directory codex keys a folder's trust on: the parent of the git common
-// directory, so every subdirectory and every linked worktree of one repository
-// gives the same root, and a subrepo with its own .git gives its own. The root
-// has symlinks resolved. When it cannot say, root is empty and reason is one of
-// the GitReason constants.
-func GitMainRoot(start string) (root, reason string) {
-	if start == "" {
-		return "", GitReasonError
-	}
-	if info, err := os.Stat(start); err != nil || !info.IsDir() {
-		return "", GitReasonError
-	}
-	if _, err := exec.LookPath("git"); err != nil {
-		return "", GitReasonNoGit
-	}
-	common, err := gitOut(start, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	switch {
-	case errors.Is(err, errNotARepo):
-		return "", GitReasonNoGit
-	case err != nil || common == "":
-		return "", GitReasonError
-	}
-	if filepath.Base(common) != ".git" {
-		if bare, berr := gitOut(start, "rev-parse", "--is-bare-repository"); berr == nil && bare == "true" {
-			return "", GitReasonBare
-		}
-		return "", GitReasonError
-	}
-	real, err := filepath.EvalSymlinks(filepath.Dir(common))
-	if err != nil {
-		return "", GitReasonSymlinkUnresolved
-	}
-	if !tiedToFolder(start, common) {
-		return "", GitReasonError
-	}
-	return real, ""
-}
-
-// tiedToFolder reports whether start really belongs to the repository whose
-// common directory is common. A seat can write a .git file in a folder it owns,
-// and a file that points at another repository's directory makes git report that
-// repository's common directory for the folder. So the answer is accepted only
-// when the folder is the checkout the repository itself records: for a main
-// checkout, its top-level is the parent of the common directory; for a linked
-// worktree, the worktree's own record under common/worktrees names this
-// top-level's .git file.
-func tiedToFolder(start, common string) bool {
-	gitDir, err := gitOut(start, "rev-parse", "--path-format=absolute", "--git-dir")
-	if err != nil || gitDir == "" {
-		return false
-	}
-	top, err := gitOut(start, "rev-parse", "--path-format=absolute", "--show-toplevel")
-	if err != nil || top == "" {
-		return false
-	}
-	realStart, err1 := filepath.EvalSymlinks(start)
-	realTop, err2 := filepath.EvalSymlinks(top)
-	if err1 != nil || err2 != nil || !within(realTop, realStart) {
-		return false
-	}
-	realGit, err1 := filepath.EvalSymlinks(gitDir)
-	realCommon, err2 := filepath.EvalSymlinks(common)
-	if err1 != nil || err2 != nil {
-		return false
-	}
-	if realGit == realCommon {
-		return realTop == filepath.Dir(realCommon)
-	}
-	if filepath.Dir(realGit) != filepath.Join(realCommon, "worktrees") {
-		return false
-	}
-	rec, err := os.ReadFile(filepath.Join(realGit, "gitdir"))
-	if err != nil {
-		return false
-	}
-	recorded := strings.TrimSpace(string(rec))
-	if !filepath.IsAbs(recorded) {
-		recorded = filepath.Join(realGit, recorded)
-	}
-	realRecorded, err := filepath.EvalSymlinks(recorded)
-	if err != nil {
-		return false
-	}
-	return realRecorded == filepath.Join(realTop, ".git")
-}
-
-// within reports whether path is dir or lies under it. Both are cleaned,
-// symlink-resolved paths.
-func within(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// ExpandTrustedFolder resolves one trusted_folders entry: a leading ~/ against
-// home, a relative path against the workspace root, an absolute path as it is.
-// It does not touch the filesystem.
-func ExpandTrustedFolder(p, home, wsRoot string) (string, error) {
-	switch {
-	case p == "":
-		return "", errors.New("is empty")
-	case p == "~" || strings.HasPrefix(p, "~/"):
-		if home == "" {
-			return "", errors.New("starts with ~ and the home directory is unknown")
-		}
-		return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/")), nil
-	case strings.HasPrefix(p, "~"):
-		return "", errors.New("starts with ~ but is not ~/ (another user's home is not expanded)")
-	case filepath.IsAbs(p):
-		return filepath.Clean(p), nil
-	case wsRoot == "":
-		return "", errors.New("is relative and workspace.root is not set to resolve it against (marvel work sends the manifest's directory as workspace_root; a raw API post must set workspace.root or the workspace_root parameter)")
-	default:
-		return filepath.Join(wsRoot, p), nil
-	}
-}
 
 // ValidateTrustedFolders is the daemon-side check at apply of the workspace's
 // trusted_folders: each path must exist and be the top-level of a main git
@@ -196,7 +21,7 @@ func (m *Manifest) ValidateTrustedFolders() error {
 	home, _ := os.UserHomeDir()
 	for _, entry := range *m.Workspace.TrustedFolders {
 		label := fmt.Sprintf("workspace.trusted_folders %q", entry)
-		abs, err := ExpandTrustedFolder(entry, home, m.Workspace.Root)
+		abs, err := hostprobe.ExpandTrustedFolder(entry, home, m.Workspace.Root)
 		if err != nil {
 			return fmt.Errorf("%s %w", label, err)
 		}
@@ -213,14 +38,14 @@ func (m *Manifest) ValidateTrustedFolders() error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", label, err)
 		}
-		top, err := gitOut(real, "rev-parse", "--show-toplevel")
+		top, err := hostprobe.GitOut(real, "rev-parse", "--show-toplevel")
 		if err != nil {
 			return fmt.Errorf("%s is not a git repository", label)
 		}
 		if top, err = filepath.EvalSymlinks(top); err != nil || top != real {
 			return fmt.Errorf("%s is not a git top-level (list %s)", label, top)
 		}
-		if root, reason := GitMainRoot(real); reason != "" {
+		if root, reason := hostprobe.GitMainRoot(real); reason != "" {
 			return fmt.Errorf("%s cannot be used: %s", label, reason)
 		} else if root != real {
 			return fmt.Errorf("%s is a linked worktree of %s; list the main checkout, which every worktree of it matches", label, root)

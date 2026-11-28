@@ -39,6 +39,7 @@ import (
 	"github.com/arcavenae/marvel/internal/pidfile"
 	"github.com/arcavenae/marvel/internal/procargs"
 	"github.com/arcavenae/marvel/internal/procstat"
+	"github.com/arcavenae/marvel/internal/seatenv"
 	"github.com/arcavenae/marvel/internal/service"
 	"github.com/arcavenae/marvel/internal/session"
 	"github.com/arcavenae/marvel/internal/suspend"
@@ -419,7 +420,7 @@ func NewWithOptions(opts Options) (*Daemon, error) {
 	// Before anything is exec'd: a daemon started from a Claude Code session
 	// carries that session's messaging credential and identity, and reexec,
 	// services and tmux would otherwise pass them on (marvel#381).
-	scrubbed, serr := api.UnsetInheritedSessionEnv()
+	scrubbed, serr := seatenv.UnsetInheritedSessionEnv()
 	if serr != nil {
 		return nil, fmt.Errorf("scrub inherited session env: %w", serr)
 	}
