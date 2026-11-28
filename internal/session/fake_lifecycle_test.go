@@ -118,17 +118,24 @@ func (c *callLog) CapturePane(p string) (string, error) {
 
 // The manager runs a seat's lifecycle on the in-memory fake. Each phase's calls
 // are what the code does at the commit this was written on (observed, not
-// argued to be right): ListPanes, SendKeys and CapturePane are not reached by
-// this path, and Delete kills the pane but leaves the tmux session, which only
-// CleanupWorkspace kills. Also not reached: Delete's fallback for a session with
-// no runtime instance, which kills the pane through the driver directly
-// (manager.go, the !had branch after retireInstance); here the pane dies through
-// the instance, so KillPane arrives by that route.
+// argued to be right): ListPanes is reached only by the list phase, where
+// UnrecordedTmuxState reads the panes of a workspace the store knows; SendKeys
+// and CapturePane are not reached by this path; and Delete kills the pane but
+// leaves the tmux session, which only CleanupWorkspace kills. Also not reached:
+// Delete's fallback for a session with no runtime instance, which kills the pane
+// through the driver directly (manager.go, the !had branch after
+// retireInstance); here the pane dies through the instance, so KillPane arrives
+// by that route.
 func TestManagerLifecycleOnTheFakeDriver(t *testing.T) {
 	store := api.NewStore()
 	cl := &callLog{Driver: fake.New(), n: map[string]int{}}
 	mgr := NewManager(store, cl)
 	const ws = "fake-ws"
+	// Without the record, UnrecordedTmuxState reports the whole tmux session and
+	// never reads its panes.
+	if err := store.CreateWorkspace(&api.Workspace{Name: ws}); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
 	key := ws + "/agent-0"
 	sess := &api.Session{
 		Name: "agent-0", Workspace: ws, Team: "agents", Role: "worker",
@@ -171,10 +178,14 @@ func TestManagerLifecycleOnTheFakeDriver(t *testing.T) {
 	if n := len(store.ListSessions()); n != 1 {
 		t.Errorf("list: store holds %d sessions, want 1", n)
 	}
-	if _, err := mgr.UnrecordedTmuxState(); err != nil {
+	found, err := mgr.UnrecordedTmuxState()
+	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	expect("list", "ListSessions")
+	if len(found) != 0 {
+		t.Errorf("list: the seat's own tmux state reads as unrecorded: %v", found)
+	}
+	expect("list", "ListPanes", "ListSessions")
 
 	if reaped := mgr.ReapDead(); len(reaped) != 0 {
 		t.Errorf("status: a live pane was reaped: %+v", reaped)
